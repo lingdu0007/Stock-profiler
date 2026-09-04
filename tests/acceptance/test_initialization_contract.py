@@ -52,6 +52,14 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "STOCK_PROFILER_SOURCE_SHA=${{ github.sha }}" in ci_workflow
     assert "make artifacts" in ci_workflow
     assert "SOURCE_DATE_EPOCH" in ci_workflow
+    assert "cache: pnpm" not in ci_workflow
+    assert "cache: pnpm" not in workflow
+    backend_workflow = ci_workflow.split("  web:", maxsplit=1)[0]
+    assert "actions/setup-node@" in backend_workflow
+    assert "corepack pnpm@10.17.1 --dir web install --frozen-lockfile" in backend_workflow
+    assert backend_workflow.index(
+        "corepack pnpm@10.17.1 --dir web install --frozen-lockfile"
+    ) < backend_workflow.index("uv run pytest")
     assert "verify-release-candidate:" in workflow
     assert "needs: verify-release-candidate" in workflow
     assert "tags:" in workflow
