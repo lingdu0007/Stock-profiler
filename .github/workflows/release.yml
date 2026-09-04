@@ -74,15 +74,12 @@ jobs:
           test "v${package_version}" = "$EXPECTED_TAG"
           test "$package_version" != "0.1.0.dev0"
 
-  release:
+  build-controlled-release:
     name: Controlled release build
     needs: verify-release-candidate
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
-      attestations: write
-      id-token: write
-      packages: write
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -136,10 +133,32 @@ jobs:
         run: |
           docker save "$IMAGE" --output dist/stock-profiler-image.tar
           cd dist && sha256sum stock-profiler-image.tar >> SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-artifacts-${{ needs.verify-release-candidate.outputs.tag }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Publish controlled release
+    needs: [verify-release-candidate, build-controlled-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-artifacts-${{ needs.verify-release-candidate.outputs.tag }}
+          path: dist
       - name: Attest controlled build artifacts before publication
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: dist/**
+      - name: Load controlled release container
+        run: docker load --input dist/stock-profiler-image.tar
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -173,11 +192,6 @@ jobs:
           subject-path: |
             dist/stock-profiler-image.oci-digest
             dist/SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: release-artifacts-${{ needs.verify-release-candidate.outputs.tag }}
-          path: dist/
-          if-no-files-found: error
       - name: Publish release artifacts
         env:
           GH_TOKEN: ${{ github.token }}

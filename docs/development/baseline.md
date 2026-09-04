@@ -21,8 +21,10 @@ Before rendering it, set a complete Git SHA, its commit epoch,
 `STOCK_PROFILER_AUTH_RP_ID` to the matching relying-party ID. Production
 secrets are deployment-local files mounted at `/run/secrets`; set the three
 `STOCK_PROFILER_*_FILE` variables to absolute paths outside the repository.
-Secret environment variables are rejected. The tracked `deploy/secrets/*.example`
-files remain exact synthetic placeholders for public CI interpolation only.
+Only the API mounts authentication secrets; scheduler, worker, and migration
+processes receive no authentication secret files. Secret environment variables
+are rejected. The tracked `deploy/secrets/*.example` files remain exact
+synthetic placeholders for public CI interpolation only.
 
 Startup fails closed when configuration is incomplete, synthetic, malformed,
 version-incompatible, or gives the application and M-Agent the same SQLite

@@ -13,12 +13,6 @@ x-backend: &backend
     STOCK_PROFILER_SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
     STOCK_PROFILER_APP_DATABASE_URL: sqlite:////var/lib/stock-profiler/application.sqlite3
     STOCK_PROFILER_M_AGENT_RUN_STORE_PATH: /var/lib/stock-profiler/m-agent-runs.sqlite3
-    STOCK_PROFILER_AUTH_ORIGIN: ${STOCK_PROFILER_AUTH_ORIGIN:?set an HTTPS origin}
-    STOCK_PROFILER_AUTH_RP_ID: ${STOCK_PROFILER_AUTH_RP_ID:?set a relying-party ID}
-  secrets:
-    - api_shared_secret
-    - auth_bootstrap_token
-    - auth_recovery_token
   user: "10001:10001"
   volumes:
     - application-state:/var/lib/stock-profiler
@@ -30,9 +24,22 @@ x-backend: &backend
       max-size: 20m
       max-file: "5"
 
+x-api-environment: &api-environment
+  <<: *backend-environment
+  STOCK_PROFILER_PROCESS_ROLE: api
+  STOCK_PROFILER_AUTH_ORIGIN: ${STOCK_PROFILER_AUTH_ORIGIN:?set an HTTPS origin}
+  STOCK_PROFILER_AUTH_RP_ID: ${STOCK_PROFILER_AUTH_RP_ID:?set a relying-party ID}
+
+x-api-secrets: &api-secrets
+  - api_shared_secret
+  - auth_bootstrap_token
+  - auth_recovery_token
+
 services:
   api:
     <<: *backend
+    environment: *api-environment
+    secrets: *api-secrets
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -60,6 +67,9 @@ services:
 
   scheduler:
     <<: *backend
+    environment:
+      <<: *backend-environment
+      STOCK_PROFILER_PROCESS_ROLE: scheduler
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -72,6 +82,9 @@ services:
 
   worker:
     <<: *backend
+    environment:
+      <<: *backend-environment
+      STOCK_PROFILER_PROCESS_ROLE: worker
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -84,6 +97,9 @@ services:
 
   migrate:
     <<: *backend
+    environment:
+      <<: *backend-environment
+      STOCK_PROFILER_PROCESS_ROLE: migrate
     command: ["alembic", "upgrade", "head"]
     restart: "no"
 

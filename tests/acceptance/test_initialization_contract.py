@@ -34,6 +34,9 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     gateway_dockerfile = (ROOT / "deploy" / "gateway.Dockerfile").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     baseline = (ROOT / "docs" / "development" / "baseline.md").read_text(encoding="utf-8")
+    documentation_issue = (ROOT / ".github" / "ISSUE_TEMPLATE" / "documentation.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert pyproject["build-system"]["requires"] == ["setuptools==80.9.0"]
     dependencies = pyproject["project"]["dependencies"]
@@ -61,8 +64,12 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "subject-digest: ${{ steps.oci-image.outputs.digest }}" in workflow
     assert "push-to-registry: true" in workflow
     assert "--verify-tag" in workflow
+    assert "build-controlled-release:" in workflow
+    assert "needs: [verify-release-candidate, build-controlled-release]" in workflow
+    assert "permissions:\n      contents: read" in workflow
     assert "scripts/repository_guard.py --history" in workflow
     assert "scripts/repository_guard.py --history" in security_workflow
+    assert "scripts/repository_guard.py --history" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in compose
     assert "STOCK_PROFILER_AUTH_RP_ID" in compose
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in compose
@@ -73,6 +80,12 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "stock-profiler-gateway:${STOCK_PROFILER_SOURCE_SHA" in compose
     assert "healthcheck:" in compose
     assert "SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA" in compose
+    assert "x-api-secrets:" in compose
+    assert "secrets: *api-secrets" in compose
+    assert "STOCK_PROFILER_PROCESS_ROLE: api" in compose
+    assert "STOCK_PROFILER_PROCESS_ROLE: scheduler" in compose
+    assert "STOCK_PROFILER_PROCESS_ROLE: worker" in compose
+    assert "STOCK_PROFILER_PROCESS_ROLE: migrate" in compose
     assert "respond /healthz 200" in caddyfile
     assert "org.opencontainers.image.revision=${SOURCE_SHA}" in gateway_dockerfile
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in ci_workflow
@@ -80,24 +93,28 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "SOURCE_DATE_EPOCH" in readme
     assert "STOCK_PROFILER_AUTH_ORIGIN" in readme
     assert "fails closed" in baseline
+    assert "Documentation correction" in documentation_issue
+    assert "original synthetic" in documentation_issue
 
 
 def test_web_authn_dependency_contract_is_declared_without_an_auth_route() -> None:
     package_json = (ROOT / "web" / "package.json").read_text(encoding="utf-8")
     openapi = (ROOT / "web" / "openapi.json").read_text(encoding="utf-8")
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
 
     assert '"@simplewebauthn/browser"' in package_json
     for dependency in (
-        '"@hookform/resolvers"',
-        '"@radix-ui/react-slot"',
-        '"@tanstack/react-query"',
-        '"@tailwindcss/vite"',
-        '"lucide-react"',
-        '"react-hook-form"',
-        '"react-router"',
-        '"tailwindcss"',
-        '"zod"',
+        "@hookform/resolvers",
+        "@radix-ui/react-slot",
+        "@tanstack/react-query",
+        "@tailwindcss/vite",
+        "lucide-react",
+        "react-hook-form",
+        "react-router",
+        "tailwindcss",
+        "zod",
     ):
-        assert dependency in package_json
+        assert f'"{dependency}"' in package_json
+        assert dependency in notices
     assert "/api/v1/auth" not in openapi
     assert "/api/v1/diagnostics/safety-capabilities" in openapi

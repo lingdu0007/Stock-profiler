@@ -22,7 +22,7 @@ PYTHON_DIRECT_COMPONENTS = frozenset(
         "webauthn",
     }
 )
-NOTICE_COMPONENT_MARKERS = (
+PYTHON_NOTICE_COMPONENT_MARKERS = (
     "M-Agent",
     "FastAPI",
     "SQLAlchemy",
@@ -32,11 +32,8 @@ NOTICE_COMPONENT_MARKERS = (
     "Typer",
     "Uvicorn",
     "webauthn",
-    "@simplewebauthn/browser",
-    "React",
-    "Vite",
-    "TypeScript",
 )
+REQUIRED_WEB_BUILD_COMPONENTS = frozenset({"@tailwindcss/vite", "tailwindcss"})
 ALLOWED_PYTHON_LICENSES = frozenset(
     {
         "Apache-2.0",
@@ -114,9 +111,18 @@ def require_allowed_frontend_licenses(licenses: dict[str, list[dict[str, object]
         raise SystemExit(f"unapproved frontend license: {', '.join(unapproved)}")
 
 
+def direct_web_notice_components() -> set[str]:
+    """Return direct Web dependencies that must be named in public notices."""
+    package = json.loads((ROOT / "web" / "package.json").read_text(encoding="utf-8"))
+    return set(package["dependencies"]) | REQUIRED_WEB_BUILD_COMPONENTS
+
+
 def require_direct_component_notices(notices: str) -> None:
     """Keep legal notices synchronized with the direct runtime and Web components."""
-    missing = [marker for marker in NOTICE_COMPONENT_MARKERS if marker not in notices]
+    required_markers = PYTHON_NOTICE_COMPONENT_MARKERS + tuple(
+        sorted(direct_web_notice_components())
+    )
+    missing = [marker for marker in required_markers if marker not in notices]
     if missing:
         raise SystemExit(f"third-party notices missing direct components: {', '.join(missing)}")
 

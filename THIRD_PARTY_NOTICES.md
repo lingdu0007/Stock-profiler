@@ -12,9 +12,19 @@ components:
 - Typer, MIT
 - Uvicorn, BSD-3-Clause
 - webauthn, BSD-3-Clause
+- @hookform/resolvers, MIT
+- @radix-ui/react-slot, MIT
 - @simplewebauthn/browser, MIT
-- React, MIT
-- Vite, MIT
+- @tanstack/react-query, MIT
+- @tailwindcss/vite and Tailwind CSS, MIT
+- @vitejs/plugin-react, MIT
+- lucide-react, ISC
+- openapi-fetch, MIT
+- react and react-dom (React), MIT
+- react-hook-form (React Hook Form), MIT
+- react-router (React Router), MIT
+- vite and vite-plugin-pwa (Vite), MIT
+- zod (Zod), MIT
 - TypeScript, Apache-2.0
 
 The complete resolved dependency identities are recorded in `uv.lock` and

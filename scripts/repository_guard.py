@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,11 +66,9 @@ FORBIDDEN_SUFFIXES = frozenset(
 )
 FORBIDDEN_TEXT = (
     ".scratch" + "/",
-    "\nAssignee:",
-    "\nParent:",
-    "\nTriage:",
     "stock-profiler" + "-control",
 )
+FORBIDDEN_ROLE_FIELD_PATTERN = re.compile(r"^(?:assignee|parent|triage):", flags=re.IGNORECASE)
 STRUCTURED_DATA_SUFFIXES = frozenset(
     {
         ".avro",
@@ -99,6 +98,7 @@ ALLOWED_PUBLIC_JSON_PATHS = frozenset(
     }
 )
 SYNTHETIC_FIXTURE_ROOT = Path("tests/fixtures/synthetic")
+SYNTHETIC_FIXTURE_DOCUMENTATION_NAMES = frozenset({"README.md"})
 SECRET_EXAMPLE_PATHS = frozenset(
     {
         Path("deploy/secrets/api_shared_secret.example"),
@@ -212,7 +212,8 @@ def check_path(candidate: CandidateFile) -> list[str]:
     errors: list[str] = []
     if relative.parts[0] not in ALLOWED_TOP_LEVEL_PATHS:
         errors.append(f"top-level path is not allowlisted: {relative}")
-    if any(part in FORBIDDEN_PARTS or part.endswith("-session") for part in relative.parts):
+    path_parts = tuple(part.casefold() for part in relative.parts)
+    if any(part in FORBIDDEN_PARTS or part.endswith("-session") for part in path_parts):
         errors.append(f"forbidden path: {relative}")
     if any(marker in relative.as_posix().casefold() for marker in FORBIDDEN_TEXT):
         errors.append(f"forbidden repository-role identifier in path {relative}")
@@ -224,7 +225,8 @@ def check_path(candidate: CandidateFile) -> list[str]:
         "synthetic",
     ):
         errors.append(f"fixture is outside the synthetic fixture allowlist: {relative}")
-    if relative.name == ".env" or relative.name.startswith(".env."):
+    normalized_name = relative.name.casefold()
+    if normalized_name == ".env" or normalized_name.startswith(".env."):
         errors.append(f"forbidden environment file: {relative}")
     if relative.suffix.casefold() in FORBIDDEN_SUFFIXES:
         errors.append(f"forbidden file type: {relative}")
@@ -245,33 +247,44 @@ def check_text(candidate: CandidateFile) -> list[str]:
         content = candidate.content.decode(encoding="utf-8")
     except UnicodeDecodeError:
         return [f"binary file is not allowed: {candidate.relative_path}"]
-    return [
-        f"forbidden repository-role identifier in {candidate.relative_path}"
-        for marker in FORBIDDEN_TEXT
-        if marker in content
-    ]
+    marker_error = f"forbidden repository-role identifier in {candidate.relative_path}"
+    errors = [marker_error for marker in FORBIDDEN_TEXT if marker.casefold() in content.casefold()]
+    if any(FORBIDDEN_ROLE_FIELD_PATTERN.match(line) for line in content.splitlines()):
+        errors.append(marker_error)
+    return errors
 
 
-def check_synthetic_fixture(candidate: CandidateFile, paths: set[Path]) -> list[str]:
-    """Require provenance metadata for structured fixtures."""
+def synthetic_metadata_errors(candidate: CandidateFile) -> list[str]:
+    """Verify one JSON sidecar declares original, deterministic synthetic provenance."""
     relative = candidate.relative_path
-    if not relative.is_relative_to(SYNTHETIC_FIXTURE_ROOT):
-        return []
-    if relative.suffix.casefold() != ".json":
-        if relative.suffix.casefold() not in STRUCTURED_DATA_SUFFIXES:
-            return []
-        metadata_path = Path(f"{relative.as_posix()}.metadata.json")
-        if metadata_path not in paths:
-            return [f"synthetic fixture metadata sidecar missing: {relative}"]
-        return []
     try:
         payload = json.loads(candidate.content.decode(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return [f"synthetic fixture must be valid JSON: {relative}"]
+        return [f"synthetic fixture metadata must be valid JSON: {relative}"]
     required = ("synthetic", "generator_version", "seed")
     if not all(key in payload for key in required) or payload["synthetic"] is not True:
         return [f"synthetic fixture metadata missing: {relative}"]
     return []
+
+
+def check_synthetic_fixture(
+    candidate: CandidateFile, candidates_by_path: dict[Path, CandidateFile]
+) -> list[str]:
+    """Require inline JSON provenance or verified sidecars for non-JSON fixture payloads."""
+    relative = candidate.relative_path
+    if not relative.is_relative_to(SYNTHETIC_FIXTURE_ROOT):
+        return []
+    if relative.name in SYNTHETIC_FIXTURE_DOCUMENTATION_NAMES:
+        return []
+    if relative.name.endswith(".metadata.json"):
+        return synthetic_metadata_errors(candidate)
+    if relative.suffix.casefold() == ".json":
+        return synthetic_metadata_errors(candidate)
+    metadata_path = Path(f"{relative.as_posix()}.metadata.json")
+    metadata = candidates_by_path.get(metadata_path)
+    if metadata is None:
+        return [f"synthetic fixture metadata sidecar missing: {relative}"]
+    return synthetic_metadata_errors(metadata)
 
 
 def check_secret_examples(candidates: dict[Path, CandidateFile]) -> list[str]:
@@ -291,12 +304,13 @@ def check_secret_examples(candidates: dict[Path, CandidateFile]) -> list[str]:
 
 def guard_errors(candidates: list[CandidateFile], gitlinks: list[Path]) -> list[str]:
     """Evaluate common content rules for staged or historical candidate blobs."""
-    paths = {candidate.relative_path for candidate in candidates}
     candidates_by_path = {candidate.relative_path: candidate for candidate in candidates}
     errors = [error for candidate in candidates for error in check_path(candidate)]
     errors.extend(error for candidate in candidates for error in check_text(candidate))
     errors.extend(
-        error for candidate in candidates for error in check_synthetic_fixture(candidate, paths)
+        error
+        for candidate in candidates
+        for error in check_synthetic_fixture(candidate, candidates_by_path)
     )
     errors.extend(check_secret_examples(candidates_by_path))
     if gitlinks:

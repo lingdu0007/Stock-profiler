@@ -268,6 +268,88 @@ def test_repository_guard_rejects_unknown_top_level_content_categories(tmp_path:
     assert "top-level path is not allowlisted" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("filename", "content", "expected_error"),
+    [
+        ("docs/Control/note.md", "synthetic\n", "forbidden path"),
+        ("docs/review-Session/note.md", "synthetic\n", "forbidden path"),
+        ("docs/.ENV", "SYNTHETIC=1\n", "forbidden environment file"),
+        ("README.md", "assignee: synthetic\n", "forbidden repository-role identifier"),
+        ("README.md", "PARENT: synthetic\n", "forbidden repository-role identifier"),
+        ("README.md", "triage: synthetic\n", "forbidden repository-role identifier"),
+    ],
+)
+def test_repository_guard_rejects_casefolded_paths_and_first_line_role_markers(
+    tmp_path: Path, filename: str, content: str, expected_error: str
+) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    source = tmp_path / filename
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(content, encoding="utf-8")
+    run_git(tmp_path, "add", filename)
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+
+
+@pytest.mark.parametrize("suffix", (".txt", ".yaml", ".unknown"))
+def test_repository_guard_requires_verified_sidecars_for_every_synthetic_payload(
+    tmp_path: Path, suffix: str
+) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    fixture = tmp_path / "tests" / "fixtures" / "synthetic" / f"case{suffix}"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("fabricated payload\n", encoding="utf-8")
+    run_git(tmp_path, "add", fixture.relative_to(tmp_path).as_posix())
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "synthetic fixture metadata sidecar missing" in result.stderr
+
+
+def test_repository_guard_rejects_an_unverified_synthetic_payload_sidecar(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    fixture = tmp_path / "tests" / "fixtures" / "synthetic" / "case.txt"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("fabricated payload\n", encoding="utf-8")
+    sidecar = fixture.with_name("case.txt.metadata.json")
+    sidecar.write_text("{}\n", encoding="utf-8")
+    run_git(tmp_path, "add", fixture.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "add", sidecar.relative_to(tmp_path).as_posix())
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "synthetic fixture metadata missing" in result.stderr
+
+
 def test_repository_guard_history_scans_deleted_content(tmp_path: Path) -> None:
     run_git(tmp_path, "init")
     run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")

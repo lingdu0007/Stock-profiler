@@ -78,6 +78,21 @@ def test_production_settings_reject_secret_environment_variables(
         load_production_settings(secret_directory, production_settings_kwargs(tmp_path))
 
 
+@pytest.mark.parametrize("process_role", ("scheduler", "worker", "migrate"))
+def test_non_api_production_processes_do_not_require_authentication_secrets(
+    tmp_path: Path, process_role: str
+) -> None:
+    values = production_settings_kwargs(tmp_path)
+    values["process_role"] = process_role
+
+    settings = Settings(**values)  # type: ignore[arg-type]
+
+    assert settings.process_role == process_role
+    assert settings.api_shared_secret is None
+    assert settings.auth_bootstrap_token is None
+    assert settings.auth_recovery_token is None
+
+
 @pytest.mark.parametrize(
     ("secret_name", "unsafe_value"),
     [

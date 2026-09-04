@@ -1,0 +1,22 @@
+name: Documentation correction
+description: Report a public documentation correction without including operational or personal material.
+title: "[docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, account facts, market data, provider responses, runtime output, personal information, or private operational details.
+  - type: textarea
+    id: correction
+    attributes:
+      label: Documentation correction
+      description: Identify the public document, describe the correction, and provide only original synthetic examples when an example is needed.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: This report contains no private, personal, credential, runtime, or real-world evidence.
+          required: true

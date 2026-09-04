@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["development", "test", "production"] = "development"
+    process_role: Literal["api", "scheduler", "worker", "migrate", "cli"] = "api"
     source_sha: str = Field(default_factory=discover_source_sha)
     configuration_version: str = "0.1.0.dev0"
     app_database_url: str = "sqlite:///./.runtime/stock-profiler.sqlite3"
@@ -257,9 +258,11 @@ class Settings(BaseSettings):
             production_invalid = (
                 self.source_sha == ZERO_SHA
                 or self.configuration_version != "0.1.0.dev0"
-                or not is_valid_production_secret(secret)
                 or not application_database_file_path.is_absolute()
                 or not self.m_agent_run_store_path.is_absolute()
+            )
+            authentication_invalid = (
+                not is_valid_production_secret(secret)
                 or not has_valid_rp_id
                 or not has_valid_origin
                 or not origin_matches_rp_id
@@ -273,6 +276,9 @@ class Settings(BaseSettings):
                 or self.auth_recovery_token_ttl_seconds != 10 * 60
                 or not is_valid_production_secret(bootstrap_token)
                 or not is_valid_production_secret(recovery_token)
+            )
+            production_invalid = production_invalid or (
+                self.process_role == "api" and authentication_invalid
             )
             if production_invalid:
                 raise ValueError("production configuration is incomplete or unsafe")
