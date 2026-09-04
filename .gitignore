@@ -1,0 +1,42 @@
+# Python environments and build output
+.venv/
+.coverage
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Runtime state is never source data.
+.runtime/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.bak
+*.backup
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Frontend tools and generated output
+web/node_modules/
+web/dist/
+web/.vite/
+web/.vitest/
+web/playwright-report/
+web/test-results/
+
+# Human or agent working material is not public source.
+*-session/
+.tools/

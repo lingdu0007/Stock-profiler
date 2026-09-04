@@ -1,0 +1,70 @@
+{
+  "components": {
+    "schemas": {
+      "VersionDiagnosticDto": {
+        "description": "Pydantic-only transport contract for the public diagnostic interface.",
+        "properties": {
+          "application_version": {
+            "title": "Application Version",
+            "type": "string"
+          },
+          "m_agent_release_commit": {
+            "title": "M Agent Release Commit",
+            "type": "string"
+          },
+          "m_agent_version": {
+            "title": "M Agent Version",
+            "type": "string"
+          },
+          "m_agent_wheel_sha256": {
+            "title": "M Agent Wheel Sha256",
+            "type": "string"
+          },
+          "m_agent_wheel_url": {
+            "title": "M Agent Wheel Url",
+            "type": "string"
+          },
+          "source_sha": {
+            "title": "Source Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_version",
+          "source_sha",
+          "m_agent_version",
+          "m_agent_wheel_url",
+          "m_agent_wheel_sha256",
+          "m_agent_release_commit"
+        ],
+        "title": "VersionDiagnosticDto",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Stock Profiler Diagnostics",
+    "version": "0.1.0.dev0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/diagnostics/version": {
+      "get": {
+        "operationId": "version_diagnostic_api_v1_diagnostics_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionDiagnosticDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Version Diagnostic"
+      }
+    }
+  }
+}

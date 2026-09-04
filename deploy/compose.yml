@@ -1,0 +1,122 @@
+name: stock-profiler
+
+x-backend: &backend
+  image: stock-profiler-backend:${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    args:
+      SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
+      SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set a source epoch}
+  environment: &backend-environment
+    STOCK_PROFILER_ENVIRONMENT: production
+    STOCK_PROFILER_SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
+    STOCK_PROFILER_APP_DATABASE_URL: sqlite:////var/lib/stock-profiler/application.sqlite3
+    STOCK_PROFILER_M_AGENT_RUN_STORE_PATH: /var/lib/stock-profiler/m-agent-runs.sqlite3
+    STOCK_PROFILER_AUTH_ORIGIN: ${STOCK_PROFILER_AUTH_ORIGIN:?set an HTTPS origin}
+    STOCK_PROFILER_AUTH_RP_ID: ${STOCK_PROFILER_AUTH_RP_ID:?set a relying-party ID}
+  secrets:
+    - api_shared_secret
+    - auth_bootstrap_token
+    - auth_recovery_token
+  user: "10001:10001"
+  volumes:
+    - application-state:/var/lib/stock-profiler
+  networks:
+    - application
+  logging:
+    driver: json-file
+    options:
+      max-size: 20m
+      max-file: "5"
+
+services:
+  api:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "uvicorn",
+        "stock_profiler.entrypoints.http.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--no-access-log"
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  scheduler:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "stock_profiler.entrypoints.scheduler"]
+    healthcheck:
+      test: ["CMD", "stock-profiler", "process-health", "scheduler"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "stock_profiler.entrypoints.worker"]
+    healthcheck:
+      test: ["CMD", "stock-profiler", "process-health", "worker"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/gateway.Dockerfile
+      args:
+        SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set a source epoch}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - application
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+secrets:
+  api_shared_secret:
+    file: ${STOCK_PROFILER_API_SHARED_SECRET_FILE:?set an absolute path outside the repository}
+  auth_bootstrap_token:
+    file: ${STOCK_PROFILER_AUTH_BOOTSTRAP_TOKEN_FILE:?set an absolute path outside the repository}
+  auth_recovery_token:
+    file: ${STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE:?set an absolute path outside the repository}
+
+volumes:
+  application-state:
+
+networks:
+  application:
+    internal: true

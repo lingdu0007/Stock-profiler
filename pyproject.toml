@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-profiler"
+version = "0.1.0.dev0"
+description = "Engineering baseline for the Stock Profiler host application."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Stock Profiler Maintainers" }]
+dependencies = [
+  "alembic>=1.16.0,<2.0.0",
+  "fastapi>=0.115.0,<1.0.0",
+  "m-agent @ https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl#sha256=8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
+  "pydantic-settings>=2.10.0,<3.0.0",
+  "sqlalchemy>=2.0.0,<3.0.0",
+  "structlog>=25.0.0,<26.0.0",
+  "typer>=0.16.0,<1.0.0",
+  "uvicorn>=0.35.0,<1.0.0",
+  "webauthn>=2.0.0,<3.0.0",
+]
+
+[project.scripts]
+stock-profiler = "stock_profiler.entrypoints.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.0,<1.0.0",
+  "hypothesis>=6.0.0,<7.0.0",
+  "mypy>=1.17.0,<2.0.0",
+  "pytest>=8.0.0,<9.0.0",
+  "pytest-cov>=6.0.0,<7.0.0",
+  "pyyaml>=6.0.0,<7.0.0",
+  "ruff>=0.12.0,<1.0.0",
+  "types-setuptools>=80.0.0.20250822",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --cov=stock_profiler --cov-branch --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["stock_profiler"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["m_agent.*"]
+ignore_missing_imports = true

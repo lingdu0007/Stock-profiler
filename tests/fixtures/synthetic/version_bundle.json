@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "generator_version": "baseline-fixture-1",
+  "seed": 0,
+  "application_version": "0.1.0.dev0",
+  "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "m_agent_version": "0.5.0",
+  "m_agent_release_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

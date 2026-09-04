@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
+        with:
+          version: "0.11.6"
+      - run: uv sync --locked --extra dev --python 3.11
+      - run: uv run ruff check src tests scripts migrations
+      - run: uv run ruff format --check src tests scripts migrations
+      - run: uv run mypy src tests
+      - run: uv run pytest
+      - run: uv run alembic upgrade head
+      - run: uv build --out-dir dist/python
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
+        with:
+          version: "0.11.6"
+      - run: corepack enable
+      - run: corepack pnpm@10.17.1 --dir web install --frozen-lockfile
+      - run: corepack pnpm@10.17.1 --dir web lint
+      - run: corepack pnpm@10.17.1 --dir web format
+      - run: corepack pnpm@10.17.1 --dir web type-check
+      - run: corepack pnpm@10.17.1 --dir web exec playwright install --with-deps chromium
+      - run: corepack pnpm@10.17.1 --dir web test
+      - run: corepack pnpm@10.17.1 --dir web test:e2e
+      - run: uv sync --locked --extra dev --python 3.11
+      - run: uv run python scripts/export_openapi.py web/openapi.json
+      - run: corepack pnpm@10.17.1 --dir web generate-client
+      - run: git diff --exit-code -- web/openapi.json web/src/api/schema.d.ts
+      - run: corepack pnpm@10.17.1 --dir web build
+      - run: STOCK_PROFILER_SOURCE_SHA=${{ github.sha }} SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" make artifacts
+
+  repository-safety:
+    name: Repository safety
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@22695119d769bdb6f7032ad67b9bca0ef8c4a174
+        with:
+          version: "0.11.6"
+      - run: corepack enable
+      - run: corepack pnpm@10.17.1 --dir web install --frozen-lockfile
+      - run: uv sync --locked --extra dev --python 3.11
+      - run: uv run python scripts/repository_guard.py
+      - run: uv run python scripts/check_license.py
+      - name: Scan with fixed Gitleaks
+        run: |
+          curl --fail --location --silent --show-error \
+            --output /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
+          echo "ba6dbb656933921c775ee5a2d1c13a91046e7952e9d919f9bac4cec61d628e7d  /tmp/gitleaks.tar.gz" | sha256sum --check
+          tar --extract --gzip --file /tmp/gitleaks.tar.gz --directory /tmp
+          /tmp/gitleaks detect --source . --redact --no-banner --log-opts="--all"
+
+  container-build:
+    name: Container build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: corepack enable
+      - run: corepack pnpm@10.17.1 --dir web install --frozen-lockfile
+      - run: corepack pnpm@10.17.1 --dir web build
+      - name: Validate Compose interpolation with synthetic placeholders
+        env:
+          STOCK_PROFILER_SOURCE_SHA: ${{ github.sha }}
+          STOCK_PROFILER_AUTH_ORIGIN: https://config.example.invalid
+          STOCK_PROFILER_AUTH_RP_ID: config.example.invalid
+          STOCK_PROFILER_API_SHARED_SECRET_FILE: ${{ github.workspace }}/deploy/secrets/api_shared_secret.example
+          STOCK_PROFILER_AUTH_BOOTSTRAP_TOKEN_FILE: ${{ github.workspace }}/deploy/secrets/auth_bootstrap_token.example
+          STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE: ${{ github.workspace }}/deploy/secrets/auth_recovery_token.example
+        run: SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" docker compose -f deploy/compose.yml config
+      - run: docker build --build-arg SOURCE_SHA=${{ github.sha }} --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --tag stock-profiler:${{ github.sha }} .
+      - run: docker build --file deploy/gateway.Dockerfile --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --tag stock-profiler-gateway:${{ github.sha }} .
