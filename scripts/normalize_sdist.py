@@ -32,6 +32,12 @@ def normalize_sdist(path: Path, source_date_epoch: int) -> None:
             normalized.uname = ""
             normalized.gname = ""
             normalized.pax_headers = {}
+            if normalized.isdir():
+                normalized.mode = 0o755
+            elif normalized.isfile():
+                normalized.mode = 0o644
+            elif normalized.issym():
+                normalized.mode = 0o777
             target.addfile(
                 normalized,
                 source.extractfile(member) if member.isfile() else None,
