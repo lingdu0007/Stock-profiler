@@ -32,6 +32,16 @@ class HealthDto(BaseModel):
     status: str
 
 
+class SafetyCapabilitiesDiagnosticDto(BaseModel):
+    """Machine-readable official-project safety invariants."""
+
+    model_config = ConfigDict(frozen=True)
+
+    single_user: bool
+    public_recommendation_service: bool
+    order_writing: bool
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the HTTP transport without exposing persistence entities."""
     app_settings = settings or load_settings()
@@ -80,6 +90,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             git_sha=bundle.source_sha,
         )
         return VersionDiagnosticDto(**bundle.to_dto())
+
+    @app.get(
+        "/api/v1/diagnostics/safety-capabilities",
+        response_model=SafetyCapabilitiesDiagnosticDto,
+    )
+    def safety_capabilities_diagnostic() -> SafetyCapabilitiesDiagnosticDto:
+        """Report static safety boundaries without exposing a product action."""
+        log_operational_event(
+            event="http.diagnostic",
+            component="api",
+            operation="safety-capabilities",
+            status="ready",
+            version="0.1.0.dev0",
+            git_sha=app_settings.source_sha,
+        )
+        return SafetyCapabilitiesDiagnosticDto(
+            single_user=True,
+            public_recommendation_service=False,
+            order_writing=False,
+        )
 
     return app
 

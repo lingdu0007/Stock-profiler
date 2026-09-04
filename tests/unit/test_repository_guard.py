@@ -247,6 +247,27 @@ def test_repository_guard_rejects_textual_data_and_evidence_paths(
     assert "forbidden data or evidence path" in result.stderr
 
 
+def test_repository_guard_rejects_unknown_top_level_content_categories(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    source = tmp_path / "records" / "relabelled-evidence.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("synthetic-looking text\n", encoding="utf-8")
+    run_git(tmp_path, "add", source.relative_to(tmp_path).as_posix())
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "top-level path is not allowlisted" in result.stderr
+
+
 def test_repository_guard_history_scans_deleted_content(tmp_path: Path) -> None:
     run_git(tmp_path, "init")
     run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
@@ -270,3 +291,72 @@ def test_repository_guard_history_scans_deleted_content(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "forbidden data or evidence path" in result.stderr
+
+
+def test_repository_guard_history_rechecks_each_commit_tree(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    secrets = tmp_path / "deploy" / "secrets"
+    secrets.mkdir(parents=True)
+    for name in (
+        "api_shared_secret.example",
+        "auth_bootstrap_token.example",
+        "auth_recovery_token.example",
+    ):
+        (secrets / name).write_text("synthetic-placeholder-do-not-deploy\n", encoding="utf-8")
+    (tmp_path / "deploy" / "compose.yml").write_text("name: synthetic\n", encoding="utf-8")
+    run_git(tmp_path, "add", "deploy")
+    run_git(tmp_path, "commit", "-m", "add synthetic secret templates")
+
+    changed_template = secrets / "api_shared_secret.example"
+    changed_template.write_text("unsafe-intermediate-value\n", encoding="utf-8")
+    run_git(tmp_path, "add", changed_template.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "commit", "-m", "break synthetic secret template")
+
+    changed_template.write_text("synthetic-placeholder-do-not-deploy\n", encoding="utf-8")
+    run_git(tmp_path, "add", changed_template.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "commit", "-m", "restore synthetic secret template")
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD), "--history"],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "secret example must contain only the approved synthetic placeholder" in result.stderr
+
+
+def test_repository_guard_history_does_not_backfill_missing_fixture_metadata(
+    tmp_path: Path,
+) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    fixture = tmp_path / "tests" / "fixtures" / "synthetic" / "case.csv"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("instrument,value\nFABRICATED,1\n", encoding="utf-8")
+    run_git(tmp_path, "add", fixture.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "commit", "-m", "add fixture without metadata")
+
+    metadata = fixture.with_name("case.csv.metadata.json")
+    metadata.write_text(
+        '{"synthetic": true, "generator_version": "test", "seed": 1}\n',
+        encoding="utf-8",
+    )
+    run_git(tmp_path, "add", metadata.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "commit", "-m", "add fixture metadata")
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD), "--history"],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "synthetic fixture metadata sidecar missing" in result.stderr

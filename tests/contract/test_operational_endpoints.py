@@ -27,6 +27,18 @@ def test_readiness_fails_closed_when_the_application_database_is_not_migrated(
     assert client.get("/readyz").status_code == 500
 
 
+def test_safety_capabilities_are_public_diagnostics_not_product_actions(
+    migrated_settings: Settings,
+) -> None:
+    client = TestClient(create_app(migrated_settings))
+
+    assert client.get("/api/v1/diagnostics/safety-capabilities").json() == {
+        "single_user": True,
+        "public_recommendation_service": False,
+        "order_writing": False,
+    }
+
+
 def test_heartbeat_runner_can_report_once_without_scheduling_work(
     settings: Settings, monkeypatch: MonkeyPatch
 ) -> None:

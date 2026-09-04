@@ -88,3 +88,4 @@ def test_web_authn_dependency_contract_is_declared_without_an_auth_route() -> No
 
     assert '"@simplewebauthn/browser"' in package_json
     assert "/api/v1/auth" not in openapi
+    assert "/api/v1/diagnostics/safety-capabilities" in openapi

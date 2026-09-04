@@ -130,17 +130,6 @@ jobs:
             --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
             --tag "$RELEASE_IMAGE" \
             .
-      - name: Build controlled release gateway
-        env:
-          RELEASE_COMMIT: ${{ needs.verify-release-candidate.outputs.commit }}
-          SOURCE_DATE_EPOCH: ${{ needs.verify-release-candidate.outputs.source_date_epoch }}
-        run: |
-          docker build \
-            --file deploy/gateway.Dockerfile \
-            --build-arg SOURCE_SHA="$RELEASE_COMMIT" \
-            --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-            --tag "stock-profiler-gateway:$RELEASE_COMMIT" \
-            .
       - name: Archive the controlled container image
         env:
           IMAGE: ${{ needs.verify-release-candidate.outputs.image }}

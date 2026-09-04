@@ -20,6 +20,32 @@ FORBIDDEN_PARTS = frozenset(
     }
 )
 FORBIDDEN_DATA_PATH_PARTS = frozenset({"data", "evidence"})
+ALLOWED_TOP_LEVEL_PATHS = frozenset(
+    {
+        ".dockerignore",
+        ".github",
+        ".gitignore",
+        ".pre-commit-config.yaml",
+        "CONTRIBUTING.md",
+        "Dockerfile",
+        "LICENSE",
+        "Makefile",
+        "NOTICE",
+        "README.md",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "alembic.ini",
+        "deploy",
+        "docs",
+        "migrations",
+        "pyproject.toml",
+        "scripts",
+        "src",
+        "tests",
+        "uv.lock",
+        "web",
+    }
+)
 FORBIDDEN_SUFFIXES = frozenset(
     {
         ".bak",
@@ -141,8 +167,8 @@ def candidate_files() -> list[CandidateFile]:
     return candidates
 
 
-def history_candidate_files() -> tuple[list[CandidateFile], list[Path]]:
-    """Read every committed blob so deleted forbidden content cannot evade the guard."""
+def history_candidate_trees() -> list[tuple[str, list[CandidateFile], list[Path]]]:
+    """Read each committed tree so a later correction cannot conceal an earlier violation."""
     commits = subprocess.run(
         ["git", "rev-list", "--all"],
         cwd=ROOT,
@@ -150,8 +176,7 @@ def history_candidate_files() -> tuple[list[CandidateFile], list[Path]]:
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    candidates: list[CandidateFile] = []
-    gitlinks: list[Path] = []
+    trees: list[tuple[str, list[CandidateFile], list[Path]]] = []
     for commit in commits:
         completed = subprocess.run(
             ["git", "ls-tree", "-rz", "--full-tree", commit],
@@ -159,6 +184,8 @@ def history_candidate_files() -> tuple[list[CandidateFile], list[Path]]:
             check=True,
             capture_output=True,
         )
+        candidates: list[CandidateFile] = []
+        gitlinks: list[Path] = []
         for entry in completed.stdout.split(b"\0"):
             if not entry:
                 continue
@@ -175,13 +202,16 @@ def history_candidate_files() -> tuple[list[CandidateFile], list[Path]]:
                 capture_output=True,
             ).stdout
             candidates.append(CandidateFile(relative_path=relative_path, content=content))
-    return candidates, sorted(set(gitlinks))
+        trees.append((commit, candidates, sorted(set(gitlinks))))
+    return trees
 
 
 def check_path(candidate: CandidateFile) -> list[str]:
     """Detect forbidden path shapes and oversized public files."""
     relative = candidate.relative_path
     errors: list[str] = []
+    if relative.parts[0] not in ALLOWED_TOP_LEVEL_PATHS:
+        errors.append(f"top-level path is not allowlisted: {relative}")
     if any(part in FORBIDDEN_PARTS or part.endswith("-session") for part in relative.parts):
         errors.append(f"forbidden path: {relative}")
     if any(marker in relative.as_posix().casefold() for marker in FORBIDDEN_TEXT):
@@ -282,11 +312,15 @@ def main() -> None:
     parser.add_argument("--history", action="store_true")
     arguments = parser.parse_args()
     if arguments.history:
-        candidates, gitlinks = history_candidate_files()
+        errors = [
+            f"{commit}: {error}"
+            for commit, candidates, gitlinks in history_candidate_trees()
+            for error in guard_errors(candidates, gitlinks)
+        ]
     else:
         candidates = candidate_files()
         gitlinks = staged_gitlink_paths()
-    errors = guard_errors(candidates, gitlinks)
+        errors = guard_errors(candidates, gitlinks)
     if errors:
         raise SystemExit("\n".join(sorted(set(errors))))
     print("repository guard passed")
