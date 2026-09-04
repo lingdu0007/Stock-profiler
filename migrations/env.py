@@ -23,7 +23,7 @@ def application_database_url() -> str:
     configured_url = config.get_main_option("sqlalchemy.url")
     if configured_url and configured_url != "sqlite:///./.runtime/stock-profiler.sqlite3":
         return configured_url
-    return load_settings().app_database_url
+    return load_settings(expected_process_role="migrate").app_database_url
 
 
 def ensure_parent_directory(database_url: str) -> None:

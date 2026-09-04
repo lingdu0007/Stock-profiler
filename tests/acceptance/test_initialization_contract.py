@@ -56,6 +56,9 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "needs: verify-release-candidate" in workflow
     assert "tags:" in workflow
     assert '"v*"' in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "inputs.tag" not in workflow
+    assert "EXPECTED_TAG: ${{ github.ref_name }}" in workflow
     assert "persist-credentials: false" in workflow
     assert '[[ "$EXPECTED_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in workflow
     assert (

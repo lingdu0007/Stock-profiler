@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing protected release tag
-        required: true
-        type: string
 
 jobs:
   verify-release-candidate:
@@ -32,7 +26,7 @@ jobs:
           persist-credentials: false
       - id: identity
         env:
-          EXPECTED_TAG: ${{ inputs.tag || github.ref_name }}
+          EXPECTED_TAG: ${{ github.ref_name }}
         run: |
           if ! [[ "$EXPECTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             exit 1

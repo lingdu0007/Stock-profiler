@@ -93,6 +93,18 @@ def test_non_api_production_processes_do_not_require_authentication_secrets(
     assert settings.auth_recovery_token is None
 
 
+def test_settings_loader_rejects_an_entrypoint_role_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_settings.cache_clear()
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "scheduler")
+
+    with pytest.raises(ValueError, match="process role mismatch"):
+        load_settings(expected_process_role="worker")
+
+    load_settings.cache_clear()
+
+
 @pytest.mark.parametrize(
     ("secret_name", "unsafe_value"),
     [

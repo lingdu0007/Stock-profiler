@@ -19,6 +19,7 @@ from sqlalchemy.exc import ArgumentError
 from stock_profiler.foundation.logging import configure_logging
 
 ZERO_SHA = "0" * 40
+ProcessRole = Literal["api", "scheduler", "worker", "migrate", "cli"]
 SECRET_SETTING_FIELDS = frozenset(
     {"api_shared_secret", "auth_bootstrap_token", "auth_recovery_token"}
 )
@@ -136,7 +137,7 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["development", "test", "production"] = "development"
-    process_role: Literal["api", "scheduler", "worker", "migrate", "cli"] = "api"
+    process_role: ProcessRole = "api"
     source_sha: str = Field(default_factory=discover_source_sha)
     configuration_version: str = "0.1.0.dev0"
     app_database_url: str = "sqlite:///./.runtime/stock-profiler.sqlite3"
@@ -285,9 +286,13 @@ class Settings(BaseSettings):
         return self
 
 
-@lru_cache(maxsize=1)
-def load_settings() -> Settings:
-    """Freeze environment and secret-file configuration for the process lifetime."""
+@lru_cache(maxsize=5)
+def load_settings(expected_process_role: ProcessRole | None = None) -> Settings:
+    """Freeze settings and reject a process that does not match its declared entrypoint role."""
     settings = Settings()
+    if expected_process_role is not None and settings.process_role != expected_process_role:
+        raise ValueError(
+            f"process role mismatch: expected {expected_process_role}, got {settings.process_role}"
+        )
     configure_logging(development=settings.environment == "development")
     return settings

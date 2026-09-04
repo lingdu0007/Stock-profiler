@@ -41,7 +41,7 @@ def test_heartbeat_loop_emits_only_allowlisted_operational_log_fields(
     )
     monkeypatch.setattr(
         "stock_profiler.entrypoints.process_runner.load_settings",
-        lambda: settings,
+        lambda expected_process_role: settings,
     )
 
     with capture_logs() as logs:
@@ -55,6 +55,7 @@ def test_heartbeat_loop_emits_only_allowlisted_operational_log_fields(
                     "credential": "not-logged",
                 },
             },
+            expected_process_role="worker",
             once=True,
         )
 

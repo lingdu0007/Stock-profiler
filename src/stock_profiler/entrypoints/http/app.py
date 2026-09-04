@@ -45,6 +45,8 @@ class SafetyCapabilitiesDiagnosticDto(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the HTTP transport without exposing persistence entities."""
     app_settings = settings or load_settings()
+    if app_settings.process_role != "api":
+        raise ValueError("HTTP entrypoint requires api process role")
     app = FastAPI(
         title="Stock Profiler Diagnostics",
         version="0.1.0.dev0",

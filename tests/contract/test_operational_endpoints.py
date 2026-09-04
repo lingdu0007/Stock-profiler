@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from structlog.testing import capture_logs
@@ -27,6 +28,13 @@ def test_readiness_fails_closed_when_the_application_database_is_not_migrated(
     assert client.get("/readyz").status_code == 500
 
 
+def test_http_entrypoint_rejects_any_non_api_process_role(settings: Settings) -> None:
+    non_api_settings = settings.model_copy(update={"process_role": "scheduler"})
+
+    with pytest.raises(ValueError, match="HTTP entrypoint requires api process role"):
+        create_app(non_api_settings)
+
+
 def test_safety_capabilities_are_public_diagnostics_not_product_actions(
     migrated_settings: Settings,
 ) -> None:
@@ -44,7 +52,7 @@ def test_heartbeat_runner_can_report_once_without_scheduling_work(
 ) -> None:
     monkeypatch.setattr(
         "stock_profiler.entrypoints.process_runner.load_settings",
-        lambda: settings,
+        lambda expected_process_role: settings,
     )
 
     def snapshot(_: Settings) -> ProcessSnapshot:
@@ -58,7 +66,7 @@ def test_heartbeat_runner_can_report_once_without_scheduling_work(
         }
 
     with capture_logs() as logs:
-        run_heartbeat_loop(snapshot, once=True)
+        run_heartbeat_loop(snapshot, expected_process_role="scheduler", once=True)
 
     assert logs == [
         {
