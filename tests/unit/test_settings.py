@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -10,12 +11,19 @@ from stock_profiler.bootstrap import settings as settings_module
 from stock_profiler.bootstrap.settings import Settings, load_settings
 
 
+def production_fixture_secret(name: str) -> str:
+    """Create deterministic opaque test material that meets the production shape."""
+    return sha256(f"public-fixture-{name}".encode()).hexdigest()
+
+
 def write_production_secrets(directory: Path) -> None:
     """Create non-synthetic local secret files for a production settings test."""
     directory.mkdir()
-    (directory / "api_shared_secret").write_text("api-shared-secret", encoding="utf-8")
-    (directory / "auth_bootstrap_token").write_text("bootstrap-token", encoding="utf-8")
-    (directory / "auth_recovery_token").write_text("recovery-token", encoding="utf-8")
+    for name in ("api_shared_secret", "auth_bootstrap_token", "auth_recovery_token"):
+        (directory / name).write_text(
+            production_fixture_secret(name),
+            encoding="utf-8",
+        )
 
 
 def production_settings_kwargs(tmp_path: Path) -> dict[str, object]:
@@ -52,7 +60,9 @@ def test_production_settings_load_secrets_only_from_a_secret_directory(tmp_path:
     settings = load_production_settings(secret_directory, production_settings_kwargs(tmp_path))
 
     assert settings.api_shared_secret is not None
-    assert settings.api_shared_secret.get_secret_value() == "api-shared-secret"
+    assert settings.api_shared_secret.get_secret_value() == production_fixture_secret(
+        "api_shared_secret"
+    )
     assert settings.auth_bootstrap_token is not None
     assert settings.auth_recovery_token is not None
 
@@ -65,6 +75,30 @@ def test_production_settings_reject_secret_environment_variables(
     monkeypatch.setenv("STOCK_PROFILER_API_SHARED_SECRET", "environment-secret")
 
     with pytest.raises(ValidationError, match="secret values must be supplied"):
+        load_production_settings(secret_directory, production_settings_kwargs(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("secret_name", "unsafe_value"),
+    [
+        ("api_shared_secret", "too-short"),
+        ("auth_bootstrap_token", "dev-value-that-is-long-enough-to-be-rejected"),
+        ("api_shared_secret", "synthetic-value-that-is-long-enough-to-be-rejected"),
+        ("auth_bootstrap_token", "test-value-that-is-long-enough-to-be-rejected"),
+        ("auth_recovery_token", "development-value-that-is-long-enough-to-be-rejected"),
+        ("auth_bootstrap_token", "example-value-that-is-long-enough-to-be-rejected"),
+        ("auth_recovery_token", "placeholder-value-that-is-long-enough-to-be-rejected"),
+        ("api_shared_secret", "invalid.value-that-is-long-enough-to-be-rejected"),
+    ],
+)
+def test_production_settings_reject_short_placeholder_and_malformed_secrets(
+    tmp_path: Path, secret_name: str, unsafe_value: str
+) -> None:
+    secret_directory = tmp_path / "secrets"
+    write_production_secrets(secret_directory)
+    (secret_directory / secret_name).write_text(unsafe_value, encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="production configuration"):
         load_production_settings(secret_directory, production_settings_kwargs(tmp_path))
 
 

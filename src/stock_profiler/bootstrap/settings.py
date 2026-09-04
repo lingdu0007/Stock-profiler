@@ -25,6 +25,17 @@ SECRET_SETTING_FIELDS = frozenset(
 SECRET_ENVIRONMENT_VARIABLES = tuple(
     f"STOCK_PROFILER_{field_name.upper()}" for field_name in SECRET_SETTING_FIELDS
 )
+MINIMUM_PRODUCTION_SECRET_LENGTH = 32
+PUBLIC_SECRET_MARKERS = frozenset(
+    {
+        "dev",
+        "development",
+        "example",
+        "placeholder",
+        "synthetic",
+        "test",
+    }
+)
 RESERVED_AUTH_HOSTNAMES = frozenset({"localhost", "example", "invalid", "test"})
 RESERVED_AUTH_HOST_SUFFIXES = (".example", ".invalid", ".localhost", ".test")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -43,6 +54,15 @@ def is_valid_rp_id(value: str) -> bool:
 def uses_reserved_auth_hostname(value: str) -> bool:
     """Identify documentation-only hostnames that cannot be production origins."""
     return value in RESERVED_AUTH_HOSTNAMES or value.endswith(RESERVED_AUTH_HOST_SUFFIXES)
+
+
+def is_valid_production_secret(value: str) -> bool:
+    """Accept opaque, non-placeholder secret material from a mounted secret file."""
+    return (
+        len(value) >= MINIMUM_PRODUCTION_SECRET_LENGTH
+        and fullmatch(r"[A-Za-z0-9_-]+", value) is not None
+        and not any(marker in value.casefold() for marker in PUBLIC_SECRET_MARKERS)
+    )
 
 
 def discover_source_sha() -> str:
@@ -237,8 +257,7 @@ class Settings(BaseSettings):
             production_invalid = (
                 self.source_sha == ZERO_SHA
                 or self.configuration_version != "0.1.0.dev0"
-                or not secret
-                or "synthetic" in secret.casefold()
+                or not is_valid_production_secret(secret)
                 or not application_database_file_path.is_absolute()
                 or not self.m_agent_run_store_path.is_absolute()
                 or not has_valid_rp_id
@@ -252,10 +271,8 @@ class Settings(BaseSettings):
                 or self.auth_recent_reauthentication_ttl_seconds != 10 * 60
                 or self.auth_bootstrap_token_ttl_seconds != 10 * 60
                 or self.auth_recovery_token_ttl_seconds != 10 * 60
-                or not bootstrap_token
-                or "synthetic" in bootstrap_token.casefold()
-                or not recovery_token
-                or "synthetic" in recovery_token.casefold()
+                or not is_valid_production_secret(bootstrap_token)
+                or not is_valid_production_secret(recovery_token)
             )
             if production_invalid:
                 raise ValueError("production configuration is incomplete or unsafe")

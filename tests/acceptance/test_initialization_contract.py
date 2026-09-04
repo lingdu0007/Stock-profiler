@@ -87,5 +87,17 @@ def test_web_authn_dependency_contract_is_declared_without_an_auth_route() -> No
     openapi = (ROOT / "web" / "openapi.json").read_text(encoding="utf-8")
 
     assert '"@simplewebauthn/browser"' in package_json
+    for dependency in (
+        '"@hookform/resolvers"',
+        '"@radix-ui/react-slot"',
+        '"@tanstack/react-query"',
+        '"@tailwindcss/vite"',
+        '"lucide-react"',
+        '"react-hook-form"',
+        '"react-router"',
+        '"tailwindcss"',
+        '"zod"',
+    ):
+        assert dependency in package_json
     assert "/api/v1/auth" not in openapi
     assert "/api/v1/diagnostics/safety-capabilities" in openapi
