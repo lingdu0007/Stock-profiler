@@ -79,8 +79,8 @@ api-client-check:
 	cmp "$$temporary_directory/schema.d.ts" web/src/api/schema.d.ts
 
 dev:
-	STOCK_PROFILER_ENVIRONMENT=development uv run alembic upgrade head
-	STOCK_PROFILER_ENVIRONMENT=development uv run uvicorn stock_profiler.entrypoints.http.app:app --reload
+	STOCK_PROFILER_ENVIRONMENT=development STOCK_PROFILER_PROCESS_ROLE=migrate uv run alembic upgrade head
+	STOCK_PROFILER_ENVIRONMENT=development STOCK_PROFILER_PROCESS_ROLE=api uv run uvicorn stock_profiler.entrypoints.http.app:app --reload
 
 dev-web:
 	$(PNPM) dev

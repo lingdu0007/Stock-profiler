@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
 
-from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.bootstrap.settings import Settings, load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,9 +23,12 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def migrated_settings(settings: Settings) -> Settings:
+def migrated_settings(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Generator[Settings]:
     """Apply the application-owned Alembic revision before readiness tests."""
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", settings.app_database_url)
     command.upgrade(config, "head")
-    return settings
+    yield settings
+    load_settings.cache_clear()
