@@ -19,6 +19,11 @@ test("renders the synthetic diagnostic version bundle", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByText("0.1.0.dev0")).toBeVisible();
-  await expect(page.getByText("0.5.0")).toBeVisible();
+  await expect(page.getByText("0.5.0", { exact: true })).toBeVisible();
   await expect(page.getByText("a".repeat(40))).toBeVisible();
+  await expect(
+    page.getByText(
+      "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl"
+    )
+  ).toBeVisible();
 });

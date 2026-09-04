@@ -16,6 +16,7 @@ export SOURCE_DATE_EPOCH
 
 setup:
 	uv sync --locked --extra dev --python 3.11
+	uv run pre-commit install --install-hooks
 	corepack enable
 	$(PNPM) install --frozen-lockfile
 	$(PNPM) exec playwright install chromium

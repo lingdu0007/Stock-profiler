@@ -9,6 +9,7 @@ const labels: Array<[keyof VersionBundle, string]> = [
   ["application_version", "Application"],
   ["source_sha", "Source SHA"],
   ["m_agent_version", "M-Agent"],
+  ["m_agent_wheel_url", "Release Wheel URL"],
   ["m_agent_release_commit", "M-Agent Release commit"],
   ["m_agent_wheel_sha256", "Wheel SHA-256"]
 ];

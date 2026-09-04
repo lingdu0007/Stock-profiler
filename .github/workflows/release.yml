@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -29,7 +32,7 @@ jobs:
           persist-credentials: false
       - id: identity
         env:
-          EXPECTED_TAG: ${{ inputs.tag }}
+          EXPECTED_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           if ! [[ "$EXPECTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             exit 1
@@ -101,6 +104,8 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm@10.17.1 --dir web install --frozen-lockfile
       - run: make repo-guard license-check api-client-check
+      - name: Scan complete history with repository role guard
+        run: uv run python scripts/repository_guard.py --history
       - name: Scan complete history with fixed Gitleaks
         run: |
           curl --fail --location --silent --show-error \
@@ -124,6 +129,17 @@ jobs:
             --build-arg SOURCE_SHA="$RELEASE_COMMIT" \
             --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
             --tag "$RELEASE_IMAGE" \
+            .
+      - name: Build controlled release gateway
+        env:
+          RELEASE_COMMIT: ${{ needs.verify-release-candidate.outputs.commit }}
+          SOURCE_DATE_EPOCH: ${{ needs.verify-release-candidate.outputs.source_date_epoch }}
+        run: |
+          docker build \
+            --file deploy/gateway.Dockerfile \
+            --build-arg SOURCE_SHA="$RELEASE_COMMIT" \
+            --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            --tag "stock-profiler-gateway:$RELEASE_COMMIT" \
             .
       - name: Archive the controlled container image
         env:

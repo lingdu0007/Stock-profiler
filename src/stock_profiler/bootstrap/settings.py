@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 from re import fullmatch
 from typing import Literal
 from urllib.parse import urlparse, urlsplit
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -26,6 +27,7 @@ SECRET_ENVIRONMENT_VARIABLES = tuple(
 )
 RESERVED_AUTH_HOSTNAMES = frozenset({"localhost", "example", "invalid", "test"})
 RESERVED_AUTH_HOST_SUFFIXES = (".example", ".invalid", ".localhost", ".test")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def is_valid_rp_id(value: str) -> bool:
@@ -41,6 +43,22 @@ def is_valid_rp_id(value: str) -> bool:
 def uses_reserved_auth_hostname(value: str) -> bool:
     """Identify documentation-only hostnames that cannot be production origins."""
     return value in RESERVED_AUTH_HOSTNAMES or value.endswith(RESERVED_AUTH_HOST_SUFFIXES)
+
+
+def discover_source_sha() -> str:
+    """Use the checked-out revision for local diagnostics when no image SHA is injected."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ZERO_SHA
+    source_sha = completed.stdout.strip()
+    return source_sha if fullmatch(r"[0-9a-f]{40}", source_sha) else ZERO_SHA
 
 
 class EnvironmentWithoutSecretValues(PydanticBaseSettingsSource):
@@ -98,7 +116,7 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["development", "test", "production"] = "development"
-    source_sha: str = ZERO_SHA
+    source_sha: str = Field(default_factory=discover_source_sha)
     configuration_version: str = "0.1.0.dev0"
     app_database_url: str = "sqlite:///./.runtime/stock-profiler.sqlite3"
     m_agent_run_store_path: Path = Path("./.runtime/m-agent-runs.sqlite3")

@@ -1,4 +1,11 @@
 repos:
+  - repo: local
+    hooks:
+      - id: repository-guard
+        name: repository role guard
+        entry: uv run python scripts/repository_guard.py
+        language: system
+        pass_filenames: false
   - repo: https://github.com/gitleaks/gitleaks
     rev: 02808f45d038526bfcceebcbf6421c1047997ff9
     hooks:

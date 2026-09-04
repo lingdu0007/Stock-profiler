@@ -221,3 +221,52 @@ def test_repository_guard_requires_secret_templates_to_remain_synthetic(tmp_path
 
     assert result.returncode != 0
     assert "secret example must contain only the approved synthetic placeholder" in result.stderr
+
+
+@pytest.mark.parametrize("filename", ("data/derived-notes.md", "evidence/source-record.txt"))
+def test_repository_guard_rejects_textual_data_and_evidence_paths(
+    tmp_path: Path, filename: str
+) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    source = tmp_path / filename
+    source.parent.mkdir(parents=True)
+    source.write_text("synthetic-looking text\n", encoding="utf-8")
+    run_git(tmp_path, "add", filename)
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "forbidden data or evidence path" in result.stderr
+
+
+def test_repository_guard_history_scans_deleted_content(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    run_git(tmp_path, "config", "user.email", "synthetic@example.invalid")
+    run_git(tmp_path, "config", "user.name", "Synthetic Test")
+    source = tmp_path / "evidence" / "removed-record.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("synthetic-looking text\n", encoding="utf-8")
+    run_git(tmp_path, "add", source.relative_to(tmp_path).as_posix())
+    run_git(tmp_path, "commit", "-m", "add forbidden synthetic-looking content")
+    source.unlink()
+    run_git(tmp_path, "add", "--update")
+    run_git(tmp_path, "commit", "-m", "remove forbidden synthetic-looking content")
+
+    result = subprocess.run(
+        [sys.executable, str(GUARD), "--history"],
+        cwd=tmp_path,
+        capture_output=True,
+        env={**os.environ, "REPOSITORY_GUARD_ROOT": str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "forbidden data or evidence path" in result.stderr

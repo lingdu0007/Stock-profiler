@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -151,6 +152,19 @@ def test_application_database_url_query_cannot_hide_the_m_agent_store(tmp_path: 
             app_database_url=f"sqlite:///{run_store}?timeout=5",
             m_agent_run_store_path=run_store,
         )
+
+
+def test_source_sha_discovery_uses_the_complete_git_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_sha = "b" * 40
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"stdout": f"{expected_sha}\n"})(),
+    )
+
+    assert settings_module.discover_source_sha() == expected_sha
 
 
 def test_authentication_configuration_contract_is_frozen_without_enabling_authentication(

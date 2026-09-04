@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -18,6 +19,7 @@ FORBIDDEN_PARTS = frozenset(
         "__pycache__",
     }
 )
+FORBIDDEN_DATA_PATH_PARTS = frozenset({"data", "evidence"})
 FORBIDDEN_SUFFIXES = frozenset(
     {
         ".bak",
@@ -139,6 +141,43 @@ def candidate_files() -> list[CandidateFile]:
     return candidates
 
 
+def history_candidate_files() -> tuple[list[CandidateFile], list[Path]]:
+    """Read every committed blob so deleted forbidden content cannot evade the guard."""
+    commits = subprocess.run(
+        ["git", "rev-list", "--all"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    candidates: list[CandidateFile] = []
+    gitlinks: list[Path] = []
+    for commit in commits:
+        completed = subprocess.run(
+            ["git", "ls-tree", "-rz", "--full-tree", commit],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        )
+        for entry in completed.stdout.split(b"\0"):
+            if not entry:
+                continue
+            metadata, encoded_path = entry.split(b"\t", maxsplit=1)
+            mode = metadata.split(maxsplit=1)[0]
+            relative_path = Path(os.fsdecode(encoded_path))
+            if mode == b"160000":
+                gitlinks.append(relative_path)
+                continue
+            content = subprocess.run(
+                ["git", "show", f"{commit}:{relative_path.as_posix()}"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+            ).stdout
+            candidates.append(CandidateFile(relative_path=relative_path, content=content))
+    return candidates, sorted(set(gitlinks))
+
+
 def check_path(candidate: CandidateFile) -> list[str]:
     """Detect forbidden path shapes and oversized public files."""
     relative = candidate.relative_path
@@ -147,6 +186,8 @@ def check_path(candidate: CandidateFile) -> list[str]:
         errors.append(f"forbidden path: {relative}")
     if any(marker in relative.as_posix().casefold() for marker in FORBIDDEN_TEXT):
         errors.append(f"forbidden repository-role identifier in path {relative}")
+    if any(part.casefold() in FORBIDDEN_DATA_PATH_PARTS for part in relative.parts):
+        errors.append(f"forbidden data or evidence path: {relative}")
     if relative.parts[:2] == ("tests", "fixtures") and relative.parts[:3] != (
         "tests",
         "fixtures",
@@ -218,9 +259,8 @@ def check_secret_examples(candidates: dict[Path, CandidateFile]) -> list[str]:
     return errors
 
 
-def main() -> None:
-    """Exit nonzero if public-source safety invariants are violated."""
-    candidates = candidate_files()
+def guard_errors(candidates: list[CandidateFile], gitlinks: list[Path]) -> list[str]:
+    """Evaluate common content rules for staged or historical candidate blobs."""
     paths = {candidate.relative_path for candidate in candidates}
     candidates_by_path = {candidate.relative_path: candidate for candidate in candidates}
     errors = [error for candidate in candidates for error in check_path(candidate)]
@@ -229,10 +269,24 @@ def main() -> None:
         error for candidate in candidates for error in check_synthetic_fixture(candidate, paths)
     )
     errors.extend(check_secret_examples(candidates_by_path))
-    if staged_gitlink_paths():
+    if gitlinks:
         errors.append("gitlinks are not allowed in the public baseline")
     if any(candidate.relative_path == Path(".gitmodules") for candidate in candidates):
         errors.append("git submodules are not allowed in the public baseline")
+    return errors
+
+
+def main() -> None:
+    """Exit nonzero if public-source safety invariants are violated."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--history", action="store_true")
+    arguments = parser.parse_args()
+    if arguments.history:
+        candidates, gitlinks = history_candidate_files()
+    else:
+        candidates = candidate_files()
+        gitlinks = staged_gitlink_paths()
+    errors = guard_errors(candidates, gitlinks)
     if errors:
         raise SystemExit("\n".join(sorted(set(errors))))
     print("repository guard passed")

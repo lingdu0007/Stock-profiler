@@ -5,5 +5,7 @@
     @api path /api/v1/*
     reverse_proxy @api api:8000
 
+    respond /healthz 200
+
     file_server
 }

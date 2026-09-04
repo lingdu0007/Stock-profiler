@@ -24,8 +24,14 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    security_workflow = (ROOT / ".github" / "workflows" / "security.yml").read_text(
+        encoding="utf-8"
+    )
+    pre_commit = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     compose = (ROOT / "deploy" / "compose.yml").read_text(encoding="utf-8")
+    caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    gateway_dockerfile = (ROOT / "deploy" / "gateway.Dockerfile").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     baseline = (ROOT / "docs" / "development" / "baseline.md").read_text(encoding="utf-8")
 
@@ -36,12 +42,17 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "stock_profiler-$(ARTIFACT_VERSION).tar.gz" in makefile
     assert "stock-profiler-web-$(ARTIFACT_VERSION).tar.gz" in makefile
     assert "$(GITLEAKS) protect --staged --redact --no-banner" in makefile
+    assert "pre-commit install --install-hooks" in makefile
+    assert "repository-guard" in pre_commit
+    assert "scripts/repository_guard.py" in pre_commit
     assert "$(PNPM) exec playwright install chromium" in makefile
     assert "STOCK_PROFILER_SOURCE_SHA=${{ github.sha }}" in ci_workflow
     assert "make artifacts" in ci_workflow
     assert "SOURCE_DATE_EPOCH" in ci_workflow
     assert "verify-release-candidate:" in workflow
     assert "needs: verify-release-candidate" in workflow
+    assert "tags:" in workflow
+    assert '"v*"' in workflow
     assert "persist-credentials: false" in workflow
     assert '[[ "$EXPECTED_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in workflow
     assert (
@@ -50,6 +61,8 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "subject-digest: ${{ steps.oci-image.outputs.digest }}" in workflow
     assert "push-to-registry: true" in workflow
     assert "--verify-tag" in workflow
+    assert "scripts/repository_guard.py --history" in workflow
+    assert "scripts/repository_guard.py --history" in security_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in compose
     assert "STOCK_PROFILER_AUTH_RP_ID" in compose
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in compose
@@ -57,6 +70,11 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE" in compose
     assert '"process-health", "scheduler"' in compose
     assert '"process-health", "worker"' in compose
+    assert "stock-profiler-gateway:${STOCK_PROFILER_SOURCE_SHA" in compose
+    assert "healthcheck:" in compose
+    assert "SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA" in compose
+    assert "respond /healthz 200" in caddyfile
+    assert "org.opencontainers.image.revision=${SOURCE_SHA}" in gateway_dockerfile
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in ci_workflow
     assert "SOURCE_DATE_EPOCH" in readme

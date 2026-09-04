@@ -35,5 +35,14 @@ describe("App", () => {
     expect(await screen.findByText("0.1.0.dev0")).toBeVisible();
     expect(screen.getByText("0.5.0")).toBeVisible();
     expect(screen.getByText("a".repeat(40))).toBeVisible();
+    expect(
+      screen.getByText(
+        "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl"
+      )
+    ).toBeVisible();
+    expect(
+      screen.getByText("8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6")
+    ).toBeVisible();
+    expect(screen.getByText("743651e5c74a4865f25a31dab68d188b5b0aed64")).toBeVisible();
   });
 });

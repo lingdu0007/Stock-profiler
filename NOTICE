@@ -3,3 +3,6 @@ Copyright 2026 Stock Profiler Maintainers
 
 This product includes components distributed under their own license terms.
 See THIRD_PARTY_NOTICES.md.
+
+Official-project safety invariants describe the maintained project's scope and
+do not add license restrictions to Apache-2.0 forks or confer official status.

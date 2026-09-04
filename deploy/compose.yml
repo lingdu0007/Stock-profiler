@@ -88,10 +88,12 @@ services:
     restart: "no"
 
   gateway:
+    image: stock-profiler-gateway:${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
     build:
       context: ..
       dockerfile: deploy/gateway.Dockerfile
       args:
+        SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA:?set a complete Git SHA}
         SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set a source epoch}
     depends_on:
       api:
@@ -100,6 +102,11 @@ services:
       - "127.0.0.1:8080:8080"
     networks:
       - application
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     logging:
       driver: json-file
       options:

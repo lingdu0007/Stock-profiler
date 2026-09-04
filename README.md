@@ -81,3 +81,8 @@ Only original synthetic fixtures may be committed. Never add credentials,
 runtime databases, logs, backups, account information, market data, provider
 responses, or transformed copies of those materials. See
 [`SECURITY.md`](SECURITY.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+The single-user, non-public-recommendation, and no-order-writing constraints
+are official-project safety invariants. They define the maintained project's
+scope and do not add restrictions to Apache-2.0 forks; a fork is not an
+officially maintained or endorsed deployment.
