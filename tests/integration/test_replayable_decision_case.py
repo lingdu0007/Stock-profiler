@@ -19,6 +19,7 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitUncertainError,
     DecisionLedger,
 )
+from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -382,7 +383,12 @@ def test_cross_build_commit_recovery_resumes_the_original_m_agent_run(
         patch.setattr(DecisionLedger, "commit_event", fail_commit)
         failed = run_default_frozen_decision_case(migrated_settings)
 
-    upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
+    upgraded_settings = migrated_settings.model_copy(
+        update={
+            "configuration_version": "0.1.1.dev0",
+            "source_sha": "b" * 40,
+        }
+    )
     recovered = run_default_frozen_decision_case(upgraded_settings)
 
     assert failed.publication_status == "CLOSED"
@@ -396,6 +402,62 @@ def test_cross_build_commit_recovery_resumes_the_original_m_agent_run(
         "decision_events": 1,
         "reports": 1,
     }
+
+
+def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_execute = frozen_adapter.execute_frozen_decision_case
+
+    async def interrupt_after_framework_checkpoint(
+        case: FrozenDecisionCase, runtime: RuntimeStorage
+    ) -> FrameworkRunResult:
+        await original_execute(case, runtime)
+        raise RuntimeError("synthetic worker interruption after framework checkpoint")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "execute_frozen_decision_case", interrupt_after_framework_checkpoint)
+        with pytest.raises(RuntimeError, match="worker interruption"):
+            run_default_frozen_decision_case(migrated_settings)
+
+    original_case = load_frozen_decision_case(migrated_settings)
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
+
+    upgraded_settings = migrated_settings.model_copy(
+        update={
+            "configuration_version": "0.1.1.dev0",
+            "source_sha": "b" * 40,
+        }
+    )
+    recovered = run_default_frozen_decision_case(upgraded_settings)
+
+    assert recovered.business_object_id == original_case.business_object_id
+    assert recovered.framework_run_id == original_case.framework_run_id
+    assert recovered.decision_event_id == original_case.decision_event_id
+    assert recovered.report_version_id == original_case.report_version_id
+    assert recovered.publication_status == "PUBLISHED"
+
+
+def test_repeated_business_commit_failures_append_distinct_stage_records(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
+        raise DecisionEventCommitError("synthetic event storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "commit_event", fail_commit)
+        first = run_default_frozen_decision_case(migrated_settings)
+        second = run_default_frozen_decision_case(migrated_settings)
+
+    assert first.publication_status == "CLOSED"
+    assert second.publication_status == "CLOSED"
+    assert [
+        result.status
+        for result in DecisionLedger.from_settings(migrated_settings).get_stage_results(
+            first.business_object_id
+        )
+    ] == ["SUCCEEDED", "SUCCEEDED", "FAILED", "FAILED"]
 
 
 def test_uncertain_event_commit_closes_publication_until_the_original_identity_recovers(
@@ -973,11 +1035,27 @@ def test_notification_migration_refuses_to_drop_append_only_history(
         case.business_identity,
         "FAILED",
     )
+    engine = create_engine(migrated_settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE decision_case_business_objects SET case_payload = NULL"))
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", migrated_settings.app_database_url)
 
     with pytest.raises(RuntimeError, match="append-only notification attempts"):
         command.downgrade(config, "0003_decision_stage_events")
+
+    assert execution.report is not None
+
+
+def test_frozen_case_snapshot_migration_refuses_to_drop_recovery_state(
+    migrated_settings: Settings,
+) -> None:
+    execution = run_default_frozen_decision_case(migrated_settings)
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", migrated_settings.app_database_url)
+
+    with pytest.raises(RuntimeError, match="frozen case snapshots"):
+        command.downgrade(config, "0004_corrections_and_notification_attempts")
 
     assert execution.report is not None
 
@@ -995,6 +1073,7 @@ def test_recovery_backfills_event_stage_results_before_publication(
         stage_result: StageResult,
         decision_event_id: str | None = None,
         stage_event_id: str | None = None,
+        append: bool = False,
     ) -> None:
         if stage_result.phase == "BUSINESS_COMMIT" and decision_event_id is not None:
             raise RuntimeError("synthetic crash after event commit")
@@ -1005,6 +1084,7 @@ def test_recovery_backfills_event_stage_results_before_publication(
             stage_result=stage_result,
             decision_event_id=decision_event_id,
             stage_event_id=stage_event_id,
+            append=append,
         )
 
     with monkeypatch.context() as patch:

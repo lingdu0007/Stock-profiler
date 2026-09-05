@@ -166,6 +166,12 @@ class DecisionLedger:
         ):
             raise DecisionEventCommitError("business identity maps to different frozen input")
 
+    def persist_business_mapping_before_framework(self, case: FrozenDecisionCase) -> None:
+        """Commit the original mapping before a separate M-Agent store can checkpoint work."""
+        with self.serialize_case_execution() as connection:
+            if self.get_original_decision_event(case.business_object_id, connection) is None:
+                self.ensure_business_object(connection, case)
+
     def get_decision_event(
         self, decision_event_id: str, connection: Connection
     ) -> DecisionEventFact | None:
@@ -210,26 +216,71 @@ class DecisionLedger:
         stage_result: StageResult,
         decision_event_id: str | None = None,
         stage_event_id: str | None = None,
+        append: bool = False,
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
-        resolved_stage_event_id = stage_event_id or _stage_event_id(
-            case,
-            stage_result,
-            decision_event_id,
+        stage_payload = stage_result.model_dump_json()
+        if stage_event_id is not None:
+            self._insert_or_validate_stage_result(
+                connection,
+                stage_event_id=stage_event_id,
+                case=case,
+                decision_event_id=decision_event_id,
+                stage_payload=stage_payload,
+                stage_result=stage_result,
+            )
+            return
+        occurrence_count = int(
+            connection.execute(
+                select(func.count())
+                .select_from(DECISION_STAGE_EVENTS)
+                .where(
+                    DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id,
+                    DECISION_STAGE_EVENTS.c.framework_run_id == case.framework_run_id,
+                    DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id,
+                    DECISION_STAGE_EVENTS.c.stage_payload == stage_payload,
+                )
+            ).scalar_one()
         )
+        if occurrence_count and not append:
+            return
+        self._insert_or_validate_stage_result(
+            connection,
+            stage_event_id=_stage_event_id(
+                case,
+                stage_result,
+                decision_event_id,
+                occurrence=occurrence_count + 1 if append else None,
+            ),
+            case=case,
+            decision_event_id=decision_event_id,
+            stage_payload=stage_payload,
+            stage_result=stage_result,
+        )
+
+    def _insert_or_validate_stage_result(
+        self,
+        connection: Connection,
+        *,
+        stage_event_id: str,
+        case: FrozenDecisionCase,
+        decision_event_id: str | None,
+        stage_payload: str,
+        stage_result: StageResult,
+    ) -> None:
         existing = connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload).where(
-                DECISION_STAGE_EVENTS.c.stage_event_id == resolved_stage_event_id
+                DECISION_STAGE_EVENTS.c.stage_event_id == stage_event_id
             )
         ).scalar_one_or_none()
         if existing is None:
             connection.execute(
                 DECISION_STAGE_EVENTS.insert().values(
-                    stage_event_id=resolved_stage_event_id,
+                    stage_event_id=stage_event_id,
                     business_object_id=case.business_object_id,
                     framework_run_id=case.framework_run_id,
                     decision_event_id=decision_event_id,
-                    stage_payload=stage_result.model_dump_json(),
+                    stage_payload=stage_payload,
                     recorded_at=datetime.now(UTC).isoformat(),
                 )
             )
@@ -508,13 +559,18 @@ class DecisionLedger:
 
 
 def _stage_event_id(
-    case: FrozenDecisionCase, stage_result: StageResult, decision_event_id: str | None
+    case: FrozenDecisionCase,
+    stage_result: StageResult,
+    decision_event_id: str | None,
+    *,
+    occurrence: int | None = None,
 ) -> str:
     payload = {
         "business_object_id": case.business_object_id,
         "framework_run_id": case.framework_run_id,
         "decision_event_id": decision_event_id,
         "stage_result": stage_result.model_dump(mode="json"),
+        "occurrence": occurrence,
     }
     serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return f"decision-stage-{sha256(serialized.encode()).hexdigest()}"
