@@ -9,6 +9,13 @@ LABEL org.opencontainers.image.revision=${SOURCE_SHA}
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY web/dist /srv
 
-RUN find /etc/caddy/Caddyfile /srv -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+RUN addgroup -S -g 10001 stock-profiler \
+    && adduser -S -D -H -u 10001 -G stock-profiler stock-profiler \
+    && mkdir -p /config/caddy /data/caddy \
+    && chown -R stock-profiler:stock-profiler /config /data /etc/caddy /srv \
+    && find /etc/caddy/Caddyfile /srv -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
-USER caddy
+ENV XDG_CONFIG_HOME=/config
+ENV XDG_DATA_HOME=/data
+
+USER 10001:10001

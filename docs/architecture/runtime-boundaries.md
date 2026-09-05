@@ -21,6 +21,9 @@ reports the official single-user, non-public-recommendation, and no-order-
 writing invariants without offering an action. A read-only report route requires
 an opaque Passkey session; browser enrollment requires a ten-minute
 host-console bootstrap or recovery grant and has no public registration page.
+The host console is a direct CLI operation, not a public HTTP endpoint. Caddy
+terminates same-origin TLS for the configured private hostname before serving
+the PWA and `/api/v1`.
 The React client is generated from the OpenAPI 3.1 document and renders only
 the committed report projection. The PWA precaches static assets only, has no
 runtime API cache configuration, and private API responses use `no-store`.

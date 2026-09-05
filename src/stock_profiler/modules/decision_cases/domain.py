@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from stock_profiler.modules.decision_cases.frozen_case import FROZEN_CASE_PAYLOAD
+from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 
 
 class FrozenContract(BaseModel):
@@ -76,9 +77,9 @@ class DecisionCaseExecution(FrozenContract):
     framework_run_id: str
     decision_event_id: str
     report_version_id: str
-    framework_run_status: str
-    business_commit_status: str
-    publication_status: str
+    framework_run_status: Literal["SUCCEEDED"]
+    business_commit_status: Literal["COMMITTED"]
+    publication_status: Literal["PUBLISHED"]
     report: FormalReport
 
 
@@ -177,9 +178,15 @@ class FrozenDecisionCase(FrozenContract):
         )
 
 
-def load_frozen_decision_case() -> FrozenDecisionCase:
-    """Return the only compiled-in original synthetic D0 input."""
-    return FrozenDecisionCase.model_validate(FROZEN_CASE_PAYLOAD)
+def load_frozen_decision_case(settings: Settings) -> FrozenDecisionCase:
+    """Bind the declared synthetic case to the exact configured host build."""
+    payload = load_frozen_case_payload()
+    version_bundle = payload.get("version_bundle")
+    if not isinstance(version_bundle, dict):
+        raise RuntimeError("frozen decision-case fixture has no version bundle")
+    version_bundle["host_application_version"] = settings.configuration_version
+    version_bundle["host_source_sha"] = settings.source_sha
+    return FrozenDecisionCase.model_validate(payload)
 
 
 def _fingerprint(value: object) -> str:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
@@ -14,6 +14,7 @@ from stock_profiler.adapters.authentication.passkeys import (
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings, load_settings
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.logging import log_operational_event
 from stock_profiler.foundation.versioning import build_version_bundle
 from stock_profiler.modules.decision_cases.domain import FormalReport
@@ -51,12 +52,6 @@ class SafetyCapabilitiesDiagnosticDto(BaseModel):
     order_writing: bool
 
 
-class HostGrantRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    purpose: Literal["bootstrap", "recovery"]
-
-
 class ChallengeDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -71,13 +66,13 @@ class CredentialRequest(BaseModel):
     credential: dict[str, object]
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, clock: Clock | None = None) -> FastAPI:
     """Build the HTTP transport without exposing persistence entities."""
     app_settings = settings or load_settings()
     if app_settings.process_role != "api":
         raise ValueError("HTTP entrypoint requires api process role")
     app = FastAPI(
-        title="Stock Profiler Diagnostics",
+        title="Stock Profiler",
         version="0.1.0.dev0",
         openapi_version="3.1.0",
         docs_url=None,
@@ -97,24 +92,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     def authenticator() -> PasskeyAuthenticator:
-        return PasskeyAuthenticator(initialize_runtime_storage(app_settings).engine, app_settings)
+        return PasskeyAuthenticator(
+            initialize_runtime_storage(app_settings).engine, app_settings, clock=clock
+        )
 
     def require_expected_origin(origin: Annotated[str | None, Header()] = None) -> None:
         if origin != app_settings.auth_origin:
             raise HTTPException(status_code=403, detail="origin is not authorized")
-
-    @app.post("/api/v1/auth/host-console/grants")
-    def host_console_grant(
-        request: HostGrantRequest,
-        host_token: str | None = Header(default=None, alias="X-Host-Token"),
-        _: None = Depends(require_expected_origin),
-    ) -> dict[str, str]:
-        try:
-            return {
-                "grant_id": authenticator().create_host_grant(request.purpose, host_token or "")
-            }
-        except AuthenticationError as error:
-            raise HTTPException(status_code=403, detail=str(error)) from error
 
     @app.post(
         "/api/v1/auth/passkeys/registration/options",
@@ -148,7 +132,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail=str(error)) from error
         return Response(status_code=204)
 
-    @app.post("/api/v1/auth/passkeys/authentication/options", response_model=ChallengeDto)
+    @app.post(
+        "/api/v1/auth/passkeys/authentication/options",
+        response_model=ChallengeDto,
+        responses={401: {"description": "No enrolled passkey is available"}},
+    )
     def authentication_options(_: None = Depends(require_expected_origin)) -> ChallengeDto:
         try:
             payload = authenticator().authentication_options()
@@ -159,7 +147,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=str(error)) from error
 
-    @app.post("/api/v1/auth/passkeys/authentication/verify")
+    @app.post(
+        "/api/v1/auth/passkeys/authentication/verify",
+        responses={401: {"description": "Authentication verification failed"}},
+    )
     def authentication_verify(
         request: CredentialRequest,
         response: Response,
@@ -182,11 +173,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return {"csrf_token": csrf_token}
 
-    @app.post("/api/v1/auth/passkeys/reauthentication/options", response_model=ChallengeDto)
+    @app.post(
+        "/api/v1/auth/passkeys/reauthentication/options",
+        response_model=ChallengeDto,
+        responses={403: {"description": "Recent authenticated session required"}},
+    )
     def reauthentication_options(
-        session_token: Annotated[
-            str | None, Cookie(alias="__Host-stock_profiler_session")
-        ] = None,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
         csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
         _: None = Depends(require_expected_origin),
     ) -> ChallengeDto:
@@ -200,12 +193,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
 
-    @app.post("/api/v1/auth/passkeys/reauthentication/verify")
+    @app.post(
+        "/api/v1/auth/passkeys/reauthentication/verify",
+        responses={403: {"description": "Reauthentication verification failed"}},
+    )
     def reauthentication_verify(
         request: CredentialRequest,
-        session_token: Annotated[
-            str | None, Cookie(alias="__Host-stock_profiler_session")
-        ] = None,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
         csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
         _: None = Depends(require_expected_origin),
     ) -> dict[str, str]:
@@ -213,18 +207,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             credential_id = authenticator().verify_assertion(
                 request.challenge_id, request.credential, "reauthentication"
             )
-            access = authenticator().reauthenticate(
-                session_token, csrf_token, credential_id
-            )
+            access = authenticator().reauthenticate(session_token, csrf_token, credential_id)
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
         return {"credential_id": access.credential_id}
 
-    @app.delete("/api/v1/auth/session", status_code=204)
+    @app.delete(
+        "/api/v1/auth/session",
+        status_code=204,
+        responses={403: {"description": "Origin, CSRF token, or session was invalid"}},
+    )
     def logout(
-        session_token: Annotated[
-            str | None, Cookie(alias="__Host-stock_profiler_session")
-        ] = None,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
         csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
         _: None = Depends(require_expected_origin),
     ) -> Response:
@@ -311,9 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def formal_report(
         report_version_id: str,
         response: Response,
-        session_token: Annotated[
-            str | None, Cookie(alias="__Host-stock_profiler_session")
-        ] = None,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
     ) -> FormalReport:
         try:
             access = authenticator().require_session(session_token)

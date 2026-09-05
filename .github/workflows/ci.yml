@@ -109,9 +109,13 @@ jobs:
           STOCK_PROFILER_SOURCE_SHA: ${{ github.sha }}
           STOCK_PROFILER_AUTH_ORIGIN: https://config.example.invalid
           STOCK_PROFILER_AUTH_RP_ID: config.example.invalid
+          STOCK_PROFILER_GATEWAY_HOSTNAME: config.example.invalid
+          STOCK_PROFILER_GATEWAY_BIND_ADDRESS: 127.0.0.1
           STOCK_PROFILER_API_SHARED_SECRET_FILE: ${{ github.workspace }}/deploy/secrets/api_shared_secret.example
           STOCK_PROFILER_AUTH_BOOTSTRAP_TOKEN_FILE: ${{ github.workspace }}/deploy/secrets/auth_bootstrap_token.example
           STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE: ${{ github.workspace }}/deploy/secrets/auth_recovery_token.example
+          STOCK_PROFILER_GATEWAY_TLS_CERTIFICATE_FILE: ${{ github.workspace }}/deploy/secrets/api_shared_secret.example
+          STOCK_PROFILER_GATEWAY_TLS_PRIVATE_KEY_FILE: ${{ github.workspace }}/deploy/secrets/api_shared_secret.example
         run: SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" docker compose -f deploy/compose.yml config
       - run: docker build --build-arg SOURCE_SHA=${{ github.sha }} --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --tag stock-profiler:${{ github.sha }} .
       - run: docker build --file deploy/gateway.Dockerfile --build-arg SOURCE_SHA=${{ github.sha }} --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --tag stock-profiler-gateway:${{ github.sha }} .

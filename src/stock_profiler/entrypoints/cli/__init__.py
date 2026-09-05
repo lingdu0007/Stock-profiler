@@ -5,6 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 
+from stock_profiler.adapters.authentication.passkeys import (
+    AuthenticationError,
+    PasskeyAuthenticator,
+)
+from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import load_settings
 from stock_profiler.entrypoints.cli.service import (
     diagnostic_snapshot,
@@ -28,10 +33,12 @@ def main() -> None:
             "process-health",
             "decision-case-run",
             "decision-case-replay",
+            "host-console-grant",
         ),
     )
     parser.add_argument("process", nargs="?", choices=("api", "scheduler", "worker"))
     parser.add_argument("--business-identity")
+    parser.add_argument("--purpose", choices=("bootstrap", "recovery"))
     args = parser.parse_args()
     settings = load_settings()
     if args.command == "version":
@@ -48,6 +55,17 @@ def main() -> None:
         except ValueError as error:
             parser.error(str(error))
         print(execution.model_dump_json())
+        return
+    if args.command == "host-console-grant":
+        if args.purpose is None:
+            parser.error("host-console-grant requires --purpose")
+        try:
+            grant_id = PasskeyAuthenticator(
+                initialize_runtime_storage(settings).engine, settings
+            ).create_host_console_grant(args.purpose)
+        except AuthenticationError as error:
+            parser.error(str(error))
+        print(json.dumps({"grant_id": grant_id, "purpose": args.purpose}, sort_keys=True))
         return
     if args.command == "doctor":
         diagnostic = diagnostic_snapshot(settings)

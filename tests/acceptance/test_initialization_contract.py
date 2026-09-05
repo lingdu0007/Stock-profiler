@@ -31,6 +31,7 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     compose = (ROOT / "deploy" / "compose.yml").read_text(encoding="utf-8")
     caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     gateway_dockerfile = (ROOT / "deploy" / "gateway.Dockerfile").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     baseline = (ROOT / "docs" / "development" / "baseline.md").read_text(encoding="utf-8")
@@ -83,9 +84,13 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "scripts/repository_guard.py --history" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in compose
     assert "STOCK_PROFILER_AUTH_RP_ID" in compose
+    assert "STOCK_PROFILER_GATEWAY_HOSTNAME" in compose
+    assert "STOCK_PROFILER_GATEWAY_BIND_ADDRESS" in compose
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in compose
     assert "STOCK_PROFILER_AUTH_BOOTSTRAP_TOKEN_FILE" in compose
     assert "STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE" in compose
+    assert "STOCK_PROFILER_GATEWAY_TLS_CERTIFICATE_FILE" in compose
+    assert "STOCK_PROFILER_GATEWAY_TLS_PRIVATE_KEY_FILE" in compose
     assert '"process-health", "scheduler"' in compose
     assert '"process-health", "worker"' in compose
     assert "stock-profiler-gateway:${STOCK_PROFILER_SOURCE_SHA" in compose
@@ -97,13 +102,27 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "STOCK_PROFILER_PROCESS_ROLE: scheduler" in compose
     assert "STOCK_PROFILER_PROCESS_ROLE: worker" in compose
     assert "STOCK_PROFILER_PROCESS_ROLE: migrate" in compose
+    assert '"${STOCK_PROFILER_GATEWAY_BIND_ADDRESS' in compose
+    assert ':443:8443"' in compose
+    assert "extra_hosts:" in compose
+    assert "${STOCK_PROFILER_GATEWAY_HOSTNAME}:127.0.0.1" in compose
+    assert "- edge" in compose
+    assert "edge:\n  application:\n    internal: true" in compose
     assert "handle /api/v1/*" in caddyfile
     assert "handle /healthz" in caddyfile
     assert "respond 200" in caddyfile
     assert "try_files {path} /index.html" in caddyfile
+    assert "https://{$STOCK_PROFILER_GATEWAY_HOSTNAME}:8443" in caddyfile
+    assert (
+        "tls /run/secrets/gateway_tls_certificate /run/secrets/gateway_tls_private_key" in caddyfile
+    )
     assert "org.opencontainers.image.revision=${SOURCE_SHA}" in gateway_dockerfile
+    assert "USER 10001:10001" in gateway_dockerfile
+    assert "COPY tests/fixtures/synthetic/replayable_frozen_decision_case.json" in dockerfile
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in ci_workflow
+    assert "STOCK_PROFILER_GATEWAY_HOSTNAME" in ci_workflow
+    assert "STOCK_PROFILER_GATEWAY_TLS_CERTIFICATE_FILE" in ci_workflow
     assert "SOURCE_DATE_EPOCH" in readme
     assert "STOCK_PROFILER_AUTH_ORIGIN" in readme
     assert "fails closed" in baseline
@@ -130,7 +149,7 @@ def test_web_authn_and_read_only_report_contracts_are_declared() -> None:
     ):
         assert f'"{dependency}"' in package_json
         assert dependency in notices
-    assert "/api/v1/auth/host-console/grants" in openapi
+    assert "/api/v1/auth/host-console/grants" not in openapi
     assert "/api/v1/auth/passkeys/authentication/options" in openapi
     assert "/api/v1/auth/passkeys/authentication/verify" in openapi
     assert "/api/v1/auth/passkeys/registration/options" in openapi

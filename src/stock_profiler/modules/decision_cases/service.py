@@ -29,7 +29,7 @@ def replay_default_frozen_decision_case(
     settings: Settings, business_identity: str
 ) -> DecisionCaseExecution:
     """Replay only when the caller names the fixture's immutable business identity."""
-    case = load_frozen_decision_case()
+    case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
     return _run_frozen_decision_case(settings)
@@ -37,25 +37,27 @@ def replay_default_frozen_decision_case(
 
 def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     """Run or replay one exact frozen business identity without HTTP transport."""
-    case = load_frozen_decision_case()
+    case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
-    existing_report = ledger.get_formal_report(case.report_version_id)
-    if existing_report is not None:
-        return _execution(case, existing_report)
+    with ledger.serialize_case_execution() as connection:
+        existing_report = ledger.get_formal_report(case.report_version_id, connection)
+        if existing_report is not None:
+            return _execution(case, existing_report)
 
-    ledger.ensure_business_object(case)
-    framework = asyncio.run(execute_frozen_decision_case(case, runtime))
-    if framework.status != "SUCCEEDED" or framework.output is None:
-        raise DecisionEventCommitError("framework did not produce a publishable typed output")
-    result = ExternalResult.model_validate_json(framework.output)
-    if result != case.expected_external_result:
-        raise DecisionEventCommitError("host validation rejected the framework output")
-    report = ledger.commit_event_and_report(
-        case=case,
-        framework_run_id=framework.run_id,
-        result=result,
-    )
+        ledger.ensure_business_object(connection, case)
+        framework = asyncio.run(execute_frozen_decision_case(case, runtime))
+        if framework.status != "SUCCEEDED" or framework.output is None:
+            raise DecisionEventCommitError("framework did not produce a publishable typed output")
+        result = ExternalResult.model_validate_json(framework.output)
+        if result != case.expected_external_result:
+            raise DecisionEventCommitError("host validation rejected the framework output")
+        report = ledger.commit_event_and_report(
+            connection,
+            case=case,
+            framework_run_id=framework.run_id,
+            result=result,
+        )
     return _execution(case, report)
 
 
