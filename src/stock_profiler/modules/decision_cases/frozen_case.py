@@ -1,0 +1,71 @@
+"""The sole original, versioned synthetic input admitted by the D0 host."""
+
+from __future__ import annotations
+
+from typing import Final
+
+FROZEN_CASE_PAYLOAD: Final[dict[str, object]] = {
+    "synthetic": True,
+    "generator_version": "frozen-decision-case-v1",
+    "seed": 4017,
+    "case_id": "d0-orbital-mosaic-001",
+    "business_identity": "synthetic:decision:orbital-mosaic:001",
+    "knowledge_cutoff": "2042-05-17T16:00:00Z",
+    "report_generated_at": "2042-05-17T15:19:00Z",
+    "evidence_clock": {
+        "fact_effective_at": "2042-05-17T15:00:00Z",
+        "source_published_at": "2042-05-17T15:12:00Z",
+        "acquired_at": "2042-05-17T15:16:00Z",
+        "validated_at": "2042-05-17T15:18:00Z",
+    },
+    "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+    "version_bundle": {
+        "case_contract_version": "1.0.0",
+        "host_contract_version": "1.0.0",
+        "host_application_version": "0.1.0.dev0",
+        "host_source_sha": "fcd1645cd18b88eb81c6af46ee81c2012e2e083b",
+        "agent_definition_id": "synthetic-frozen-decision-case",
+        "agent_definition_version": "1.0.0",
+        "output_contract_version": "1.0.0",
+        "m_agent_version": "0.5.0",
+        "m_agent_wheel_url": (
+            "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/"
+            "m_agent-0.5.0-py3-none-any.whl"
+        ),
+        "m_agent_wheel_sha256": "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
+        "m_agent_release_commit": "743651e5c74a4865f25a31dab68d188b5b0aed64",
+    },
+    "input": {
+        "security": {
+            "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+            "symbol": "XQZ-4017",
+            "display_name": "Orbital Mosaic Fabrication",
+        },
+        "account": {
+            "account_id": "synthetic-account-4017",
+            "account_kind": "SIMULATED_CASH",
+        },
+        "evidence": [
+            {
+                "evidence_id": "synthetic-evidence-001",
+                "source": "fictional-ledger-alpha",
+                "statement": (
+                    "The fictional issuer completed the imaginary orbital-mosaic checklist."
+                ),
+            },
+            {
+                "evidence_id": "synthetic-evidence-002",
+                "source": "fictional-ledger-beta",
+                "statement": "The simulated account has no execution capability.",
+            },
+        ],
+    },
+    "expected_external_result": {
+        "outcome_code": "SYNTHETIC_REVIEW_COMPLETE",
+        "summary": "Synthetic D0 decision case completed under the frozen contract.",
+        "key_reasons": [
+            "All required fictional evidence records are present.",
+            "The output is D0 synthetic evidence and is not a recommendation.",
+        ],
+    },
+}

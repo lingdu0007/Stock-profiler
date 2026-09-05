@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_SYNTHETIC_CASE_PATH = (
-    REPOSITORY_ROOT / "tests" / "fixtures" / "synthetic" / "replayable_frozen_decision_case.json"
-)
+from stock_profiler.modules.decision_cases.frozen_case import FROZEN_CASE_PAYLOAD
 
 
 class FrozenContract(BaseModel):
@@ -35,10 +31,14 @@ class DecisionCaseVersionBundle(FrozenContract):
 
     case_contract_version: str
     host_contract_version: str
+    host_application_version: str
+    host_source_sha: str
     agent_definition_id: str
     agent_definition_version: str
     output_contract_version: str
     m_agent_version: str
+    m_agent_wheel_url: str
+    m_agent_wheel_sha256: str
     m_agent_release_commit: str
 
 
@@ -80,6 +80,18 @@ class DecisionCaseExecution(FrozenContract):
     report: FormalReport
 
 
+class DecisionEventFact(FrozenContract):
+    """The append-only business fact from which the report is rebuilt."""
+
+    decision_event_id: str
+    business_object_id: str
+    framework_run_id: str
+    case: FrozenDecisionCase
+    result: ExternalResult
+    validation_status: str
+    committed_at: str
+
+
 class FrozenDecisionCase(FrozenContract):
     """One replayable synthetic decision input with all clocks and contracts fixed."""
 
@@ -89,6 +101,7 @@ class FrozenDecisionCase(FrozenContract):
     case_id: str
     business_identity: str
     knowledge_cutoff: str
+    report_generated_at: str
     evidence_clock: EvidenceClock
     qualification_scope: str
     version_bundle: DecisionCaseVersionBundle
@@ -162,10 +175,9 @@ class FrozenDecisionCase(FrozenContract):
         )
 
 
-def load_frozen_decision_case(path: Path = DEFAULT_SYNTHETIC_CASE_PATH) -> FrozenDecisionCase:
-    """Load an explicitly declared original synthetic case from its versioned fixture."""
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return FrozenDecisionCase.model_validate(payload)
+def load_frozen_decision_case() -> FrozenDecisionCase:
+    """Return the only compiled-in original synthetic D0 input."""
+    return FrozenDecisionCase.model_validate(FROZEN_CASE_PAYLOAD)
 
 
 def _fingerprint(value: object) -> str:

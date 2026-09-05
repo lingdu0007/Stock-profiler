@@ -103,14 +103,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if origin != app_settings.auth_origin:
             raise HTTPException(status_code=403, detail="origin is not authorized")
 
-    def authenticated_credential(
-        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
-    ) -> str:
-        try:
-            return authenticator().require_session(session_token)
-        except AuthenticationError as error:
-            raise HTTPException(status_code=401, detail=str(error)) from error
-
     @app.post("/api/v1/auth/host-console/grants")
     def host_console_grant(
         request: HostGrantRequest,
@@ -181,6 +173,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_age=app_settings.auth_session_idle_ttl_seconds,
         )
         return {"csrf_token": csrf_token}
+
+    @app.post("/api/v1/auth/passkeys/reauthentication/options", response_model=ChallengeDto)
+    def reauthentication_options(
+        session_token: Annotated[
+            str | None, Cookie(alias="__Host-stock_profiler_session")
+        ] = None,
+        csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+        _: None = Depends(require_expected_origin),
+    ) -> ChallengeDto:
+        try:
+            authenticator().authorize_session_mutation(session_token, csrf_token)
+            payload = authenticator().authentication_options("reauthentication")
+            return ChallengeDto(
+                challenge_id=cast(str, payload["challenge_id"]),
+                options=cast(dict[str, object], payload["options"]),
+            )
+        except AuthenticationError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+
+    @app.post("/api/v1/auth/passkeys/reauthentication/verify")
+    def reauthentication_verify(
+        request: CredentialRequest,
+        session_token: Annotated[
+            str | None, Cookie(alias="__Host-stock_profiler_session")
+        ] = None,
+        csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+        _: None = Depends(require_expected_origin),
+    ) -> dict[str, str]:
+        try:
+            credential_id = authenticator().verify_assertion(
+                request.challenge_id, request.credential, "reauthentication"
+            )
+            access = authenticator().reauthenticate(
+                session_token, csrf_token, credential_id
+            )
+        except AuthenticationError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        return {"credential_id": access.credential_id}
 
     @app.delete("/api/v1/auth/session", status_code=204)
     def logout(
@@ -262,13 +292,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             order_writing=False,
         )
 
-    @app.get("/api/v1/reports/{report_version_id}", response_model=FormalReport)
+    @app.get(
+        "/api/v1/reports/{report_version_id}",
+        response_model=FormalReport,
+        responses={401: {"description": "Authentication required"}},
+    )
     def formal_report(
-        report_version_id: str, _: str = Depends(authenticated_credential)
+        report_version_id: str,
+        response: Response,
+        session_token: Annotated[
+            str | None, Cookie(alias="__Host-stock_profiler_session")
+        ] = None,
     ) -> FormalReport:
+        try:
+            access = authenticator().require_session(session_token)
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
         report = get_formal_report(report_version_id, app_settings)
         if report is None:
             raise HTTPException(status_code=404, detail="formal report not found")
+        response.set_cookie(
+            key=app_settings.auth_session_cookie_name,
+            value=session_token or "",
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+            max_age=access.cookie_max_age_seconds,
+        )
         return report
 
     return app

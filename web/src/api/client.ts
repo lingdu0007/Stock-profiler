@@ -1,5 +1,7 @@
 import {
   startAuthentication,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON
 } from "@simplewebauthn/browser";
 import createClient from "openapi-fetch";
@@ -48,6 +50,37 @@ export async function completePasskeyAuthentication(): Promise<void> {
     }
   });
   if (!verifyResponse.data) {
+    throw new ApiResponseError(verifyResponse.response.status);
+  }
+}
+
+export async function completePasskeyRegistration(
+  hostToken: string,
+  purpose: "bootstrap" | "recovery"
+): Promise<void> {
+  const grantResponse = await client.POST("/api/v1/auth/host-console/grants", {
+    body: { purpose },
+    params: { header: { "X-Host-Token": hostToken } }
+  });
+  if (!grantResponse.data) {
+    throw new ApiResponseError(grantResponse.response.status);
+  }
+  const optionsResponse = await client.POST("/api/v1/auth/passkeys/registration/options", {
+    params: { header: { "X-Host-Console-Grant": grantResponse.data.grant_id } }
+  });
+  if (!optionsResponse.data) {
+    throw new ApiResponseError(optionsResponse.response.status);
+  }
+  const credential = await startRegistration({
+    optionsJSON: optionsResponse.data.options as unknown as PublicKeyCredentialCreationOptionsJSON
+  });
+  const verifyResponse = await client.POST("/api/v1/auth/passkeys/registration/verify", {
+    body: {
+      challenge_id: optionsResponse.data.challenge_id,
+      credential: credential as unknown as Record<string, unknown>
+    }
+  });
+  if (verifyResponse.error) {
     throw new ApiResponseError(verifyResponse.response.status);
   }
 }

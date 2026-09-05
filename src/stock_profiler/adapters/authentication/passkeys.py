@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -34,6 +36,14 @@ from stock_profiler.bootstrap.settings import Settings
 
 class AuthenticationError(RuntimeError):
     """Authentication data is missing, expired, invalid, or not authorized."""
+
+
+@dataclass(frozen=True)
+class SessionAccess:
+    """Validated session identity plus the remaining browser-cookie lifetime."""
+
+    credential_id: str
+    cookie_max_age_seconds: int
 
 
 class PasskeyAuthenticator:
@@ -100,7 +110,7 @@ class PasskeyAuthenticator:
                 )
             )
 
-    def authentication_options(self) -> dict[str, object]:
+    def authentication_options(self, purpose: str = "authentication") -> dict[str, object]:
         with self._engine.connect() as connection:
             credentials = (
                 connection.execute(select(AUTH_CREDENTIALS.c.credential_id)).scalars().all()
@@ -115,12 +125,19 @@ class PasskeyAuthenticator:
                 for credential_id in credentials
             ],
         )
-        return self._save_challenge("authentication", options.challenge, None, options)
+        return self._save_challenge(purpose, options.challenge, None, options)
 
     def authentication_verify(
-        self, challenge_id: str, credential: dict[str, object]
+        self, challenge_id: str, credential: dict[str, object], purpose: str = "authentication"
     ) -> tuple[str, str]:
-        challenge, _ = self._consume_challenge(challenge_id, "authentication")
+        credential_id = self.verify_assertion(challenge_id, credential, purpose)
+        return self._create_session(credential_id)
+
+    def verify_assertion(
+        self, challenge_id: str, credential: dict[str, object], purpose: str
+    ) -> str:
+        """Verify one assertion and advance its stored signature counter."""
+        challenge, _ = self._consume_challenge(challenge_id, purpose)
         credential_id = str(credential.get("id", ""))
         with self._engine.connect() as connection:
             stored = (
@@ -148,9 +165,11 @@ class PasskeyAuthenticator:
                 .where(AUTH_CREDENTIALS.c.credential_id == credential_id)
                 .values(sign_count=str(verified.new_sign_count))
             )
-        return self._create_session(credential_id)
+        return credential_id
 
-    def require_session(self, session_token: str | None) -> str:
+    def require_session(
+        self, session_token: str | None, require_recent_reauthentication: bool = False
+    ) -> SessionAccess:
         if not session_token:
             raise AuthenticationError("authentication required")
         with self._engine.connect() as connection:
@@ -167,6 +186,10 @@ class PasskeyAuthenticator:
             stored is None
             or self._expired(stored["absolute_expires_at"])
             or self._idle_expired(stored["last_seen_at"])
+            or (
+                require_recent_reauthentication
+                and self._recent_reauthentication_expired(stored["recent_reauth_at"])
+            )
         ):
             raise AuthenticationError("session expired")
         with self._engine.begin() as connection:
@@ -175,7 +198,31 @@ class PasskeyAuthenticator:
                 .where(AUTH_SESSIONS.c.session_hash == _digest(session_token))
                 .values(last_seen_at=self._now())
             )
-        return str(stored["credential_id"])
+        return SessionAccess(
+            credential_id=str(stored["credential_id"]),
+            cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
+        )
+
+    def reauthenticate(
+        self, session_token: str | None, csrf_token: str | None, credential_id: str
+    ) -> SessionAccess:
+        """Mark an active session recent only after CSRF and same-credential verification."""
+        access = self._authorize_session_mutation(session_token, csrf_token)
+        if access.credential_id != credential_id:
+            raise AuthenticationError("reauthentication credential does not match the session")
+        with self._engine.begin() as connection:
+            connection.execute(
+                update(AUTH_SESSIONS)
+                .where(AUTH_SESSIONS.c.session_hash == _digest(session_token or ""))
+                .values(recent_reauth_at=self._now())
+            )
+        return access
+
+    def authorize_session_mutation(
+        self, session_token: str | None, csrf_token: str | None
+    ) -> SessionAccess:
+        """Require a live opaque session and its double-submit CSRF token."""
+        return self._authorize_session_mutation(session_token, csrf_token)
 
     def logout(self, session_token: str | None, csrf_token: str | None) -> None:
         """Destroy one authenticated browser session after its double-submit CSRF check."""
@@ -190,13 +237,7 @@ class PasskeyAuthenticator:
                 .mappings()
                 .one_or_none()
             )
-            if (
-                stored is None
-                or self._expired(stored["absolute_expires_at"])
-                or self._idle_expired(stored["last_seen_at"])
-                or not secrets.compare_digest(str(stored["csrf_hash"]), _digest(csrf_token))
-            ):
-                raise AuthenticationError("session logout was not authorized")
+            self._validate_session_mutation(stored, csrf_token)
             connection.execute(
                 AUTH_SESSIONS.delete().where(AUTH_SESSIONS.c.session_hash == session_hash)
             )
@@ -291,6 +332,40 @@ class PasskeyAuthenticator:
             raise AuthenticationError("host console grant expired or invalid")
         connection.execute(AUTH_HOST_GRANTS.delete().where(AUTH_HOST_GRANTS.c.grant_id == grant_id))
 
+    def _authorize_session_mutation(
+        self, session_token: str | None, csrf_token: str | None
+    ) -> SessionAccess:
+        if not session_token or not csrf_token:
+            raise AuthenticationError("session and CSRF token are required")
+        with self._engine.connect() as connection:
+            stored = (
+                connection.execute(
+                    select(AUTH_SESSIONS).where(
+                        AUTH_SESSIONS.c.session_hash == _digest(session_token)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        self._validate_session_mutation(stored, csrf_token)
+        assert stored is not None
+        return SessionAccess(
+            credential_id=str(stored["credential_id"]),
+            cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
+        )
+
+    def _validate_session_mutation(
+        self, stored: object, csrf_token: str | None
+    ) -> None:
+        if not isinstance(stored, Mapping) or not csrf_token:
+            raise AuthenticationError("session logout was not authorized")
+        if (
+            self._expired(str(stored["absolute_expires_at"]))
+            or self._idle_expired(str(stored["last_seen_at"]))
+            or not secrets.compare_digest(str(stored["csrf_hash"]), _digest(csrf_token))
+        ):
+            raise AuthenticationError("session logout was not authorized")
+
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
 
@@ -304,6 +379,17 @@ class PasskeyAuthenticator:
         return datetime.fromisoformat(timestamp) + timedelta(
             seconds=self._settings.auth_session_idle_ttl_seconds
         ) <= datetime.now(UTC)
+
+    def _recent_reauthentication_expired(self, timestamp: str) -> bool:
+        return datetime.fromisoformat(timestamp) + timedelta(
+            seconds=self._settings.auth_recent_reauthentication_ttl_seconds
+        ) <= datetime.now(UTC)
+
+    def _cookie_max_age_seconds(self, absolute_expires_at: str) -> int:
+        absolute_remaining = int(
+            (datetime.fromisoformat(absolute_expires_at) - datetime.now(UTC)).total_seconds()
+        )
+        return max(0, min(self._settings.auth_session_idle_ttl_seconds, absolute_remaining))
 
 
 def _digest(value: str) -> str:

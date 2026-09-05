@@ -30,14 +30,12 @@ def upgrade() -> None:
         sa.Column("event_payload", sa.String(), nullable=False),
         sa.Column("committed_at", sa.String(length=40), nullable=False),
         sa.PrimaryKeyConstraint("decision_event_id"),
-        sa.UniqueConstraint("business_object_id"),
         sa.UniqueConstraint("framework_run_id"),
     )
     op.create_table(
         "formal_reports",
         sa.Column("report_version_id", sa.String(length=96), nullable=False),
         sa.Column("decision_event_id", sa.String(length=96), nullable=False),
-        sa.Column("report_payload", sa.String(), nullable=False),
         sa.Column("generated_at", sa.String(length=40), nullable=False),
         sa.PrimaryKeyConstraint("report_version_id"),
         sa.UniqueConstraint("decision_event_id"),

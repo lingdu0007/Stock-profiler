@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/passkeys/reauthentication/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reauthentication Options */
+        post: operations["reauthentication_options_api_v1_auth_passkeys_reauthentication_options_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/reauthentication/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reauthentication Verify */
+        post: operations["reauthentication_verify_api_v1_auth_passkeys_reauthentication_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/passkeys/registration/options": {
         parameters: {
             query?: never;
@@ -193,12 +227,20 @@ export interface components {
             agent_definition_version: string;
             /** Case Contract Version */
             case_contract_version: string;
+            /** Host Application Version */
+            host_application_version: string;
             /** Host Contract Version */
             host_contract_version: string;
+            /** Host Source Sha */
+            host_source_sha: string;
             /** M Agent Release Commit */
             m_agent_release_commit: string;
             /** M Agent Version */
             m_agent_version: string;
+            /** M Agent Wheel Sha256 */
+            m_agent_wheel_sha256: string;
+            /** M Agent Wheel Url */
+            m_agent_wheel_url: string;
             /** Output Contract Version */
             output_contract_version: string;
         };
@@ -426,6 +468,80 @@ export interface operations {
             };
         };
     };
+    reauthentication_options_api_v1_auth_passkeys_reauthentication_options_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeDto"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reauthentication_verify_api_v1_auth_passkeys_reauthentication_verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     registration_options_api_v1_auth_passkeys_registration_options_post: {
         parameters: {
             query?: never;
@@ -584,6 +700,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["FormalReport"];
                 };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
