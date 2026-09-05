@@ -97,7 +97,10 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "STOCK_PROFILER_PROCESS_ROLE: scheduler" in compose
     assert "STOCK_PROFILER_PROCESS_ROLE: worker" in compose
     assert "STOCK_PROFILER_PROCESS_ROLE: migrate" in compose
-    assert "respond /healthz 200" in caddyfile
+    assert "handle /api/v1/*" in caddyfile
+    assert "handle /healthz" in caddyfile
+    assert "respond 200" in caddyfile
+    assert "try_files {path} /index.html" in caddyfile
     assert "org.opencontainers.image.revision=${SOURCE_SHA}" in gateway_dockerfile
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in ci_workflow
