@@ -14,8 +14,8 @@
   },
   "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
   "version_bundle": {
-    "case_contract_version": "1.0.0",
-    "host_contract_version": "1.0.0",
+    "case_contract_version": "2.0.0",
+    "host_contract_version": "2.0.0",
     "host_application_version": "0.1.0.dev0",
     "host_source_sha": "0000000000000000000000000000000000000000",
     "agent_definition_id": "synthetic-frozen-decision-case",

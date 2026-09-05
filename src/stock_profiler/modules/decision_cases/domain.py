@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 
-FROZEN_CASE_CONTRACT_VERSION = "1.0.0"
-FROZEN_HOST_CONTRACT_VERSION = "1.0.0"
+FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
+FROZEN_HOST_CONTRACT_VERSION = "2.0.0"
 FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
@@ -21,9 +21,14 @@ FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
     {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION}
 )
+_SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
+    {
+        ("1.0.0", "1.0.0"),
+        (FROZEN_CASE_CONTRACT_VERSION, FROZEN_HOST_CONTRACT_VERSION),
+    }
+)
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
 FROZEN_CORRECTION_CONTRACT_VERSION = "1.0.0"
-FROZEN_CORRECTION_GENERATED_AT = "2042-05-17T16:02:00Z"
 
 
 class FrozenContract(BaseModel):
@@ -288,6 +293,11 @@ def supports_report_projection_contract(version: str) -> bool:
     return version in _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS
 
 
+def supports_case_host_contract(case_version: str, host_version: str) -> bool:
+    """Return whether a frozen case and host contract pair can be recovered by D0."""
+    return (case_version, host_version) in _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
+
+
 class FormalReport(FrozenContract):
     """Read-only delivery projection derived from one committed host event."""
 
@@ -456,8 +466,10 @@ class FrozenDecisionCase(FrozenContract):
         if self.qualification_scope != FROZEN_QUALIFICATION_SCOPE:
             raise ValueError("frozen decision cases must use the sole D0 synthetic scope")
         if (
-            self.version_bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
-            or self.version_bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
+            not supports_case_host_contract(
+                self.version_bundle.case_contract_version,
+                self.version_bundle.host_contract_version,
+            )
             or not supports_report_projection_contract(
                 self.version_bundle.report_projection_contract_version
             )

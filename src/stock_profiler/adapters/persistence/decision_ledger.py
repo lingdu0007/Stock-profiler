@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 
@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.foundation.clock import Clock, UtcClock
 from stock_profiler.modules.decision_cases.domain import (
     DecisionEventFact,
     ExternalResult,
@@ -103,12 +104,17 @@ class BusinessObjectMapping:
 class DecisionLedger:
     """Persistence boundary for the host's business identity, event, and report."""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, *, clock: Clock | None = None) -> None:
         self._engine = engine
+        self._clock = clock or UtcClock()
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> DecisionLedger:
-        return cls(initialize_runtime_storage(settings).engine)
+    def from_settings(cls, settings: Settings, *, clock: Clock | None = None) -> DecisionLedger:
+        return cls(initialize_runtime_storage(settings).engine, clock=clock)
+
+    def observed_at(self) -> str:
+        """Record the controlled UTC instant at which this host observes a write boundary."""
+        return _utc_timestamp(self._clock.now())
 
     @contextmanager
     def serialize_case_execution(self) -> Iterator[Connection]:
@@ -161,7 +167,7 @@ class DecisionLedger:
                     frozen_input_fingerprint=case.frozen_input_fingerprint,
                     framework_run_id=case.framework_run_id,
                     case_payload=case.model_dump_json(),
-                    created_at=case.report_generated_at,
+                    created_at=self.observed_at(),
                 )
             )
             return
@@ -250,7 +256,7 @@ class DecisionLedger:
                 decision_event_id=decision_event_id,
                 stage_payload=stage_payload,
                 stage_result=stage_result,
-                recorded_at=recorded_at or case.report_generated_at,
+                recorded_at=recorded_at or self.observed_at(),
             )
             return
         occurrence_count = int(
@@ -282,7 +288,7 @@ class DecisionLedger:
             decision_event_id=decision_event_id,
             stage_payload=stage_payload,
             stage_result=stage_result,
-            recorded_at=recorded_at or _logical_occurrence_at(case.report_generated_at, occurrence),
+            recorded_at=recorded_at or self.observed_at(),
         )
 
     def _insert_or_validate_stage_result(
@@ -361,7 +367,7 @@ class DecisionLedger:
             event_id=report.event_id,
             status=status,
             reasons=reasons,
-            recorded_at=_logical_occurrence_at(report.generated_at, attempt_number + 1),
+            recorded_at=self.observed_at(),
         )
         connection.execute(
             DECISION_NOTIFICATION_ATTEMPTS.insert().values(
@@ -478,6 +484,7 @@ class DecisionLedger:
     ) -> DecisionEventFact:
         """Construct the exact append-only fact that a commit attempt must preserve."""
         event_id = decision_event_id or case.decision_event_id
+        observed_at = committed_at or self.observed_at()
         return DecisionEventFact(
             decision_event_id=event_id,
             business_object_id=case.business_object_id,
@@ -485,10 +492,10 @@ class DecisionLedger:
             case=case,
             result=result,
             validation_status="PASSED",
-            committed_at=committed_at or case.report_generated_at,
+            committed_at=observed_at,
             stage_results=stage_results,
             corrects_event_id=corrects_event_id,
-            generated_at=generated_at or case.report_generated_at,
+            generated_at=generated_at or observed_at,
         )
 
     def reconcile_event_commit(
@@ -537,23 +544,13 @@ class DecisionLedger:
                 if (stage_result.phase == "CORRECTION" or index == latest_business_commit_index)
                 else None
             )
-            if fact.generated_at is not None and fact.generated_at != fact.case.report_generated_at:
-                self.record_stage_result(
-                    connection,
-                    case=fact.case,
-                    stage_result=stage_result,
-                    decision_event_id=decision_event_id,
-                    framework_run_id=fact.framework_run_id,
-                    recorded_at=fact.generated_at,
-                )
-            else:
-                self.record_stage_result(
-                    connection,
-                    case=fact.case,
-                    stage_result=stage_result,
-                    decision_event_id=decision_event_id,
-                    framework_run_id=fact.framework_run_id,
-                )
+            self.record_stage_result(
+                connection,
+                case=fact.case,
+                stage_result=stage_result,
+                decision_event_id=decision_event_id,
+                framework_run_id=fact.framework_run_id,
+            )
 
     def discard_unconfirmed_publication(self, connection: Connection) -> None:
         """Roll back a report whose durable acknowledgement was not received."""
@@ -693,11 +690,11 @@ class DecisionLedger:
         connection: Connection,
         report: FormalReport,
     ) -> FormalReport:
-        """Project prior closed publication attempts before the confirmed delivery."""
+        """Project correction history or prior closed publication gates into one report."""
         final_stage = report.stage_results[-1]
         if final_stage.phase != "PUBLICATION" or final_stage.status != "SUCCEEDED":
             return report
-        publication_stages = tuple(
+        event_stages = tuple(
             stage_result
             for stage_result in (
                 StageResult.model_validate_json(payload)
@@ -707,30 +704,43 @@ class DecisionLedger:
                     .order_by(DECISION_STAGE_EVENTS.c.sequence)
                 ).scalars()
             )
-            if stage_result.phase == "PUBLICATION"
         )
-        source_fact = self.get_decision_event(report.event_id, connection)
-        if (
-            source_fact is not None
-            and source_fact.case.version_bundle.report_projection_contract_version == "1.0.0"
-            and publication_stages
-        ):
-            return report.model_copy(
-                update={"stage_results": (*source_fact.stage_results, *publication_stages)}
+        if report.corrects_event_id is None:
+            publication_history = tuple(
+                stage_result
+                for stage_result in event_stages
+                if stage_result.phase == "PUBLICATION" and stage_result.status != "SUCCEEDED"
             )
-        publication_history = tuple(
-            stage_result
-            for stage_result in publication_stages
-            if stage_result.status != "SUCCEEDED"
+            if not publication_history:
+                return report
+            return report.model_copy(
+                update={
+                    "stage_results": (
+                        *report.stage_results[:-1],
+                        *publication_history,
+                        final_stage,
+                    )
+                }
+            )
+        correction_history_phases = frozenset(
+            {"CORRECTION", "BUSINESS_COMMIT", "COMMIT_RECONCILIATION", "PUBLICATION"}
         )
-        if not publication_history:
+        correction_history = tuple(
+            stage_result
+            for stage_result in event_stages
+            if stage_result.phase in correction_history_phases
+        )
+        if not correction_history:
             return report
         return report.model_copy(
             update={
                 "stage_results": (
-                    *report.stage_results[:-1],
-                    *publication_history,
-                    final_stage,
+                    *(
+                        stage_result
+                        for stage_result in report.stage_results
+                        if stage_result.phase not in correction_history_phases
+                    ),
+                    *correction_history,
                 )
             }
         )
@@ -804,15 +814,6 @@ def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:
     return f"notification-attempt-{sha256(serialized.encode()).hexdigest()}"
 
 
-def _logical_occurrence_at(reference_at: str, occurrence: int) -> str:
-    """Advance a frozen UTC reference by an append-only occurrence count."""
-    reference = datetime.fromisoformat(reference_at.replace("Z", "+00:00"))
-    logical_time = reference + timedelta(seconds=occurrence - 1)
-    return (
-        logical_time.astimezone(UTC)
-        .isoformat(timespec="seconds")
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
+def _utc_timestamp(value: datetime) -> str:
+    """Serialize a controlled timestamp as the ledger's canonical UTC representation."""
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

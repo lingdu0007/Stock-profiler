@@ -32,6 +32,7 @@ from stock_profiler.modules.decision_cases.domain import (
     BusinessLifecycle,
     ExternalResult,
     FormalReport,
+    FrozenDecisionCase,
     GateResult,
     StageResult,
     business_lifecycle_from_stage,
@@ -56,7 +57,7 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.version_bundle.host_source_sha == settings.source_sha
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
     assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
-    assert first.version_bundle.host_contract_version == "1.0.0"
+    assert first.version_bundle.host_contract_version == "2.0.0"
     assert first.version_bundle.report_projection_contract_version == "2.0.0"
     assert first.agent_definition.instructions == (
         "Return only the frozen synthetic decision-case external result as JSON."
@@ -87,6 +88,32 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
         }
     )
     assert revised_report_contract.report_version_id != first.report_version_id
+
+
+def test_current_case_contract_is_v2_while_v1_facts_remain_readable(
+    migrated_settings: Settings,
+) -> None:
+    current = load_frozen_decision_case(migrated_settings)
+
+    assert current.version_bundle.case_contract_version == "2.0.0"
+    assert current.version_bundle.host_contract_version == "2.0.0"
+
+    legacy_payload = current.model_dump(mode="json")
+    legacy_payload["version_bundle"]["case_contract_version"] = "1.0.0"
+    legacy_payload["version_bundle"]["host_contract_version"] = "1.0.0"
+    legacy = FrozenDecisionCase.model_validate(legacy_payload)
+
+    assert legacy.version_bundle.case_contract_version == "1.0.0"
+    assert legacy.version_bundle.host_contract_version == "1.0.0"
+    recovered = asyncio.run(
+        execute_frozen_decision_case(legacy, initialize_runtime_storage(migrated_settings))
+    )
+    assert recovered.run_id == legacy.framework_run_id
+    assert recovered.status == "SUCCEEDED"
+
+    legacy_payload["version_bundle"]["case_contract_version"] = "2.0.0"
+    with pytest.raises(ValueError, match="supported contract"):
+        FrozenDecisionCase.model_validate(legacy_payload)
 
 
 def test_runtime_rejects_a_case_whose_declared_m_agent_release_is_not_installed(

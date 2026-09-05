@@ -23,8 +23,8 @@ from stock_profiler.adapters.persistence.decision_ledger import (
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.modules.decision_cases.domain import (
-    FROZEN_CORRECTION_GENERATED_AT,
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     BusinessCommitStatus,
     BusinessLifecycle,
@@ -53,32 +53,36 @@ _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
 
 
-def run_default_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
+def run_default_frozen_decision_case(
+    settings: Settings, *, clock: Clock | None = None
+) -> DecisionCaseExecution:
     """Run the published public fixture through the same host module used by every entrypoint."""
-    return _run_frozen_decision_case(settings)
+    return _run_frozen_decision_case(settings, clock=clock)
 
 
 def replay_default_frozen_decision_case(
-    settings: Settings, business_identity: str
+    settings: Settings, business_identity: str, *, clock: Clock | None = None
 ) -> DecisionCaseExecution:
     """Replay only when the caller names the fixture's immutable business identity."""
     case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
-    return _run_frozen_decision_case(settings)
+    return _run_frozen_decision_case(settings, clock=clock)
 
 
 def retry_default_frozen_decision_case_notification(
     settings: Settings,
     business_identity: str,
     status: NotificationAttemptStatus,
+    *,
+    clock: Clock | None = None,
 ) -> NotificationAttempt:
     """Record one recoverable synthetic notification outcome for an existing report."""
     case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
     runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine)
+    ledger = DecisionLedger(runtime.engine, clock=clock)
     with ledger.serialize_case_execution() as connection:
         event = ledger.get_original_decision_event(case.business_object_id, connection)
         report = ledger.get_original_formal_report(case.business_object_id, connection)
@@ -107,14 +111,14 @@ def retry_default_frozen_decision_case_notification(
 
 
 def correct_default_frozen_decision_case(
-    settings: Settings, business_identity: str
+    settings: Settings, business_identity: str, *, clock: Clock | None = None
 ) -> DecisionCaseCorrection:
     """Append the D0 correction fact without replacing the original report."""
     case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
     runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine)
+    ledger = DecisionLedger(runtime.engine, clock=clock)
     correction_error: DecisionEventCommitError | None = None
     publication_error: DecisionEventCommitError | None = None
     report: FormalReport | None = None
@@ -160,6 +164,7 @@ def correct_default_frozen_decision_case(
                     reasons=(),
                 ),
             )
+            correction_written_at = ledger.observed_at()
             attempted_fact = ledger.build_event_fact(
                 case=correction_case,
                 framework_run_id=original_event.framework_run_id,
@@ -167,8 +172,8 @@ def correct_default_frozen_decision_case(
                 stage_results=correction_stages,
                 decision_event_id=correction_event_id,
                 corrects_event_id=original_event.decision_event_id,
-                committed_at=FROZEN_CORRECTION_GENERATED_AT,
-                generated_at=FROZEN_CORRECTION_GENERATED_AT,
+                committed_at=correction_written_at,
+                generated_at=correction_written_at,
             )
             try:
                 correction_event = ledger.commit_event(
@@ -179,8 +184,8 @@ def correct_default_frozen_decision_case(
                     stage_results=correction_stages,
                     decision_event_id=correction_event_id,
                     corrects_event_id=original_event.decision_event_id,
-                    committed_at=FROZEN_CORRECTION_GENERATED_AT,
-                    generated_at=FROZEN_CORRECTION_GENERATED_AT,
+                    committed_at=correction_written_at,
+                    generated_at=correction_written_at,
                 )
             except DecisionEventCommitUncertainError as error:
                 correction_event = ledger.reconcile_event_commit(connection, attempted_fact)
@@ -231,11 +236,13 @@ def correct_default_frozen_decision_case(
     )
 
 
-def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
+def _run_frozen_decision_case(
+    settings: Settings, *, clock: Clock | None = None
+) -> DecisionCaseExecution:
     """Run or replay one exact frozen business identity without HTTP transport."""
     case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine)
+    ledger = DecisionLedger(runtime.engine, clock=clock)
     ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
@@ -266,15 +273,8 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                             "durable business mapping is missing before framework execution"
                         )
                     if mapping.case is None:
-                        if (
-                            mapping.case_id != case.case_id
-                            or not case.matches_legacy_recovery_input()
-                        ):
-                            raise DecisionEventCommitError(
-                                "business identity maps to different frozen input"
-                            )
-                        execution_case = case.legacy_projection_recovery_case(
-                            mapping.framework_run_id
+                        raise DecisionEventCommitError(
+                            "durable business mapping lacks a frozen case snapshot"
                         )
                     else:
                         execution_case = mapping.case
@@ -472,11 +472,14 @@ def _commit_framework_result(
             reasons=(),
         ),
     )
+    committed_at = ledger.observed_at()
     attempted_fact = ledger.build_event_fact(
         case=execution_case,
         framework_run_id=framework.run_id,
         result=result,
         stage_results=stage_results,
+        committed_at=committed_at,
+        generated_at=committed_at,
     )
     try:
         return ledger.commit_event(
@@ -485,6 +488,8 @@ def _commit_framework_result(
             framework_run_id=framework.run_id,
             result=result,
             stage_results=stage_results,
+            committed_at=committed_at,
+            generated_at=committed_at,
         )
     except DecisionEventCommitUncertainError:
         committed = ledger.reconcile_event_commit(connection, attempted_fact)
@@ -675,18 +680,7 @@ def _record_fact_stage_result(
     *,
     allow_repeated_occurrence: bool = False,
 ) -> None:
-    """Append event-owned evidence using its distinct frozen generated clock."""
-    if fact.generated_at is not None and fact.generated_at != fact.case.report_generated_at:
-        ledger.record_stage_result(
-            connection,
-            case=fact.case,
-            stage_result=stage_result,
-            decision_event_id=fact.decision_event_id,
-            framework_run_id=fact.framework_run_id,
-            allow_repeated_occurrence=allow_repeated_occurrence,
-            recorded_at=fact.generated_at,
-        )
-        return
+    """Append event-owned evidence with the current controlled observation time."""
     ledger.record_stage_result(
         connection,
         case=fact.case,
@@ -894,7 +888,6 @@ def _record_correction_commit_failure(
         decision_event_id=correction_event_id,
         framework_run_id=framework_run_id,
         stage_result=correction_stage,
-        recorded_at=FROZEN_CORRECTION_GENERATED_AT,
     )
     ledger.record_stage_result(
         connection,
@@ -913,7 +906,6 @@ def _record_correction_commit_failure(
             reasons=("COMMIT_UNCERTAIN",) if uncertain else ("COMMIT_STORAGE_FAILED",),
         ),
         allow_repeated_occurrence=True,
-        recorded_at=FROZEN_CORRECTION_GENERATED_AT,
     )
 
 

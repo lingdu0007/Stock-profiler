@@ -3,10 +3,10 @@
     "generator_version": "frozen-decision-case-web-projection-v1",
     "seed": 4017,
     "report": {
-        "report_version_id": "report-version-27dc2b78d18de810c3b6b6ddaf3f6f21d02d8011ddd06bd68ef32a13f99cb59b",
-        "event_id": "decision-event-3b2ed99d640865f7d4542aacd7b823c0ea28f240d7cab7621947f0b156b2b11b",
-        "business_object_id": "business-object-43fd82e9b08520f3ea6427bd1314cf504b13842bad59dc3c7a9dd30b24c29a4f",
-        "framework_run_id": "framework-run-43be4efa1e8ef148789442ade4dd8a2a5b026099df1c67253d8af56b6059de48",
+        "report_version_id": "report-version-f81f5432ae04e731804fc80901004b253766c6ef918ca093359623f62f596cde",
+        "event_id": "decision-event-aebffe09381a7715294b9d1ec24fa527eddfc23bd64749d068fe8941237d3c71",
+        "business_object_id": "business-object-bef295f463e67ac453b2d775f491f58e3e548d54c286b7cb28176660b6809e2a",
+        "framework_run_id": "framework-run-3159f2522d9755cd2ad830b3ee22627ff3fadfb56978f17076dc57513ff82647",
         "case_id": "d0-orbital-mosaic-001",
         "synthetic": true,
         "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
@@ -19,8 +19,8 @@
             "validated_at": "2042-05-17T15:18:00Z"
         },
         "version_bundle": {
-            "case_contract_version": "1.0.0",
-            "host_contract_version": "1.0.0",
+            "case_contract_version": "2.0.0",
+            "host_contract_version": "2.0.0",
             "host_application_version": "0.1.0.dev0",
             "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "agent_definition_id": "synthetic-frozen-decision-case",
