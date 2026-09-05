@@ -28,6 +28,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import (
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
+    FROZEN_CORRECTION_GENERATED_AT,
     DecisionEventFact,
     ExternalResult,
     FormalReport,
@@ -120,7 +121,7 @@ def test_formal_report_projection_fixture_matches_the_frozen_runtime(
     assert fixture["report"] == outcome.report.model_dump(mode="json")
 
 
-def test_append_only_ledger_records_use_the_frozen_case_and_report_clocks(
+def test_append_only_ledger_records_use_frozen_logical_occurrence_clocks(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -130,6 +131,15 @@ def test_append_only_ledger_records_use_the_frozen_case_and_report_clocks(
         migrated_settings,
         case.business_identity,
         "FAILED",
+    )
+    retry_default_frozen_decision_case_notification(
+        migrated_settings,
+        case.business_identity,
+        "SUCCEEDED",
+    )
+    correction = correct_default_frozen_decision_case(
+        migrated_settings,
+        case.business_identity,
     )
 
     engine = create_engine(migrated_settings.app_database_url)
@@ -144,24 +154,53 @@ def test_append_only_ledger_records_use_the_frozen_case_and_report_clocks(
             ).scalar_one()
             == case.report_generated_at
         )
-        assert set(
+        initial_stage_clocks = set(
             connection.execute(
                 text(
-                    "SELECT recorded_at FROM decision_stage_events "
-                    "WHERE business_object_id = :business_object_id"
+                    """
+                    SELECT recorded_at
+                    FROM decision_stage_events
+                    WHERE business_object_id = :business_object_id
+                      AND decision_event_id IS NULL
+                    """
                 ),
                 {"business_object_id": case.business_object_id},
             ).scalars()
-        ) == {case.report_generated_at}
-        assert set(
+        )
+        correction_stage_clocks = set(
             connection.execute(
                 text(
-                    "SELECT recorded_at FROM decision_notification_attempts "
-                    "WHERE report_version_id = :report_version_id"
+                    """
+                    SELECT recorded_at
+                    FROM decision_stage_events
+                    WHERE decision_event_id = :decision_event_id
+                    """
+                ),
+                {"decision_event_id": correction.report.event_id},
+            ).scalars()
+        )
+        notification_clocks = (
+            connection.execute(
+                text(
+                    """
+                    SELECT recorded_at
+                    FROM decision_notification_attempts
+                    WHERE report_version_id = :report_version_id
+                    ORDER BY sequence
+                    """
                 ),
                 {"report_version_id": execution.report.report_version_id},
-            ).scalars()
-        ) == {execution.report.generated_at}
+            )
+            .scalars()
+            .all()
+        )
+
+    assert initial_stage_clocks == {case.report_generated_at}
+    assert correction_stage_clocks == {FROZEN_CORRECTION_GENERATED_AT}
+    assert notification_clocks == [
+        "2042-05-17T16:01:01Z",
+        "2042-05-17T16:01:02Z",
+    ]
 
 
 def test_report_lookup_by_event_requires_a_committed_event(
@@ -266,8 +305,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             "ABSTAINED",
             None,
             "BUSINESS_DECISION",
-            "DECISION_DETERMINED",
-            "UNKNOWN",
+            "ABSTENTION_RECORDED",
+            "PASSED",
         ),
         (
             "result-failed",
@@ -1747,6 +1786,77 @@ def test_correction_commit_failure_retains_its_append_only_failure_evidence(
     assert ledger.counts() == {"business_objects": 1, "decision_events": 2, "reports": 2}
 
 
+@pytest.mark.parametrize(
+    "commit_error",
+    (DecisionEventCommitError, DecisionEventCommitUncertainError),
+)
+def test_cross_build_correction_recovery_reuses_the_first_attempt_identity(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    commit_error: type[DecisionEventCommitError],
+) -> None:
+    original = run_default_frozen_decision_case(migrated_settings)
+    assert original.report is not None
+    case = load_frozen_decision_case(migrated_settings)
+    attempted_correction_event_ids: list[str] = []
+    original_commit_event = DecisionLedger.commit_event
+
+    def fail_correction_commit(
+        self: DecisionLedger,
+        connection: Connection,
+        *,
+        case: FrozenDecisionCase,
+        framework_run_id: str,
+        result: ExternalResult,
+        stage_results: tuple[StageResult, ...],
+        decision_event_id: str | None = None,
+        corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
+    ) -> DecisionEventFact:
+        if corrects_event_id is not None:
+            assert decision_event_id is not None
+            attempted_correction_event_ids.append(decision_event_id)
+            raise commit_error("synthetic correction commit interruption")
+        return original_commit_event(
+            self,
+            connection,
+            case=case,
+            framework_run_id=framework_run_id,
+            result=result,
+            stage_results=stage_results,
+            decision_event_id=decision_event_id,
+            corrects_event_id=corrects_event_id,
+            committed_at=committed_at,
+            generated_at=generated_at,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "commit_event", fail_correction_commit)
+        with pytest.raises(DecisionEventCommitError, match="correction commit"):
+            correct_default_frozen_decision_case(
+                migrated_settings,
+                case.business_identity,
+            )
+
+    upgraded_settings = migrated_settings.model_copy(
+        update={
+            "configuration_version": "synthetic-config-v2",
+            "source_sha": "b" * 40,
+        }
+    )
+    recovered = correct_default_frozen_decision_case(
+        upgraded_settings,
+        case.business_identity,
+    )
+
+    assert attempted_correction_event_ids == [recovered.report.event_id]
+    assert recovered.report.event_id == case.correction_event_id(original.report.event_id)
+    assert recovered.report.report_version_id == case.correction_report_version_id(
+        original.report.event_id
+    )
+
+
 def test_read_failure_does_not_remove_the_published_report(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2126,6 +2236,38 @@ def test_correction_migration_retries_after_notification_table_creation_is_inter
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
             "0005_persist_frozen_case_snapshots"
         )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_rejects_an_incomplete_notification_attempts_table(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_notification_attempts (
+                    sequence INTEGER PRIMARY KEY,
+                    notification_attempt_id VARCHAR(96) NOT NULL,
+                    report_version_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96) NOT NULL,
+                    status VARCHAR(16) NOT NULL,
+                    reasons_payload VARCHAR NOT NULL,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="notification attempts table has unexpected schema"):
+        command.upgrade(config, "head")
 
     load_settings.cache_clear()
 

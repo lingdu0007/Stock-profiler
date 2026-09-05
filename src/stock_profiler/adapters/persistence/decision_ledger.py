@@ -6,6 +6,7 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 
@@ -235,6 +236,7 @@ class DecisionLedger:
         stage_event_id: str | None = None,
         framework_run_id: str | None = None,
         allow_repeated_occurrence: bool = False,
+        recorded_at: str | None = None,
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
@@ -248,6 +250,7 @@ class DecisionLedger:
                 decision_event_id=decision_event_id,
                 stage_payload=stage_payload,
                 stage_result=stage_result,
+                recorded_at=recorded_at or case.report_generated_at,
             )
             return
         occurrence_count = int(
@@ -264,6 +267,7 @@ class DecisionLedger:
         )
         if occurrence_count and not allow_repeated_occurrence:
             return
+        occurrence = occurrence_count + 1 if allow_repeated_occurrence else 1
         self._insert_or_validate_stage_result(
             connection,
             stage_event_id=_stage_event_id(
@@ -271,13 +275,14 @@ class DecisionLedger:
                 stage_result,
                 decision_event_id,
                 framework_run_id=durable_framework_run_id,
-                occurrence=occurrence_count + 1 if allow_repeated_occurrence else None,
+                occurrence=occurrence if allow_repeated_occurrence else None,
             ),
             case=case,
             framework_run_id=durable_framework_run_id,
             decision_event_id=decision_event_id,
             stage_payload=stage_payload,
             stage_result=stage_result,
+            recorded_at=recorded_at or _logical_occurrence_at(case.report_generated_at, occurrence),
         )
 
     def _insert_or_validate_stage_result(
@@ -290,6 +295,7 @@ class DecisionLedger:
         decision_event_id: str | None,
         stage_payload: str,
         stage_result: StageResult,
+        recorded_at: str,
     ) -> None:
         existing = connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload).where(
@@ -304,7 +310,7 @@ class DecisionLedger:
                     framework_run_id=framework_run_id,
                     decision_event_id=decision_event_id,
                     stage_payload=stage_payload,
-                    recorded_at=case.report_generated_at,
+                    recorded_at=recorded_at,
                 )
             )
             return
@@ -355,6 +361,7 @@ class DecisionLedger:
             event_id=report.event_id,
             status=status,
             reasons=reasons,
+            recorded_at=_logical_occurrence_at(report.generated_at, attempt_number + 1),
         )
         connection.execute(
             DECISION_NOTIFICATION_ATTEMPTS.insert().values(
@@ -367,7 +374,7 @@ class DecisionLedger:
                     ensure_ascii=True,
                     separators=(",", ":"),
                 ),
-                recorded_at=report.generated_at,
+                recorded_at=attempt.recorded_at,
             )
         )
         return attempt
@@ -383,6 +390,7 @@ class DecisionLedger:
                 DECISION_NOTIFICATION_ATTEMPTS.c.decision_event_id,
                 DECISION_NOTIFICATION_ATTEMPTS.c.status,
                 DECISION_NOTIFICATION_ATTEMPTS.c.reasons_payload,
+                DECISION_NOTIFICATION_ATTEMPTS.c.recorded_at,
             )
             .where(DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id == report_version_id)
             .order_by(DECISION_NOTIFICATION_ATTEMPTS.c.sequence)
@@ -399,6 +407,7 @@ class DecisionLedger:
                 event_id=row.decision_event_id,
                 status=cast(NotificationAttemptStatus, row.status),
                 reasons=tuple(json.loads(row.reasons_payload)),
+                recorded_at=row.recorded_at,
             )
             for row in rows
         )
@@ -528,13 +537,23 @@ class DecisionLedger:
                 if (stage_result.phase == "CORRECTION" or index == latest_business_commit_index)
                 else None
             )
-            self.record_stage_result(
-                connection,
-                case=fact.case,
-                stage_result=stage_result,
-                decision_event_id=decision_event_id,
-                framework_run_id=fact.framework_run_id,
-            )
+            if fact.generated_at is not None and fact.generated_at != fact.case.report_generated_at:
+                self.record_stage_result(
+                    connection,
+                    case=fact.case,
+                    stage_result=stage_result,
+                    decision_event_id=decision_event_id,
+                    framework_run_id=fact.framework_run_id,
+                    recorded_at=fact.generated_at,
+                )
+            else:
+                self.record_stage_result(
+                    connection,
+                    case=fact.case,
+                    stage_result=stage_result,
+                    decision_event_id=decision_event_id,
+                    framework_run_id=fact.framework_run_id,
+                )
 
     def discard_unconfirmed_publication(self, connection: Connection) -> None:
         """Roll back a report whose durable acknowledgement was not received."""
@@ -727,3 +746,17 @@ def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:
     }
     serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return f"notification-attempt-{sha256(serialized.encode()).hexdigest()}"
+
+
+def _logical_occurrence_at(reference_at: str, occurrence: int) -> str:
+    """Advance a frozen UTC reference by an append-only occurrence count."""
+    reference = datetime.fromisoformat(reference_at.replace("Z", "+00:00"))
+    logical_time = reference + timedelta(seconds=occurrence - 1)
+    return (
+        logical_time.astimezone(UTC)
+        .isoformat(timespec="seconds")
+        .replace(
+            "+00:00",
+            "Z",
+        )
+    )

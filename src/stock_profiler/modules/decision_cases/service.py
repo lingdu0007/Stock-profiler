@@ -101,6 +101,7 @@ def retry_default_frozen_decision_case_notification(
                 gate_results=(GateResult(gate_id="FORMAL_REPORT_PUBLISHED", status="PASSED"),),
                 reasons=attempt.reasons,
             ),
+            recorded_at=attempt.recorded_at,
         )
     return attempt
 
@@ -209,69 +210,15 @@ def correct_default_frozen_decision_case(
                     correction_error = error
         if correction_error is None:
             assert correction_event is not None
-            ledger.ensure_event_stage_results(connection, correction_event)
-            report = ledger.get_formal_report_for_event(
-                correction_event.decision_event_id,
-                connection,
+            correction_report_version_id = correction_event.case.correction_report_version_id(
+                original_event.decision_event_id
             )
-            if report is None:
-                correction_report_version_id = correction_event.case.correction_report_version_id(
-                    original_event.decision_event_id
-                )
-                try:
-                    report = ledger.publish_report(
-                        connection,
-                        correction_event,
-                        correction_report_version_id,
-                    )
-                except FormalReportCommitUncertainError as error:
-                    report = ledger.reconcile_report_commit(
-                        connection,
-                        correction_event.formal_report(correction_report_version_id),
-                    )
-                    if report is None:
-                        ledger.discard_unconfirmed_publication(connection)
-                        ledger.ensure_event_stage_results(connection, correction_event)
-                        ledger.record_stage_result(
-                            connection,
-                            case=correction_event.case,
-                            decision_event_id=correction_event.decision_event_id,
-                            framework_run_id=correction_event.framework_run_id,
-                            stage_result=StageResult(
-                                phase="PUBLICATION",
-                                status="FAILED",
-                                gate_results=(
-                                    GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),
-                                ),
-                                reasons=("PUBLICATION_COMMIT_UNCERTAIN",),
-                            ),
-                            allow_repeated_occurrence=True,
-                        )
-                        publication_error = error
-                except DecisionEventCommitError as error:
-                    ledger.discard_unconfirmed_publication(connection)
-                    ledger.ensure_event_stage_results(connection, correction_event)
-                    ledger.record_stage_result(
-                        connection,
-                        case=correction_event.case,
-                        decision_event_id=correction_event.decision_event_id,
-                        framework_run_id=correction_event.framework_run_id,
-                        stage_result=StageResult(
-                            phase="PUBLICATION",
-                            status="FAILED",
-                            gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
-                            reasons=("PUBLICATION_STORAGE_FAILED",),
-                        ),
-                        allow_repeated_occurrence=True,
-                    )
-                    publication_error = error
-            if report is not None:
-                ledger.record_stage_result(
-                    connection,
-                    case=correction_event.case,
-                    decision_event_id=correction_event.decision_event_id,
-                    stage_result=report.stage_results[-1],
-                )
+            report, publication_error = _publish_report_or_record_failure(
+                ledger,
+                connection,
+                correction_event,
+                correction_report_version_id,
+            )
     if correction_error is not None:
         raise DecisionEventCommitError("correction commit failed") from correction_error
     if publication_error is not None:
@@ -459,9 +406,7 @@ def _commit_framework_result(
         else:
             validation_result = host_validation_result(execution_case, result)
             business_result = (
-                business_outcome_result(execution_case, result)
-                if validation_result.status == "SUCCEEDED"
-                else None
+                business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
             )
     ledger.record_stage_result(
         connection,
@@ -600,60 +545,12 @@ def _publish_committed_fact(
     fact: DecisionEventFact,
 ) -> DecisionCaseExecution:
     """Publish a committed host fact or append a closed publication result."""
-    ledger.ensure_event_stage_results(connection, fact)
-    try:
-        report = ledger.publish_report(connection, fact)
-    except FormalReportCommitUncertainError:
-        recovered_report = ledger.reconcile_report_commit(
-            connection,
-            fact.formal_report(fact.case.report_version_id_for_event(fact.decision_event_id)),
-        )
-        if recovered_report is None:
-            ledger.discard_unconfirmed_publication(connection)
-            ledger.ensure_event_stage_results(connection, fact)
-            publication_failure = StageResult(
-                phase="PUBLICATION",
-                status="FAILED",
-                gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
-                reasons=("PUBLICATION_COMMIT_UNCERTAIN",),
-            )
-            ledger.record_stage_result(
-                connection,
-                case=fact.case,
-                stage_result=publication_failure,
-                decision_event_id=fact.decision_event_id,
-                framework_run_id=fact.framework_run_id,
-                allow_repeated_occurrence=True,
-            )
-            return _unpublished_execution(
-                fact.case,
-                framework_run_id=fact.framework_run_id,
-                decision_event_id=fact.decision_event_id,
-                report_version_id=fact.case.report_version_id_for_event(fact.decision_event_id),
-                framework_run_status="SUCCEEDED",
-                business_result_status=_business_result_status_from_stages(fact.stage_results),
-                business_lifecycle=None,
-                business_commit_status="COMMITTED",
-                stage_results=ledger.get_stage_results(fact.business_object_id, connection),
-            )
-        report = recovered_report
-    except DecisionEventCommitError:
-        ledger.discard_unconfirmed_publication(connection)
-        ledger.ensure_event_stage_results(connection, fact)
-        publication_failure = StageResult(
-            phase="PUBLICATION",
-            status="FAILED",
-            gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
-            reasons=("PUBLICATION_STORAGE_FAILED",),
-        )
-        ledger.record_stage_result(
-            connection,
-            case=fact.case,
-            stage_result=publication_failure,
-            decision_event_id=fact.decision_event_id,
-            framework_run_id=fact.framework_run_id,
-            allow_repeated_occurrence=True,
-        )
+    report, publication_error = _publish_report_or_record_failure(
+        ledger,
+        connection,
+        fact,
+    )
+    if publication_error is not None:
         return _unpublished_execution(
             fact.case,
             framework_run_id=fact.framework_run_id,
@@ -665,14 +562,105 @@ def _publish_committed_fact(
             business_commit_status="COMMITTED",
             stage_results=ledger.get_stage_results(fact.business_object_id, connection),
         )
+    assert report is not None
+    return _published_execution(report)
+
+
+def _publish_report_or_record_failure(
+    ledger: DecisionLedger,
+    connection: Connection,
+    fact: DecisionEventFact,
+    report_version_id: str | None = None,
+) -> tuple[FormalReport | None, DecisionEventCommitError | None]:
+    """Publish one committed fact or append the exact closed publication boundary."""
+    resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(
+        fact.decision_event_id
+    )
+    ledger.ensure_event_stage_results(connection, fact)
+    report: FormalReport | None = None
+    try:
+        report = (
+            ledger.publish_report(connection, fact)
+            if report_version_id is None
+            else ledger.publish_report(connection, fact, resolved_report_version_id)
+        )
+    except FormalReportCommitUncertainError as error:
+        report = ledger.reconcile_report_commit(
+            connection,
+            fact.formal_report(resolved_report_version_id),
+        )
+        if report is None:
+            _record_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "PUBLICATION_COMMIT_UNCERTAIN",
+            )
+            return None, error
+    except DecisionEventCommitError as error:
+        _record_publication_failure(
+            ledger,
+            connection,
+            fact,
+            "PUBLICATION_STORAGE_FAILED",
+        )
+        return None, error
+    assert report is not None
+    _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
+    return report, None
+
+
+def _record_publication_failure(
+    ledger: DecisionLedger,
+    connection: Connection,
+    fact: DecisionEventFact,
+    reason: str,
+) -> None:
+    """Discard unconfirmed output and retain the corresponding closed gate."""
+    ledger.discard_unconfirmed_publication(connection)
+    ledger.ensure_event_stage_results(connection, fact)
+    _record_fact_stage_result(
+        ledger,
+        connection,
+        fact,
+        StageResult(
+            phase="PUBLICATION",
+            status="FAILED",
+            gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
+            reasons=(reason,),
+        ),
+        allow_repeated_occurrence=True,
+    )
+
+
+def _record_fact_stage_result(
+    ledger: DecisionLedger,
+    connection: Connection,
+    fact: DecisionEventFact,
+    stage_result: StageResult,
+    *,
+    allow_repeated_occurrence: bool = False,
+) -> None:
+    """Append event-owned evidence using its distinct frozen generated clock."""
+    if fact.generated_at is not None and fact.generated_at != fact.case.report_generated_at:
+        ledger.record_stage_result(
+            connection,
+            case=fact.case,
+            stage_result=stage_result,
+            decision_event_id=fact.decision_event_id,
+            framework_run_id=fact.framework_run_id,
+            allow_repeated_occurrence=allow_repeated_occurrence,
+            recorded_at=fact.generated_at,
+        )
+        return
     ledger.record_stage_result(
         connection,
         case=fact.case,
-        stage_result=report.stage_results[-1],
+        stage_result=stage_result,
         decision_event_id=fact.decision_event_id,
         framework_run_id=fact.framework_run_id,
+        allow_repeated_occurrence=allow_repeated_occurrence,
     )
-    return _published_execution(report)
 
 
 def get_formal_report(report_version_id: str, settings: Settings) -> FormalReport | None:
@@ -867,6 +855,7 @@ def _record_correction_commit_failure(
         decision_event_id=correction_event_id,
         framework_run_id=framework_run_id,
         stage_result=correction_stage,
+        recorded_at=FROZEN_CORRECTION_GENERATED_AT,
     )
     ledger.record_stage_result(
         connection,
@@ -885,6 +874,7 @@ def _record_correction_commit_failure(
             reasons=("COMMIT_UNCERTAIN",) if uncertain else ("COMMIT_STORAGE_FAILED",),
         ),
         allow_repeated_occurrence=True,
+        recorded_at=FROZEN_CORRECTION_GENERATED_AT,
     )
 
 
