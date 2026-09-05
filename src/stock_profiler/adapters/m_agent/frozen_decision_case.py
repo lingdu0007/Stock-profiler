@@ -105,8 +105,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     if (
         bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
         or bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
-        or bundle.report_projection_contract_version
-        != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+        or bundle.report_projection_contract_version != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
         or bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
         or bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
         or bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION

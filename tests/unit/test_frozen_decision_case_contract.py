@@ -91,11 +91,7 @@ def test_runtime_rejects_any_unsupported_host_contract_version(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
     tampered = case.model_copy(
-        update={
-            "version_bundle": case.version_bundle.model_copy(
-                update={field_name: "999.0.0"}
-            )
-        }
+        update={"version_bundle": case.version_bundle.model_copy(update={field_name: "999.0.0"})}
     )
 
     with pytest.raises(ValueError, match="full frozen version bundle"):
