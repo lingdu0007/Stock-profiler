@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -19,7 +20,10 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitUncertainError,
     DecisionLedger,
 )
-from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
+from stock_profiler.adapters.persistence.runtime_ownership import (
+    RuntimeStorage,
+    initialize_runtime_storage,
+)
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -436,6 +440,69 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
     assert recovered.framework_run_id == original_case.framework_run_id
     assert recovered.decision_event_id == original_case.decision_event_id
     assert recovered.report_version_id == original_case.report_version_id
+    assert recovered.publication_status == "PUBLISHED"
+
+
+def test_legacy_mapping_without_a_snapshot_reuses_its_original_m_agent_run(
+    migrated_settings: Settings,
+) -> None:
+    original_case = load_frozen_decision_case(migrated_settings)
+    framework = asyncio.run(
+        frozen_adapter.execute_frozen_decision_case(
+            original_case,
+            initialize_runtime_storage(migrated_settings),
+        )
+    )
+    assert framework.run_id == original_case.framework_run_id
+
+    engine = create_engine(migrated_settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    case_payload,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    NULL,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": original_case.business_object_id,
+                "case_id": original_case.case_id,
+                "frozen_input_fingerprint": original_case.frozen_input_fingerprint,
+                "framework_run_id": original_case.framework_run_id,
+                "created_at": original_case.report_generated_at,
+            },
+        )
+
+    upgraded_settings = migrated_settings.model_copy(
+        update={
+            "configuration_version": "0.1.1.dev0",
+            "source_sha": "b" * 40,
+        }
+    )
+    upgraded_case = load_frozen_decision_case(upgraded_settings)
+    recovered = run_default_frozen_decision_case(upgraded_settings)
+
+    assert recovered.business_object_id == original_case.business_object_id
+    assert recovered.framework_run_id == original_case.framework_run_id
+    assert recovered.decision_event_id == upgraded_case.decision_event_id_for_framework_run(
+        original_case.framework_run_id
+    )
+    assert recovered.report_version_id == upgraded_case.report_version_id_for_event(
+        recovered.decision_event_id
+    )
     assert recovered.publication_status == "PUBLISHED"
 
 
@@ -1073,7 +1140,8 @@ def test_recovery_backfills_event_stage_results_before_publication(
         stage_result: StageResult,
         decision_event_id: str | None = None,
         stage_event_id: str | None = None,
-        append: bool = False,
+        framework_run_id: str | None = None,
+        allow_repeated_occurrence: bool = False,
     ) -> None:
         if stage_result.phase == "BUSINESS_COMMIT" and decision_event_id is not None:
             raise RuntimeError("synthetic crash after event commit")
@@ -1084,7 +1152,8 @@ def test_recovery_backfills_event_stage_results_before_publication(
             stage_result=stage_result,
             decision_event_id=decision_event_id,
             stage_event_id=stage_event_id,
-            append=append,
+            framework_run_id=framework_run_id,
+            allow_repeated_occurrence=allow_repeated_occurrence,
         )
 
     with monkeypatch.context() as patch:
