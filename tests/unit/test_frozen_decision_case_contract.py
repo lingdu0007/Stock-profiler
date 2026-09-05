@@ -24,6 +24,7 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
     _deterministic_model_response,
     execute_frozen_decision_case,
 )
+from stock_profiler.adapters.persistence.decision_ledger import DecisionEventCommitError
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases import service
@@ -298,6 +299,50 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
     ] == ["RUNNING", "SUCCEEDED"]
 
 
+def test_terminal_m_agent_run_rejects_a_definition_snapshot_that_differs_from_the_case(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    runtime = initialize_runtime_storage(migrated_settings)
+
+    async def create_tampered_terminal_run() -> None:
+        definition = AgentDefinition.for_adapter(
+            definition_id=case.agent_definition.definition_id,
+            version=case.agent_definition.version,
+            instructions="Tampered instructions must not be accepted for recovery.",
+            model_adapter=DeterministicModelAdapter(
+                responses=(_deterministic_model_response(case),),
+                capabilities=ModelCapabilities(
+                    structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT
+                ),
+            ),
+            output_contract=OutputContract(
+                contract_id=case.agent_definition.output_contract.contract_id,
+                version=case.agent_definition.output_contract.version,
+                schema=FROZEN_OUTPUT_SCHEMA,
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            ),
+        )
+        registry = DefinitionRegistry()
+        registry.register(definition)
+        runner = Runner(registry=registry, store=runtime.run_store)
+        created = await runner.create_run(
+            definition.definition_id,
+            definition.version,
+            json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            run_id=case.framework_run_id,
+        )
+
+        completed = await runner.start_run(created.run_id)
+
+        assert completed.status.value == "SUCCEEDED"
+
+    asyncio.run(create_tampered_terminal_run())
+
+    with pytest.raises(DecisionEventCommitError, match="durable framework recovery failed"):
+        run_default_frozen_decision_case(migrated_settings)
+
+
 def test_active_m_agent_lease_waits_for_the_original_run_to_resume(
     migrated_settings: Settings,
 ) -> None:
@@ -354,7 +399,7 @@ def test_active_m_agent_lease_waits_for_the_original_run_to_resume(
             release_runtime.run_store.close()
 
     def release_after_observation_starts() -> None:
-        sleep(0.05)
+        sleep(0.6)
         asyncio.run(release_leased_run())
 
     release_worker = Thread(target=release_after_observation_starts)
