@@ -20,6 +20,26 @@ down_revision = "0003_decision_stage_events"
 branch_labels = None
 depends_on = None
 
+_REQUIRED_NOTIFICATION_ATTEMPT_COLUMNS = frozenset(
+    {
+        "sequence",
+        "notification_attempt_id",
+        "report_version_id",
+        "decision_event_id",
+        "status",
+        "reasons_payload",
+        "recorded_at",
+    }
+)
+_NOTIFICATION_ATTEMPT_STRING_COLUMN_LENGTHS = {
+    "notification_attempt_id": 96,
+    "report_version_id": 96,
+    "decision_event_id": 96,
+    "status": 16,
+    "reasons_payload": None,
+    "recorded_at": 40,
+}
+
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
@@ -140,6 +160,11 @@ def _validated_event_fact(
         fact.decision_event_id != decision_event_id
         or fact.business_object_id != business_object_id
         or fact.framework_run_id != framework_run_id
+        or fact.case.business_object_id != business_object_id
+        or fact.case.framework_run_id != framework_run_id
+        or fact.corrects_event_id is not None
+        or fact.decision_event_id
+        != fact.case.decision_event_id_for_framework_run(framework_run_id)
     ):
         raise RuntimeError("legacy decision event identity does not match its row")
     return fact
@@ -167,29 +192,75 @@ def _validated_report_stage_results(
     return stage_results
 
 
-def _preflight_legacy_stage_history() -> None:
+def _event_rows_for_preflight(event_table: str) -> sa.MappingResult:
+    """Read the table that was authoritative when an interrupted replacement stopped."""
+    bind = op.get_bind()
+    if event_table == "decision_events":
+        return bind.execute(
+            sa.text(
+                """
+                SELECT
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload
+                FROM decision_events
+                """
+            )
+        ).mappings()
+    if event_table == "decision_events_replacement":
+        return bind.execute(
+            sa.text(
+                """
+                SELECT
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload
+                FROM decision_events_replacement
+                """
+            )
+        ).mappings()
+    raise RuntimeError("interrupted decision event migration has no authoritative event table")
+
+
+def _preflight_legacy_stage_history(event_table: str) -> None:
     """Validate every legacy payload before SQLite's non-transactional DDL begins."""
     bind = op.get_bind()
+    mappings = {
+        row["business_object_id"]: row
+        for row in bind.execute(
+            sa.text(
+                """
+                SELECT
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id
+                FROM decision_case_business_objects
+                """
+            )
+        ).mappings()
+    }
     event_facts: dict[str, DecisionEventFact] = {}
-    event_rows = bind.execute(
-        sa.text(
-            """
-            SELECT
-                decision_event_id,
-                business_object_id,
-                framework_run_id,
-                event_payload
-            FROM decision_events
-            """
-        )
-    ).mappings()
-    for row in event_rows:
-        event_facts[row["decision_event_id"]] = _validated_event_fact(
+    for row in _event_rows_for_preflight(event_table):
+        event = _validated_event_fact(
             _payload(row["event_payload"]),
             decision_event_id=row["decision_event_id"],
             business_object_id=row["business_object_id"],
             framework_run_id=row["framework_run_id"],
         )
+        mapping = mappings.get(row["business_object_id"])
+        if (
+            mapping is None
+            or mapping["case_id"] != event.case.case_id
+            or mapping["frozen_input_fingerprint"] != event.case.frozen_input_fingerprint
+            or mapping["framework_run_id"] != event.framework_run_id
+        ):
+            raise RuntimeError(
+                "legacy decision event identity does not match its durable business mapping"
+            )
+        event_facts[row["decision_event_id"]] = event
 
     report_rows = bind.execute(
         sa.text(
@@ -402,27 +473,42 @@ def _ensure_notification_attempts_table() -> None:
     if _has_table("decision_notification_attempts"):
         inspector = sa.inspect(op.get_bind())
         columns = {
-            column["name"] for column in inspector.get_columns("decision_notification_attempts")
+            str(column["name"]): column
+            for column in inspector.get_columns("decision_notification_attempts")
         }
-        required_columns = {
-            "sequence",
-            "notification_attempt_id",
-            "report_version_id",
-            "decision_event_id",
-            "status",
-            "reasons_payload",
-            "recorded_at",
-        }
+        missing_columns = _REQUIRED_NOTIFICATION_ATTEMPT_COLUMNS - columns.keys()
+        incompatible_columns = [
+            column_name
+            for column_name in _REQUIRED_NOTIFICATION_ATTEMPT_COLUMNS - missing_columns
+            if not _has_expected_notification_attempt_column_definition(
+                columns[column_name],
+                column_name,
+            )
+        ]
         has_sequence_primary_key = inspector.get_pk_constraint(
             "decision_notification_attempts"
         ).get("constrained_columns") == ["sequence"]
+        sequence_column = columns.get("sequence")
+        has_generated_sequence = sequence_column is not None and _has_generated_sequence(
+            sequence_column,
+            has_sequence_primary_key,
+        )
         has_unique_notification_id = _has_unique_notification_attempt_id(
             inspector,
         )
+        has_no_extra_columns = columns.keys() == _REQUIRED_NOTIFICATION_ATTEMPT_COLUMNS
+        has_no_extra_constraints = (
+            not inspector.get_foreign_keys("decision_notification_attempts")
+            and not inspector.get_check_constraints("decision_notification_attempts")
+        )
         if (
-            not required_columns.issubset(columns)
+            missing_columns
+            or incompatible_columns
+            or not has_no_extra_columns
             or not has_sequence_primary_key
+            or not has_generated_sequence
             or not has_unique_notification_id
+            or not has_no_extra_constraints
         ):
             raise RuntimeError("notification attempts table has unexpected schema")
         return
@@ -440,24 +526,54 @@ def _ensure_notification_attempts_table() -> None:
     )
 
 
+def _has_expected_notification_attempt_column_definition(
+    column: dict[str, object],
+    column_name: str,
+) -> bool:
+    """Fail closed unless an interrupted table retains the canonical storage contract."""
+    if (
+        column.get("nullable") is not False
+        or column.get("default") is not None
+        or column.get("computed") is not None
+    ):
+        return False
+    column_type = column.get("type")
+    if column_name == "sequence":
+        return isinstance(column_type, sa.Integer)
+    expected_length = _NOTIFICATION_ATTEMPT_STRING_COLUMN_LENGTHS[column_name]
+    return isinstance(column_type, sa.String) and column_type.length == expected_length
+
+
+def _has_generated_sequence(column: dict[str, object], has_primary_key: bool) -> bool:
+    """Recognize the SQLite INTEGER PRIMARY KEY rowid allocation used by this migration."""
+    if not has_primary_key or not isinstance(column.get("type"), sa.Integer):
+        return False
+    if op.get_bind().dialect.name == "sqlite":
+        return True
+    return column.get("autoincrement") is True
+
+
 def _has_unique_notification_attempt_id(inspector: sa.Inspector) -> bool:
     """Recognize SQLite's automatic UNIQUE index after an interrupted table create."""
-    if any(
-        constraint.get("column_names") == ["notification_attempt_id"]
-        for constraint in inspector.get_unique_constraints("decision_notification_attempts")
-    ) or any(
-        index.get("unique") and index.get("column_names") == ["notification_attempt_id"]
-        for index in inspector.get_indexes("decision_notification_attempts")
-    ):
-        return True
+    found_notification_id = False
+    for constraint in inspector.get_unique_constraints("decision_notification_attempts"):
+        if constraint.get("column_names") != ["notification_attempt_id"]:
+            return False
+        found_notification_id = True
+    for index in inspector.get_indexes("decision_notification_attempts"):
+        if not index.get("unique"):
+            return False
+        if index.get("column_names") != ["notification_attempt_id"]:
+            return False
+        found_notification_id = True
     bind = op.get_bind()
     if bind.dialect.name != "sqlite":
-        return False
+        return found_notification_id
     for index in bind.execute(
         sa.text("PRAGMA index_list('decision_notification_attempts')")
     ).mappings():
         if not index["unique"]:
-            continue
+            return False
         index_name = str(index["name"]).replace("'", "''")
         index_columns = [
             row["name"]
@@ -465,9 +581,10 @@ def _has_unique_notification_attempt_id(inspector: sa.Inspector) -> bool:
                 sa.text(f"PRAGMA index_info('{index_name}')")  # noqa: S608
             ).mappings()
         ]
-        if index_columns == ["notification_attempt_id"]:
-            return True
-    return False
+        if index_columns != ["notification_attempt_id"]:
+            return False
+        found_notification_id = True
+    return found_notification_id
 
 
 def _notification_attempt_count() -> int:
@@ -495,9 +612,19 @@ def _repair_interrupted_event_table_downgrade() -> bool:
     return not _decision_events_have_correction_lineage()
 
 
+def _authoritative_event_table_for_upgrade() -> str:
+    """Choose the only durable event table before performing any repair DDL."""
+    if _has_table("decision_events"):
+        return "decision_events"
+    if _has_table("decision_events_replacement"):
+        return "decision_events_replacement"
+    raise RuntimeError("interrupted decision event migration has no authoritative event table")
+
+
 def upgrade() -> None:
+    event_table = _authoritative_event_table_for_upgrade()
+    _preflight_legacy_stage_history(event_table)
     _repair_interrupted_event_table_replacement()
-    _preflight_legacy_stage_history()
     _ensure_event_correction_lineage()
     _append_legacy_stage_history()
     _ensure_notification_attempts_table()

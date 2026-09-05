@@ -22,10 +22,21 @@ def _case_payload_column() -> dict[str, object] | None:
     )
 
 
+def _has_compatible_case_payload_column(column: dict[str, object]) -> bool:
+    """Accept only the nullable, unbounded JSON column created by this migration."""
+    return (
+        column.get("nullable") is True
+        and column.get("default") is None
+        and column.get("computed") is None
+        and isinstance(column.get("type"), sa.String)
+        and column["type"].length is None
+    )
+
+
 def upgrade() -> None:
     existing_column = _case_payload_column()
     if existing_column is not None:
-        if existing_column["nullable"] is True:
+        if _has_compatible_case_payload_column(existing_column):
             return
         raise RuntimeError("interrupted frozen case snapshot migration has incompatible column")
     op.add_column(

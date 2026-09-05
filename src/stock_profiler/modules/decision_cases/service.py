@@ -14,6 +14,7 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
     FrameworkRunResult,
     FrameworkRunTransition,
     execute_frozen_decision_case,
+    find_unmapped_legacy_frozen_decision_case,
 )
 from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
@@ -245,6 +246,19 @@ def _run_frozen_decision_case(
     case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine, clock=clock)
+    with ledger.serialize_case_execution() as connection:
+        existing_business_object_id = ledger.resolve_business_object_id(case, connection)
+        has_existing_mapping = (
+            ledger.get_business_object_mapping(existing_business_object_id, connection)
+            is not None
+        )
+    if not has_existing_mapping:
+        try:
+            legacy_case = find_unmapped_legacy_frozen_decision_case(case, runtime)
+        except ValueError as error:
+            raise DecisionEventCommitError("durable legacy framework recovery failed") from error
+        if legacy_case is not None:
+            case = legacy_case
     business_object_id = ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
