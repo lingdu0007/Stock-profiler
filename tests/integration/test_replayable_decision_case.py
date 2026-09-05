@@ -2433,6 +2433,69 @@ def test_stage_result_migration_rejects_a_table_without_append_only_identities(
     load_settings.cache_clear()
 
 
+def test_stage_result_migration_rejects_a_table_without_a_sequence_column(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0002_decision_case_ledger")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_stage_events (
+                    stage_event_id VARCHAR(96) NOT NULL UNIQUE,
+                    business_object_id VARCHAR(96) NOT NULL,
+                    framework_run_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96),
+                    stage_payload VARCHAR NOT NULL,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="incompatible table"):
+        command.upgrade(config, "0003_decision_stage_events")
+
+    load_settings.cache_clear()
+
+
+def test_stage_result_migration_rejects_an_incompatible_nullable_column(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0002_decision_case_ledger")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_stage_events (
+                    sequence INTEGER PRIMARY KEY,
+                    stage_event_id VARCHAR(96) NOT NULL UNIQUE,
+                    business_object_id VARCHAR(96) NOT NULL,
+                    framework_run_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96) NOT NULL,
+                    stage_payload VARCHAR NOT NULL,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="incompatible table"):
+        command.upgrade(config, "0003_decision_stage_events")
+
+    load_settings.cache_clear()
+
+
 def test_snapshot_migration_retries_after_column_addition_is_interrupted(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

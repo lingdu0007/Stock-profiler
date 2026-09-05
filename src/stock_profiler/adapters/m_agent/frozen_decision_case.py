@@ -12,6 +12,7 @@ from typing import cast
 
 from m_agent.adapters import DeterministicModelAdapter
 from m_agent.runtime import (
+    DEFAULT_LEASE_TTL,
     AgentDefinition,
     DefinitionRegistry,
     DuplicateRunError,
@@ -68,7 +69,6 @@ DEFAULT_SYNTHETIC_MODEL_RESPONSE = (
     '],"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
     '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
 )
-_CONCURRENT_RUN_OBSERVATION_ATTEMPTS = 50
 _CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS = 0.01
 _CONCURRENT_RUN_RECOVERY_ERRORS = (
     DuplicateRunError,
@@ -197,6 +197,7 @@ async def execute_frozen_decision_case(
             run = await _recover_concurrent_run(
                 runner,
                 case,
+                definition,
                 observe,
             )
             await record_framework_statuses()
@@ -206,11 +207,12 @@ async def execute_frozen_decision_case(
             run = await _recover_concurrent_run(
                 runner,
                 case,
+                definition,
                 observe,
             )
             await record_framework_statuses()
     else:
-        _assert_existing_run_matches_case(run, case)
+        _assert_existing_run_matches_case(run, case, definition)
         if run.status.is_terminal:
             await observe(
                 FrameworkRunTransition(
@@ -235,6 +237,7 @@ async def execute_frozen_decision_case(
                 run = await _recover_concurrent_run(
                     runner,
                     case,
+                    definition,
                     observe,
                 )
             await record_framework_statuses()
@@ -252,16 +255,18 @@ async def execute_frozen_decision_case(
 async def _recover_concurrent_run(
     runner: Runner,
     case: FrozenDecisionCase,
+    definition: AgentDefinition,
     observe: FrameworkTransitionRecorder,
 ) -> RunRecord:
     """Converge on a competing owner without creating a replacement Run."""
-    for _ in range(_CONCURRENT_RUN_OBSERVATION_ATTEMPTS):
+    deadline = asyncio.get_running_loop().time() + DEFAULT_LEASE_TTL.total_seconds()
+    while asyncio.get_running_loop().time() < deadline:
         try:
             run = await runner.get_run(case.framework_run_id)
         except RunNotFoundError:
             await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
             continue
-        _assert_existing_run_matches_case(run, case)
+        _assert_existing_run_matches_case(run, case, definition)
         if run.status.is_terminal or run.status.value == "WAITING":
             await observe(
                 FrameworkRunTransition(
@@ -322,7 +327,11 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
 
 
-def _assert_existing_run_matches_case(run: RunRecord, case: FrozenDecisionCase) -> None:
+def _assert_existing_run_matches_case(
+    run: RunRecord,
+    case: FrozenDecisionCase,
+    definition: AgentDefinition,
+) -> None:
     """Bind a recovered run to the same frozen definition and input before reuse."""
     expected_input = json.dumps(
         case.input,
@@ -336,6 +345,8 @@ def _assert_existing_run_matches_case(run: RunRecord, case: FrozenDecisionCase) 
         or run.input != expected_input
     ):
         raise ValueError("durable M-Agent Run does not match the frozen recovery input")
+    if run.snapshot != definition.frozen_snapshot():
+        raise ValueError("durable M-Agent Run does not match the frozen definition snapshot")
 
 
 def _deterministic_model_response(case: FrozenDecisionCase) -> str:
