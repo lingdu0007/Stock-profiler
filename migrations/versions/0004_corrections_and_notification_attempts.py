@@ -332,6 +332,31 @@ def _ensure_event_correction_lineage() -> None:
 
 def _ensure_notification_attempts_table() -> None:
     if _has_table("decision_notification_attempts"):
+        inspector = sa.inspect(op.get_bind())
+        columns = {
+            column["name"] for column in inspector.get_columns("decision_notification_attempts")
+        }
+        required_columns = {
+            "sequence",
+            "notification_attempt_id",
+            "report_version_id",
+            "decision_event_id",
+            "status",
+            "reasons_payload",
+            "recorded_at",
+        }
+        has_sequence_primary_key = inspector.get_pk_constraint(
+            "decision_notification_attempts"
+        ).get("constrained_columns") == ["sequence"]
+        has_unique_notification_id = _has_unique_notification_attempt_id(
+            inspector,
+        )
+        if (
+            not required_columns.issubset(columns)
+            or not has_sequence_primary_key
+            or not has_unique_notification_id
+        ):
+            raise RuntimeError("notification attempts table has unexpected schema")
         return
     op.create_table(
         "decision_notification_attempts",
@@ -345,6 +370,36 @@ def _ensure_notification_attempts_table() -> None:
         sa.PrimaryKeyConstraint("sequence"),
         sa.UniqueConstraint("notification_attempt_id"),
     )
+
+
+def _has_unique_notification_attempt_id(inspector: sa.Inspector) -> bool:
+    """Recognize SQLite's automatic UNIQUE index after an interrupted table create."""
+    if any(
+        constraint.get("column_names") == ["notification_attempt_id"]
+        for constraint in inspector.get_unique_constraints("decision_notification_attempts")
+    ) or any(
+        index.get("unique") and index.get("column_names") == ["notification_attempt_id"]
+        for index in inspector.get_indexes("decision_notification_attempts")
+    ):
+        return True
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        return False
+    for index in bind.execute(
+        sa.text("PRAGMA index_list('decision_notification_attempts')")
+    ).mappings():
+        if not index["unique"]:
+            continue
+        index_name = str(index["name"]).replace("'", "''")
+        index_columns = [
+            row["name"]
+            for row in bind.execute(
+                sa.text(f"PRAGMA index_info('{index_name}')")  # noqa: S608
+            ).mappings()
+        ]
+        if index_columns == ["notification_attempt_id"]:
+            return True
+    return False
 
 
 def _notification_attempt_count() -> int:

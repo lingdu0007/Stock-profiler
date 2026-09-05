@@ -334,6 +334,7 @@ class NotificationAttempt(FrozenContract):
     event_id: str
     status: NotificationAttemptStatus
     reasons: tuple[str, ...]
+    recorded_at: str
 
 
 class DecisionCaseExecution(FrozenContract):
@@ -575,13 +576,16 @@ class FrozenDecisionCase(FrozenContract):
 
     def correction_event_id(self, original_event_id: str) -> str:
         """Allocate a separate append-only event identity for the sole D0 correction."""
+        version_bundle = self.version_bundle.model_dump(mode="json")
+        version_bundle.pop("host_application_version")
+        version_bundle.pop("host_source_sha")
         return _stable_id(
             "decision-correction",
             {
                 "business_object_id": self.business_object_id,
                 "original_event_id": original_event_id,
                 "correction_contract_version": FROZEN_CORRECTION_CONTRACT_VERSION,
-                "version_bundle": self.version_bundle.model_dump(mode="json"),
+                "version_bundle": version_bundle,
             },
         )
 
@@ -668,9 +672,8 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
     )
 
 
-def business_outcome_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
+def business_outcome_result(result: ExternalResult) -> StageResult:
     """Classify an already validated typed output into its owning business family."""
-    del case
     phase, status = _SYNTHETIC_OUTCOME_STAGES[result.outcome_code]
     return StageResult(
         phase=phase,
@@ -696,7 +699,7 @@ _SYNTHETIC_OUTCOME_STAGES: dict[str, tuple[StagePhase, StageStatus]] = {
 _SYNTHETIC_OUTCOME_GATES: dict[str, GateResult] = {
     "SYNTHETIC_REVIEW_COMPLETE": GateResult(gate_id="DECISION_ACCEPTED", status="PASSED"),
     "SYNTHETIC_INPUT_REJECTED": GateResult(gate_id="DECISION_ACCEPTED", status="FAILED"),
-    "SYNTHETIC_RESULT_ABSTAINED": GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
+    "SYNTHETIC_RESULT_ABSTAINED": GateResult(gate_id="ABSTENTION_RECORDED", status="PASSED"),
     "SYNTHETIC_RESULT_FAILED": GateResult(gate_id="DECISION_COMPLETED", status="FAILED"),
     "SYNTHETIC_RESULT_PENDING": GateResult(
         gate_id="ADJUDICATION_COMPLETED",
