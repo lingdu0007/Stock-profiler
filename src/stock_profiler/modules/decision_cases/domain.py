@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -89,16 +89,6 @@ class GateResult(FrozenContract):
     status: Literal["PASSED", "FAILED", "UNKNOWN"]
 
 
-DecisionResultStatus = Literal[
-    "SUCCEEDED",
-    "REJECTED",
-    "ABSTAINED",
-    "FAILED",
-    "PENDING",
-    "EXPIRED",
-    "EXECUTION_BLOCKED",
-    "UNKNOWN",
-]
 BusinessResultStatus = Literal["SUCCEEDED", "REJECTED", "ABSTAINED", "FAILED"]
 BusinessLifecycleStatus = Literal[
     "PENDING",
@@ -132,21 +122,13 @@ StageStatus = Literal[
     "CANCELLED",
 ]
 BusinessCommitStatus = Literal["NOT_ATTEMPTED", "COMMITTED", "UNKNOWN"]
+_BUSINESS_RESULT_STATUSES = frozenset(get_args(BusinessResultStatus))
+_BUSINESS_LIFECYCLE_STATUSES = frozenset(get_args(BusinessLifecycleStatus))
+_FRAMEWORK_RUN_STATUSES = frozenset(get_args(FrameworkRunStatus))
+_COMMITTABLE_HOST_RESULT_STATUSES = _BUSINESS_RESULT_STATUSES - {"FAILED"}
 _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
-    "FRAMEWORK_RUN": frozenset(
-        {"CREATED", "RUNNING", "WAITING", "SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}
-    ),
-    "HOST_VALIDATION": frozenset(
-        {
-            "SUCCEEDED",
-            "REJECTED",
-            "ABSTAINED",
-            "FAILED",
-            "PENDING",
-            "EXPIRED",
-            "EXECUTION_BLOCKED",
-        }
-    ),
+    "FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
+    "HOST_VALIDATION": _BUSINESS_RESULT_STATUSES | _BUSINESS_LIFECYCLE_STATUSES,
     "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "UNKNOWN"}),
     "PUBLICATION": frozenset({"SUCCEEDED", "FAILED"}),
     "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
@@ -446,6 +428,7 @@ def host_validation_result(
     case: FrozenDecisionCase, result: ExternalResult
 ) -> StageResult:
     """Classify a typed framework result without collapsing host outcomes."""
+    recorded_reasons = (result.outcome_code, *result.key_reasons)
     valid_frozen_input = (
         case.synthetic
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
@@ -456,7 +439,7 @@ def host_validation_result(
             phase="HOST_VALIDATION",
             status="SUCCEEDED",
             gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),),
-            reasons=(),
+            reasons=recorded_reasons,
         )
     status = _SYNTHETIC_OUTCOME_STATUSES.get(result.outcome_code)
     if valid_frozen_input and status is not None:
@@ -464,7 +447,7 @@ def host_validation_result(
             phase="HOST_VALIDATION",
             status=status,
             gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="FAILED"),),
-            reasons=(result.outcome_code,),
+            reasons=recorded_reasons,
         )
     return StageResult(
         phase="HOST_VALIDATION",
@@ -474,7 +457,7 @@ def host_validation_result(
     )
 
 
-_SYNTHETIC_OUTCOME_STATUSES: dict[str, DecisionResultStatus] = {
+_SYNTHETIC_OUTCOME_STATUSES: dict[str, BusinessResultStatus | BusinessLifecycleStatus] = {
     "SYNTHETIC_INPUT_REJECTED": "REJECTED",
     "SYNTHETIC_RESULT_ABSTAINED": "ABSTAINED",
     "SYNTHETIC_RESULT_FAILED": "FAILED",
@@ -482,6 +465,48 @@ _SYNTHETIC_OUTCOME_STATUSES: dict[str, DecisionResultStatus] = {
     "SYNTHETIC_RESULT_EXPIRED": "EXPIRED",
     "SYNTHETIC_RESULT_EXECUTION_BLOCKED": "EXECUTION_BLOCKED",
 }
+
+
+def is_committable_host_validation_result(stage_result: StageResult) -> bool:
+    """Permit only host business outcomes that may become a committed fact."""
+    return (
+        stage_result.phase == "HOST_VALIDATION"
+        and stage_result.status in _COMMITTABLE_HOST_RESULT_STATUSES
+    )
+
+
+def business_result_status_from_stage(
+    stage_result: StageResult,
+) -> BusinessResultStatus | None:
+    """Extract a host business outcome while preserving lifecycle-only states."""
+    if (
+        stage_result.phase == "HOST_VALIDATION"
+        and stage_result.status in _BUSINESS_RESULT_STATUSES
+    ):
+        return cast(BusinessResultStatus, stage_result.status)
+    return None
+
+
+def business_lifecycle_status_from_stage(
+    stage_result: StageResult,
+) -> BusinessLifecycleStatus | None:
+    """Extract a lifecycle status only from the phase that owns it."""
+    if (
+        stage_result.phase == "HOST_VALIDATION"
+        and stage_result.status in _BUSINESS_LIFECYCLE_STATUSES
+    ):
+        return cast(BusinessLifecycleStatus, stage_result.status)
+    return None
+
+
+def framework_run_status_from_stage(stage_result: StageResult) -> FrameworkRunStatus:
+    """Read a saved framework state without treating host states as framework data."""
+    if (
+        stage_result.phase == "FRAMEWORK_RUN"
+        and stage_result.status in _FRAMEWORK_RUN_STATUSES
+    ):
+        return cast(FrameworkRunStatus, stage_result.status)
+    raise RuntimeError("stage result does not contain a framework run state")
 
 
 def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
