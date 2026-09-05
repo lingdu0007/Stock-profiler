@@ -7,6 +7,7 @@ import json
 
 from stock_profiler.adapters.authentication.passkeys import (
     AuthenticationError,
+    HostGrantPurpose,
     PasskeyAuthenticator,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -62,10 +63,19 @@ def main() -> None:
         try:
             grant_id = PasskeyAuthenticator(
                 initialize_runtime_storage(settings).engine, settings
-            ).create_host_console_grant(args.purpose)
+            ).create_host_console_grant(HostGrantPurpose(args.purpose))
         except AuthenticationError as error:
             parser.error(str(error))
-        print(json.dumps({"grant_id": grant_id, "purpose": args.purpose}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "enrollment_path": f"/enroll#{grant_id}",
+                    "grant_id": grant_id,
+                    "purpose": args.purpose,
+                },
+                sort_keys=True,
+            )
+        )
         return
     if args.command == "doctor":
         diagnostic = diagnostic_snapshot(settings)

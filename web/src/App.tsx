@@ -14,8 +14,11 @@ import {
 import {
   ApiResponseError,
   completePasskeyAuthentication,
+  completePasskeyRegistration,
   fetchFormalReport,
-  type FormalReport
+  fetchVersionBundle,
+  type FormalReport,
+  type VersionBundle
 } from "./api/client";
 
 const queryClient = new QueryClient({
@@ -62,6 +65,39 @@ function ReportPage() {
       {reportQuery.isPending && <p aria-live="polite">Loading report</p>}
       {reportQuery.isError && <p aria-live="polite">Report unavailable</p>}
       {reportQuery.data && <FormalReportView report={reportQuery.data} />}
+    </Shell>
+  );
+}
+
+const versionLabels: Array<[keyof VersionBundle, string]> = [
+  ["application_version", "Application"],
+  ["source_sha", "Source SHA"],
+  ["m_agent_version", "M-Agent"],
+  ["m_agent_wheel_url", "Release Wheel URL"],
+  ["m_agent_release_commit", "M-Agent Release commit"],
+  ["m_agent_wheel_sha256", "Wheel SHA-256"]
+];
+
+function VersionDiagnostics() {
+  const versionQuery = useQuery({
+    queryKey: ["diagnostics", "version"],
+    queryFn: fetchVersionBundle
+  });
+
+  return (
+    <Shell>
+      <section aria-live="polite" aria-label="Version bundle" className="report-section">
+        <h2>Version bundle</h2>
+        {versionQuery.isPending && <p>Loading</p>}
+        {versionQuery.isError && <p>Diagnostics unavailable</p>}
+        {versionQuery.data && (
+          <dl className="record-list">
+            {versionLabels.map(([key, label]) => (
+              <Record key={key} label={label} value={versionQuery.data[key]} />
+            ))}
+          </dl>
+        )}
+      </section>
     </Shell>
   );
 }
@@ -162,6 +198,59 @@ function SignInPage() {
   );
 }
 
+function EnrollmentPage() {
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const grantId = enrollmentGrantFromFragment();
+
+  async function enroll() {
+    if (!grantId) {
+      setError("Enrollment authorization is unavailable.");
+      return;
+    }
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await completePasskeyRegistration(grantId);
+      window.history.replaceState({}, "", "/sign-in");
+      navigate("/sign-in", { replace: true });
+    } catch {
+      setError("Passkey enrollment was not completed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Shell>
+      <section aria-label="Passkey enrollment" className="sign-in">
+        <h2>Enroll Passkey</h2>
+        {grantId ? (
+          <button className="passkey-button" disabled={isSubmitting} onClick={() => void enroll()}>
+            <KeyRound aria-hidden="true" size={18} />
+            {isSubmitting ? "Verifying Passkey" : "Enroll Passkey"}
+          </button>
+        ) : (
+          <p aria-live="polite" className="error-message">
+            Enrollment authorization is unavailable.
+          </p>
+        )}
+        {error && (
+          <p aria-live="polite" className="error-message">
+            {error}
+          </p>
+        )}
+      </section>
+    </Shell>
+  );
+}
+
+function enrollmentGrantFromFragment(): string | null {
+  const fragment = window.location.hash.slice(1);
+  return fragment || null;
+}
+
 function safeReturnPath(value: string | null): string {
   return value?.startsWith("/reports/") ? value : "/";
 }
@@ -171,9 +260,11 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          <Route path="/" element={<VersionDiagnostics />} />
           <Route path="/reports/:reportVersionId" element={<ReportPage />} />
           <Route path="/sign-in" element={<SignInPage />} />
-          <Route path="*" element={<Navigate replace to="/sign-in" />} />
+          <Route path="/enroll" element={<EnrollmentPage />} />
+          <Route path="*" element={<Navigate replace to="/" />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

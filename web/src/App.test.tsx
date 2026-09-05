@@ -44,4 +44,13 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Continue with Passkey" })).toBeVisible();
     expect(screen.queryByText(report.result.outcome_code)).not.toBeInTheDocument();
   });
+
+  it("does not expose a public enrollment action without a host-console grant fragment", async () => {
+    window.history.pushState({}, "", "/enroll");
+
+    render(<App />);
+
+    expect(await screen.findByText("Enrollment authorization is unavailable.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Enroll Passkey" })).not.toBeInTheDocument();
+  });
 });

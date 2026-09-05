@@ -6,7 +6,7 @@ import json
 from hashlib import sha256
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
@@ -15,7 +15,7 @@ from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_p
 class FrozenContract(BaseModel):
     """Reject unversioned fields so a frozen case cannot silently expand."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
 
 class EvidenceClock(FrozenContract):
@@ -43,6 +43,24 @@ class DecisionCaseVersionBundle(FrozenContract):
     m_agent_wheel_url: str
     m_agent_wheel_sha256: str
     m_agent_release_commit: str
+
+
+class FrozenOutputContract(FrozenContract):
+    """The versioned framework output contract frozen into one decision case."""
+
+    contract_id: str
+    version: str
+    json_schema: dict[str, Any] = Field(alias="schema", serialization_alias="schema")
+
+
+class FrozenAgentDefinition(FrozenContract):
+    """The complete host-owned source for one frozen M-Agent definition."""
+
+    definition_id: str
+    version: str
+    instructions: str
+    model_adapter_id: str
+    output_contract: FrozenOutputContract
 
 
 class ExternalResult(FrozenContract):
@@ -94,6 +112,23 @@ class DecisionEventFact(FrozenContract):
     validation_status: str
     committed_at: str
 
+    def formal_report(self, report_version_id: str) -> FormalReport:
+        """Project this complete append-only fact into its one read-only report."""
+        return FormalReport(
+            report_version_id=report_version_id,
+            event_id=self.decision_event_id,
+            business_object_id=self.business_object_id,
+            framework_run_id=self.framework_run_id,
+            case_id=self.case.case_id,
+            synthetic=True,
+            qualification_scope=self.case.qualification_scope,
+            generated_at=self.case.report_generated_at,
+            knowledge_cutoff=self.case.knowledge_cutoff,
+            evidence_clock=self.case.evidence_clock,
+            version_bundle=self.case.version_bundle,
+            result=self.result,
+        )
+
 
 class FrozenDecisionCase(FrozenContract):
     """One replayable synthetic decision input with all clocks and contracts fixed."""
@@ -108,6 +143,7 @@ class FrozenDecisionCase(FrozenContract):
     evidence_clock: EvidenceClock
     qualification_scope: str
     version_bundle: DecisionCaseVersionBundle
+    agent_definition: FrozenAgentDefinition
     input: dict[str, Any]
     expected_external_result: ExternalResult
 
@@ -122,6 +158,14 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("frozen decision cases require stable identities")
         if not self.qualification_scope.startswith("D0_"):
             raise ValueError("frozen decision cases are limited to the D0 synthetic scope")
+        if (
+            self.agent_definition.definition_id != self.version_bundle.agent_definition_id
+            or self.agent_definition.version != self.version_bundle.agent_definition_version
+            or self.agent_definition.model_adapter_id != self.version_bundle.model_adapter_id
+            or self.agent_definition.output_contract.version
+            != self.version_bundle.output_contract_version
+        ):
+            raise ValueError("frozen AgentDefinition must match the version bundle")
         return self
 
     @property

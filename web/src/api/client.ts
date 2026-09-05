@@ -1,5 +1,7 @@
 import {
+  startRegistration,
   startAuthentication,
+  type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON
 } from "@simplewebauthn/browser";
 import createClient from "openapi-fetch";
@@ -16,6 +18,7 @@ const client = createClient<paths>({
 });
 
 export type FormalReport = components["schemas"]["FormalReport"];
+export type VersionBundle = components["schemas"]["VersionDiagnosticDto"];
 
 export class ApiResponseError extends Error {
   constructor(readonly status: number) {
@@ -31,6 +34,35 @@ export async function fetchFormalReport(reportVersionId: string): Promise<Formal
     throw new ApiResponseError(response.status);
   }
   return data;
+}
+
+export async function fetchVersionBundle(): Promise<VersionBundle> {
+  const { data, response } = await client.GET("/api/v1/diagnostics/version");
+  if (!data) {
+    throw new ApiResponseError(response.status);
+  }
+  return data;
+}
+
+export async function completePasskeyRegistration(grantId: string): Promise<void> {
+  const optionsResponse = await client.POST("/api/v1/auth/passkeys/registration/options", {
+    params: { header: { "X-Host-Console-Grant": grantId } }
+  });
+  if (!optionsResponse.data) {
+    throw new ApiResponseError(optionsResponse.response.status);
+  }
+  const credential = await startRegistration({
+    optionsJSON: optionsResponse.data.options as unknown as PublicKeyCredentialCreationOptionsJSON
+  });
+  const verifyResponse = await client.POST("/api/v1/auth/passkeys/registration/verify", {
+    body: {
+      challenge_id: optionsResponse.data.challenge_id,
+      credential: credential as unknown as Record<string, unknown>
+    }
+  });
+  if (!verifyResponse.response.ok) {
+    throw new ApiResponseError(verifyResponse.response.status);
+  }
 }
 
 export async function completePasskeyAuthentication(): Promise<void> {

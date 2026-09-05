@@ -20,7 +20,10 @@ Before rendering it, set a complete Git SHA, its commit epoch,
 `STOCK_PROFILER_AUTH_ORIGIN` to a complete HTTPS origin, and
 `STOCK_PROFILER_AUTH_RP_ID` to the matching relying-party ID. Set
 `STOCK_PROFILER_GATEWAY_HOSTNAME` to that stable private hostname and
-`STOCK_PROFILER_GATEWAY_BIND_ADDRESS` to its private VPN address. Production
+`STOCK_PROFILER_GATEWAY_BIND_ADDRESS` to its private IPv4 VPN address.
+The gateway permits only loopback, RFC1918, and CGNAT bind ranges and verifies
+the mounted certificate's validity, hostname, and key pair before serving.
+Production
 secrets, including the gateway TLS certificate and private key, are
 deployment-local files mounted at `/run/secrets`; set the corresponding
 `STOCK_PROFILER_*_FILE` variables to absolute paths outside the repository.

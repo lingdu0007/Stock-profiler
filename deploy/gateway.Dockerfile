@@ -7,15 +7,19 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 LABEL org.opencontainers.image.revision=${SOURCE_SHA}
 
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY deploy/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint
 COPY web/dist /srv
 
-RUN addgroup -S -g 10001 stock-profiler \
+RUN apk add --no-cache openssl su-exec \
+    && addgroup -S -g 10001 stock-profiler \
     && adduser -S -D -H -u 10001 -G stock-profiler stock-profiler \
     && mkdir -p /config/caddy /data/caddy \
     && chown -R stock-profiler:stock-profiler /config /data /etc/caddy /srv \
+    && chmod 755 /usr/local/bin/gateway-entrypoint \
     && find /etc/caddy/Caddyfile /srv -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 ENV XDG_CONFIG_HOME=/config
 ENV XDG_DATA_HOME=/data
 
-USER 10001:10001
+USER root
+ENTRYPOINT ["/usr/local/bin/gateway-entrypoint"]

@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from stock_profiler.adapters.authentication.passkeys import (
     AuthenticationError,
+    HostGrantPurpose,
     PasskeyAuthenticator,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -40,7 +41,7 @@ def test_host_grants_and_recent_reauthentication_use_the_injected_clock(
         settings,
         clock=clock,
     )
-    grant_id = authenticator.create_host_console_grant("bootstrap")
+    grant_id = authenticator.create_host_console_grant(HostGrantPurpose.BOOTSTRAP)
 
     authenticator.registration_options(grant_id)
     clock.advance(timedelta(minutes=10))

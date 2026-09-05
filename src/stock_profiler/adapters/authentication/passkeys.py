@@ -7,8 +7,10 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from hashlib import sha256
 
+from pydantic import SecretStr
 from sqlalchemy import select, update
 from sqlalchemy.engine import Engine
 from webauthn import (
@@ -39,6 +41,21 @@ class AuthenticationError(RuntimeError):
     """Authentication data is missing, expired, invalid, or not authorized."""
 
 
+class HostGrantPurpose(StrEnum):
+    """The only direct-console grants that may start passkey enrollment."""
+
+    BOOTSTRAP = "bootstrap"
+    RECOVERY = "recovery"
+
+
+class ChallengePurpose(StrEnum):
+    """The small fixed set of one-time WebAuthn ceremonies."""
+
+    REGISTRATION = "registration"
+    AUTHENTICATION = "authentication"
+    REAUTHENTICATION = "reauthentication"
+
+
 @dataclass(frozen=True)
 class SessionAccess:
     """Validated session identity plus the remaining browser-cookie lifetime."""
@@ -55,25 +72,21 @@ class PasskeyAuthenticator:
         self._settings = settings
         self._clock = clock or UtcClock()
 
-    def create_host_console_grant(self, purpose: str) -> str:
+    def create_host_console_grant(self, purpose: HostGrantPurpose) -> str:
         """Mint one 10-minute enrollment grant from the directly operated host console."""
-        expected_secret = (
-            self._settings.auth_bootstrap_token
-            if purpose == "bootstrap"
-            else self._settings.auth_recovery_token
-        )
+        expected_secret = self._host_grant_secret(purpose)
         expected = expected_secret.get_secret_value() if expected_secret else ""
-        if purpose not in {"bootstrap", "recovery"} or not expected:
+        if not expected:
             raise AuthenticationError("host console authorization failed")
         grant_id = secrets.token_urlsafe(32)
         with self._engine.begin() as connection:
             connection.execute(
                 AUTH_HOST_GRANTS.insert().values(
                     grant_id=grant_id,
-                    purpose=purpose,
+                    purpose=purpose.value,
                     expires_at=self._expires(
                         self._settings.auth_bootstrap_token_ttl_seconds
-                        if purpose == "bootstrap"
+                        if purpose is HostGrantPurpose.BOOTSTRAP
                         else self._settings.auth_recovery_token_ttl_seconds
                     ),
                 )
@@ -90,10 +103,12 @@ class PasskeyAuthenticator:
             user_display_name="Stock Profiler User",
             timeout=self._settings.auth_challenge_ttl_seconds * 1000,
         )
-        return self._save_challenge("registration", options.challenge, grant_id, options)
+        return self._save_challenge(
+            ChallengePurpose.REGISTRATION, options.challenge, grant_id, options
+        )
 
     def registration_verify(self, challenge_id: str, credential: dict[str, object]) -> None:
-        challenge, grant_id = self._consume_challenge(challenge_id, "registration")
+        challenge, grant_id = self._consume_challenge(challenge_id, ChallengePurpose.REGISTRATION)
         if grant_id is None:
             raise AuthenticationError("registration is missing a host console grant")
         verified = verify_registration_response(
@@ -113,7 +128,9 @@ class PasskeyAuthenticator:
                 )
             )
 
-    def authentication_options(self, purpose: str = "authentication") -> dict[str, object]:
+    def authentication_options(
+        self, purpose: ChallengePurpose = ChallengePurpose.AUTHENTICATION
+    ) -> dict[str, object]:
         with self._engine.connect() as connection:
             credentials = (
                 connection.execute(select(AUTH_CREDENTIALS.c.credential_id)).scalars().all()
@@ -131,13 +148,16 @@ class PasskeyAuthenticator:
         return self._save_challenge(purpose, options.challenge, None, options)
 
     def authentication_verify(
-        self, challenge_id: str, credential: dict[str, object], purpose: str = "authentication"
+        self,
+        challenge_id: str,
+        credential: dict[str, object],
+        purpose: ChallengePurpose = ChallengePurpose.AUTHENTICATION,
     ) -> tuple[str, str]:
         credential_id = self.verify_assertion(challenge_id, credential, purpose)
         return self._create_session(credential_id)
 
     def verify_assertion(
-        self, challenge_id: str, credential: dict[str, object], purpose: str
+        self, challenge_id: str, credential: dict[str, object], purpose: ChallengePurpose
     ) -> str:
         """Verify one assertion and advance its stored signature counter."""
         challenge, _ = self._consume_challenge(challenge_id, purpose)
@@ -210,7 +230,7 @@ class PasskeyAuthenticator:
         self, session_token: str | None, csrf_token: str | None, credential_id: str
     ) -> SessionAccess:
         """Mark an active session recent only after CSRF and same-credential verification."""
-        access = self._authorize_session_mutation(session_token, csrf_token)
+        access = self.require_mutable_session(session_token, csrf_token)
         if access.credential_id != credential_id:
             raise AuthenticationError("reauthentication credential does not match the session")
         with self._engine.begin() as connection:
@@ -221,11 +241,28 @@ class PasskeyAuthenticator:
             )
         return access
 
-    def authorize_session_mutation(
+    def require_mutable_session(
         self, session_token: str | None, csrf_token: str | None
     ) -> SessionAccess:
         """Require a live opaque session and its double-submit CSRF token."""
-        return self._authorize_session_mutation(session_token, csrf_token)
+        if not session_token or not csrf_token:
+            raise AuthenticationError("session and CSRF token are required")
+        with self._engine.connect() as connection:
+            stored = (
+                connection.execute(
+                    select(AUTH_SESSIONS).where(
+                        AUTH_SESSIONS.c.session_hash == _digest(session_token)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        self._validate_session_mutation(stored, csrf_token)
+        assert stored is not None
+        return SessionAccess(
+            credential_id=str(stored["credential_id"]),
+            cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
+        )
 
     def logout(self, session_token: str | None, csrf_token: str | None) -> None:
         """Destroy one authenticated browser session after its double-submit CSRF check."""
@@ -267,7 +304,7 @@ class PasskeyAuthenticator:
 
     def _save_challenge(
         self,
-        purpose: str,
+        purpose: ChallengePurpose,
         challenge: bytes,
         grant_id: str | None,
         options: PublicKeyCredentialCreationOptions | PublicKeyCredentialRequestOptions,
@@ -277,7 +314,7 @@ class PasskeyAuthenticator:
             connection.execute(
                 AUTH_CHALLENGES.insert().values(
                     challenge_id=challenge_id,
-                    purpose=purpose,
+                    purpose=purpose.value,
                     challenge=bytes_to_base64url(challenge),
                     grant_id=grant_id,
                     expires_at=self._expires(self._settings.auth_challenge_ttl_seconds),
@@ -285,7 +322,9 @@ class PasskeyAuthenticator:
             )
         return {"challenge_id": challenge_id, "options": json.loads(options_to_json(options))}
 
-    def _consume_challenge(self, challenge_id: str, purpose: str) -> tuple[bytes, str | None]:
+    def _consume_challenge(
+        self, challenge_id: str, purpose: ChallengePurpose
+    ) -> tuple[bytes, str | None]:
         with self._engine.begin() as connection:
             stored = (
                 connection.execute(
@@ -296,7 +335,7 @@ class PasskeyAuthenticator:
             )
             if (
                 stored is None
-                or stored["purpose"] != purpose
+                or stored["purpose"] != purpose.value
                 or self._expired(stored["expires_at"])
             ):
                 raise AuthenticationError("challenge expired or invalid")
@@ -335,28 +374,6 @@ class PasskeyAuthenticator:
             raise AuthenticationError("host console grant expired or invalid")
         connection.execute(AUTH_HOST_GRANTS.delete().where(AUTH_HOST_GRANTS.c.grant_id == grant_id))
 
-    def _authorize_session_mutation(
-        self, session_token: str | None, csrf_token: str | None
-    ) -> SessionAccess:
-        if not session_token or not csrf_token:
-            raise AuthenticationError("session and CSRF token are required")
-        with self._engine.connect() as connection:
-            stored = (
-                connection.execute(
-                    select(AUTH_SESSIONS).where(
-                        AUTH_SESSIONS.c.session_hash == _digest(session_token)
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-        self._validate_session_mutation(stored, csrf_token)
-        assert stored is not None
-        return SessionAccess(
-            credential_id=str(stored["credential_id"]),
-            cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
-        )
-
     def _validate_session_mutation(self, stored: object, csrf_token: str | None) -> None:
         if not isinstance(stored, Mapping) or not csrf_token:
             raise AuthenticationError("session logout was not authorized")
@@ -366,6 +383,12 @@ class PasskeyAuthenticator:
             or not secrets.compare_digest(str(stored["csrf_hash"]), _digest(csrf_token))
         ):
             raise AuthenticationError("session logout was not authorized")
+
+    def _host_grant_secret(self, purpose: HostGrantPurpose) -> SecretStr | None:
+        """Select the direct-console secret without accepting arbitrary purpose strings."""
+        if purpose is HostGrantPurpose.BOOTSTRAP:
+            return self._settings.auth_bootstrap_token
+        return self._settings.auth_recovery_token
 
     def _now(self) -> str:
         return self._clock.now().isoformat()

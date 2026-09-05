@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from importlib.metadata import version
 
 from m_agent.adapters import DeterministicModelAdapter
 from m_agent.runtime import (
@@ -17,7 +18,16 @@ from m_agent.runtime import (
 )
 
 from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
+from stock_profiler.foundation.versioning import (
+    M_AGENT_DISTRIBUTION,
+    M_AGENT_RELEASE_COMMIT,
+    M_AGENT_WHEEL_SHA256,
+    M_AGENT_WHEEL_URL,
+)
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+
+DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
+D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
 
 
 @dataclass(frozen=True)
@@ -33,28 +43,20 @@ async def execute_frozen_decision_case(
     case: FrozenDecisionCase, runtime: RuntimeStorage
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
+    _assert_runtime_version_bundle(case)
     adapter = DeterministicModelAdapter(
         responses=(case.expected_external_result.model_dump_json(),),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
     )
     definition = AgentDefinition.for_adapter(
-        definition_id=case.version_bundle.agent_definition_id,
-        version=case.version_bundle.agent_definition_version,
-        instructions="Return only the frozen synthetic decision-case external result as JSON.",
+        definition_id=case.agent_definition.definition_id,
+        version=case.agent_definition.version,
+        instructions=case.agent_definition.instructions,
         model_adapter=adapter,
         output_contract=OutputContract(
-            contract_id="synthetic-decision-case-output",
-            version=case.version_bundle.output_contract_version,
-            schema={
-                "type": "object",
-                "properties": {
-                    "outcome_code": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "key_reasons": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["outcome_code", "summary", "key_reasons"],
-                "additionalProperties": False,
-            },
+            contract_id=case.agent_definition.output_contract.contract_id,
+            version=case.agent_definition.output_contract.version,
+            schema=case.agent_definition.output_contract.json_schema,
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
     )
@@ -72,3 +74,21 @@ async def execute_frozen_decision_case(
         )
         run = await runner.start_run(created.run_id)
     return FrameworkRunResult(run_id=run.run_id, status=run.status.value, output=run.output)
+
+
+def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
+    """Reject frozen metadata that does not describe the installed deterministic route."""
+    bundle = case.version_bundle
+    if (
+        bundle.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
+        or bundle.routing_policy_version != D0_ROUTING_POLICY_VERSION
+        or case.agent_definition.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
+    ):
+        raise ValueError("frozen deterministic route does not match the runtime adapter")
+    if (
+        bundle.m_agent_version != version(M_AGENT_DISTRIBUTION)
+        or bundle.m_agent_wheel_url != M_AGENT_WHEEL_URL
+        or bundle.m_agent_wheel_sha256 != M_AGENT_WHEEL_SHA256
+        or bundle.m_agent_release_commit != M_AGENT_RELEASE_COMMIT
+    ):
+        raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
