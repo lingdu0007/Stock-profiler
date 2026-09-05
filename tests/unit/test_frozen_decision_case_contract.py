@@ -142,10 +142,13 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     case = load_frozen_decision_case(migrated_settings)
     contradictory_scope = case.model_copy(update={"qualification_scope": "D0_REAL_RECOMMENDATION"})
 
-    assert host_validation_result(
-        contradictory_scope,
-        case.expected_external_result,
-    ).status == "FAILED"
+    assert (
+        host_validation_result(
+            contradictory_scope,
+            case.expected_external_result,
+        ).status
+        == "FAILED"
+    )
 
 
 def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_identity_set(
@@ -174,6 +177,7 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
         )
         registry = DefinitionRegistry()
         registry.register(definition)
+
         def crash_after_model_checkpoint(point: CrashPoint, run_id: str) -> None:
             if point is CrashPoint.AFTER_MODEL_CHECKPOINT and run_id == case.framework_run_id:
                 raise RuntimeError("synthetic worker interruption after model checkpoint")

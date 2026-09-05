@@ -401,14 +401,30 @@ class FrozenDecisionCase(FrozenContract):
             },
         )
 
+    def matches_recovery_input(self, other: FrozenDecisionCase) -> bool:
+        """Allow source identity updates while rejecting a changed frozen input."""
+        own_payload = self.model_dump(mode="json")
+        other_payload = other.model_dump(mode="json")
+        own_bundle = own_payload["version_bundle"]
+        other_bundle = other_payload["version_bundle"]
+        assert isinstance(own_bundle, dict)
+        assert isinstance(other_bundle, dict)
+        own_bundle.pop("host_source_sha")
+        other_bundle.pop("host_source_sha")
+        return own_payload == other_payload
+
     @property
     def decision_event_id(self) -> str:
         """Reserve a host-owned append-only event identity without reusing the Run ID."""
+        return self.decision_event_id_for_framework_run(self.framework_run_id)
+
+    def decision_event_id_for_framework_run(self, framework_run_id: str) -> str:
+        """Allocate an event identity for a recovered original M-Agent Run."""
         return _stable_id(
             "decision-event",
             {
                 "business_object_id": self.business_object_id,
-                "framework_run_id": self.framework_run_id,
+                "framework_run_id": framework_run_id,
                 "expected_external_result": self.expected_external_result.model_dump(mode="json"),
                 "version_bundle": self.version_bundle.model_dump(mode="json"),
             },
@@ -417,10 +433,14 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def report_version_id(self) -> str:
         """Reserve the report identity separately from its source decision event."""
+        return self.report_version_id_for_event(self.decision_event_id)
+
+    def report_version_id_for_event(self, decision_event_id: str) -> str:
+        """Allocate a projection identity for one retained decision event."""
         return _stable_id(
             "report-version",
             {
-                "decision_event_id": self.decision_event_id,
+                "decision_event_id": decision_event_id,
                 "report_projection_contract_version": (
                     self.version_bundle.report_projection_contract_version
                 ),
@@ -488,9 +508,7 @@ _COMPLETE_SYNTHETIC_INPUT = {
 }
 
 
-def host_validation_result(
-    case: FrozenDecisionCase, result: ExternalResult
-) -> StageResult:
+def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
     """Classify a typed framework result without collapsing host outcomes."""
     recorded_reasons = result.key_reasons
     valid_frozen_input = (
@@ -544,10 +562,7 @@ def business_result_status_from_stage(
     stage_result: StageResult,
 ) -> BusinessResultStatus | None:
     """Extract a host business outcome while preserving lifecycle-only states."""
-    if (
-        stage_result.phase == "HOST_VALIDATION"
-        and stage_result.status in _BUSINESS_RESULT_STATUSES
-    ):
+    if stage_result.phase == "HOST_VALIDATION" and stage_result.status in _BUSINESS_RESULT_STATUSES:
         return cast(BusinessResultStatus, stage_result.status)
     return None
 
@@ -566,10 +581,7 @@ def business_lifecycle_status_from_stage(
 
 def framework_run_status_from_stage(stage_result: StageResult) -> FrameworkRunStatus:
     """Read a saved framework state without treating host states as framework data."""
-    if (
-        stage_result.phase == "FRAMEWORK_RUN"
-        and stage_result.status in _FRAMEWORK_RUN_STATUSES
-    ):
+    if stage_result.phase == "FRAMEWORK_RUN" and stage_result.status in _FRAMEWORK_RUN_STATUSES:
         return cast(FrameworkRunStatus, stage_result.status)
     raise RuntimeError("stage result does not contain a framework run state")
 

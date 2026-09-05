@@ -27,9 +27,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    stage_count = op.get_bind().execute(
-        sa.text("SELECT COUNT(*) FROM decision_stage_events")
-    ).scalar_one()
+    stage_count = (
+        op.get_bind().execute(sa.text("SELECT COUNT(*) FROM decision_stage_events")).scalar_one()
+    )
     if stage_count:
         raise RuntimeError("cannot downgrade while append-only stage results exist")
     op.drop_table("decision_stage_events")

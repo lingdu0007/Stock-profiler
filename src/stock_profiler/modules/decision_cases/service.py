@@ -86,9 +86,7 @@ def retry_default_frozen_decision_case_notification(
             stage_result=StageResult(
                 phase="NOTIFICATION",
                 status=attempt.status,
-                gate_results=(
-                    GateResult(gate_id="FORMAL_REPORT_PUBLISHED", status="PASSED"),
-                ),
+                gate_results=(GateResult(gate_id="FORMAL_REPORT_PUBLISHED", status="PASSED"),),
                 reasons=attempt.reasons,
             ),
         )
@@ -120,28 +118,27 @@ def correct_default_frozen_decision_case(
             connection,
         )
         if correction_event is None:
-            correction_event_id = case.correction_event_id(original_event.decision_event_id)
+            original_case = original_event.case
+            correction_event_id = original_case.correction_event_id(
+                original_event.decision_event_id
+            )
             correction_stages = (
                 StageResult(
                     phase="CORRECTION",
                     status="SUCCEEDED",
-                    gate_results=(
-                        GateResult(gate_id="ORIGINAL_EVENT_RETAINED", status="PASSED"),
-                    ),
+                    gate_results=(GateResult(gate_id="ORIGINAL_EVENT_RETAINED", status="PASSED"),),
                     reasons=("SYNTHETIC_CORRECTION_RECORDED",),
                 ),
                 StageResult(
                     phase="BUSINESS_COMMIT",
                     status="SUCCEEDED",
-                    gate_results=(
-                        GateResult(gate_id="CORRECTION_RESULT_SAVED", status="PASSED"),
-                    ),
+                    gate_results=(GateResult(gate_id="CORRECTION_RESULT_SAVED", status="PASSED"),),
                     reasons=(),
                 ),
             )
             correction_event = ledger.commit_event(
                 connection,
-                case=case,
+                case=original_case,
                 framework_run_id=original_event.framework_run_id,
                 result=ExternalResult(
                     outcome_code="SYNTHETIC_CORRECTION_RECORDED",
@@ -201,17 +198,30 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
 
         fact = ledger.get_original_decision_event(case.business_object_id, connection)
         if fact is None:
-            ledger.ensure_business_object(connection, case)
-            framework = asyncio.run(execute_frozen_decision_case(case, runtime))
-            framework_result = _framework_stage_result(case, framework)
+            mapping = ledger.get_business_object_mapping(case.business_object_id, connection)
+            if mapping is None:
+                ledger.ensure_business_object(connection, case)
+                execution_case = case
+            elif mapping.case is None:
+                if mapping.frozen_input_fingerprint != case.frozen_input_fingerprint:
+                    raise DecisionEventCommitError(
+                        "business mapping has no recoverable frozen case snapshot"
+                    )
+                execution_case = case
+            elif not mapping.case.matches_recovery_input(case):
+                raise DecisionEventCommitError("business identity maps to different frozen input")
+            else:
+                execution_case = mapping.case
+            framework = asyncio.run(execute_frozen_decision_case(execution_case, runtime))
+            framework_result = _framework_stage_result(execution_case, framework)
             ledger.record_stage_result(
                 connection,
-                case=case,
+                case=execution_case,
                 stage_result=framework_result,
             )
-            if framework.run_id != case.framework_run_id:
+            if framework.run_id != execution_case.framework_run_id:
                 return _unpublished_execution(
-                    case,
+                    execution_case,
                     framework_run_status=framework_run_status_from_stage(framework_result),
                     business_result_status=None,
                     business_lifecycle_status=None,
@@ -220,7 +230,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 )
             if framework.status != "SUCCEEDED":
                 return _unpublished_execution(
-                    case,
+                    execution_case,
                     framework_run_status=framework.status,
                     business_result_status=None,
                     business_lifecycle_status=None,
@@ -235,16 +245,16 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 except ValidationError:
                     validation_result = _failed_host_validation("OUTPUT_CONTRACT_INVALID")
                 else:
-                    validation_result = host_validation_result(case, result)
+                    validation_result = host_validation_result(execution_case, result)
             ledger.record_stage_result(
                 connection,
-                case=case,
+                case=execution_case,
                 stage_result=validation_result,
             )
             stage_results_before_commit = (framework_result, validation_result)
             if not is_committable_host_validation_result(validation_result):
                 return _unpublished_execution(
-                    case,
+                    execution_case,
                     framework_run_status=framework.status,
                     business_result_status=business_result_status_from_stage(validation_result),
                     business_lifecycle_status=business_lifecycle_status_from_stage(
@@ -267,13 +277,16 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             try:
                 fact = ledger.commit_event(
                     connection,
-                    case=case,
+                    case=execution_case,
                     framework_run_id=framework.run_id,
                     result=result,
                     stage_results=stage_results,
                 )
             except DecisionEventCommitUncertainError:
-                committed = ledger.get_decision_event(case.decision_event_id, connection)
+                committed = ledger.get_decision_event(
+                    execution_case.decision_event_id,
+                    connection,
+                )
                 if committed is not None:
                     fact = committed
                 else:
@@ -290,15 +303,13 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     )
                     ledger.record_stage_result(
                         connection,
-                        case=case,
+                        case=execution_case,
                         stage_result=uncertain_commit,
                     )
                     return _unpublished_execution(
-                        case,
+                        execution_case,
                         framework_run_status=framework.status,
-                        business_result_status=business_result_status_from_stage(
-                            validation_result
-                        ),
+                        business_result_status=business_result_status_from_stage(validation_result),
                         business_lifecycle_status=None,
                         business_commit_status="UNKNOWN",
                         stage_results=(
@@ -307,7 +318,10 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                         ),
                     )
             except DecisionEventCommitError:
-                committed = ledger.get_decision_event(case.decision_event_id, connection)
+                committed = ledger.get_decision_event(
+                    execution_case.decision_event_id,
+                    connection,
+                )
                 if committed is not None:
                     fact = committed
                 else:
@@ -324,15 +338,13 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     )
                     ledger.record_stage_result(
                         connection,
-                        case=case,
+                        case=execution_case,
                         stage_result=failed_commit,
                     )
                     return _unpublished_execution(
-                        case,
+                        execution_case,
                         framework_run_status=framework.status,
-                        business_result_status=business_result_status_from_stage(
-                            validation_result
-                        ),
+                        business_result_status=business_result_status_from_stage(validation_result),
                         business_lifecycle_status=None,
                         business_commit_status="FAILED",
                         stage_results=(
@@ -355,12 +367,15 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             )
             ledger.record_stage_result(
                 connection,
-                case=case,
+                case=fact.case,
                 stage_result=publication_failure,
                 decision_event_id=fact.decision_event_id,
             )
             return _unpublished_execution(
-                case,
+                fact.case,
+                framework_run_id=fact.framework_run_id,
+                decision_event_id=fact.decision_event_id,
+                report_version_id=fact.case.report_version_id_for_event(fact.decision_event_id),
                 framework_run_status="SUCCEEDED",
                 business_result_status=_business_result_status_from_stages(fact.stage_results),
                 business_lifecycle_status=None,
@@ -369,7 +384,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             )
         ledger.record_stage_result(
             connection,
-            case=case,
+            case=fact.case,
             stage_result=report.stage_results[-1],
             decision_event_id=fact.decision_event_id,
         )
@@ -400,6 +415,9 @@ def _published_execution(report: FormalReport) -> DecisionCaseExecution:
 def _unpublished_execution(
     case: FrozenDecisionCase,
     *,
+    framework_run_id: str | None = None,
+    decision_event_id: str | None = None,
+    report_version_id: str | None = None,
     framework_run_status: FrameworkRunStatus,
     business_result_status: BusinessResultStatus | None,
     business_lifecycle_status: BusinessLifecycleStatus | None,
@@ -409,9 +427,9 @@ def _unpublished_execution(
     """Expose a closed publication gate without inventing a formal report."""
     return DecisionCaseExecution(
         business_object_id=case.business_object_id,
-        framework_run_id=case.framework_run_id,
-        decision_event_id=case.decision_event_id,
-        report_version_id=case.report_version_id,
+        framework_run_id=framework_run_id or case.framework_run_id,
+        decision_event_id=decision_event_id or case.decision_event_id,
+        report_version_id=report_version_id or case.report_version_id,
         framework_run_status=framework_run_status,
         business_result_status=business_result_status,
         business_lifecycle_status=business_lifecycle_status,
@@ -422,17 +440,13 @@ def _unpublished_execution(
     )
 
 
-def _framework_stage_result(
-    case: FrozenDecisionCase, framework: FrameworkRunResult
-) -> StageResult:
+def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunResult) -> StageResult:
     """Save the framework state before evaluating any host-owned result."""
     if framework.run_id != case.framework_run_id:
         return StageResult(
             phase="FRAMEWORK_RUN",
             status="FAILED",
-            gate_results=(
-                GateResult(gate_id="ORIGINAL_RUN_IDENTITY", status="FAILED"),
-            ),
+            gate_results=(GateResult(gate_id="ORIGINAL_RUN_IDENTITY", status="FAILED"),),
             reasons=("FRAMEWORK_IDENTITY_MISMATCH",),
         )
     if framework.status == "SUCCEEDED":
@@ -447,9 +461,7 @@ def _framework_stage_result(
         status=framework.status,
         gate_results=(GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
         reasons=(
-            framework.error_code
-            or framework.waiting_reason
-            or f"FRAMEWORK_{framework.status}",
+            framework.error_code or framework.waiting_reason or f"FRAMEWORK_{framework.status}",
         ),
     )
 
