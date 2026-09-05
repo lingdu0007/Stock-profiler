@@ -58,12 +58,19 @@ def _validate_existing_stage_event_table() -> None:
         has_sequence_primary_key,
     )
     has_unique_stage_event_id = _has_unique_stage_event_id(inspector)
+    has_no_extra_columns = columns.keys() == _REQUIRED_STAGE_EVENT_COLUMNS
+    has_no_extra_constraints = (
+        not inspector.get_foreign_keys("decision_stage_events")
+        and not inspector.get_check_constraints("decision_stage_events")
+    )
     if (
         missing_columns
         or incompatible_columns
+        or not has_no_extra_columns
         or not has_sequence_primary_key
         or not has_generated_sequence
         or not has_unique_stage_event_id
+        or not has_no_extra_constraints
     ):
         missing_schema = [
             *(f"column {column}" for column in sorted(missing_columns)),
@@ -85,7 +92,7 @@ def _has_expected_stage_event_column_definition(
     """Fail closed unless an interrupted column has the canonical storage semantics."""
     if column.get("nullable") is not (column_name == "decision_event_id"):
         return False
-    if column.get("default") is not None:
+    if column.get("default") is not None or column.get("computed") is not None:
         return False
     column_type = column.get("type")
     if column_name == "sequence":
@@ -104,21 +111,22 @@ def _has_generated_sequence(column: dict[str, object], has_primary_key: bool) ->
 
 
 def _has_unique_stage_event_id(inspector: sa.Inspector) -> bool:
-    """Recognize SQLite's automatic UNIQUE index after an interrupted table create."""
-    if any(
-        constraint.get("column_names") == ["stage_event_id"]
-        for constraint in inspector.get_unique_constraints("decision_stage_events")
-    ) or any(
-        index.get("unique") and index.get("column_names") == ["stage_event_id"]
-        for index in inspector.get_indexes("decision_stage_events")
-    ):
-        return True
+    """Accept only the canonical stage-event uniqueness and no secondary indexes."""
+    found_stage_event_id = False
+    for constraint in inspector.get_unique_constraints("decision_stage_events"):
+        if constraint.get("column_names") != ["stage_event_id"]:
+            return False
+        found_stage_event_id = True
+    for index in inspector.get_indexes("decision_stage_events"):
+        if not index.get("unique") or index.get("column_names") != ["stage_event_id"]:
+            return False
+        found_stage_event_id = True
     bind = op.get_bind()
     if bind.dialect.name != "sqlite":
-        return False
+        return found_stage_event_id
     for index in bind.execute(sa.text("PRAGMA index_list('decision_stage_events')")).mappings():
         if not index["unique"]:
-            continue
+            return False
         index_name = str(index["name"]).replace("'", "''")
         index_columns = [
             row["name"]
@@ -126,9 +134,10 @@ def _has_unique_stage_event_id(inspector: sa.Inspector) -> bool:
                 sa.text(f"PRAGMA index_info('{index_name}')")  # noqa: S608
             ).mappings()
         ]
-        if index_columns == ["stage_event_id"]:
-            return True
-    return False
+        if index_columns != ["stage_event_id"]:
+            return False
+        found_stage_event_id = True
+    return found_stage_event_id
 
 
 def upgrade() -> None:

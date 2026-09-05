@@ -141,7 +141,7 @@ def correct_default_frozen_decision_case(
             connection,
         )
         if correction_event is None:
-            correction_case = _correction_case(original_event.case)
+            correction_case = _correction_case(original_event.case, case)
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
@@ -167,7 +167,7 @@ def correct_default_frozen_decision_case(
                     reasons=(),
                 ),
             )
-            correction_written_at = ledger.observed_at()
+            correction_written_at = correction_case.report_generated_at
             attempted_fact = ledger.build_event_fact(
                 case=correction_case,
                 framework_run_id=original_event.framework_run_id,
@@ -318,7 +318,14 @@ def _run_frozen_decision_case(
                         )
                     )
                 except ValueError as error:
-                    raise DecisionEventCommitError("durable framework recovery failed") from error
+                    if str(error) == "mapped durable M-Agent Run is missing":
+                        raise DecisionEventCommitError(
+                            "business identity maps to a missing durable framework Run; "
+                            "durable framework recovery failed"
+                        ) from error
+                    raise DecisionEventCommitError(
+                        "durable framework recovery failed"
+                    ) from error
                 with ledger.serialize_case_execution() as connection:
                     existing_report = ledger.get_original_formal_report(
                         business_object_id,
@@ -489,7 +496,7 @@ def _commit_framework_result(
             reasons=(),
         ),
     )
-    committed_at = ledger.observed_at()
+    committed_at = execution_case.report_generated_at
     attempted_fact = ledger.build_event_fact(
         case=execution_case,
         framework_run_id=framework.run_id,
@@ -926,12 +933,19 @@ def _record_correction_commit_failure(
     )
 
 
-def _correction_case(original_case: FrozenDecisionCase) -> FrozenDecisionCase:
-    """Keep the sole D0 correction on the original frozen event contract."""
+def _correction_case(
+    original_case: FrozenDecisionCase,
+    current_case: FrozenDecisionCase,
+) -> FrozenDecisionCase:
+    """Retain the original Run while recording correction provenance from this host build."""
     return original_case.model_copy(
         update={
             "version_bundle": original_case.version_bundle.model_copy(
                 update={
+                    "host_application_version": (
+                        current_case.version_bundle.host_application_version
+                    ),
+                    "host_source_sha": current_case.version_bundle.host_source_sha,
                     "report_projection_contract_version": (
                         FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
                     )

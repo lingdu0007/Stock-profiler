@@ -39,6 +39,24 @@ _NOTIFICATION_ATTEMPT_STRING_COLUMN_LENGTHS = {
     "reasons_payload": None,
     "recorded_at": 40,
 }
+_REQUIRED_DECISION_EVENT_COLUMNS = frozenset(
+    {
+        "decision_event_id",
+        "business_object_id",
+        "framework_run_id",
+        "corrects_event_id",
+        "event_payload",
+        "committed_at",
+    }
+)
+_DECISION_EVENT_STRING_COLUMN_LENGTHS = {
+    "decision_event_id": 96,
+    "business_object_id": 96,
+    "framework_run_id": 96,
+    "corrects_event_id": 96,
+    "event_payload": None,
+    "committed_at": 40,
+}
 
 
 def _canonical_json(value: object) -> str:
@@ -420,6 +438,64 @@ def _decision_events_have_correction_lineage() -> bool:
     )
 
 
+def _decision_events_are_canonical() -> bool:
+    """Require the exact event table that permits append-only corrections."""
+    inspector = sa.inspect(op.get_bind())
+    columns = {
+        str(column["name"]): column for column in inspector.get_columns("decision_events")
+    }
+    if columns.keys() != _REQUIRED_DECISION_EVENT_COLUMNS:
+        return False
+    if inspector.get_pk_constraint("decision_events").get("constrained_columns") != [
+        "decision_event_id"
+    ]:
+        return False
+    if (
+        inspector.get_foreign_keys("decision_events")
+        or inspector.get_check_constraints("decision_events")
+    ):
+        return False
+    if not all(
+        _has_expected_decision_event_column_definition(columns[column_name], column_name)
+        for column_name in _REQUIRED_DECISION_EVENT_COLUMNS
+    ):
+        return False
+    if any(inspector.get_unique_constraints("decision_events")):
+        return False
+    if any(inspector.get_indexes("decision_events")):
+        return False
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        return True
+    for index in bind.execute(sa.text("PRAGMA index_list('decision_events')")).mappings():
+        index_name = str(index["name"]).replace("'", "''")
+        index_columns = [
+            row["name"]
+            for row in bind.execute(
+                sa.text(f"PRAGMA index_info('{index_name}')")  # noqa: S608
+            ).mappings()
+        ]
+        if index.get("origin") != "pk" or index_columns != ["decision_event_id"]:
+            return False
+    return True
+
+
+def _has_expected_decision_event_column_definition(
+    column: dict[str, object],
+    column_name: str,
+) -> bool:
+    """Fail closed unless an event column has the canonical storage semantics."""
+    if (
+        column.get("nullable") is not (column_name == "corrects_event_id")
+        or column.get("default") is not None
+        or column.get("computed") is not None
+    ):
+        return False
+    column_type = column.get("type")
+    expected_length = _DECISION_EVENT_STRING_COLUMN_LENGTHS[column_name]
+    return isinstance(column_type, sa.String) and column_type.length == expected_length
+
+
 def _repair_interrupted_event_table_replacement() -> None:
     """Complete or discard the only non-transactional DDL intermediate state."""
     has_events = _has_table("decision_events")
@@ -433,8 +509,9 @@ def _repair_interrupted_event_table_replacement() -> None:
 
 
 def _ensure_event_correction_lineage() -> None:
-    if _decision_events_have_correction_lineage():
+    if _decision_events_are_canonical():
         return
+    preserves_correction_lineage = _decision_events_have_correction_lineage()
     op.create_table(
         "decision_events_replacement",
         sa.Column("decision_event_id", sa.String(length=96), nullable=False),
@@ -445,26 +522,48 @@ def _ensure_event_correction_lineage() -> None:
         sa.Column("committed_at", sa.String(length=40), nullable=False),
         sa.PrimaryKeyConstraint("decision_event_id"),
     )
-    op.execute(
-        """
-        INSERT INTO decision_events_replacement (
-            decision_event_id,
-            business_object_id,
-            framework_run_id,
-            corrects_event_id,
-            event_payload,
-            committed_at
+    if preserves_correction_lineage:
+        op.execute(
+            """
+            INSERT INTO decision_events_replacement (
+                decision_event_id,
+                business_object_id,
+                framework_run_id,
+                corrects_event_id,
+                event_payload,
+                committed_at
+            )
+            SELECT
+                decision_event_id,
+                business_object_id,
+                framework_run_id,
+                corrects_event_id,
+                event_payload,
+                committed_at
+            FROM decision_events
+            """
         )
-        SELECT
-            decision_event_id,
-            business_object_id,
-            framework_run_id,
-            NULL,
-            event_payload,
-            committed_at
-        FROM decision_events
-        """
-    )
+    else:
+        op.execute(
+            """
+            INSERT INTO decision_events_replacement (
+                decision_event_id,
+                business_object_id,
+                framework_run_id,
+                corrects_event_id,
+                event_payload,
+                committed_at
+            )
+            SELECT
+                decision_event_id,
+                business_object_id,
+                framework_run_id,
+                NULL,
+                event_payload,
+                committed_at
+            FROM decision_events
+            """
+        )
     op.drop_table("decision_events")
     op.rename_table("decision_events_replacement", "decision_events")
 

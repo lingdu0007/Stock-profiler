@@ -147,13 +147,21 @@ class DecisionLedger:
         if row is None:
             return None
         try:
-            case = (
+            stored_case = (
                 FrozenDecisionCase.model_validate_json(row.case_payload)
                 if row.case_payload is not None
                 else None
             )
         except ValidationError as error:
             raise DecisionEventCommitError("stored frozen case snapshot is invalid") from error
+        case = stored_case
+        if (
+            stored_case is not None
+            and stored_case.framework_run_id != row.framework_run_id
+        ):
+            case = stored_case.model_copy(
+                update={"recovery_framework_run_id": row.framework_run_id}
+            )
         return BusinessObjectMapping(
             case_id=row.case_id,
             frozen_input_fingerprint=row.frozen_input_fingerprint,
@@ -290,6 +298,13 @@ class DecisionLedger:
             fact = DecisionEventFact.model_validate_json(payload)
         except ValidationError as error:
             raise DecisionEventCommitError("stored decision event is invalid") from error
+        mapping = self.get_business_object_mapping(business_object_id, connection)
+        has_recovered_mapping_for_fact = (
+            mapping is not None
+            and mapping.framework_run_id == framework_run_id
+            and mapping.case is not None
+            and mapping.case.matches_recovery_input(fact.case)
+        )
         expected_event_id = (
             fact.case.correction_event_id(fact.corrects_event_id)
             if fact.corrects_event_id is not None
@@ -303,7 +318,9 @@ class DecisionLedger:
             or fact.corrects_event_id != corrects_event_id
             or fact.case.business_object_id != business_object_id
             or (
-                not is_correction and fact.case.framework_run_id != framework_run_id
+                not is_correction
+                and fact.case.framework_run_id != framework_run_id
+                and not has_recovered_mapping_for_fact
             )
             or fact.decision_event_id != expected_event_id
         ):
@@ -325,7 +342,6 @@ class DecisionLedger:
                 raise DecisionEventCommitError(
                     "stored decision event does not match its durable lineage"
                 )
-        mapping = self.get_business_object_mapping(business_object_id, connection)
         if (
             mapping is None
             or mapping.case_id != fact.case.case_id

@@ -138,7 +138,7 @@ def find_unmapped_legacy_frozen_decision_case(
         separators=(",", ":"),
         sort_keys=True,
     )
-    candidates: list[FrozenDecisionCase] = []
+    candidates: dict[str, FrozenDecisionCase] = {}
     try:
         with sqlite3.connect(
             f"{runtime.m_agent_run_store_path.resolve().as_uri()}?mode=ro",
@@ -151,32 +151,35 @@ def find_unmapped_legacy_frozen_decision_case(
                     FROM runs
                     JOIN run_payloads
                       ON run_payloads.run_id = runs.run_id
-                    WHERE runs.run_id = ?
-                      AND runs.definition_id = ?
+                    WHERE runs.definition_id = ?
                       AND runs.definition_version = ?
                       AND run_payloads.field = ?
                       AND run_payloads.encoded = ?
                     ORDER BY runs.run_id
                     """,
                     (
-                        legacy_case.framework_run_id,
                         legacy_case.agent_definition.definition_id,
                         legacy_case.agent_definition.version,
                         _RUN_INPUT_FIELD,
                         _PLAINTEXT_PAYLOAD_PREFIX + expected_input.encode(),
                     ),
                 ).fetchall()
-                candidates.extend(
-                    legacy_case.model_copy(update={"recovery_framework_run_id": row[0]})
-                    for row in rows
-                )
+                for row in rows:
+                    run_id = str(row[0])
+                    if run_id != case.framework_run_id:
+                        candidates[run_id] = legacy_case
     except sqlite3.OperationalError as error:
         if "no such table" in str(error).lower():
             return None
         raise ValueError("cannot inspect durable M-Agent Run history") from error
     if len(candidates) > 1:
         raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    recovery_framework_run_id, legacy_case = next(iter(candidates.items()))
+    return legacy_case.model_copy(
+        update={"recovery_framework_run_id": recovery_framework_run_id}
+    )
 
 
 async def execute_frozen_decision_case(
