@@ -11,9 +11,10 @@ There is no shared table and no cross-database transaction.
 The host owns the frozen business identity, deterministic validation,
 append-only decision event, and formal report projection. M-Agent owns the
 durable framework Run. A framework `SUCCEEDED` state is not publication: the
-host validates typed output, commits the event and report atomically in its
-application database, then makes the report readable by its independent report
-version ID.
+host validates typed output, durably commits the append-only event, then
+publishes its report projection in a separate application transaction. A report
+is readable only after it references that committed event; a report-projection
+failure leaves the durable event without a readable report.
 
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic

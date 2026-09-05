@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/session/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Session */
+        post: operations["refresh_session_api_v1_auth_session_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/diagnostics/safety-capabilities": {
         parameters: {
             query?: never;
@@ -181,6 +198,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AuthenticationVerificationDto
+         * @description Pydantic transport contract for a completed passkey authentication.
+         */
+        AuthenticationVerificationDto: {
+            /** Csrf Token */
+            csrf_token: string;
+        };
         /** ChallengeDto */
         ChallengeDto: {
             /** Challenge Id */
@@ -292,6 +317,14 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * ReauthenticationVerificationDto
+         * @description Pydantic transport contract for a completed recent reauthentication.
+         */
+        ReauthenticationVerificationDto: {
+            /** Credential Id */
+            credential_id: string;
+        };
+        /**
          * SafetyCapabilitiesDiagnosticDto
          * @description Machine-readable official-project safety invariants.
          */
@@ -302,6 +335,14 @@ export interface components {
             public_recommendation_service: boolean;
             /** Single User */
             single_user: boolean;
+        };
+        /**
+         * SessionRefreshDto
+         * @description Pydantic transport contract for a CSRF-protected idle-session refresh.
+         */
+        SessionRefreshDto: {
+            /** Status */
+            status: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -402,9 +443,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["AuthenticationVerificationDto"];
                 };
             };
             /** @description Authentication verification failed */
@@ -490,9 +529,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ReauthenticationVerificationDto"];
                 };
             };
             /** @description Reauthentication verification failed */
@@ -612,6 +649,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Origin, CSRF token, or session was invalid */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_session_api_v1_auth_session_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionRefreshDto"];
+                };
             };
             /** @description Origin, CSRF token, or session was invalid */
             403: {

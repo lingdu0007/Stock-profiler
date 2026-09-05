@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -8,7 +8,9 @@ import { syntheticReport as report } from "./test-support/synthetic-report";
 
 describe("App", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
+    document.cookie = "__Host-stock_profiler_csrf=; Max-Age=0; Path=/; Secure";
     window.history.pushState({}, "", "/");
   });
 
@@ -31,6 +33,35 @@ describe("App", () => {
     expect(screen.getByText("D0 synthetic")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(
+      `/api/v1/reports/${report.report_version_id}`
+    );
+  });
+
+  it("refreshes a CSRF-protected session before reading the committed report", async () => {
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    document.cookie = "__Host-stock_profiler_csrf=synthetic-csrf-token; Path=/; Secure";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "authenticated" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(report), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByText(report.result.outcome_code)).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain("/api/v1/auth/session/refresh");
+    expect((fetchMock.mock.calls[1]?.[0] as Request).url).toContain(
       `/api/v1/reports/${report.report_version_id}`
     );
   });

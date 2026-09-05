@@ -26,7 +26,23 @@ export class ApiResponseError extends Error {
   }
 }
 
+function csrfToken(): string | null {
+  const cookie = document.cookie
+    .split("; ")
+    .find((value) => value.startsWith("__Host-stock_profiler_csrf="));
+  return cookie ? decodeURIComponent(cookie.split("=", 2)[1] ?? "") : null;
+}
+
 export async function fetchFormalReport(reportVersionId: string): Promise<FormalReport> {
+  const csrf = csrfToken();
+  if (csrf) {
+    const refreshResponse = await client.POST("/api/v1/auth/session/refresh", {
+      params: { header: { "X-CSRF-Token": csrf } }
+    });
+    if (!refreshResponse.data) {
+      throw new ApiResponseError(refreshResponse.response.status);
+    }
+  }
   const { data, response } = await client.GET("/api/v1/reports/{report_version_id}", {
     params: { path: { report_version_id: reportVersionId } }
   });

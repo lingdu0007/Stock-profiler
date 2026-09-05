@@ -21,16 +21,18 @@ import {
   type VersionBundle
 } from "./api/client";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      gcTime: 0,
-      refetchOnWindowFocus: false,
-      retry: false,
-      staleTime: 0
+function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        gcTime: 0,
+        refetchOnWindowFocus: false,
+        retry: false,
+        staleTime: 0
+      }
     }
-  }
-});
+  });
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -256,6 +258,8 @@ function safeReturnPath(value: string | null): string {
 }
 
 export function App() {
+  const [queryClient] = useState(createQueryClient);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

@@ -11,6 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 
+FROZEN_CASE_CONTRACT_VERSION = "1.0.0"
+FROZEN_HOST_CONTRACT_VERSION = "1.0.0"
+FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
+FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
+FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
+FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.0.0"
+
 
 class FrozenContract(BaseModel):
     """Reject unversioned fields so a frozen case cannot silently expand."""
@@ -160,6 +167,16 @@ class FrozenDecisionCase(FrozenContract):
         if not self.qualification_scope.startswith("D0_"):
             raise ValueError("frozen decision cases are limited to the D0 synthetic scope")
         if (
+            self.version_bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
+            or self.version_bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
+            or self.version_bundle.report_projection_contract_version
+            != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+            or self.version_bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
+            or self.version_bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
+            or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
+        ):
+            raise ValueError("frozen version bundle does not match the supported contract")
+        if (
             self.agent_definition.definition_id != self.version_bundle.agent_definition_id
             or self.agent_definition.version != self.version_bundle.agent_definition_version
             or self.agent_definition.model_adapter_id != self.version_bundle.model_adapter_id
@@ -167,6 +184,12 @@ class FrozenDecisionCase(FrozenContract):
             != self.version_bundle.output_contract_version
         ):
             raise ValueError("frozen AgentDefinition must match the version bundle")
+        if (
+            self.agent_definition.definition_id != FROZEN_AGENT_DEFINITION_ID
+            or self.agent_definition.version != FROZEN_AGENT_DEFINITION_VERSION
+            or self.agent_definition.output_contract.version != FROZEN_OUTPUT_CONTRACT_VERSION
+        ):
+            raise ValueError("frozen AgentDefinition does not match the supported contract")
         return self
 
     @property

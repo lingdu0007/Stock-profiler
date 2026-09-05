@@ -73,3 +73,48 @@ def test_runtime_rejects_a_case_whose_declared_m_agent_release_is_not_installed(
         asyncio.run(
             execute_frozen_decision_case(tampered, initialize_runtime_storage(migrated_settings))
         )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "case_contract_version",
+        "host_contract_version",
+        "report_projection_contract_version",
+    ),
+)
+def test_runtime_rejects_any_unsupported_host_contract_version(
+    migrated_settings: Settings, field_name: str
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    tampered = case.model_copy(
+        update={
+            "version_bundle": case.version_bundle.model_copy(
+                update={field_name: "999.0.0"}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="full frozen version bundle"):
+        asyncio.run(
+            execute_frozen_decision_case(tampered, initialize_runtime_storage(migrated_settings))
+        )
+
+
+@pytest.mark.parametrize("field_name", ("definition_id", "version"))
+def test_runtime_rejects_tampered_agent_definition_identity(
+    migrated_settings: Settings, field_name: str
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    tampered = case.model_copy(
+        update={
+            "agent_definition": case.agent_definition.model_copy(
+                update={field_name: "unsupported-frozen-definition"}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="frozen AgentDefinition"):
+        asyncio.run(
+            execute_frozen_decision_case(tampered, initialize_runtime_storage(migrated_settings))
+        )
