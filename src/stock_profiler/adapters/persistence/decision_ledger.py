@@ -90,6 +90,7 @@ class DecisionEventCommitUncertainError(DecisionEventCommitError):
 class BusinessObjectMapping:
     """The durable case snapshot and original Run bound to one business object."""
 
+    case_id: str
     frozen_input_fingerprint: str
     framework_run_id: str
     case: FrozenDecisionCase | None
@@ -126,6 +127,7 @@ class DecisionLedger:
         """Load a saved case snapshot before deriving any current-build Run identity."""
         row = connection.execute(
             select(
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
                 DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
@@ -134,6 +136,7 @@ class DecisionLedger:
         if row is None:
             return None
         return BusinessObjectMapping(
+            case_id=row.case_id,
             frozen_input_fingerprint=row.frozen_input_fingerprint,
             framework_run_id=row.framework_run_id,
             case=(
@@ -159,6 +162,8 @@ class DecisionLedger:
             )
             return
         if mapping.case is not None and mapping.case.matches_recovery_input(case):
+            return
+        if mapping.case is None and mapping.case_id == case.case_id:
             return
         if (
             mapping.frozen_input_fingerprint != case.frozen_input_fingerprint
@@ -216,15 +221,18 @@ class DecisionLedger:
         stage_result: StageResult,
         decision_event_id: str | None = None,
         stage_event_id: str | None = None,
-        append: bool = False,
+        framework_run_id: str | None = None,
+        allow_repeated_occurrence: bool = False,
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
+        durable_framework_run_id = framework_run_id or case.framework_run_id
         stage_payload = stage_result.model_dump_json()
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,
                 stage_event_id=stage_event_id,
                 case=case,
+                framework_run_id=durable_framework_run_id,
                 decision_event_id=decision_event_id,
                 stage_payload=stage_payload,
                 stage_result=stage_result,
@@ -236,13 +244,13 @@ class DecisionLedger:
                 .select_from(DECISION_STAGE_EVENTS)
                 .where(
                     DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id,
-                    DECISION_STAGE_EVENTS.c.framework_run_id == case.framework_run_id,
+                    DECISION_STAGE_EVENTS.c.framework_run_id == durable_framework_run_id,
                     DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id,
                     DECISION_STAGE_EVENTS.c.stage_payload == stage_payload,
                 )
             ).scalar_one()
         )
-        if occurrence_count and not append:
+        if occurrence_count and not allow_repeated_occurrence:
             return
         self._insert_or_validate_stage_result(
             connection,
@@ -250,9 +258,11 @@ class DecisionLedger:
                 case,
                 stage_result,
                 decision_event_id,
-                occurrence=occurrence_count + 1 if append else None,
+                framework_run_id=durable_framework_run_id,
+                occurrence=occurrence_count + 1 if allow_repeated_occurrence else None,
             ),
             case=case,
+            framework_run_id=durable_framework_run_id,
             decision_event_id=decision_event_id,
             stage_payload=stage_payload,
             stage_result=stage_result,
@@ -264,6 +274,7 @@ class DecisionLedger:
         *,
         stage_event_id: str,
         case: FrozenDecisionCase,
+        framework_run_id: str,
         decision_event_id: str | None,
         stage_payload: str,
         stage_result: StageResult,
@@ -278,7 +289,7 @@ class DecisionLedger:
                 DECISION_STAGE_EVENTS.insert().values(
                     stage_event_id=stage_event_id,
                     business_object_id=case.business_object_id,
-                    framework_run_id=case.framework_run_id,
+                    framework_run_id=framework_run_id,
                     decision_event_id=decision_event_id,
                     stage_payload=stage_payload,
                     recorded_at=datetime.now(UTC).isoformat(),
@@ -447,6 +458,7 @@ class DecisionLedger:
                 case=fact.case,
                 stage_result=stage_result,
                 decision_event_id=decision_event_id,
+                framework_run_id=fact.framework_run_id,
             )
 
     def discard_unconfirmed_publication(self, connection: Connection) -> None:
@@ -461,7 +473,9 @@ class DecisionLedger:
         report_version_id: str | None = None,
     ) -> FormalReport:
         """Create a report only after its source business event is durably committed."""
-        resolved_report_version_id = report_version_id or fact.case.report_version_id
+        resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(
+            fact.decision_event_id
+        )
         existing = self.get_formal_report(resolved_report_version_id, connection)
         if existing is not None:
             return existing
@@ -563,11 +577,12 @@ def _stage_event_id(
     stage_result: StageResult,
     decision_event_id: str | None,
     *,
+    framework_run_id: str,
     occurrence: int | None = None,
 ) -> str:
     payload = {
         "business_object_id": case.business_object_id,
-        "framework_run_id": case.framework_run_id,
+        "framework_run_id": framework_run_id,
         "decision_event_id": decision_event_id,
         "stage_result": stage_result.model_dump(mode="json"),
         "occurrence": occurrence,
