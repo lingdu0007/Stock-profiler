@@ -7,7 +7,10 @@ import pytest
 from stock_profiler.adapters.m_agent.frozen_decision_case import execute_frozen_decision_case
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
-from stock_profiler.modules.decision_cases.domain import load_frozen_decision_case
+from stock_profiler.modules.decision_cases.domain import (
+    host_validates_external_result,
+    load_frozen_decision_case,
+)
 
 
 def test_frozen_synthetic_case_has_stable_independent_identities(settings: Settings) -> None:
@@ -118,3 +121,12 @@ def test_runtime_rejects_tampered_agent_definition_identity(
         asyncio.run(
             execute_frozen_decision_case(tampered, initialize_runtime_storage(migrated_settings))
         )
+
+
+def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    contradictory_scope = case.model_copy(update={"qualification_scope": "D0_REAL_RECOMMENDATION"})
+
+    assert not host_validates_external_result(contradictory_scope, case.expected_external_result)

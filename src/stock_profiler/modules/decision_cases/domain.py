@@ -17,6 +17,7 @@ FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.0.0"
+FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
 
 
 class FrozenContract(BaseModel):
@@ -164,8 +165,8 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("frozen decision cases require a generator version")
         if not self.case_id or not self.business_identity:
             raise ValueError("frozen decision cases require stable identities")
-        if not self.qualification_scope.startswith("D0_"):
-            raise ValueError("frozen decision cases are limited to the D0 synthetic scope")
+        if self.qualification_scope != FROZEN_QUALIFICATION_SCOPE:
+            raise ValueError("frozen decision cases must use the sole D0 synthetic scope")
         if (
             self.version_bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
             or self.version_bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
@@ -286,7 +287,12 @@ _COMPLETE_SYNTHETIC_INPUT = {
 
 def host_validates_external_result(case: FrozenDecisionCase, result: ExternalResult) -> bool:
     """Accept only the expected result from the complete frozen synthetic input."""
-    return has_complete_synthetic_input(case.input) and result == case.expected_external_result
+    return (
+        case.synthetic
+        and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
+        and has_complete_synthetic_input(case.input)
+        and result == case.expected_external_result
+    )
 
 
 def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
