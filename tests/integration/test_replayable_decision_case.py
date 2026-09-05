@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from multiprocessing import get_context
 from pathlib import Path
 from threading import Barrier
@@ -41,7 +42,6 @@ from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import domain as decision_domain
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
-    FROZEN_CORRECTION_GENERATED_AT,
     DecisionEventFact,
     ExternalResult,
     FormalReport,
@@ -58,6 +58,19 @@ from stock_profiler.modules.decision_cases.service import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class MutableClock:
+    """Drive observable write times through the public D0 service seam."""
+
+    def __init__(self, current: datetime) -> None:
+        self.current = current
+
+    def now(self) -> datetime:
+        return self.current
+
+    def advance(self, duration: timedelta) -> None:
+        self.current += duration
 
 
 def _load_result_family_fixture(name: str) -> FrozenDecisionCase:
@@ -128,31 +141,42 @@ def test_formal_report_projection_fixture_matches_the_frozen_runtime(
             encoding="utf-8"
         )
     )
-    outcome = run_default_frozen_decision_case(migrated_settings)
+    outcome = run_default_frozen_decision_case(
+        migrated_settings,
+        clock=MutableClock(datetime(2042, 5, 17, 16, 1, tzinfo=UTC)),
+    )
 
     assert outcome.report is not None
     assert fixture["report"] == outcome.report.model_dump(mode="json")
 
 
-def test_append_only_ledger_records_use_frozen_logical_occurrence_clocks(
+def test_append_only_ledger_records_use_controlled_observation_and_write_clocks(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
-    execution = run_default_frozen_decision_case(migrated_settings)
+    clock = MutableClock(datetime(2042, 5, 17, 16, 1, tzinfo=UTC))
+    execution = run_default_frozen_decision_case(migrated_settings, clock=clock)
     assert execution.report is not None
+    assert execution.report.generated_at == "2042-05-17T16:01:00Z"
+    clock.advance(timedelta(minutes=1))
     retry_default_frozen_decision_case_notification(
         migrated_settings,
         case.business_identity,
         "FAILED",
+        clock=clock,
     )
+    clock.advance(timedelta(minutes=1))
     retry_default_frozen_decision_case_notification(
         migrated_settings,
         case.business_identity,
         "SUCCEEDED",
+        clock=clock,
     )
+    clock.advance(timedelta(minutes=1))
     correction = correct_default_frozen_decision_case(
         migrated_settings,
         case.business_identity,
+        clock=clock,
     )
 
     engine = create_engine(migrated_settings.app_database_url)
@@ -209,10 +233,10 @@ def test_append_only_ledger_records_use_frozen_logical_occurrence_clocks(
         )
 
     assert initial_stage_clocks == {case.report_generated_at}
-    assert correction_stage_clocks == {FROZEN_CORRECTION_GENERATED_AT}
+    assert correction_stage_clocks == {"2042-05-17T16:04:00Z"}
     assert notification_clocks == [
-        "2042-05-17T16:01:01Z",
-        "2042-05-17T16:01:02Z",
+        "2042-05-17T16:02:00Z",
+        "2042-05-17T16:03:00Z",
     ]
 
 
@@ -1038,7 +1062,7 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
     ] == ["CREATED", "RUNNING", "SUCCEEDED", "SUCCEEDED"]
 
 
-def test_legacy_mapping_without_a_snapshot_reuses_its_original_m_agent_run(
+def test_legacy_mapping_without_a_snapshot_fails_closed_before_reusing_a_run(
     migrated_settings: Settings,
 ) -> None:
     current_case = load_frozen_decision_case(migrated_settings)
@@ -1088,20 +1112,17 @@ def test_legacy_mapping_without_a_snapshot_reuses_its_original_m_agent_run(
             },
         )
 
-    recovered = run_default_frozen_decision_case(migrated_settings)
+    with pytest.raises(DecisionEventCommitError, match="lacks a frozen case snapshot"):
+        run_default_frozen_decision_case(migrated_settings)
 
-    assert recovered.business_object_id == original_case.business_object_id
-    assert recovered.framework_run_id == original_case.framework_run_id
-    assert recovered.decision_event_id == original_case.decision_event_id
-    assert recovered.report_version_id == original_case.report_version_id
-    assert recovered.publication_status == "PUBLISHED"
-    assert recovered.report is not None
-    assert recovered.report.stage_results == DecisionLedger.from_settings(
-        migrated_settings
-    ).get_stage_results(original_case.business_object_id)
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 0,
+        "reports": 0,
+    }
 
 
-def test_legacy_mapping_without_a_snapshot_recovers_across_a_build_change(
+def test_legacy_mapping_without_a_snapshot_cannot_publish_across_a_build_change(
     migrated_settings: Settings,
 ) -> None:
     current_case = load_frozen_decision_case(migrated_settings)
@@ -1157,17 +1178,13 @@ def test_legacy_mapping_without_a_snapshot_recovers_across_a_build_change(
             "source_sha": "b" * 40,
         }
     )
-    recovered = run_default_frozen_decision_case(upgraded_settings)
+    with pytest.raises(DecisionEventCommitError, match="lacks a frozen case snapshot"):
+        run_default_frozen_decision_case(upgraded_settings)
 
-    assert recovered.business_object_id == original_case.business_object_id
-    assert recovered.framework_run_id == original_case.framework_run_id
-    assert recovered.decision_event_id == original_case.decision_event_id
-    assert recovered.report_version_id == original_case.report_version_id
-    assert recovered.publication_status == "PUBLISHED"
     assert DecisionLedger.from_settings(upgraded_settings).counts() == {
         "business_objects": 1,
-        "decision_events": 1,
-        "reports": 1,
+        "decision_events": 0,
+        "reports": 0,
     }
 
 
@@ -1401,6 +1418,8 @@ def test_uncertain_commit_lookup_reuses_the_original_committed_identity(
         stage_results: tuple[StageResult, ...],
         decision_event_id: str | None = None,
         corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
     ) -> DecisionEventFact:
         original_commit(
             self,
@@ -1411,6 +1430,8 @@ def test_uncertain_commit_lookup_reuses_the_original_committed_identity(
             stage_results=stage_results,
             decision_event_id=decision_event_id,
             corrects_event_id=corrects_event_id,
+            committed_at=committed_at,
+            generated_at=generated_at,
         )
         raise DecisionEventCommitError("synthetic acknowledgement loss")
 
@@ -1448,6 +1469,8 @@ def test_commit_reconciliation_rejects_a_mismatched_original_event(
         stage_results: tuple[StageResult, ...],
         decision_event_id: str | None = None,
         corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
     ) -> DecisionEventFact:
         original_commit(
             self,
@@ -1458,6 +1481,8 @@ def test_commit_reconciliation_rejects_a_mismatched_original_event(
             stage_results=stage_results,
             decision_event_id=decision_event_id,
             corrects_event_id=corrects_event_id,
+            committed_at=committed_at,
+            generated_at=generated_at,
         )
         raise DecisionEventCommitError("synthetic mismatched acknowledgement")
 
@@ -1763,18 +1788,22 @@ def test_cross_build_notification_and_correction_reuse_the_original_published_id
 def test_correction_appends_a_new_report_that_references_the_original_event(
     migrated_settings: Settings,
 ) -> None:
-    original_execution = run_default_frozen_decision_case(migrated_settings)
+    clock = MutableClock(datetime(2042, 5, 17, 16, 1, tzinfo=UTC))
+    original_execution = run_default_frozen_decision_case(migrated_settings, clock=clock)
     assert original_execution.report is not None
     original_report = original_execution.report
     case = load_frozen_decision_case(migrated_settings)
 
+    clock.advance(timedelta(minutes=1))
     correction = correct_default_frozen_decision_case(
         migrated_settings,
         case.business_identity,
+        clock=clock,
     )
     replayed_correction = correct_default_frozen_decision_case(
         migrated_settings,
         case.business_identity,
+        clock=clock,
     )
 
     assert replayed_correction == correction
@@ -1993,6 +2022,15 @@ def test_correction_commit_failure_retains_its_append_only_failure_evidence(
 
     assert recovered.original_event_id == original.report.event_id
     assert ledger.counts() == {"business_objects": 1, "decision_events": 2, "reports": 2}
+    assert [
+        (stage.phase, stage.status)
+        for stage in recovered.report.stage_results
+        if stage.phase in {"CORRECTION", "BUSINESS_COMMIT"}
+    ] == [
+        ("CORRECTION", "SUCCEEDED"),
+        ("BUSINESS_COMMIT", "FAILED"),
+        ("BUSINESS_COMMIT", "SUCCEEDED"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2620,6 +2658,14 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", settings.app_database_url)
     command.upgrade(config, "0003_decision_stage_events")
+    current_case = load_frozen_decision_case(settings)
+    case = current_case.model_copy(
+        update={
+            "version_bundle": current_case.version_bundle.model_copy(
+                update={"report_projection_contract_version": "1.0.0"}
+            )
+        }
+    )
     engine = create_engine(settings.app_database_url)
     with engine.begin() as connection:
         connection.execute(
@@ -2632,14 +2678,20 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
                     event_payload,
                     committed_at
                 ) VALUES (
-                    'legacy-event-invalid-payload',
-                    'legacy-business-object',
-                    'legacy-framework-run',
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
                     '{invalid-json',
-                    '2042-05-17T16:01:00Z'
+                    :committed_at
                 )
                 """
-            )
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "committed_at": case.report_generated_at,
+            },
         )
 
     with pytest.raises(RuntimeError, match="valid JSON"):
@@ -2668,21 +2720,29 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
                 """
                 UPDATE decision_events
                 SET event_payload = :event_payload
-                WHERE decision_event_id = 'legacy-event-invalid-payload'
+                WHERE decision_event_id = :decision_event_id
                 """
             ),
             {
                 "event_payload": json.dumps(
                     {
+                        "decision_event_id": case.decision_event_id,
+                        "business_object_id": case.business_object_id,
+                        "framework_run_id": case.framework_run_id,
+                        "case": case.model_dump(mode="json"),
                         "result": {
                             "outcome_code": "SYNTHETIC_REVIEW_COMPLETE",
                             "key_reasons": [],
-                        }
+                            "summary": "A complete legacy event remains readable after retry.",
+                        },
+                        "validation_status": "PASSED",
+                        "committed_at": case.report_generated_at,
                     },
                     ensure_ascii=True,
                     separators=(",", ":"),
                     sort_keys=True,
-                )
+                ),
+                "decision_event_id": case.decision_event_id,
             },
         )
 
@@ -2693,6 +2753,82 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
         }
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
             "0005_persist_frozen_case_snapshots"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_rejects_a_valid_event_with_an_invalid_stage_contract(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    case = load_frozen_decision_case(settings)
+    event_payload = {
+        "decision_event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case": case.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+        "validation_status": "PASSED",
+        "committed_at": case.report_generated_at,
+        "stage_results": [{}],
+    }
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    :event_payload,
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "event_payload": json.dumps(
+                    event_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "committed_at": case.report_generated_at,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="stage contract"):
+        command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_events_replacement'"
+                )
+            ).scalar_one_or_none()
+            is None
+        )
+        assert "corrects_event_id" not in {
+            row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
+        }
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
         )
 
     load_settings.cache_clear()

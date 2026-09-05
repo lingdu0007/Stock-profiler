@@ -37,11 +37,10 @@ from stock_profiler.foundation.versioning import (
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_AGENT_DEFINITION_ID,
     FROZEN_AGENT_DEFINITION_VERSION,
-    FROZEN_CASE_CONTRACT_VERSION,
-    FROZEN_HOST_CONTRACT_VERSION,
     FROZEN_OUTPUT_CONTRACT_VERSION,
     FrameworkRunStatus,
     FrozenDecisionCase,
+    supports_case_host_contract,
     supports_report_projection_contract,
     synthetic_outcome_code_from_input,
 )
@@ -298,8 +297,10 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     """Reject frozen metadata that does not describe the installed deterministic route."""
     bundle = case.version_bundle
     if (
-        bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
-        or bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
+        not supports_case_host_contract(
+            bundle.case_contract_version,
+            bundle.host_contract_version,
+        )
         or not supports_report_projection_contract(bundle.report_projection_contract_version)
         or bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
         or bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION

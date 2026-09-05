@@ -7,6 +7,13 @@ from hashlib import sha256
 
 import sqlalchemy as sa
 from alembic import op
+from pydantic import ValidationError
+
+from stock_profiler.modules.decision_cases.domain import (
+    DecisionEventFact,
+    FormalReport,
+    StageResult,
+)
 
 revision = "0004_corrections_and_notification_attempts"
 down_revision = "0003_decision_stage_events"
@@ -106,9 +113,54 @@ def _validated_stage_results(payload: dict[str, object]) -> list[dict[str, objec
     candidates = (
         stage_results if isinstance(stage_results, list) else _legacy_stage_results(payload)
     )
-    if not all(isinstance(stage_result, dict) for stage_result in candidates):
-        raise RuntimeError("legacy decision stage result must be a JSON object")
-    return candidates
+    if not candidates or not all(isinstance(stage_result, dict) for stage_result in candidates):
+        raise RuntimeError("legacy decision stage contract is invalid")
+    try:
+        return [
+            StageResult.model_validate(stage_result).model_dump(mode="json")
+            for stage_result in candidates
+        ]
+    except ValidationError as error:
+        raise RuntimeError("legacy decision stage contract is invalid") from error
+
+
+def _validated_event_stage_results(
+    payload: dict[str, object],
+    *,
+    decision_event_id: str,
+    business_object_id: str,
+    framework_run_id: str,
+) -> list[dict[str, object]]:
+    stage_results = _validated_stage_results(payload)
+    try:
+        fact = DecisionEventFact.model_validate(payload)
+    except ValidationError as error:
+        raise RuntimeError("legacy decision event contract is invalid") from error
+    if (
+        fact.decision_event_id != decision_event_id
+        or fact.business_object_id != business_object_id
+        or fact.framework_run_id != framework_run_id
+    ):
+        raise RuntimeError("legacy decision event identity does not match its row")
+    return stage_results
+
+
+def _validated_report_stage_results(
+    payload: dict[str, object],
+    *,
+    decision_event_id: str,
+    event_ids: set[str],
+) -> list[dict[str, object]]:
+    stage_results = _validated_stage_results(payload)
+    if decision_event_id not in event_ids:
+        raise RuntimeError("legacy formal report references an unknown decision event")
+    try:
+        report = FormalReport.model_validate(payload)
+    except ValidationError as error:
+        raise RuntimeError("legacy formal report contract is invalid") from error
+    if report.event_id != decision_event_id:
+        raise RuntimeError("legacy formal report identity does not match its row")
+    return stage_results
 
 
 def _preflight_legacy_stage_history() -> None:
@@ -118,13 +170,22 @@ def _preflight_legacy_stage_history() -> None:
     event_rows = bind.execute(
         sa.text(
             """
-            SELECT decision_event_id, event_payload
+            SELECT
+                decision_event_id,
+                business_object_id,
+                framework_run_id,
+                event_payload
             FROM decision_events
             """
         )
     ).mappings()
     for row in event_rows:
-        _validated_stage_results(_payload(row["event_payload"]))
+        _validated_event_stage_results(
+            _payload(row["event_payload"]),
+            decision_event_id=row["decision_event_id"],
+            business_object_id=row["business_object_id"],
+            framework_run_id=row["framework_run_id"],
+        )
         event_ids.add(row["decision_event_id"])
 
     report_rows = bind.execute(
@@ -136,12 +197,11 @@ def _preflight_legacy_stage_history() -> None:
         )
     ).mappings()
     for row in report_rows:
-        report_payload = _payload(row["report_payload"])
-        if isinstance(report_payload.get("stage_results"), list):
-            _validated_stage_results(report_payload)
-            continue
-        if row["decision_event_id"] not in event_ids:
-            raise RuntimeError("legacy formal report references an unknown decision event")
+        _validated_report_stage_results(
+            _payload(row["report_payload"]),
+            decision_event_id=row["decision_event_id"],
+            event_ids=event_ids,
+        )
 
 
 def _record_legacy_stage_result(
