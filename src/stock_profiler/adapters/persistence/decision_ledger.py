@@ -331,6 +331,11 @@ class DecisionLedger:
                 decision_event_id=decision_event_id,
             )
 
+    def discard_unconfirmed_publication(self, connection: Connection) -> None:
+        """Roll back a report whose durable acknowledgement was not received."""
+        connection.rollback()
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
     def publish_report(
         self,
         connection: Connection,

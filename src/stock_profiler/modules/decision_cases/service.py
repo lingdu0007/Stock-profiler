@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 from pydantic import ValidationError
 
@@ -32,12 +31,12 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttempt,
     NotificationAttemptStatus,
     StageResult,
+    business_lifecycle_status_from_stage,
+    business_result_status_from_stage,
+    framework_run_status_from_stage,
     host_validation_result,
+    is_committable_host_validation_result,
     load_frozen_decision_case,
-)
-
-_COMMITTABLE_HOST_RESULTS = frozenset(
-    {"SUCCEEDED", "REJECTED", "ABSTAINED"}
 )
 
 
@@ -179,7 +178,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_formal_report(case.report_version_id, connection)
         if existing_report is not None:
-            return _execution(case, existing_report)
+            return _published_execution(case, existing_report)
 
         fact = ledger.get_decision_event(case.decision_event_id, connection)
         if fact is None:
@@ -194,23 +193,11 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             if framework.run_id != case.framework_run_id:
                 return _unpublished_execution(
                     case,
-                    framework_run_status="FAILED",
+                    framework_run_status=framework_run_status_from_stage(framework_result),
                     business_result_status=None,
                     business_lifecycle_status=None,
                     business_commit_status="NOT_ATTEMPTED",
-                    stage_results=(
-                        StageResult(
-                            phase="FRAMEWORK_RUN",
-                            status="FAILED",
-                            gate_results=(
-                                GateResult(
-                                    gate_id="ORIGINAL_RUN_IDENTITY",
-                                    status="FAILED",
-                                ),
-                            ),
-                            reasons=("FRAMEWORK_IDENTITY_MISMATCH",),
-                        ),
-                    ),
+                    stage_results=(framework_result,),
                 )
             if framework.status != "SUCCEEDED":
                 return _unpublished_execution(
@@ -236,12 +223,14 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 stage_result=validation_result,
             )
             stage_results_before_commit = (framework_result, validation_result)
-            if validation_result.status not in _COMMITTABLE_HOST_RESULTS:
+            if not is_committable_host_validation_result(validation_result):
                 return _unpublished_execution(
                     case,
                     framework_run_status=framework.status,
-                    business_result_status=_business_result_status(validation_result),
-                    business_lifecycle_status=_business_lifecycle_status(validation_result),
+                    business_result_status=business_result_status_from_stage(validation_result),
+                    business_lifecycle_status=business_lifecycle_status_from_stage(
+                        validation_result
+                    ),
                     business_commit_status="NOT_ATTEMPTED",
                     stage_results=stage_results_before_commit,
                 )
@@ -288,7 +277,9 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     return _unpublished_execution(
                         case,
                         framework_run_status=framework.status,
-                        business_result_status=_business_result_status(validation_result),
+                        business_result_status=business_result_status_from_stage(
+                            validation_result
+                        ),
                         business_lifecycle_status="UNKNOWN",
                         business_commit_status="UNKNOWN",
                         stage_results=(
@@ -301,6 +292,8 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
         try:
             report = ledger.publish_report(connection, fact)
         except DecisionEventCommitError:
+            ledger.discard_unconfirmed_publication(connection)
+            ledger.ensure_event_stage_results(connection, fact)
             publication_failure = StageResult(
                 phase="PUBLICATION",
                 status="FAILED",
@@ -327,7 +320,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             stage_result=report.stage_results[-1],
             decision_event_id=fact.decision_event_id,
         )
-    return _execution(case, report)
+    return _published_execution(case, report)
 
 
 def get_formal_report(report_version_id: str, settings: Settings) -> FormalReport | None:
@@ -335,13 +328,13 @@ def get_formal_report(report_version_id: str, settings: Settings) -> FormalRepor
     return DecisionLedger.from_settings(settings).get_formal_report(report_version_id)
 
 
-def _execution(case: FrozenDecisionCase, report: FormalReport) -> DecisionCaseExecution:
+def _published_execution(case: FrozenDecisionCase, report: FormalReport) -> DecisionCaseExecution:
     return DecisionCaseExecution(
         business_object_id=case.business_object_id,
         framework_run_id=case.framework_run_id,
         decision_event_id=case.decision_event_id,
         report_version_id=case.report_version_id,
-        framework_run_status=_framework_run_status(report),
+        framework_run_status=framework_run_status_from_stage(report.stage_results[0]),
         business_result_status=_business_result_status_from_stages(report.stage_results),
         business_lifecycle_status=None,
         business_commit_status="COMMITTED",
@@ -413,41 +406,10 @@ def _failed_host_validation(reason: str) -> StageResult:
     )
 
 
-def _framework_run_status(report: FormalReport) -> FrameworkRunStatus:
-    for stage_result in report.stage_results:
-        if stage_result.phase == "FRAMEWORK_RUN":
-            if stage_result.status in {
-                "CREATED",
-                "RUNNING",
-                "WAITING",
-                "SUCCEEDED",
-                "REJECTED",
-                "FAILED",
-                "CANCELLED",
-            }:
-                return cast(FrameworkRunStatus, stage_result.status)
-            raise RuntimeError("formal report has an invalid framework run state")
-    return "FAILED"
-
-
 def _business_result_status_from_stages(
     stage_results: tuple[StageResult, ...],
 ) -> BusinessResultStatus | None:
     for stage_result in stage_results:
         if stage_result.phase == "HOST_VALIDATION":
-            return _business_result_status(stage_result)
-    return None
-
-
-def _business_result_status(stage_result: StageResult) -> BusinessResultStatus | None:
-    if stage_result.status in {"SUCCEEDED", "REJECTED", "ABSTAINED", "FAILED"}:
-        return cast(BusinessResultStatus, stage_result.status)
-    return None
-
-
-def _business_lifecycle_status(
-    stage_result: StageResult,
-) -> BusinessLifecycleStatus | None:
-    if stage_result.status in {"PENDING", "EXPIRED", "EXECUTION_BLOCKED", "UNKNOWN"}:
-        return cast(BusinessLifecycleStatus, stage_result.status)
+            return business_result_status_from_stage(stage_result)
     return None

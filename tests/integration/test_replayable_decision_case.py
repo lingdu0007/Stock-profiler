@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from typing import Literal
 
 import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import FrameworkRunResult
@@ -13,11 +17,12 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
     DecisionLedger,
 )
-from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
     DecisionEventFact,
     ExternalResult,
+    FormalReport,
     FrozenDecisionCase,
     StageResult,
     load_frozen_decision_case,
@@ -28,6 +33,8 @@ from stock_profiler.modules.decision_cases.service import (
     retry_default_frozen_decision_case_notification,
     run_default_frozen_decision_case,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
@@ -46,6 +53,11 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     assert outcome.report.synthetic is True
     assert outcome.report.qualification_scope == "D0_SYNTHETIC_CONTRACT_ONLY"
     assert outcome.report.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
+    assert outcome.stage_results[1].reasons == (
+        "SYNTHETIC_REVIEW_COMPLETE",
+        "All required fictional evidence records are present.",
+        "The output is D0 synthetic evidence and is not a recommendation.",
+    )
     assert get_formal_report(outcome.report_version_id, migrated_settings) == outcome.report
 
 
@@ -81,7 +93,10 @@ def test_framework_success_and_host_rejection_remain_distinct_committed_results(
         ("PUBLICATION", "SUCCEEDED"),
     ]
     assert outcome.stage_results[1].gate_results[0].gate_id == "FROZEN_RESULT_MATCH"
-    assert outcome.stage_results[1].reasons == ("SYNTHETIC_INPUT_REJECTED",)
+    assert outcome.stage_results[1].reasons == (
+        "SYNTHETIC_INPUT_REJECTED",
+        "The host rejected the frozen input.",
+    )
 
 
 @pytest.mark.parametrize(
@@ -112,7 +127,7 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
                 {
                     "outcome_code": outcome_code,
                     "summary": f"Frozen synthetic result {outcome_code}.",
-                    "key_reasons": [outcome_code],
+                    "key_reasons": [f"Reason for {outcome_code}."],
                 }
             ),
         )
@@ -136,6 +151,10 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
             expected_business_status or expected_lifecycle_status,
         ),
     ]
+    assert outcome.stage_results[1].reasons == (
+        outcome_code,
+        f"Reason for {outcome_code}.",
+    )
     counts = DecisionLedger.from_settings(migrated_settings).counts()
     assert counts == {
         "business_objects": 1,
@@ -374,13 +393,21 @@ def test_uncertain_commit_lookup_reuses_the_original_committed_identity(
 def test_report_projection_failure_preserves_the_committed_event_but_never_publishes_it(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    original_publish = DecisionLedger.publish_report
+
+    def write_report_then_lose_confirmation(
+        self: DecisionLedger,
+        connection: Connection,
+        fact: DecisionEventFact,
+    ) -> FormalReport:
+        original_publish(self, connection, fact)
+        raise DecisionEventCommitError("synthetic projection acknowledgement loss")
+
     with monkeypatch.context() as patch:
         patch.setattr(
             DecisionLedger,
             "publish_report",
-            lambda self, _connection, _fact: (_ for _ in ()).throw(
-                DecisionEventCommitError("synthetic projection storage failure")
-            ),
+            write_report_then_lose_confirmation,
         )
         unpublished = run_default_frozen_decision_case(migrated_settings)
 
@@ -396,6 +423,7 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
 
     ledger = DecisionLedger.from_settings(migrated_settings)
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 0}
+    assert get_formal_report(unpublished.report_version_id, migrated_settings) is None
 
     recovered = run_default_frozen_decision_case(migrated_settings)
 
@@ -521,6 +549,63 @@ def test_read_failure_does_not_remove_the_published_report(
         "decision_events": 1,
         "reports": 1,
     }
+
+
+def test_stage_result_migration_refuses_to_drop_append_only_history(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_stage_events (
+                    stage_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    decision_event_id,
+                    stage_payload,
+                    recorded_at
+                ) VALUES (
+                    'stage-event-synthetic',
+                    'business-object-synthetic',
+                    'framework-run-synthetic',
+                    NULL,
+                    '{}',
+                    '2042-05-17T16:01:00Z'
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="append-only stage results"):
+        command.downgrade(config, "0002_decision_case_ledger")
+
+    load_settings.cache_clear()
+
+
+def test_notification_migration_refuses_to_drop_append_only_history(
+    migrated_settings: Settings,
+) -> None:
+    execution = run_default_frozen_decision_case(migrated_settings)
+    case = load_frozen_decision_case(migrated_settings)
+    retry_default_frozen_decision_case_notification(
+        migrated_settings,
+        case.business_identity,
+        "FAILED",
+    )
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", migrated_settings.app_database_url)
+
+    with pytest.raises(RuntimeError, match="append-only notification attempts"):
+        command.downgrade(config, "0003_decision_stage_events")
+
+    assert execution.report is not None
 
 
 def test_recovery_backfills_event_stage_results_before_publication(

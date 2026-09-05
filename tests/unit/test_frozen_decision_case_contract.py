@@ -7,6 +7,7 @@ import pytest
 from m_agent.adapters import DeterministicModelAdapter
 from m_agent.runtime import (
     AgentDefinition,
+    CrashPoint,
     DefinitionRegistry,
     ModelCapabilities,
     OutputContract,
@@ -147,13 +148,13 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     ).status == "FAILED"
 
 
-def test_adapter_resumes_the_original_waiting_m_agent_run(
+def test_adapter_resumes_the_original_m_agent_model_checkpoint(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
     runtime = initialize_runtime_storage(migrated_settings)
 
-    async def create_waiting_run() -> None:
+    async def create_checkpointed_run() -> None:
         definition = AgentDefinition.for_adapter(
             definition_id=case.agent_definition.definition_id,
             version=case.agent_definition.version,
@@ -173,27 +174,38 @@ def test_adapter_resumes_the_original_waiting_m_agent_run(
         )
         registry = DefinitionRegistry()
         registry.register(definition)
-        creator = Runner(registry=registry, store=runtime.run_store, owner="test-creator")
-        await creator.create_run(
+        def crash_after_model_checkpoint(point: CrashPoint, run_id: str) -> None:
+            if point is CrashPoint.AFTER_MODEL_CHECKPOINT and run_id == case.framework_run_id:
+                raise RuntimeError("synthetic worker interruption after model checkpoint")
+
+        interrupted_runner = Runner(
+            registry=registry,
+            store=runtime.run_store,
+            owner="test-interrupted-worker",
+            crash_hook=crash_after_model_checkpoint,
+        )
+        created = await interrupted_runner.create_run(
             definition.definition_id,
             definition.version,
             json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
             run_id=case.framework_run_id,
         )
-        waiting_runner = Runner(
-            registry=DefinitionRegistry(),
-            store=runtime.run_store,
-            owner="test-interrupted-worker",
-        )
-        waiting = await waiting_runner.resume_run(case.framework_run_id)
-        assert waiting.status.value == "WAITING"
+        with pytest.raises(RuntimeError, match="model checkpoint"):
+            await interrupted_runner.start_run(created.run_id)
+
+        checkpointed = await interrupted_runner.get_run(case.framework_run_id)
+        checkpoints = await runtime.run_store.get_checkpoints(case.framework_run_id)
+        assert checkpointed.status.value == "RUNNING"
+        assert len(checkpoints) == 1
+        assert checkpoints[0].run_id == case.framework_run_id
+        assert checkpoints[0].step_type.value == "MODEL"
         await runtime.run_store.release_lease(
-            waiting.run_id,
+            checkpointed.run_id,
             "test-interrupted-worker",
-            expected_version=waiting.version,
+            expected_version=checkpointed.version,
         )
 
-    asyncio.run(create_waiting_run())
+    asyncio.run(create_checkpointed_run())
 
     recovered = asyncio.run(execute_frozen_decision_case(case, runtime))
 
