@@ -159,6 +159,17 @@ class DecisionLedger:
         ).scalar_one_or_none()
         return DecisionEventFact.model_validate_json(payload) if payload is not None else None
 
+    def get_correction_event(
+        self, original_event_id: str, connection: Connection
+    ) -> DecisionEventFact | None:
+        """Read the sole D0 correction that already references one original fact."""
+        payload = connection.execute(
+            select(DECISION_EVENTS.c.event_payload).where(
+                DECISION_EVENTS.c.corrects_event_id == original_event_id
+            )
+        ).scalar_one_or_none()
+        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+
     def record_stage_result(
         self,
         connection: Connection,
@@ -408,6 +419,19 @@ class DecisionLedger:
                 DECISION_EVENTS.c.corrects_event_id.is_(None),
             )
             .order_by(FORMAL_REPORTS.c.generated_at)
+        ).one_or_none()
+        if row is None:
+            return None
+        return FormalReport.model_validate_json(row.report_payload)
+
+    def get_formal_report_for_event(
+        self, decision_event_id: str, connection: Connection
+    ) -> FormalReport | None:
+        """Read one existing projection without deriving a new report identity."""
+        row = connection.execute(
+            select(FORMAL_REPORTS.c.report_payload).where(
+                FORMAL_REPORTS.c.decision_event_id == decision_event_id
+            )
         ).one_or_none()
         if row is None:
             return None

@@ -62,6 +62,7 @@ class FrameworkRunResult:
     status: FrameworkRunStatus
     output: str | None
     waiting_reason: str | None = None
+    error_code: str | None = None
 
 
 async def execute_frozen_decision_case(
@@ -105,6 +106,7 @@ async def execute_frozen_decision_case(
         status=run.status.value,
         output=run.output,
         waiting_reason=run.waiting_reason,
+        error_code=run.error_code,
     )
 
 
