@@ -25,6 +25,7 @@ def test_authenticated_api_reads_the_same_committed_report_and_never_caches_it(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     report = run_default_frozen_decision_case(migrated_settings).report
+    assert report is not None
     client, csrf_token = _authenticated_client_with_csrf(migrated_settings, monkeypatch)
     storage = initialize_runtime_storage(migrated_settings)
     with storage.engine.connect() as connection:
@@ -81,6 +82,7 @@ def test_reports_are_inaccessible_without_a_session_and_logout_requires_origin_a
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     report = run_default_frozen_decision_case(migrated_settings).report
+    assert report is not None
     unauthenticated = TestClient(create_app(_auth_settings(migrated_settings)), base_url=ORIGIN)
 
     denied = unauthenticated.get(f"/api/v1/reports/{report.report_version_id}")

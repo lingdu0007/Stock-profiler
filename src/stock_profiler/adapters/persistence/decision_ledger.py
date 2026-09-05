@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from hashlib import sha256
+from typing import Literal, cast
 
-from sqlalchemy import Column, MetaData, String, Table, func, select
+from sqlalchemy import Column, Integer, MetaData, String, Table, func, select
 from sqlalchemy.engine import Connection, Engine
 
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -16,6 +19,8 @@ from stock_profiler.modules.decision_cases.domain import (
     ExternalResult,
     FormalReport,
     FrozenDecisionCase,
+    NotificationAttempt,
+    StageResult,
 )
 
 METADATA = MetaData()
@@ -33,7 +38,8 @@ DECISION_EVENTS = Table(
     METADATA,
     Column("decision_event_id", String(96), primary_key=True),
     Column("business_object_id", String(96), nullable=False),
-    Column("framework_run_id", String(96), nullable=False, unique=True),
+    Column("framework_run_id", String(96), nullable=False),
+    Column("corrects_event_id", String(96), nullable=True),
     Column("event_payload", String, nullable=False),
     Column("committed_at", String(40), nullable=False),
 )
@@ -44,6 +50,28 @@ FORMAL_REPORTS = Table(
     Column("decision_event_id", String(96), nullable=False, unique=True),
     Column("report_payload", String, nullable=False),
     Column("generated_at", String(40), nullable=False),
+)
+DECISION_STAGE_EVENTS = Table(
+    "decision_stage_events",
+    METADATA,
+    Column("sequence", Integer, primary_key=True, autoincrement=True),
+    Column("stage_event_id", String(96), nullable=False, unique=True),
+    Column("business_object_id", String(96), nullable=False),
+    Column("framework_run_id", String(96), nullable=False),
+    Column("decision_event_id", String(96), nullable=True),
+    Column("stage_payload", String, nullable=False),
+    Column("recorded_at", String(40), nullable=False),
+)
+DECISION_NOTIFICATION_ATTEMPTS = Table(
+    "decision_notification_attempts",
+    METADATA,
+    Column("sequence", Integer, primary_key=True, autoincrement=True),
+    Column("notification_attempt_id", String(96), nullable=False, unique=True),
+    Column("report_version_id", String(96), nullable=False),
+    Column("decision_event_id", String(96), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("reasons_payload", String, nullable=False),
+    Column("recorded_at", String(40), nullable=False),
 )
 
 
@@ -112,6 +140,130 @@ class DecisionLedger:
         ).scalar_one_or_none()
         return DecisionEventFact.model_validate_json(payload) if payload is not None else None
 
+    def record_stage_result(
+        self,
+        connection: Connection,
+        *,
+        case: FrozenDecisionCase,
+        stage_result: StageResult,
+        decision_event_id: str | None = None,
+        stage_event_id: str | None = None,
+    ) -> None:
+        """Append a phase outcome without replacing an earlier result family."""
+        resolved_stage_event_id = stage_event_id or _stage_event_id(
+            case,
+            stage_result,
+            decision_event_id,
+        )
+        existing = connection.execute(
+            select(DECISION_STAGE_EVENTS.c.stage_payload).where(
+                DECISION_STAGE_EVENTS.c.stage_event_id == resolved_stage_event_id
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            connection.execute(
+                DECISION_STAGE_EVENTS.insert().values(
+                    stage_event_id=resolved_stage_event_id,
+                    business_object_id=case.business_object_id,
+                    framework_run_id=case.framework_run_id,
+                    decision_event_id=decision_event_id,
+                    stage_payload=stage_result.model_dump_json(),
+                    recorded_at=datetime.now(UTC).isoformat(),
+                )
+            )
+            return
+        if StageResult.model_validate_json(existing) != stage_result:
+            raise DecisionEventCommitError("stage event identity maps to different results")
+
+    def get_stage_results(
+        self, business_object_id: str, connection: Connection | None = None
+    ) -> tuple[StageResult, ...]:
+        """Read the append-only stage history in the order it was recorded."""
+        statement = (
+            select(DECISION_STAGE_EVENTS.c.stage_payload)
+            .where(DECISION_STAGE_EVENTS.c.business_object_id == business_object_id)
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        if connection is not None:
+            payloads = connection.execute(statement).scalars().all()
+        else:
+            with self._engine.connect() as read_connection:
+                payloads = read_connection.execute(statement).scalars().all()
+        return tuple(StageResult.model_validate_json(payload) for payload in payloads)
+
+    def record_notification_attempt(
+        self,
+        connection: Connection,
+        *,
+        report: FormalReport,
+        status: Literal["SUCCEEDED", "FAILED"],
+        reasons: tuple[str, ...],
+    ) -> NotificationAttempt:
+        """Append one notification attempt without mutating its source report."""
+        attempt_number = int(
+            connection.execute(
+                select(func.count())
+                .select_from(DECISION_NOTIFICATION_ATTEMPTS)
+                .where(
+                    DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id
+                    == report.report_version_id
+                )
+            ).scalar_one()
+        ) + 1
+        attempt = NotificationAttempt(
+            notification_attempt_id=_notification_attempt_id(report, attempt_number),
+            report_version_id=report.report_version_id,
+            event_id=report.event_id,
+            status=status,
+            reasons=reasons,
+        )
+        connection.execute(
+            DECISION_NOTIFICATION_ATTEMPTS.insert().values(
+                notification_attempt_id=attempt.notification_attempt_id,
+                report_version_id=attempt.report_version_id,
+                decision_event_id=attempt.event_id,
+                status=attempt.status,
+                reasons_payload=json.dumps(
+                    attempt.reasons,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ),
+                recorded_at=datetime.now(UTC).isoformat(),
+            )
+        )
+        return attempt
+
+    def get_notification_attempts(
+        self, report_version_id: str, connection: Connection | None = None
+    ) -> tuple[NotificationAttempt, ...]:
+        """Read notification history without deriving or changing report content."""
+        statement = (
+            select(
+                DECISION_NOTIFICATION_ATTEMPTS.c.notification_attempt_id,
+                DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id,
+                DECISION_NOTIFICATION_ATTEMPTS.c.decision_event_id,
+                DECISION_NOTIFICATION_ATTEMPTS.c.status,
+                DECISION_NOTIFICATION_ATTEMPTS.c.reasons_payload,
+            )
+            .where(DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id == report_version_id)
+            .order_by(DECISION_NOTIFICATION_ATTEMPTS.c.sequence)
+        )
+        if connection is not None:
+            rows = connection.execute(statement).all()
+        else:
+            with self._engine.connect() as read_connection:
+                rows = read_connection.execute(statement).all()
+        return tuple(
+            NotificationAttempt(
+                notification_attempt_id=row.notification_attempt_id,
+                report_version_id=row.report_version_id,
+                event_id=row.decision_event_id,
+                status=cast(Literal["SUCCEEDED", "FAILED"], row.status),
+                reasons=tuple(json.loads(row.reasons_payload)),
+            )
+            for row in rows
+        )
+
     def commit_event(
         self,
         connection: Connection,
@@ -119,18 +271,24 @@ class DecisionLedger:
         case: FrozenDecisionCase,
         framework_run_id: str,
         result: ExternalResult,
+        stage_results: tuple[StageResult, ...],
+        decision_event_id: str | None = None,
+        corrects_event_id: str | None = None,
     ) -> DecisionEventFact:
         """Reliably append the host event before any report projection is made."""
+        event_id = decision_event_id or case.decision_event_id
         fact = DecisionEventFact(
-            decision_event_id=case.decision_event_id,
+            decision_event_id=event_id,
             business_object_id=case.business_object_id,
             framework_run_id=framework_run_id,
             case=case,
             result=result,
             validation_status="PASSED",
             committed_at=case.report_generated_at,
+            stage_results=stage_results,
+            corrects_event_id=corrects_event_id,
         )
-        existing = self.get_decision_event(case.decision_event_id, connection)
+        existing = self.get_decision_event(event_id, connection)
         if existing is not None:
             if existing != fact:
                 raise DecisionEventCommitError("decision event identity maps to different facts")
@@ -138,9 +296,10 @@ class DecisionLedger:
         try:
             connection.execute(
                 DECISION_EVENTS.insert().values(
-                    decision_event_id=case.decision_event_id,
+                    decision_event_id=event_id,
                     business_object_id=case.business_object_id,
                     framework_run_id=framework_run_id,
+                    corrects_event_id=corrects_event_id,
                     event_payload=fact.model_dump_json(),
                     committed_at=fact.committed_at,
                 )
@@ -151,12 +310,18 @@ class DecisionLedger:
             raise DecisionEventCommitError("decision event commit failed") from error
         return fact
 
-    def publish_report(self, connection: Connection, fact: DecisionEventFact) -> FormalReport:
+    def publish_report(
+        self,
+        connection: Connection,
+        fact: DecisionEventFact,
+        report_version_id: str | None = None,
+    ) -> FormalReport:
         """Create a report only after its source business event is durably committed."""
-        existing = self.get_formal_report(fact.case.report_version_id, connection)
+        resolved_report_version_id = report_version_id or fact.case.report_version_id
+        existing = self.get_formal_report(resolved_report_version_id, connection)
         if existing is not None:
             return existing
-        report = fact.formal_report(fact.case.report_version_id)
+        report = fact.formal_report(resolved_report_version_id)
         try:
             connection.execute(
                 FORMAL_REPORTS.insert().values(
@@ -214,3 +379,26 @@ class DecisionLedger:
                     ).scalar_one()
                 ),
             }
+
+
+def _stage_event_id(
+    case: FrozenDecisionCase, stage_result: StageResult, decision_event_id: str | None
+) -> str:
+    payload = {
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "decision_event_id": decision_event_id,
+        "stage_result": stage_result.model_dump(mode="json"),
+    }
+    serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return f"decision-stage-{sha256(serialized.encode()).hexdigest()}"
+
+
+def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:
+    payload = {
+        "report_version_id": report.report_version_id,
+        "event_id": report.event_id,
+        "attempt_number": attempt_number,
+    }
+    serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return f"notification-attempt-{sha256(serialized.encode()).hexdigest()}"

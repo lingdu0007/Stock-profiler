@@ -15,7 +15,7 @@
   "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
   "version_bundle": {
     "case_contract_version": "1.0.0",
-    "host_contract_version": "1.0.0",
+    "host_contract_version": "1.1.0",
     "host_application_version": "0.1.0.dev0",
     "host_source_sha": "0000000000000000000000000000000000000000",
     "agent_definition_id": "synthetic-frozen-decision-case",
@@ -23,7 +23,7 @@
     "model_adapter_id": "m-agent-deterministic-model-adapter",
     "routing_policy_version": "d0-single-definition-route-v1",
     "output_contract_version": "1.0.0",
-    "report_projection_contract_version": "1.0.0",
+    "report_projection_contract_version": "1.1.0",
     "m_agent_version": "0.5.0",
     "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl",
     "m_agent_wheel_sha256": "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",

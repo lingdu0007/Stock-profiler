@@ -293,6 +293,8 @@ export interface components {
             business_object_id: string;
             /** Case Id */
             case_id: string;
+            /** Corrects Event Id */
+            corrects_event_id?: string | null;
             /** Event Id */
             event_id: string;
             evidence_clock: components["schemas"]["EvidenceClock"];
@@ -307,9 +309,24 @@ export interface components {
             /** Report Version Id */
             report_version_id: string;
             result: components["schemas"]["ExternalResult"];
+            /** Stage Results */
+            stage_results: components["schemas"]["StageResult"][];
             /** Synthetic */
             synthetic: boolean;
             version_bundle: components["schemas"]["DecisionCaseVersionBundle"];
+        };
+        /**
+         * GateResult
+         * @description One deterministic gate evaluated during a saved decision stage.
+         */
+        GateResult: {
+            /** Gate Id */
+            gate_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -343,6 +360,26 @@ export interface components {
         SessionRefreshDto: {
             /** Status */
             status: string;
+        };
+        /**
+         * StageResult
+         * @description A phase-specific outcome; lifecycle states have no global terminal meaning.
+         */
+        StageResult: {
+            /** Gate Results */
+            gate_results: components["schemas"]["GateResult"][];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
         };
         /** ValidationError */
         ValidationError: {

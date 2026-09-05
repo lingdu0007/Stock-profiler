@@ -186,6 +186,17 @@
             "title": "Case Id",
             "type": "string"
           },
+          "corrects_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Event Id"
+          },
           "event_id": {
             "title": "Event Id",
             "type": "string"
@@ -216,6 +227,13 @@
           "result": {
             "$ref": "#/components/schemas/ExternalResult"
           },
+          "stage_results": {
+            "items": {
+              "$ref": "#/components/schemas/StageResult"
+            },
+            "title": "Stage Results",
+            "type": "array"
+          },
           "synthetic": {
             "title": "Synthetic",
             "type": "boolean"
@@ -236,9 +254,28 @@
           "knowledge_cutoff",
           "evidence_clock",
           "version_bundle",
-          "result"
+          "result",
+          "stage_results"
         ],
         "title": "FormalReport",
+        "type": "object"
+      },
+      "GateResult": {
+        "additionalProperties": false,
+        "description": "One deterministic gate evaluated during a saved decision stage.",
+        "properties": {
+          "gate_id": {
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PASSED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["gate_id", "status"],
+        "title": "GateResult",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -296,6 +333,59 @@
         },
         "required": ["status"],
         "title": "SessionRefreshDto",
+        "type": "object"
+      },
+      "StageResult": {
+        "additionalProperties": false,
+        "description": "A phase-specific outcome; lifecycle states have no global terminal meaning.",
+        "properties": {
+          "gate_results": {
+            "items": {
+              "$ref": "#/components/schemas/GateResult"
+            },
+            "title": "Gate Results",
+            "type": "array"
+          },
+          "phase": {
+            "enum": [
+              "FRAMEWORK_RUN",
+              "HOST_VALIDATION",
+              "BUSINESS_COMMIT",
+              "PUBLICATION",
+              "NOTIFICATION",
+              "CORRECTION"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "CREATED",
+              "RUNNING",
+              "WAITING",
+              "SUCCEEDED",
+              "REJECTED",
+              "ABSTAINED",
+              "FAILED",
+              "PENDING",
+              "EXPIRED",
+              "EXECUTION_BLOCKED",
+              "UNKNOWN",
+              "CANCELLED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["phase", "status", "gate_results", "reasons"],
+        "title": "StageResult",
         "type": "object"
       },
       "ValidationError": {

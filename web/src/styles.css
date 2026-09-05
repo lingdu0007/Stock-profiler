@@ -118,6 +118,72 @@ h2 {
   margin-top: 8px;
 }
 
+.stage-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stage-row {
+  border: 1px solid #cbd5e1;
+  padding: 14px;
+}
+
+.stage-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stage-phase,
+.stage-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.stage-phase {
+  color: #0f3d4c;
+}
+
+.stage-status {
+  color: #9a3412;
+}
+
+.stage-gates {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+
+.stage-gates > div {
+  align-items: baseline;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.stage-gates dt,
+.stage-gates dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.stage-gates dd {
+  color: #475569;
+}
+
+.stage-reasons {
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  margin: 12px 0 0;
+}
+
 .record-list {
   margin: 0;
 }
@@ -181,6 +247,11 @@ dd {
 
   .record-row {
     gap: 5px;
+    grid-template-columns: 1fr;
+  }
+
+  .stage-gates > div {
+    gap: 4px;
     grid-template-columns: 1fr;
   }
 }

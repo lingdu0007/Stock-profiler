@@ -122,11 +122,39 @@ function FormalReportView({ report }: { report: FormalReport }) {
         </ol>
       </section>
 
+      <section className="report-section" aria-label="Decision stages">
+        <h2>Decision stages</h2>
+        <ol className="stage-list">
+          {report.stage_results.map((stage, index) => (
+            <li key={`${stage.phase}-${stage.status}-${index}`} className="stage-row">
+              <div className="stage-heading">
+                <span className="stage-phase">{stage.phase}</span>
+                <span className="stage-status">{stage.status}</span>
+              </div>
+              <dl className="stage-gates">
+                {stage.gate_results.map((gate) => (
+                  <div key={gate.gate_id}>
+                    <dt>{gate.gate_id}</dt>
+                    <dd>{gate.status}</dd>
+                  </div>
+                ))}
+              </dl>
+              {stage.reasons.length > 0 && (
+                <p className="stage-reasons">{stage.reasons.join(", ")}</p>
+              )}
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <section className="report-section" aria-label="Report record">
         <h2>Record</h2>
         <dl className="record-list">
           <Record label="Report version" value={report.report_version_id} />
           <Record label="Business event" value={report.event_id} />
+          {report.corrects_event_id && (
+            <Record label="Corrects event" value={report.corrects_event_id} />
+          )}
           <Record label="M-Agent Run" value={report.framework_run_id} />
           <Record label="Business object" value={report.business_object_id} />
           <Record label="Knowledge cutoff" value={report.knowledge_cutoff} />

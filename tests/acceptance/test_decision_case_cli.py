@@ -39,6 +39,33 @@ def test_cli_runs_and_replays_the_frozen_case_by_its_stable_business_identity(
     assert replay["report_version_id"] == case.report_version_id
 
 
+def test_cli_replays_the_same_append_only_correction_by_business_identity(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
+
+    monkeypatch.setattr(sys, "argv", ["stock-profiler", "decision-case-run"])
+    main()
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["stock-profiler", "decision-case-correct", "--business-identity", case.business_identity],
+    )
+    main()
+    first = json.loads(capsys.readouterr().out)
+
+    main()
+    second = json.loads(capsys.readouterr().out)
+
+    assert second == first
+    assert first["original_event_id"] == case.decision_event_id
+    assert first["report"]["corrects_event_id"] == case.decision_event_id
+    assert first["report"]["framework_run_id"] == case.framework_run_id
+
+
 def test_cli_replay_rejects_an_unknown_business_identity(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

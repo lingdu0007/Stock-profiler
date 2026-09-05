@@ -9,8 +9,8 @@ The current `0.1.0.dev0` baseline provides:
 
 - a Python 3.11 host with a pinned M-Agent `0.5.0` release wheel;
 - one frozen, original D0 synthetic decision case with immutable clocks,
-  version bundle, independent business/Run/event/report identities, and
-  deterministic replay;
+  version bundle, independent business/Run/event/report identities, durable
+  Run recovery, append-only stage outcomes, and deterministic replay;
 - a CLI acceptance path and authenticated, read-only FastAPI report projection;
 - startup-frozen configuration, privacy-safe structured logging, health
   diagnostics, and separate SQLite ownership for application state and
@@ -21,8 +21,8 @@ The current `0.1.0.dev0` baseline provides:
   verification only.
 
 It does not implement real data access, investment conclusions, real
-qualification, provider or broker integrations, notifications, order writing,
-or account actions.
+qualification, provider or broker integrations, external notification delivery,
+order writing, or account actions.
 
 ## Quick Start
 
@@ -39,6 +39,8 @@ uv run stock-profiler version
 uv run stock-profiler doctor
 uv run stock-profiler decision-case-run
 uv run stock-profiler decision-case-replay \
+  --business-identity synthetic:decision:orbital-mosaic:001
+uv run stock-profiler decision-case-correct \
   --business-identity synthetic:decision:orbital-mosaic:001
 ```
 

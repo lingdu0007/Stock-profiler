@@ -31,6 +31,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FROZEN_HOST_CONTRACT_VERSION,
     FROZEN_OUTPUT_CONTRACT_VERSION,
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
+    FrameworkRunStatus,
     FrozenDecisionCase,
     has_complete_synthetic_input,
 )
@@ -58,8 +59,9 @@ class FrameworkRunResult:
     """Framework details expressed without leaking framework types to the host module."""
 
     run_id: str
-    status: str
+    status: FrameworkRunStatus
     output: str | None
+    waiting_reason: str | None = None
 
 
 async def execute_frozen_decision_case(
@@ -96,7 +98,14 @@ async def execute_frozen_decision_case(
             run_id=case.framework_run_id,
         )
         run = await runner.start_run(created.run_id)
-    return FrameworkRunResult(run_id=run.run_id, status=run.status.value, output=run.output)
+    else:
+        run = run if run.status.is_terminal else await runner.resume_run(run.run_id)
+    return FrameworkRunResult(
+        run_id=run.run_id,
+        status=run.status.value,
+        output=run.output,
+        waiting_reason=run.waiting_reason,
+    )
 
 
 def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
