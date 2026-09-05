@@ -589,7 +589,7 @@ class FrozenDecisionCase(FrozenContract):
             "report-correction",
             {
                 "correction_event_id": self.correction_event_id(original_event_id),
-                "report_projection_contract_version": FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
+                "correction_contract_version": FROZEN_CORRECTION_CONTRACT_VERSION,
             },
         )
 

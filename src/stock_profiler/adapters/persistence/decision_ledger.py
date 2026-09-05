@@ -697,7 +697,7 @@ class DecisionLedger:
         final_stage = report.stage_results[-1]
         if final_stage.phase != "PUBLICATION" or final_stage.status != "SUCCEEDED":
             return report
-        publication_history = tuple(
+        publication_stages = tuple(
             stage_result
             for stage_result in (
                 StageResult.model_validate_json(payload)
@@ -707,7 +707,21 @@ class DecisionLedger:
                     .order_by(DECISION_STAGE_EVENTS.c.sequence)
                 ).scalars()
             )
-            if stage_result.phase == "PUBLICATION" and stage_result.status != "SUCCEEDED"
+            if stage_result.phase == "PUBLICATION"
+        )
+        source_fact = self.get_decision_event(report.event_id, connection)
+        if (
+            source_fact is not None
+            and source_fact.case.version_bundle.report_projection_contract_version == "1.0.0"
+            and publication_stages
+        ):
+            return report.model_copy(
+                update={"stage_results": (*source_fact.stage_results, *publication_stages)}
+            )
+        publication_history = tuple(
+            stage_result
+            for stage_result in publication_stages
+            if stage_result.status != "SUCCEEDED"
         )
         if not publication_history:
             return report

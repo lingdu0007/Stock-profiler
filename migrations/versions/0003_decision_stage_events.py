@@ -28,15 +28,51 @@ def _has_table(name: str) -> bool:
 
 
 def _validate_existing_stage_event_table() -> None:
-    columns = {
-        column["name"] for column in sa.inspect(op.get_bind()).get_columns("decision_stage_events")
-    }
+    inspector = sa.inspect(op.get_bind())
+    columns = {column["name"] for column in inspector.get_columns("decision_stage_events")}
     missing_columns = _REQUIRED_STAGE_EVENT_COLUMNS - columns
-    if missing_columns:
+    has_sequence_primary_key = inspector.get_pk_constraint("decision_stage_events").get(
+        "constrained_columns"
+    ) == ["sequence"]
+    has_unique_stage_event_id = _has_unique_stage_event_id(inspector)
+    if missing_columns or not has_sequence_primary_key or not has_unique_stage_event_id:
+        missing_schema = [
+            *(f"column {column}" for column in sorted(missing_columns)),
+            *(() if has_sequence_primary_key else ("primary key sequence",)),
+            *(() if has_unique_stage_event_id else ("unique stage_event_id",)),
+        ]
         raise RuntimeError(
             "interrupted decision stage event migration has incompatible table: "
-            f"missing {', '.join(sorted(missing_columns))}"
+            f"missing {', '.join(missing_schema)}"
         )
+
+
+def _has_unique_stage_event_id(inspector: sa.Inspector) -> bool:
+    """Recognize SQLite's automatic UNIQUE index after an interrupted table create."""
+    if any(
+        constraint.get("column_names") == ["stage_event_id"]
+        for constraint in inspector.get_unique_constraints("decision_stage_events")
+    ) or any(
+        index.get("unique") and index.get("column_names") == ["stage_event_id"]
+        for index in inspector.get_indexes("decision_stage_events")
+    ):
+        return True
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        return False
+    for index in bind.execute(sa.text("PRAGMA index_list('decision_stage_events')")).mappings():
+        if not index["unique"]:
+            continue
+        index_name = str(index["name"]).replace("'", "''")
+        index_columns = [
+            row["name"]
+            for row in bind.execute(
+                sa.text(f"PRAGMA index_info('{index_name}')")  # noqa: S608
+            ).mappings()
+        ]
+        if index_columns == ["stage_event_id"]:
+            return True
+    return False
 
 
 def upgrade() -> None:
