@@ -108,7 +108,7 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "original synthetic" in documentation_issue
 
 
-def test_web_authn_dependency_contract_is_declared_without_an_auth_route() -> None:
+def test_web_authn_and_read_only_report_contracts_are_declared() -> None:
     package_json = (ROOT / "web" / "package.json").read_text(encoding="utf-8")
     openapi = (ROOT / "web" / "openapi.json").read_text(encoding="utf-8")
     notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
@@ -127,5 +127,10 @@ def test_web_authn_dependency_contract_is_declared_without_an_auth_route() -> No
     ):
         assert f'"{dependency}"' in package_json
         assert dependency in notices
-    assert "/api/v1/auth" not in openapi
+    assert "/api/v1/auth/host-console/grants" in openapi
+    assert "/api/v1/auth/passkeys/authentication/options" in openapi
+    assert "/api/v1/auth/passkeys/authentication/verify" in openapi
+    assert "/api/v1/auth/passkeys/registration/options" in openapi
+    assert "/api/v1/auth/passkeys/registration/verify" in openapi
+    assert "/api/v1/reports/{report_version_id}" in openapi
     assert "/api/v1/diagnostics/safety-capabilities" in openapi

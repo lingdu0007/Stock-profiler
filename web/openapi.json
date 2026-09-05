@@ -1,6 +1,224 @@
 {
   "components": {
     "schemas": {
+      "ChallengeDto": {
+        "properties": {
+          "challenge_id": {
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          }
+        },
+        "required": ["challenge_id", "options"],
+        "title": "ChallengeDto",
+        "type": "object"
+      },
+      "CredentialRequest": {
+        "properties": {
+          "challenge_id": {
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "credential": {
+            "additionalProperties": true,
+            "title": "Credential",
+            "type": "object"
+          }
+        },
+        "required": ["challenge_id", "credential"],
+        "title": "CredentialRequest",
+        "type": "object"
+      },
+      "DecisionCaseVersionBundle": {
+        "additionalProperties": false,
+        "description": "The complete version set that participates in replay identity.",
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "agent_definition_version": {
+            "title": "Agent Definition Version",
+            "type": "string"
+          },
+          "case_contract_version": {
+            "title": "Case Contract Version",
+            "type": "string"
+          },
+          "host_contract_version": {
+            "title": "Host Contract Version",
+            "type": "string"
+          },
+          "m_agent_release_commit": {
+            "title": "M Agent Release Commit",
+            "type": "string"
+          },
+          "m_agent_version": {
+            "title": "M Agent Version",
+            "type": "string"
+          },
+          "output_contract_version": {
+            "title": "Output Contract Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_contract_version",
+          "host_contract_version",
+          "agent_definition_id",
+          "agent_definition_version",
+          "output_contract_version",
+          "m_agent_version",
+          "m_agent_release_commit"
+        ],
+        "title": "DecisionCaseVersionBundle",
+        "type": "object"
+      },
+      "EvidenceClock": {
+        "additionalProperties": false,
+        "description": "The immutable fact, publication, acquisition, and validation clocks.",
+        "properties": {
+          "acquired_at": {
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "fact_effective_at": {
+            "title": "Fact Effective At",
+            "type": "string"
+          },
+          "source_published_at": {
+            "title": "Source Published At",
+            "type": "string"
+          },
+          "validated_at": {
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": ["fact_effective_at", "source_published_at", "acquired_at", "validated_at"],
+        "title": "EvidenceClock",
+        "type": "object"
+      },
+      "ExternalResult": {
+        "additionalProperties": false,
+        "description": "The user-visible result expected from this original synthetic fixture.",
+        "properties": {
+          "key_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Reasons",
+            "type": "array"
+          },
+          "outcome_code": {
+            "title": "Outcome Code",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": ["outcome_code", "summary", "key_reasons"],
+        "title": "ExternalResult",
+        "type": "object"
+      },
+      "FormalReport": {
+        "additionalProperties": false,
+        "description": "Read-only delivery projection derived from one committed host event.",
+        "properties": {
+          "business_object_id": {
+            "title": "Business Object Id",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "evidence_clock": {
+            "$ref": "#/components/schemas/EvidenceClock"
+          },
+          "framework_run_id": {
+            "title": "Framework Run Id",
+            "type": "string"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ExternalResult"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "version_bundle": {
+            "$ref": "#/components/schemas/DecisionCaseVersionBundle"
+          }
+        },
+        "required": [
+          "report_version_id",
+          "event_id",
+          "business_object_id",
+          "framework_run_id",
+          "case_id",
+          "synthetic",
+          "qualification_scope",
+          "generated_at",
+          "knowledge_cutoff",
+          "evidence_clock",
+          "version_bundle",
+          "result"
+        ],
+        "title": "FormalReport",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HostGrantRequest": {
+        "properties": {
+          "purpose": {
+            "enum": ["bootstrap", "recovery"],
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": ["purpose"],
+        "title": "HostGrantRequest",
+        "type": "object"
+      },
       "SafetyCapabilitiesDiagnosticDto": {
         "description": "Machine-readable official-project safety invariants.",
         "properties": {
@@ -19,6 +237,42 @@
         },
         "required": ["single_user", "public_recommendation_service", "order_writing"],
         "title": "SafetyCapabilitiesDiagnosticDto",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": ["loc", "msg", "type"],
+        "title": "ValidationError",
         "type": "object"
       },
       "VersionDiagnosticDto": {
@@ -68,6 +322,363 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/host-console/grants": {
+      "post": {
+        "operationId": "host_console_grant_api_v1_auth_host_console_grants_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Host-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Host-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Host Console Grant Api V1 Auth Host Console Grants Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Host Console Grant"
+      }
+    },
+    "/api/v1/auth/passkeys/authentication/options": {
+      "post": {
+        "operationId": "authentication_options_api_v1_auth_passkeys_authentication_options_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authentication Options"
+      }
+    },
+    "/api/v1/auth/passkeys/authentication/verify": {
+      "post": {
+        "operationId": "authentication_verify_api_v1_auth_passkeys_authentication_verify_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Authentication Verify Api V1 Auth Passkeys Authentication Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authentication Verify"
+      }
+    },
+    "/api/v1/auth/passkeys/registration/options": {
+      "post": {
+        "operationId": "registration_options_api_v1_auth_passkeys_registration_options_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Host-Console-Grant",
+            "required": true,
+            "schema": {
+              "title": "X-Host-Console-Grant",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Registration Options"
+      }
+    },
+    "/api/v1/auth/passkeys/registration/verify": {
+      "post": {
+        "operationId": "registration_verify_api_v1_auth_passkeys_registration_verify_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Registration Verify"
+      }
+    },
+    "/api/v1/auth/session": {
+      "delete": {
+        "operationId": "logout_api_v1_auth_session_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logout"
+      }
+    },
     "/api/v1/diagnostics/safety-capabilities": {
       "get": {
         "description": "Report static safety boundaries without exposing a product action.",
@@ -103,6 +714,61 @@
           }
         },
         "summary": "Version Diagnostic"
+      }
+    },
+    "/api/v1/reports/{report_version_id}": {
+      "get": {
+        "operationId": "formal_report_api_v1_reports__report_version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_version_id",
+            "required": true,
+            "schema": {
+              "title": "Report Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormalReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Formal Report"
       }
     }
   }
