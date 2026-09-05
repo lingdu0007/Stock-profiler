@@ -68,8 +68,9 @@ def retry_default_frozen_decision_case_notification(
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
     with ledger.serialize_case_execution() as connection:
-        report = ledger.get_formal_report(case.report_version_id, connection)
-        if report is None:
+        event = ledger.get_original_decision_event(case.business_object_id, connection)
+        report = ledger.get_original_formal_report(case.business_object_id, connection)
+        if event is None or report is None:
             raise ValueError("formal report must be published before notification")
         attempt = ledger.record_notification_attempt(
             connection,
@@ -79,7 +80,7 @@ def retry_default_frozen_decision_case_notification(
         )
         ledger.record_stage_result(
             connection,
-            case=case,
+            case=event.case,
             decision_event_id=report.event_id,
             stage_event_id=attempt.notification_attempt_id,
             stage_result=StageResult(
@@ -104,16 +105,22 @@ def correct_default_frozen_decision_case(
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
     with ledger.serialize_case_execution() as connection:
-        original_event = ledger.get_decision_event(case.decision_event_id, connection)
-        original_report = ledger.get_formal_report(case.report_version_id, connection)
+        original_event = ledger.get_original_decision_event(
+            case.business_object_id,
+            connection,
+        )
+        original_report = ledger.get_original_formal_report(
+            case.business_object_id,
+            connection,
+        )
         if original_event is None or original_report is None:
             raise ValueError("a published original report is required before correction")
-        correction_event_id = case.correction_event_id(original_event.decision_event_id)
-        correction_report_version_id = case.correction_report_version_id(
-            original_event.decision_event_id
+        correction_event = ledger.get_correction_event(
+            original_event.decision_event_id,
+            connection,
         )
-        correction_event = ledger.get_decision_event(correction_event_id, connection)
         if correction_event is None:
+            correction_event_id = case.correction_event_id(original_event.decision_event_id)
             correction_stages = (
                 StageResult(
                     phase="CORRECTION",
@@ -153,14 +160,22 @@ def correct_default_frozen_decision_case(
                 generated_at=FROZEN_CORRECTION_GENERATED_AT,
             )
         ledger.ensure_event_stage_results(connection, correction_event)
-        report = ledger.publish_report(
+        report = ledger.get_formal_report_for_event(
+            correction_event.decision_event_id,
             connection,
-            correction_event,
-            correction_report_version_id,
         )
+        if report is None:
+            correction_report_version_id = correction_event.case.correction_report_version_id(
+                original_event.decision_event_id
+            )
+            report = ledger.publish_report(
+                connection,
+                correction_event,
+                correction_report_version_id,
+            )
         ledger.record_stage_result(
             connection,
-            case=case,
+            case=correction_event.case,
             decision_event_id=correction_event.decision_event_id,
             stage_result=report.stage_results[-1],
         )
@@ -431,7 +446,11 @@ def _framework_stage_result(
         phase="FRAMEWORK_RUN",
         status=framework.status,
         gate_results=(GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
-        reasons=(framework.waiting_reason or f"FRAMEWORK_{framework.status}",),
+        reasons=(
+            framework.error_code
+            or framework.waiting_reason
+            or f"FRAMEWORK_{framework.status}",
+        ),
     )
 
 

@@ -271,6 +271,29 @@ def test_invalid_framework_output_contract_is_saved_and_keeps_publication_closed
     }
 
 
+def test_real_m_agent_output_contract_failure_keeps_its_explicit_reason(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        frozen_adapter,
+        "_deterministic_model_response",
+        lambda _: '{"outcome_code":"SYNTHETIC_REVIEW_COMPLETE"}',
+    )
+
+    outcome = run_default_frozen_decision_case(migrated_settings)
+
+    assert outcome.framework_run_status == "FAILED"
+    assert outcome.business_result_status is None
+    assert outcome.business_lifecycle_status is None
+    assert outcome.business_commit_status == "NOT_ATTEMPTED"
+    assert outcome.publication_status == "CLOSED"
+    assert outcome.report is None
+    assert [(stage.phase, stage.status) for stage in outcome.stage_results] == [
+        ("FRAMEWORK_RUN", "FAILED")
+    ]
+    assert outcome.stage_results[0].reasons == ("MODEL_CONTRACT_VIOLATION",)
+
+
 def test_replay_reuses_the_original_business_object_framework_run_event_and_report(
     migrated_settings: Settings,
 ) -> None:
@@ -536,6 +559,47 @@ def test_notification_failure_and_retry_preserve_the_original_published_report(
         if stage.phase == "NOTIFICATION"
     ] == ["FAILED", "FAILED", "SUCCEEDED"]
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
+
+
+def test_cross_build_notification_and_correction_reuse_the_original_published_identity(
+    migrated_settings: Settings,
+) -> None:
+    initial = run_default_frozen_decision_case(migrated_settings)
+    assert initial.report is not None
+    case = load_frozen_decision_case(migrated_settings)
+    initial_notification = retry_default_frozen_decision_case_notification(
+        migrated_settings,
+        case.business_identity,
+        "FAILED",
+    )
+    initial_correction = correct_default_frozen_decision_case(
+        migrated_settings,
+        case.business_identity,
+    )
+    upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
+
+    replayed = run_default_frozen_decision_case(upgraded_settings)
+    retried_notification = retry_default_frozen_decision_case_notification(
+        upgraded_settings,
+        case.business_identity,
+        "SUCCEEDED",
+    )
+    replayed_correction = correct_default_frozen_decision_case(
+        upgraded_settings,
+        case.business_identity,
+    )
+
+    assert replayed.report == initial.report
+    assert replayed.framework_run_id == initial.framework_run_id
+    assert replayed.decision_event_id == initial.decision_event_id
+    assert replayed.report_version_id == initial.report_version_id
+    assert retried_notification.report_version_id == initial.report_version_id
+    assert retried_notification.event_id == initial.decision_event_id
+    assert (
+        retried_notification.notification_attempt_id
+        != initial_notification.notification_attempt_id
+    )
+    assert replayed_correction == initial_correction
 
 
 def test_correction_appends_a_new_report_that_references_the_original_event(
