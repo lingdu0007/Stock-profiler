@@ -1,9 +1,10 @@
 {
 	auto_https disable_redirects
+	admin 127.0.0.1:2019
 }
 
 https://{$STOCK_PROFILER_GATEWAY_HOSTNAME}:8443 {
-	tls /run/secrets/gateway_tls_certificate /run/secrets/gateway_tls_private_key
+	tls /run/stock-profiler/gateway_tls_certificate /run/stock-profiler/gateway_tls_private_key
 
 	root * /srv
 	encode zstd gzip

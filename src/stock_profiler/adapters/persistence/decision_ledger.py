@@ -78,15 +78,26 @@ class DecisionLedger:
         ):
             raise DecisionEventCommitError("business identity maps to different frozen input")
 
-    def commit_event_and_report(
+    def get_decision_event(
+        self, decision_event_id: str, connection: Connection
+    ) -> DecisionEventFact | None:
+        """Read the committed host fact before attempting a report projection."""
+        payload = connection.execute(
+            select(DECISION_EVENTS.c.event_payload).where(
+                DECISION_EVENTS.c.decision_event_id == decision_event_id
+            )
+        ).scalar_one_or_none()
+        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+
+    def commit_event(
         self,
         connection: Connection,
         *,
         case: FrozenDecisionCase,
         framework_run_id: str,
         result: ExternalResult,
-    ) -> FormalReport:
-        """Atomically append the event and its only formal report projection."""
+    ) -> DecisionEventFact:
+        """Reliably append the host event before any report projection is made."""
         fact = DecisionEventFact(
             decision_event_id=case.decision_event_id,
             business_object_id=case.business_object_id,
@@ -96,7 +107,11 @@ class DecisionLedger:
             validation_status="PASSED",
             committed_at=case.report_generated_at,
         )
-        report = _report_from_fact(case.report_version_id, fact)
+        existing = self.get_decision_event(case.decision_event_id, connection)
+        if existing is not None:
+            if existing != fact:
+                raise DecisionEventCommitError("decision event identity maps to different facts")
+            return existing
         try:
             connection.execute(
                 DECISION_EVENTS.insert().values(
@@ -107,6 +122,19 @@ class DecisionLedger:
                     committed_at=fact.committed_at,
                 )
             )
+            connection.commit()
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception as error:
+            raise DecisionEventCommitError("decision event commit failed") from error
+        return fact
+
+    def publish_report(self, connection: Connection, fact: DecisionEventFact) -> FormalReport:
+        """Create a report only after its source business event is durably committed."""
+        existing = self.get_formal_report(fact.case.report_version_id, connection)
+        if existing is not None:
+            return existing
+        report = fact.formal_report(fact.case.report_version_id)
+        try:
             connection.execute(
                 FORMAL_REPORTS.insert().values(
                     report_version_id=report.report_version_id,
@@ -115,7 +143,7 @@ class DecisionLedger:
                 )
             )
         except Exception as error:
-            raise DecisionEventCommitError("decision event commit failed") from error
+            raise DecisionEventCommitError("formal report publication failed") from error
         return report
 
     def get_formal_report(
@@ -141,7 +169,7 @@ class DecisionLedger:
         if row is None:
             return None
         fact = DecisionEventFact.model_validate_json(row.event_payload)
-        return _report_from_fact(str(row.report_version_id), fact)
+        return fact.formal_report(str(row.report_version_id))
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""
@@ -163,22 +191,3 @@ class DecisionLedger:
                     ).scalar_one()
                 ),
             }
-
-
-def _report_from_fact(report_version_id: str, fact: DecisionEventFact) -> FormalReport:
-    """Build the only report projection from the event's complete host-owned fact."""
-    case = fact.case
-    return FormalReport(
-        report_version_id=report_version_id,
-        event_id=fact.decision_event_id,
-        business_object_id=fact.business_object_id,
-        framework_run_id=fact.framework_run_id,
-        case_id=case.case_id,
-        synthetic=True,
-        qualification_scope=case.qualification_scope,
-        generated_at=case.report_generated_at,
-        knowledge_cutoff=case.knowledge_cutoff,
-        evidence_clock=case.evidence_clock,
-        version_bundle=case.version_bundle,
-        result=fact.result,
-    )

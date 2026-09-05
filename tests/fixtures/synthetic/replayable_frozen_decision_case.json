@@ -28,6 +28,29 @@
     "m_agent_wheel_sha256": "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
     "m_agent_release_commit": "743651e5c74a4865f25a31dab68d188b5b0aed64"
   },
+  "agent_definition": {
+    "definition_id": "synthetic-frozen-decision-case",
+    "version": "1.0.0",
+    "instructions": "Return only the frozen synthetic decision-case external result as JSON.",
+    "model_adapter_id": "m-agent-deterministic-model-adapter",
+    "output_contract": {
+      "contract_id": "synthetic-decision-case-output",
+      "version": "1.0.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "outcome_code": { "type": "string" },
+          "summary": { "type": "string" },
+          "key_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["outcome_code", "summary", "key_reasons"],
+        "additionalProperties": false
+      }
+    }
+  },
   "input": {
     "security": {
       "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",

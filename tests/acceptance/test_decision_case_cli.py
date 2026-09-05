@@ -80,3 +80,4 @@ def test_cli_creates_a_short_lived_host_console_grant_without_an_http_request(
     assert grant["purpose"] == "bootstrap"
     assert isinstance(grant["grant_id"], str)
     assert grant["grant_id"]
+    assert grant["enrollment_path"] == f"/enroll#{grant['grant_id']}"

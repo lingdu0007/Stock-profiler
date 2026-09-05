@@ -33,6 +33,7 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     gateway_dockerfile = (ROOT / "deploy" / "gateway.Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (ROOT / "deploy" / "gateway-entrypoint.sh").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     baseline = (ROOT / "docs" / "development" / "baseline.md").read_text(encoding="utf-8")
     documentation_issue = (ROOT / ".github" / "ISSUE_TEMPLATE" / "documentation.yml").read_text(
@@ -108,16 +109,24 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "${STOCK_PROFILER_GATEWAY_HOSTNAME}:127.0.0.1" in compose
     assert "- edge" in compose
     assert "edge:\n  application:\n    internal: true" in compose
+    assert "http://127.0.0.1:2019/config/" in compose
     assert "handle /api/v1/*" in caddyfile
     assert "handle /healthz" in caddyfile
     assert "respond 200" in caddyfile
     assert "try_files {path} /index.html" in caddyfile
     assert "https://{$STOCK_PROFILER_GATEWAY_HOSTNAME}:8443" in caddyfile
     assert (
-        "tls /run/secrets/gateway_tls_certificate /run/secrets/gateway_tls_private_key" in caddyfile
+        "tls /run/stock-profiler/gateway_tls_certificate "
+        "/run/stock-profiler/gateway_tls_private_key" in caddyfile
     )
     assert "org.opencontainers.image.revision=${SOURCE_SHA}" in gateway_dockerfile
-    assert "USER 10001:10001" in gateway_dockerfile
+    assert "su-exec 10001:10001 caddy run" in entrypoint
+    assert "gateway-entrypoint" in gateway_dockerfile
+    assert "RFC1918" in entrypoint
+    assert "CGNAT" in entrypoint
+    assert "-checkend 0" in entrypoint
+    assert "-checkhost" in entrypoint
+    assert "install -m 600 -o 10001 -g 10001" in entrypoint
     assert "COPY tests/fixtures/synthetic/replayable_frozen_decision_case.json" in dockerfile
     assert "STOCK_PROFILER_API_SHARED_SECRET_FILE" in ci_workflow
     assert "STOCK_PROFILER_AUTH_ORIGIN" in ci_workflow

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from webauthn.helpers import bytes_to_base64url
 
-from stock_profiler.adapters.authentication.passkeys import PasskeyAuthenticator
+from stock_profiler.adapters.authentication.passkeys import HostGrantPurpose, PasskeyAuthenticator
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
@@ -105,7 +105,7 @@ def _authenticated_client_with_csrf(
     client = TestClient(create_app(settings), base_url=ORIGIN)
     grant_id = PasskeyAuthenticator(
         initialize_runtime_storage(settings).engine, settings
-    ).create_host_console_grant("bootstrap")
+    ).create_host_console_grant(HostGrantPurpose.BOOTSTRAP)
     registration = client.post(
         "/api/v1/auth/passkeys/registration/options",
         headers={"Origin": ORIGIN, "X-Host-Console-Grant": grant_id},

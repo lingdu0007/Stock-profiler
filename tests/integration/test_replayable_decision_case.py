@@ -72,10 +72,33 @@ def test_event_commit_failure_never_leaves_a_readable_formal_report(
     def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
         raise DecisionEventCommitError("synthetic event storage failure")
 
-    monkeypatch.setattr(DecisionLedger, "commit_event_and_report", fail_commit)
+    monkeypatch.setattr(DecisionLedger, "commit_event", fail_commit)
 
     with pytest.raises(DecisionEventCommitError):
         run_default_frozen_decision_case(migrated_settings)
 
     ledger = DecisionLedger.from_settings(migrated_settings)
     assert ledger.counts() == {"business_objects": 0, "decision_events": 0, "reports": 0}
+
+
+def test_report_projection_failure_preserves_the_committed_event_but_never_publishes_it(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            DecisionLedger,
+            "publish_report",
+            lambda self, _connection, _fact: (_ for _ in ()).throw(
+                DecisionEventCommitError("synthetic projection storage failure")
+            ),
+        )
+        with pytest.raises(DecisionEventCommitError, match="projection storage failure"):
+            run_default_frozen_decision_case(migrated_settings)
+
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 0}
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.publication_status == "PUBLISHED"
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}

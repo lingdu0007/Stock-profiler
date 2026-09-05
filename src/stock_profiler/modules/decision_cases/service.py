@@ -45,19 +45,24 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
         if existing_report is not None:
             return _execution(case, existing_report)
 
-        ledger.ensure_business_object(connection, case)
-        framework = asyncio.run(execute_frozen_decision_case(case, runtime))
-        if framework.status != "SUCCEEDED" or framework.output is None:
-            raise DecisionEventCommitError("framework did not produce a publishable typed output")
-        result = ExternalResult.model_validate_json(framework.output)
-        if result != case.expected_external_result:
-            raise DecisionEventCommitError("host validation rejected the framework output")
-        report = ledger.commit_event_and_report(
-            connection,
-            case=case,
-            framework_run_id=framework.run_id,
-            result=result,
-        )
+        fact = ledger.get_decision_event(case.decision_event_id, connection)
+        if fact is None:
+            ledger.ensure_business_object(connection, case)
+            framework = asyncio.run(execute_frozen_decision_case(case, runtime))
+            if framework.status != "SUCCEEDED" or framework.output is None:
+                raise DecisionEventCommitError(
+                    "framework did not produce a publishable typed output"
+                )
+            result = ExternalResult.model_validate_json(framework.output)
+            if result != case.expected_external_result:
+                raise DecisionEventCommitError("host validation rejected the framework output")
+            fact = ledger.commit_event(
+                connection,
+                case=case,
+                framework_run_id=framework.run_id,
+                result=result,
+            )
+        report = ledger.publish_report(connection, fact)
     return _execution(case, report)
 
 

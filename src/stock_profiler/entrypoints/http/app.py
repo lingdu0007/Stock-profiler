@@ -10,6 +10,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from stock_profiler.adapters.authentication.passkeys import (
     AuthenticationError,
+    ChallengePurpose,
     PasskeyAuthenticator,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -66,6 +67,14 @@ class CredentialRequest(BaseModel):
     credential: dict[str, object]
 
 
+def _challenge_dto(payload: dict[str, object]) -> ChallengeDto:
+    """Translate the adapter's value boundary into the generated HTTP contract."""
+    return ChallengeDto(
+        challenge_id=cast(str, payload["challenge_id"]),
+        options=cast(dict[str, object], payload["options"]),
+    )
+
+
 def create_app(settings: Settings | None = None, *, clock: Clock | None = None) -> FastAPI:
     """Build the HTTP transport without exposing persistence entities."""
     app_settings = settings or load_settings()
@@ -110,11 +119,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         _: None = Depends(require_expected_origin),
     ) -> ChallengeDto:
         try:
-            payload = authenticator().registration_options(grant_id)
-            return ChallengeDto(
-                challenge_id=cast(str, payload["challenge_id"]),
-                options=cast(dict[str, object], payload["options"]),
-            )
+            return _challenge_dto(authenticator().registration_options(grant_id))
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
 
@@ -139,11 +144,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
     )
     def authentication_options(_: None = Depends(require_expected_origin)) -> ChallengeDto:
         try:
-            payload = authenticator().authentication_options()
-            return ChallengeDto(
-                challenge_id=cast(str, payload["challenge_id"]),
-                options=cast(dict[str, object], payload["options"]),
-            )
+            return _challenge_dto(authenticator().authentication_options())
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=str(error)) from error
 
@@ -184,11 +185,9 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         _: None = Depends(require_expected_origin),
     ) -> ChallengeDto:
         try:
-            authenticator().authorize_session_mutation(session_token, csrf_token)
-            payload = authenticator().authentication_options("reauthentication")
-            return ChallengeDto(
-                challenge_id=cast(str, payload["challenge_id"]),
-                options=cast(dict[str, object], payload["options"]),
+            authenticator().require_mutable_session(session_token, csrf_token)
+            return _challenge_dto(
+                authenticator().authentication_options(ChallengePurpose.REAUTHENTICATION)
             )
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
@@ -205,7 +204,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
     ) -> dict[str, str]:
         try:
             credential_id = authenticator().verify_assertion(
-                request.challenge_id, request.credential, "reauthentication"
+                request.challenge_id, request.credential, ChallengePurpose.REAUTHENTICATION
             )
             access = authenticator().reauthenticate(session_token, csrf_token, credential_id)
         except AuthenticationError as error:

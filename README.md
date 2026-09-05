@@ -54,6 +54,10 @@ docker compose -f deploy/compose.yml run --rm api \
   stock-profiler host-console-grant --purpose bootstrap
 ```
 
+Open the emitted `enrollment_path` at the configured private HTTPS origin
+before the grant expires. The opaque grant is carried only in the URL fragment,
+so it is not included in the browser's HTTP request.
+
 ## Controlled Compose
 
 The Compose topology has one Caddy gateway plus API, scheduler, worker, and
@@ -79,9 +83,11 @@ values outside Git. Sensitive values are read only from `/run/secrets`; they
 are not accepted as environment variables. The tracked files under
 `deploy/secrets/` are immutable synthetic templates used only for public CI
 Compose rendering and must never be used for a production deployment.
-The gateway binds only the deployment's private VPN address, terminates TLS for
-the stable private hostname with a certificate and key provisioned outside Git,
-and proxies the same HTTPS origin to `/api/v1`.
+The gateway accepts only loopback, RFC1918, or CGNAT IPv4 bind addresses,
+terminates TLS for the stable private hostname with a certificate and key
+provisioned outside Git, and proxies the same HTTPS origin to `/api/v1`. It
+fails before serving traffic unless the certificate is currently valid, matches
+the configured hostname, and matches the mounted private key.
 
 The API accepts only the configured Origin for authentication-state changes.
 Its opaque `__Host-stock_profiler_session` cookie is `Secure`, `HttpOnly`, and
