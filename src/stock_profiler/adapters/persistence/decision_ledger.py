@@ -299,11 +299,22 @@ class DecisionLedger:
         except ValidationError as error:
             raise DecisionEventCommitError("stored decision event is invalid") from error
         mapping = self.get_business_object_mapping(business_object_id, connection)
+        has_snapshotless_legacy_mapping_for_fact = (
+            mapping is not None
+            and mapping.case is None
+            and mapping.case_id == fact.case.case_id
+            and fact.case.matches_legacy_recovery_input()
+        )
         has_recovered_mapping_for_fact = (
             mapping is not None
             and mapping.framework_run_id == framework_run_id
-            and mapping.case is not None
-            and mapping.case.matches_recovery_input(fact.case)
+            and (
+                (
+                    mapping.case is not None
+                    and mapping.case.matches_recovery_input(fact.case)
+                )
+                or has_snapshotless_legacy_mapping_for_fact
+            )
         )
         expected_event_id = (
             fact.case.correction_event_id(fact.corrects_event_id)
@@ -349,6 +360,7 @@ class DecisionLedger:
             or (
                 fact.corrects_event_id is None
                 and mapping.frozen_input_fingerprint != fact.case.frozen_input_fingerprint
+                and not has_snapshotless_legacy_mapping_for_fact
             )
             or (
                 mapping.case is not None

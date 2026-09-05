@@ -233,12 +233,31 @@ def test_append_only_ledger_records_use_controlled_observation_and_write_clocks(
             .scalars()
             .all()
         )
+        event_commit_clocks = (
+            connection.execute(
+                text(
+                    """
+                    SELECT committed_at
+                    FROM decision_events
+                    WHERE business_object_id = :business_object_id
+                    ORDER BY committed_at
+                    """
+                ),
+                {"business_object_id": case.business_object_id},
+            )
+            .scalars()
+            .all()
+        )
 
     assert initial_stage_clocks == {case.report_generated_at}
     assert correction_stage_clocks == {"2042-05-17T16:04:00Z"}
     assert notification_clocks == [
         "2042-05-17T16:02:00Z",
         "2042-05-17T16:03:00Z",
+    ]
+    assert event_commit_clocks == [
+        "2042-05-17T16:01:00Z",
+        "2042-05-17T16:04:00Z",
     ]
 
 
@@ -1144,7 +1163,7 @@ def test_unmapped_v1_framework_run_recovers_without_creating_a_v2_replacement(
         assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
 
 
-def test_legacy_mapping_without_a_snapshot_fails_closed_before_reusing_a_run(
+def test_legacy_mapping_without_a_snapshot_recovers_the_original_durable_run(
     migrated_settings: Settings,
 ) -> None:
     current_case = load_frozen_decision_case(migrated_settings)
@@ -1194,17 +1213,18 @@ def test_legacy_mapping_without_a_snapshot_fails_closed_before_reusing_a_run(
             },
         )
 
-    with pytest.raises(DecisionEventCommitError, match="lacks a frozen case snapshot"):
-        run_default_frozen_decision_case(migrated_settings)
+    recovered = run_default_frozen_decision_case(migrated_settings)
 
+    assert recovered.framework_run_id == original_case.framework_run_id
+    assert recovered.decision_event_id == original_case.decision_event_id
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
-        "decision_events": 0,
-        "reports": 0,
+        "decision_events": 1,
+        "reports": 1,
     }
 
 
-def test_legacy_mapping_without_a_snapshot_cannot_publish_across_a_build_change(
+def test_legacy_mapping_without_a_snapshot_rejects_an_unverifiable_build_change(
     migrated_settings: Settings,
 ) -> None:
     current_case = load_frozen_decision_case(migrated_settings)
@@ -2093,8 +2113,7 @@ def test_correction_commit_failure_retains_its_append_only_failure_evidence(
         for stage in ledger.get_stage_results(case.business_object_id)
         if stage.phase in {"CORRECTION", "BUSINESS_COMMIT"}
     ]
-    assert [(stage.phase, stage.status) for stage in correction_stages[-2:]] == [
-        ("CORRECTION", "SUCCEEDED"),
+    assert [(stage.phase, stage.status) for stage in correction_stages[-1:]] == [
         ("BUSINESS_COMMIT", "FAILED"),
     ]
 
@@ -2110,8 +2129,8 @@ def test_correction_commit_failure_retains_its_append_only_failure_evidence(
         for stage in recovered.report.stage_results
         if stage.phase in {"CORRECTION", "BUSINESS_COMMIT"}
     ] == [
-        ("CORRECTION", "SUCCEEDED"),
         ("BUSINESS_COMMIT", "FAILED"),
+        ("CORRECTION", "SUCCEEDED"),
         ("BUSINESS_COMMIT", "SUCCEEDED"),
     ]
 
