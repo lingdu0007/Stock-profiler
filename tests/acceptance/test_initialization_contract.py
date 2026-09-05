@@ -165,3 +165,6 @@ def test_web_authn_and_read_only_report_contracts_are_declared() -> None:
     assert "/api/v1/auth/passkeys/registration/verify" in openapi
     assert "/api/v1/reports/{report_version_id}" in openapi
     assert "/api/v1/diagnostics/safety-capabilities" in openapi
+    migration_path = ROOT / "migrations" / "versions" / "0002_decision_case_ledger.py"
+    ledger_migration = migration_path.read_text(encoding="utf-8")
+    assert 'sa.Column("report_payload", sa.String(), nullable=False)' in ledger_migration

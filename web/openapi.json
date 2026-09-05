@@ -85,6 +85,10 @@
             "title": "Output Contract Version",
             "type": "string"
           },
+          "report_projection_contract_version": {
+            "title": "Report Projection Contract Version",
+            "type": "string"
+          },
           "routing_policy_version": {
             "title": "Routing Policy Version",
             "type": "string"
@@ -100,6 +104,7 @@
           "model_adapter_id",
           "routing_policy_version",
           "output_contract_version",
+          "report_projection_contract_version",
           "m_agent_version",
           "m_agent_wheel_url",
           "m_agent_wheel_sha256",

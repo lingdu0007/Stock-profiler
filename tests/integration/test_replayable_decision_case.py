@@ -10,6 +10,11 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionLedger,
 )
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.modules.decision_cases import service
+from stock_profiler.modules.decision_cases.domain import (
+    DecisionEventFact,
+    load_frozen_decision_case,
+)
 from stock_profiler.modules.decision_cases.service import (
     get_formal_report,
     run_default_frozen_decision_case,
@@ -102,3 +107,45 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
 
     assert recovered.publication_status == "PUBLISHED"
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
+
+
+def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_published(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    incomplete_snapshot = case.model_copy(update={"input": {**case.input, "evidence": []}})
+    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: incomplete_snapshot)
+
+    with pytest.raises(DecisionEventCommitError, match="host validation rejected"):
+        run_default_frozen_decision_case(migrated_settings)
+
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 0,
+        "decision_events": 0,
+        "reports": 0,
+    }
+
+    changed_definition = case.model_copy(
+        update={
+            "agent_definition": case.agent_definition.model_copy(
+                update={"instructions": "Return a changed response."}
+            )
+        }
+    )
+    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: changed_definition)
+
+    with pytest.raises(ValueError, match="frozen AgentDefinition"):
+        run_default_frozen_decision_case(migrated_settings)
+
+
+def test_reading_a_published_report_does_not_rebuild_it_from_current_code(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = run_default_frozen_decision_case(migrated_settings).report
+    monkeypatch.setattr(
+        DecisionEventFact,
+        "formal_report",
+        lambda *_: (_ for _ in ()).throw(AssertionError("report must be read from storage")),
+    )
+
+    assert get_formal_report(original.report_version_id, migrated_settings) == original

@@ -16,6 +16,7 @@ from stock_profiler.modules.decision_cases.domain import (
     ExternalResult,
     FormalReport,
     FrozenDecisionCase,
+    host_validates_external_result,
     load_frozen_decision_case,
 )
 
@@ -54,7 +55,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     "framework did not produce a publishable typed output"
                 )
             result = ExternalResult.model_validate_json(framework.output)
-            if result != case.expected_external_result:
+            if not host_validates_external_result(case, result):
                 raise DecisionEventCommitError("host validation rejected the framework output")
             fact = ledger.commit_event(
                 connection,

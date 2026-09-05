@@ -28,6 +28,20 @@ from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
 D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
+FROZEN_DEFINITION_INSTRUCTIONS = (
+    "Return only the frozen synthetic decision-case external result as JSON."
+)
+FROZEN_OUTPUT_CONTRACT_ID = "synthetic-decision-case-output"
+FROZEN_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "outcome_code": {"type": "string"},
+        "summary": {"type": "string"},
+        "key_reasons": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["outcome_code", "summary", "key_reasons"],
+    "additionalProperties": False,
+}
 
 
 @dataclass(frozen=True)
@@ -45,7 +59,7 @@ async def execute_frozen_decision_case(
     """Create or reuse the exact durable Run for one frozen host identity."""
     _assert_runtime_version_bundle(case)
     adapter = DeterministicModelAdapter(
-        responses=(case.expected_external_result.model_dump_json(),),
+        responses=(_deterministic_model_response(case),),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
     )
     definition = AgentDefinition.for_adapter(
@@ -83,8 +97,11 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         bundle.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
         or bundle.routing_policy_version != D0_ROUTING_POLICY_VERSION
         or case.agent_definition.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
+        or case.agent_definition.instructions != FROZEN_DEFINITION_INSTRUCTIONS
+        or case.agent_definition.output_contract.contract_id != FROZEN_OUTPUT_CONTRACT_ID
+        or case.agent_definition.output_contract.json_schema != FROZEN_OUTPUT_SCHEMA
     ):
-        raise ValueError("frozen deterministic route does not match the runtime adapter")
+        raise ValueError("frozen AgentDefinition does not match the runtime adapter")
     if (
         bundle.m_agent_version != version(M_AGENT_DISTRIBUTION)
         or bundle.m_agent_wheel_url != M_AGENT_WHEEL_URL
@@ -92,3 +109,32 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         or bundle.m_agent_release_commit != M_AGENT_RELEASE_COMMIT
     ):
         raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
+
+
+def _deterministic_model_response(case: FrozenDecisionCase) -> str:
+    """Make the test model respond to the frozen input, never its expected output field."""
+    evidence = case.input.get("evidence")
+    if not isinstance(evidence, list):
+        return _incomplete_synthetic_response()
+    evidence_ids = {
+        item.get("evidence_id")
+        for item in evidence
+        if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+    }
+    if evidence_ids == {"synthetic-evidence-001", "synthetic-evidence-002"}:
+        return (
+            '{"key_reasons":["All required fictional evidence records are present.",'
+            '"The output is D0 synthetic evidence and is not a recommendation."],'
+            '"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
+            '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
+        )
+    return _incomplete_synthetic_response()
+
+
+def _incomplete_synthetic_response() -> str:
+    """Return the non-publishable typed response for an incomplete frozen snapshot."""
+    return (
+        '{"key_reasons":["The frozen synthetic evidence records are incomplete."],'
+        '"outcome_code":"SYNTHETIC_INPUT_REJECTED",'
+        '"summary":"Frozen synthetic input did not satisfy the deterministic contract."}'
+    )

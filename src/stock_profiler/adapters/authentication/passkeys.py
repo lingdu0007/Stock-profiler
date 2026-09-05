@@ -11,8 +11,8 @@ from enum import StrEnum
 from hashlib import sha256
 
 from pydantic import SecretStr
-from sqlalchemy import select, update
-from sqlalchemy.engine import Engine
+from sqlalchemy import Column, MetaData, String, Table, select, update
+from sqlalchemy.engine import Connection, Engine
 from webauthn import (
     generate_authentication_options,
     generate_registration_options,
@@ -27,12 +27,6 @@ from webauthn.helpers.structs import (
     PublicKeyCredentialRequestOptions,
 )
 
-from stock_profiler.adapters.persistence.runtime_ownership import (
-    AUTH_CHALLENGES,
-    AUTH_CREDENTIALS,
-    AUTH_HOST_GRANTS,
-    AUTH_SESSIONS,
-)
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock, UtcClock
 
@@ -54,6 +48,44 @@ class ChallengePurpose(StrEnum):
     REGISTRATION = "registration"
     AUTHENTICATION = "authentication"
     REAUTHENTICATION = "reauthentication"
+
+
+METADATA = MetaData()
+AUTH_CREDENTIALS = Table(
+    "auth_credentials",
+    METADATA,
+    Column("credential_id", String(1024), primary_key=True),
+    Column("credential_public_key", String, nullable=False),
+    Column("sign_count", String(32), nullable=False),
+    Column("created_at", String(40), nullable=False),
+)
+AUTH_CHALLENGES = Table(
+    "auth_challenges",
+    METADATA,
+    Column("challenge_id", String(96), primary_key=True),
+    Column("purpose", String(32), nullable=False),
+    Column("challenge", String(256), nullable=False),
+    Column("grant_id", String(96), nullable=True),
+    Column("expires_at", String(40), nullable=False),
+)
+AUTH_HOST_GRANTS = Table(
+    "auth_host_grants",
+    METADATA,
+    Column("grant_id", String(96), primary_key=True),
+    Column("purpose", String(32), nullable=False),
+    Column("expires_at", String(40), nullable=False),
+)
+AUTH_SESSIONS = Table(
+    "auth_sessions",
+    METADATA,
+    Column("session_hash", String(64), primary_key=True),
+    Column("csrf_hash", String(64), nullable=False),
+    Column("credential_id", String(1024), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("last_seen_at", String(40), nullable=False),
+    Column("recent_reauth_at", String(40), nullable=False),
+    Column("absolute_expires_at", String(40), nullable=False),
+)
 
 
 @dataclass(frozen=True)
@@ -358,11 +390,8 @@ class PasskeyAuthenticator:
         if grant is None or self._expired(grant["expires_at"]):
             raise AuthenticationError("host console grant expired or invalid")
 
-    def _consume_active_grant(self, connection: object, grant_id: str) -> None:
+    def _consume_active_grant(self, connection: Connection, grant_id: str) -> None:
         """Consume the bootstrap or recovery grant only after registration verifies."""
-        from sqlalchemy.engine import Connection
-
-        assert isinstance(connection, Connection)
         grant = (
             connection.execute(
                 select(AUTH_HOST_GRANTS).where(AUTH_HOST_GRANTS.c.grant_id == grant_id)

@@ -24,66 +24,6 @@ HEARTBEATS = Table(
     Column("process_name", String(32), primary_key=True),
     Column("observed_at", String(40), nullable=False),
 )
-DECISION_CASE_BUSINESS_OBJECTS = Table(
-    "decision_case_business_objects",
-    METADATA,
-    Column("business_object_id", String(96), primary_key=True),
-    Column("case_id", String(96), nullable=False),
-    Column("frozen_input_fingerprint", String(64), nullable=False),
-    Column("framework_run_id", String(96), nullable=False, unique=True),
-    Column("created_at", String(40), nullable=False),
-)
-DECISION_EVENTS = Table(
-    "decision_events",
-    METADATA,
-    Column("decision_event_id", String(96), primary_key=True),
-    Column("business_object_id", String(96), nullable=False),
-    Column("framework_run_id", String(96), nullable=False, unique=True),
-    Column("event_payload", String, nullable=False),
-    Column("committed_at", String(40), nullable=False),
-)
-FORMAL_REPORTS = Table(
-    "formal_reports",
-    METADATA,
-    Column("report_version_id", String(96), primary_key=True),
-    Column("decision_event_id", String(96), nullable=False, unique=True),
-    Column("generated_at", String(40), nullable=False),
-)
-AUTH_CREDENTIALS = Table(
-    "auth_credentials",
-    METADATA,
-    Column("credential_id", String(1024), primary_key=True),
-    Column("credential_public_key", String, nullable=False),
-    Column("sign_count", String(32), nullable=False),
-    Column("created_at", String(40), nullable=False),
-)
-AUTH_CHALLENGES = Table(
-    "auth_challenges",
-    METADATA,
-    Column("challenge_id", String(96), primary_key=True),
-    Column("purpose", String(32), nullable=False),
-    Column("challenge", String(256), nullable=False),
-    Column("grant_id", String(96), nullable=True),
-    Column("expires_at", String(40), nullable=False),
-)
-AUTH_HOST_GRANTS = Table(
-    "auth_host_grants",
-    METADATA,
-    Column("grant_id", String(96), primary_key=True),
-    Column("purpose", String(32), nullable=False),
-    Column("expires_at", String(40), nullable=False),
-)
-AUTH_SESSIONS = Table(
-    "auth_sessions",
-    METADATA,
-    Column("session_hash", String(64), primary_key=True),
-    Column("csrf_hash", String(64), nullable=False),
-    Column("credential_id", String(1024), nullable=False),
-    Column("created_at", String(40), nullable=False),
-    Column("last_seen_at", String(40), nullable=False),
-    Column("recent_reauth_at", String(40), nullable=False),
-    Column("absolute_expires_at", String(40), nullable=False),
-)
 
 
 @dataclass(frozen=True)
