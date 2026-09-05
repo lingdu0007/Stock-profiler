@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
 
 import pytest
 from m_agent.adapters import DeterministicModelAdapter
@@ -293,6 +294,78 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
     assert [
         stage.status for stage in recovered.stage_results if stage.phase == "FRAMEWORK_RUN"
     ] == ["RUNNING", "SUCCEEDED"]
+
+
+def test_active_m_agent_lease_closes_publication_until_the_original_run_can_resume(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    runtime = initialize_runtime_storage(migrated_settings)
+
+    async def create_leased_run() -> None:
+        definition = AgentDefinition.for_adapter(
+            definition_id=case.agent_definition.definition_id,
+            version=case.agent_definition.version,
+            instructions=case.agent_definition.instructions,
+            model_adapter=DeterministicModelAdapter(
+                responses=(_deterministic_model_response(case),),
+                capabilities=ModelCapabilities(
+                    structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT
+                ),
+            ),
+            output_contract=OutputContract(
+                contract_id=case.agent_definition.output_contract.contract_id,
+                version=case.agent_definition.output_contract.version,
+                schema=FROZEN_OUTPUT_SCHEMA,
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            ),
+        )
+        registry = DefinitionRegistry()
+        registry.register(definition)
+        runner = Runner(registry=registry, store=runtime.run_store, owner="test-active-owner")
+        created = await runner.create_run(
+            definition.definition_id,
+            definition.version,
+            json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            run_id=case.framework_run_id,
+        )
+        await runtime.run_store.acquire_lease(
+            created.run_id,
+            "test-active-owner",
+            timedelta(seconds=30),
+            expected_version=created.version,
+        )
+
+    asyncio.run(create_leased_run())
+
+    blocked = run_default_frozen_decision_case(migrated_settings)
+
+    assert blocked.framework_run_status == "CREATED"
+    assert blocked.business_commit_status == "NOT_ATTEMPTED"
+    assert blocked.publication_status == "CLOSED"
+    assert blocked.report is None
+    assert any(
+        stage.phase == "FRAMEWORK_RUN" and stage.reasons == ("FRAMEWORK_RUN_LEASE_HELD",)
+        for stage in blocked.stage_results
+    )
+
+    async def release_leased_run() -> None:
+        run = await runtime.run_store.get_run(case.framework_run_id)
+        assert run is not None
+        await runtime.run_store.release_lease(
+            run.run_id,
+            "test-active-owner",
+            expected_version=run.version,
+        )
+
+    asyncio.run(release_leased_run())
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.framework_run_id == case.framework_run_id
+    assert recovered.decision_event_id == case.decision_event_id
+    assert recovered.publication_status == "PUBLISHED"
+    assert recovered.report is not None
 
 
 def test_framework_waiting_transition_keeps_the_final_waiting_reason(

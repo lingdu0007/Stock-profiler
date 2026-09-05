@@ -51,6 +51,12 @@
             },
             {
                 "phase": "FRAMEWORK_RUN",
+                "status": "RUNNING",
+                "gate_results": [{"gate_id": "RUN_ACTIVE", "status": "PASSED"}],
+                "reasons": ["FRAMEWORK_RUN_STARTED"]
+            },
+            {
+                "phase": "FRAMEWORK_RUN",
                 "status": "SUCCEEDED",
                 "gate_results": [
                     {"gate_id": "RUN_TERMINAL", "status": "PASSED"},

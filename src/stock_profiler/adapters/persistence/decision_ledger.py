@@ -86,6 +86,10 @@ class DecisionEventCommitUncertainError(DecisionEventCommitError):
     """A database acknowledgement was lost, so the event may or may not exist."""
 
 
+class FormalReportCommitUncertainError(DecisionEventCommitError):
+    """A report write may have committed, but its acknowledgement was lost."""
+
+
 @dataclass(frozen=True)
 class BusinessObjectMapping:
     """The durable case snapshot and original Run bound to one business object."""
@@ -494,6 +498,21 @@ class DecisionLedger:
             raise DecisionEventCommitError("committed event does not match attempted fact")
         return committed
 
+    def reconcile_report_commit(
+        self, connection: Connection, attempted: FormalReport
+    ) -> FormalReport | None:
+        """Verify an acknowledgement-uncertain report by its original report identity."""
+        connection.rollback()
+        with self._engine.connect() as verification_connection:
+            committed = self._stored_formal_report(
+                attempted.report_version_id,
+                verification_connection,
+            )
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        if committed is not None and committed != attempted:
+            raise DecisionEventCommitError("committed report does not match attempted projection")
+        return committed
+
     def ensure_event_stage_results(self, connection: Connection, fact: DecisionEventFact) -> None:
         """Backfill stage rows from an already committed append-only event."""
         latest_business_commit_index = max(
@@ -533,7 +552,7 @@ class DecisionLedger:
         resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(
             fact.decision_event_id
         )
-        existing = self.get_formal_report(resolved_report_version_id, connection)
+        existing = self._stored_formal_report(resolved_report_version_id, connection)
         if existing is not None:
             if existing != fact.formal_report(resolved_report_version_id):
                 raise DecisionEventCommitError("report identity maps to different projection")
@@ -552,6 +571,14 @@ class DecisionLedger:
             )
         except Exception as error:
             raise DecisionEventCommitError("formal report publication failed") from error
+        try:
+            connection.commit()
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception as error:
+            connection.rollback()
+            raise FormalReportCommitUncertainError(
+                "formal report commit acknowledgement is uncertain"
+            ) from error
         return report
 
     def get_formal_report(
@@ -559,16 +586,19 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read a report only when the report row references a committed event."""
         if connection is not None:
-            return self._formal_report_from_connection(connection, report_version_id)
+            return self._confirmed_formal_report_from_connection(connection, report_version_id)
         with self._engine.connect() as read_connection:
-            return self._formal_report_from_connection(read_connection, report_version_id)
+            return self._confirmed_formal_report_from_connection(
+                read_connection,
+                report_version_id,
+            )
 
     def get_original_formal_report(
         self, business_object_id: str, connection: Connection
     ) -> FormalReport | None:
         """Read the original published report by its stable business identity."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload)
+            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -581,6 +611,8 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
+        if not self._has_confirmed_publication(connection, row.decision_event_id):
+            return None
         return FormalReport.model_validate_json(row.report_payload)
 
     def get_formal_report_for_event(
@@ -588,7 +620,7 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read one existing projection without deriving a new report identity."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload)
+            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -597,13 +629,26 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
+        if not self._has_confirmed_publication(connection, row.decision_event_id):
+            return None
         return FormalReport.model_validate_json(row.report_payload)
 
-    def _formal_report_from_connection(
+    def _stored_formal_report(
+        self, report_version_id: str, connection: Connection
+    ) -> FormalReport | None:
+        """Read a report row for idempotent recovery before public confirmation."""
+        row = connection.execute(
+            select(FORMAL_REPORTS.c.report_payload).where(
+                FORMAL_REPORTS.c.report_version_id == report_version_id
+            )
+        ).one_or_none()
+        return FormalReport.model_validate_json(row.report_payload) if row is not None else None
+
+    def _confirmed_formal_report_from_connection(
         self, connection: Connection, report_version_id: str
     ) -> FormalReport | None:
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload)
+            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -612,7 +657,23 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
+        if not self._has_confirmed_publication(connection, row.decision_event_id):
+            return None
         return FormalReport.model_validate_json(row.report_payload)
+
+    def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
+        """Expose a report only after an append-only publication success was saved."""
+        stage_payloads = connection.execute(
+            select(DECISION_STAGE_EVENTS.c.stage_payload).where(
+                DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id
+            )
+        ).scalars()
+        return any(
+            stage_result.phase == "PUBLICATION" and stage_result.status == "SUCCEEDED"
+            for stage_result in (
+                StageResult.model_validate_json(payload) for payload in stage_payloads
+            )
+        )
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""

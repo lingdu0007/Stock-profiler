@@ -19,6 +19,7 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
     DecisionEventCommitUncertainError,
     DecisionLedger,
+    FormalReportCommitUncertainError,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
@@ -142,9 +143,7 @@ def correct_default_frozen_decision_case(
                     "Synthetic D0 correction recorded without replacing "
                     "the original decision event."
                 ),
-                key_reasons=(
-                    "The original evidence cutoff and formal report remain available.",
-                ),
+                key_reasons=("The original evidence cutoff and formal report remain available.",),
             )
             correction_stages = (
                 StageResult(
@@ -225,6 +224,30 @@ def correct_default_frozen_decision_case(
                         correction_event,
                         correction_report_version_id,
                     )
+                except FormalReportCommitUncertainError as error:
+                    report = ledger.reconcile_report_commit(
+                        connection,
+                        correction_event.formal_report(correction_report_version_id),
+                    )
+                    if report is None:
+                        ledger.discard_unconfirmed_publication(connection)
+                        ledger.ensure_event_stage_results(connection, correction_event)
+                        ledger.record_stage_result(
+                            connection,
+                            case=correction_event.case,
+                            decision_event_id=correction_event.decision_event_id,
+                            framework_run_id=correction_event.framework_run_id,
+                            stage_result=StageResult(
+                                phase="PUBLICATION",
+                                status="FAILED",
+                                gate_results=(
+                                    GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),
+                                ),
+                                reasons=("PUBLICATION_COMMIT_UNCERTAIN",),
+                            ),
+                            allow_repeated_occurrence=True,
+                        )
+                        publication_error = error
                 except DecisionEventCommitError as error:
                     ledger.discard_unconfirmed_publication(connection)
                     ledger.ensure_event_stage_results(connection, correction_event)
@@ -580,6 +603,40 @@ def _publish_committed_fact(
     ledger.ensure_event_stage_results(connection, fact)
     try:
         report = ledger.publish_report(connection, fact)
+    except FormalReportCommitUncertainError:
+        recovered_report = ledger.reconcile_report_commit(
+            connection,
+            fact.formal_report(fact.case.report_version_id_for_event(fact.decision_event_id)),
+        )
+        if recovered_report is None:
+            ledger.discard_unconfirmed_publication(connection)
+            ledger.ensure_event_stage_results(connection, fact)
+            publication_failure = StageResult(
+                phase="PUBLICATION",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
+                reasons=("PUBLICATION_COMMIT_UNCERTAIN",),
+            )
+            ledger.record_stage_result(
+                connection,
+                case=fact.case,
+                stage_result=publication_failure,
+                decision_event_id=fact.decision_event_id,
+                framework_run_id=fact.framework_run_id,
+                allow_repeated_occurrence=True,
+            )
+            return _unpublished_execution(
+                fact.case,
+                framework_run_id=fact.framework_run_id,
+                decision_event_id=fact.decision_event_id,
+                report_version_id=fact.case.report_version_id_for_event(fact.decision_event_id),
+                framework_run_status="SUCCEEDED",
+                business_result_status=_business_result_status_from_stages(fact.stage_results),
+                business_lifecycle=None,
+                business_commit_status="COMMITTED",
+                stage_results=ledger.get_stage_results(fact.business_object_id, connection),
+            )
+        report = recovered_report
     except DecisionEventCommitError:
         ledger.discard_unconfirmed_publication(connection)
         ledger.ensure_event_stage_results(connection, fact)
