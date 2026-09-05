@@ -38,7 +38,7 @@ def _legacy_stage_results(payload: dict[str, object]) -> list[dict[str, object]]
     result = payload.get("result")
     result_reasons = result.get("key_reasons", []) if isinstance(result, dict) else []
     reasons = [reason for reason in result_reasons if isinstance(reason, str)]
-    return [
+    stage_results: list[dict[str, object]] = [
         {
             "phase": "FRAMEWORK_RUN",
             "status": "SUCCEEDED",
@@ -51,13 +51,35 @@ def _legacy_stage_results(payload: dict[str, object]) -> list[dict[str, object]]
             "gate_results": [{"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}],
             "reasons": reasons,
         },
+    ]
+    outcome_code = result.get("outcome_code") if isinstance(result, dict) else None
+    business_status = {
+        "SYNTHETIC_REVIEW_COMPLETE": "SUCCEEDED",
+        "SYNTHETIC_INPUT_REJECTED": "REJECTED",
+        "SYNTHETIC_RESULT_ABSTAINED": "ABSTAINED",
+        "SYNTHETIC_RESULT_FAILED": "FAILED",
+    }.get(outcome_code)
+    if business_status is not None:
+        stage_results.append(
+            {
+                "phase": "BUSINESS_DECISION",
+                "status": business_status,
+                "gate_results": [
+                    {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
+                    {"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"},
+                ],
+                "reasons": reasons,
+            }
+        )
+    stage_results.append(
         {
             "phase": "BUSINESS_COMMIT",
             "status": "SUCCEEDED",
             "gate_results": [{"gate_id": "HOST_RESULT_SAVED", "status": "PASSED"}],
             "reasons": [],
-        },
-    ]
+        }
+    )
+    return stage_results
 
 
 def _publication_stage_result() -> dict[str, object]:
@@ -70,10 +92,56 @@ def _publication_stage_result() -> dict[str, object]:
 
 
 def _payload(value: str) -> dict[str, object]:
-    payload = json.loads(value)
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("legacy decision ledger payload must be valid JSON") from error
     if not isinstance(payload, dict):
         raise RuntimeError("legacy decision ledger payload must be a JSON object")
     return payload
+
+
+def _validated_stage_results(payload: dict[str, object]) -> list[dict[str, object]]:
+    stage_results = payload.get("stage_results")
+    candidates = (
+        stage_results if isinstance(stage_results, list) else _legacy_stage_results(payload)
+    )
+    if not all(isinstance(stage_result, dict) for stage_result in candidates):
+        raise RuntimeError("legacy decision stage result must be a JSON object")
+    return candidates
+
+
+def _preflight_legacy_stage_history() -> None:
+    """Validate every legacy payload before SQLite's non-transactional DDL begins."""
+    bind = op.get_bind()
+    event_ids: set[str] = set()
+    event_rows = bind.execute(
+        sa.text(
+            """
+            SELECT decision_event_id, event_payload
+            FROM decision_events
+            """
+        )
+    ).mappings()
+    for row in event_rows:
+        _validated_stage_results(_payload(row["event_payload"]))
+        event_ids.add(row["decision_event_id"])
+
+    report_rows = bind.execute(
+        sa.text(
+            """
+            SELECT decision_event_id, report_payload
+            FROM formal_reports
+            """
+        )
+    ).mappings()
+    for row in report_rows:
+        report_payload = _payload(row["report_payload"])
+        if isinstance(report_payload.get("stage_results"), list):
+            _validated_stage_results(report_payload)
+            continue
+        if row["decision_event_id"] not in event_ids:
+            raise RuntimeError("legacy formal report references an unknown decision event")
 
 
 def _record_legacy_stage_result(
@@ -149,14 +217,10 @@ def _append_legacy_stage_history() -> None:
     ).mappings()
     for row in event_rows:
         event_payload = _payload(row["event_payload"])
-        stage_results = event_payload.get("stage_results")
-        if isinstance(stage_results, list):
-            validated_stage_results = stage_results
-        else:
-            validated_stage_results = _legacy_stage_results(event_payload)
+        existing_stage_results = event_payload.get("stage_results")
+        validated_stage_results = _validated_stage_results(event_payload)
+        if not isinstance(existing_stage_results, list):
             for stage_result in validated_stage_results:
-                if not isinstance(stage_result, dict):
-                    raise RuntimeError("legacy decision stage result must be a JSON object")
                 _record_legacy_stage_result(
                     business_object_id=row["business_object_id"],
                     framework_run_id=row["framework_run_id"],
@@ -207,6 +271,7 @@ def _append_legacy_stage_history() -> None:
 
 
 def upgrade() -> None:
+    _preflight_legacy_stage_history()
     op.create_table(
         "decision_events_replacement",
         sa.Column("decision_event_id", sa.String(length=96), nullable=False),

@@ -15,6 +15,7 @@ from m_agent.runtime import (
     StructuredOutputMode,
 )
 
+from stock_profiler.adapters.m_agent import frozen_decision_case as frozen_adapter
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     FROZEN_OUTPUT_SCHEMA,
     _deterministic_model_response,
@@ -22,7 +23,14 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
+    BusinessLifecycle,
+    ExternalResult,
+    FormalReport,
+    GateResult,
+    StageResult,
+    business_lifecycle_from_stage,
     host_validation_result,
     load_frozen_decision_case,
 )
@@ -45,7 +53,7 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
     assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
     assert first.version_bundle.host_contract_version == "1.0.0"
-    assert first.version_bundle.report_projection_contract_version == "1.0.0"
+    assert first.version_bundle.report_projection_contract_version == "2.0.0"
     assert first.agent_definition.instructions == (
         "Return only the frozen synthetic decision-case external result as JSON."
     )
@@ -70,7 +78,7 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     revised_report_contract = first.model_copy(
         update={
             "version_bundle": first.version_bundle.model_copy(
-                update={"report_projection_contract_version": "2.0.0"}
+                update={"report_projection_contract_version": "3.0.0"}
             )
         }
     )
@@ -151,6 +159,66 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     )
 
 
+def test_host_validation_records_an_explicit_gate_when_result_reasons_are_empty(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    empty_reason_result = ExternalResult(
+        outcome_code=case.expected_external_result.outcome_code,
+        summary=case.expected_external_result.summary,
+        key_reasons=(),
+    )
+
+    stage = host_validation_result(case, empty_reason_result)
+
+    assert stage.phase == "HOST_VALIDATION"
+    assert stage.status == "FAILED"
+    assert stage.gate_results[0].gate_id == "KEY_REASONS_PRESENT"
+    assert stage.gate_results[0].status == "FAILED"
+    assert stage.reasons == ("RESULT_REASONS_REQUIRED",)
+
+
+def test_current_report_contract_refuses_a_missing_stage_history(
+    migrated_settings: Settings,
+) -> None:
+    execution = run_default_frozen_decision_case(migrated_settings)
+    assert execution.report is not None
+    corrupted_current_payload = execution.report.model_dump(mode="json")
+    corrupted_current_payload.pop("stage_results")
+
+    with pytest.raises(ValueError, match="stage_results"):
+        FormalReport.model_validate(corrupted_current_payload)
+
+
+def test_lifecycle_statuses_keep_their_explicit_owner_and_phase() -> None:
+    lifecycle = business_lifecycle_from_stage(
+        StageResult(
+            phase="ADJUDICATION_LIFECYCLE",
+            status="UNKNOWN",
+            gate_results=(GateResult(gate_id="ADJUDICATION_COMPLETE", status="UNKNOWN"),),
+            reasons=("ADJUDICATION_INPUT_UNKNOWN",),
+        )
+    )
+
+    assert lifecycle == BusinessLifecycle(
+        owner="ADJUDICATION",
+        phase="ADJUDICATION_LIFECYCLE",
+        status="UNKNOWN",
+    )
+    with pytest.raises(ValueError, match="belongs to ADJUDICATION"):
+        BusinessLifecycle(
+            owner="VALIDITY",
+            phase="ADJUDICATION_LIFECYCLE",
+            status="PENDING",
+        )
+    with pytest.raises(ValueError, match="cannot record status EXPIRED"):
+        BusinessLifecycle(
+            owner="ADJUDICATION",
+            phase="ADJUDICATION_LIFECYCLE",
+            status="EXPIRED",
+        )
+
+
 def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_identity_set(
     migrated_settings: Settings,
 ) -> None:
@@ -222,3 +290,32 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
     assert recovered.publication_status == "PUBLISHED"
     assert recovered.report is not None
     assert recovered.report.result == case.expected_external_result
+    assert [
+        stage.status for stage in recovered.stage_results if stage.phase == "FRAMEWORK_RUN"
+    ] == ["RUNNING", "SUCCEEDED"]
+
+
+def test_framework_waiting_transition_keeps_the_final_waiting_reason(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    stages = service._framework_stage_results(
+        case,
+        frozen_adapter.FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="WAITING",
+            output=None,
+            waiting_reason="FRAMEWORK_AWAITING_RESOLUTION",
+            transitions=(
+                frozen_adapter.FrameworkRunTransition(
+                    status="WAITING",
+                    reason="FRAMEWORK_RUN_RECOVERED",
+                ),
+            ),
+        ),
+    )
+
+    assert [(stage.status, stage.reasons) for stage in stages] == [
+        ("WAITING", ("FRAMEWORK_RUN_RECOVERED",)),
+        ("WAITING", ("FRAMEWORK_AWAITING_RESOLUTION",)),
+    ]
