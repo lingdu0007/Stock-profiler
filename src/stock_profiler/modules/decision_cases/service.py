@@ -607,7 +607,9 @@ def _publish_report_or_record_failure(
         return None, error
     assert report is not None
     _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
-    return report, None
+    confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
+    assert confirmed_report is not None
+    return confirmed_report, None
 
 
 def _record_publication_failure(
@@ -623,13 +625,31 @@ def _record_publication_failure(
         ledger,
         connection,
         fact,
-        StageResult(
-            phase="PUBLICATION",
-            status="FAILED",
-            gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
-            reasons=(reason,),
-        ),
+        _publication_failure_stage(reason),
         allow_repeated_occurrence=True,
+    )
+
+
+def _publication_failure_stage(reason: str) -> StageResult:
+    """Keep an acknowledged failure distinct from an unresolved report write."""
+    if reason == "PUBLICATION_COMMIT_UNCERTAIN":
+        return StageResult(
+            phase="PUBLICATION",
+            status="UNKNOWN",
+            gate_results=(
+                GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),
+                GateResult(gate_id="FORMAL_REPORT_SAVED", status="UNKNOWN"),
+            ),
+            reasons=(reason,),
+        )
+    return StageResult(
+        phase="PUBLICATION",
+        status="FAILED",
+        gate_results=(
+            GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),
+            GateResult(gate_id="FORMAL_REPORT_SAVED", status="FAILED"),
+        ),
+        reasons=(reason,),
     )
 
 
@@ -831,9 +851,14 @@ def _business_result_status_from_stages(
 def _business_lifecycle_from_stages(
     stage_results: tuple[StageResult, ...],
 ) -> BusinessLifecycle | None:
+    resolved_commit_reconciliation = False
     for stage_result in reversed(stage_results):
+        if stage_result.phase == "BUSINESS_COMMIT" and stage_result.status == "SUCCEEDED":
+            resolved_commit_reconciliation = True
         lifecycle = business_lifecycle_from_stage(stage_result)
-        if lifecycle is not None:
+        if lifecycle is not None and not (
+            lifecycle.owner == "COMMIT_RECONCILIATION" and resolved_commit_reconciliation
+        ):
             return lifecycle
     return None
 

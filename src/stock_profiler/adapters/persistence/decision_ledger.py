@@ -631,7 +631,10 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
-        return FormalReport.model_validate_json(row.report_payload)
+        return self._with_publication_history(
+            connection,
+            FormalReport.model_validate_json(row.report_payload),
+        )
 
     def get_formal_report_for_event(
         self, decision_event_id: str, connection: Connection
@@ -649,7 +652,10 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
-        return FormalReport.model_validate_json(row.report_payload)
+        return self._with_publication_history(
+            connection,
+            FormalReport.model_validate_json(row.report_payload),
+        )
 
     def _stored_formal_report(
         self, report_version_id: str, connection: Connection
@@ -677,7 +683,43 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
-        return FormalReport.model_validate_json(row.report_payload)
+        return self._with_publication_history(
+            connection,
+            FormalReport.model_validate_json(row.report_payload),
+        )
+
+    def _with_publication_history(
+        self,
+        connection: Connection,
+        report: FormalReport,
+    ) -> FormalReport:
+        """Project prior closed publication attempts before the confirmed delivery."""
+        final_stage = report.stage_results[-1]
+        if final_stage.phase != "PUBLICATION" or final_stage.status != "SUCCEEDED":
+            return report
+        publication_history = tuple(
+            stage_result
+            for stage_result in (
+                StageResult.model_validate_json(payload)
+                for payload in connection.execute(
+                    select(DECISION_STAGE_EVENTS.c.stage_payload)
+                    .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
+                    .order_by(DECISION_STAGE_EVENTS.c.sequence)
+                ).scalars()
+            )
+            if stage_result.phase == "PUBLICATION" and stage_result.status != "SUCCEEDED"
+        )
+        if not publication_history:
+            return report
+        return report.model_copy(
+            update={
+                "stage_results": (
+                    *report.stage_results[:-1],
+                    *publication_history,
+                    final_stage,
+                )
+            }
+        )
 
     def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
         """Expose a report only after an append-only publication success was saved."""

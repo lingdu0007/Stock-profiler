@@ -11,6 +11,16 @@ from typing import Any, Literal
 import pytest
 from alembic import command, op
 from alembic.config import Config
+from m_agent.adapters import DeterministicModelAdapter
+from m_agent.runtime import (
+    AgentDefinition,
+    DefinitionRegistry,
+    ModelCapabilities,
+    OutputContract,
+    Runner,
+    RunStatus,
+    StructuredOutputMode,
+)
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
@@ -20,6 +30,7 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
     DecisionEventCommitUncertainError,
     DecisionLedger,
+    FormalReportCommitUncertainError,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import (
     RuntimeStorage,
@@ -465,6 +476,68 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
     assert [(result.phase, result.status) for result in outcome.stage_results] == [
         ("FRAMEWORK_RUN", "WAITING")
     ]
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 0,
+        "reports": 0,
+    }
+
+
+def test_actual_runtime_waiting_run_recovers_without_a_replacement_identity(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    runtime = initialize_runtime_storage(migrated_settings)
+
+    async def create_waiting_run() -> None:
+        adapter = DeterministicModelAdapter(
+            responses=(frozen_adapter._deterministic_model_response(case),),
+            capabilities=ModelCapabilities(
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT
+            ),
+        )
+        definition = AgentDefinition.for_adapter(
+            definition_id=case.agent_definition.definition_id,
+            version=case.agent_definition.version,
+            instructions=case.agent_definition.instructions,
+            model_adapter=adapter,
+            output_contract=OutputContract(
+                contract_id=case.agent_definition.output_contract.contract_id,
+                version=case.agent_definition.output_contract.version,
+                schema=case.agent_definition.output_contract.json_schema,
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            ),
+        )
+        registry = DefinitionRegistry()
+        registry.register(definition)
+        runner = Runner(registry=registry, store=runtime.run_store)
+        created = await runner.create_run(
+            definition.definition_id,
+            definition.version,
+            json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            run_id=case.framework_run_id,
+        )
+        waiting = await runtime.run_store.transition_run(
+            created.run_id,
+            expected_version=created.version,
+            status=RunStatus.WAITING,
+            waiting_reason="UNCERTAIN_NON_IDEMPOTENT",
+        )
+        assert waiting.status is RunStatus.WAITING
+
+    asyncio.run(create_waiting_run())
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+    replayed = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.framework_run_id == case.framework_run_id
+    assert replayed.framework_run_id == case.framework_run_id
+    assert recovered.framework_run_status == "WAITING"
+    assert replayed.framework_run_status == "WAITING"
+    assert recovered.publication_status == "CLOSED"
+    assert replayed.publication_status == "CLOSED"
+    assert recovered.report is None
+    assert replayed.report is None
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
         "decision_events": 0,
@@ -1198,6 +1271,7 @@ def test_uncertain_event_commit_closes_publication_until_the_original_identity_r
     assert recovered.framework_run_id == uncertain.framework_run_id
     assert recovered.decision_event_id == uncertain.decision_event_id
     assert recovered.report is not None
+    assert recovered.business_lifecycle is None
     assert recovered.publication_status == "PUBLISHED"
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
@@ -1419,6 +1493,15 @@ def test_report_projection_failure_preserves_the_unconfirmed_report_but_never_ex
     recovered = run_default_frozen_decision_case(migrated_settings)
 
     assert recovered.publication_status == "PUBLISHED"
+    assert recovered.report is not None
+    assert [
+        (stage.status, stage.reasons)
+        for stage in recovered.report.stage_results
+        if stage.phase == "PUBLICATION"
+    ] == [
+        ("FAILED", ("PUBLICATION_STORAGE_FAILED",)),
+        ("SUCCEEDED", ()),
+    ]
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
         "CREATED",
@@ -1470,6 +1553,53 @@ def test_report_commit_acknowledgement_loss_reconciles_the_original_report_befor
         "decision_events": 1,
         "reports": 1,
     }
+
+
+def test_unresolved_report_commit_uncertainty_stays_closed_until_the_original_report_recovers(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_report_commit(
+        self: DecisionLedger,
+        _connection: Connection,
+        _fact: DecisionEventFact,
+    ) -> FormalReport:
+        raise FormalReportCommitUncertainError("synthetic report commit uncertainty")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "publish_report", fail_report_commit)
+        uncertain = run_default_frozen_decision_case(migrated_settings)
+
+    assert uncertain.framework_run_status == "SUCCEEDED"
+    assert uncertain.business_result_status == "SUCCEEDED"
+    assert uncertain.business_lifecycle is None
+    assert uncertain.business_commit_status == "COMMITTED"
+    assert uncertain.publication_status == "CLOSED"
+    assert uncertain.report is None
+    assert uncertain.stage_results[-1] == StageResult(
+        phase="PUBLICATION",
+        status="UNKNOWN",
+        gate_results=(
+            GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),
+            GateResult(gate_id="FORMAL_REPORT_SAVED", status="UNKNOWN"),
+        ),
+        reasons=("PUBLICATION_COMMIT_UNCERTAIN",),
+    )
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.framework_run_id == uncertain.framework_run_id
+    assert recovered.decision_event_id == uncertain.decision_event_id
+    assert recovered.report_version_id == uncertain.report_version_id
+    assert recovered.publication_status == "PUBLISHED"
+    assert recovered.report is not None
+    assert [
+        (stage.status, stage.reasons)
+        for stage in recovered.report.stage_results
+        if stage.phase == "PUBLICATION"
+    ] == [
+        ("UNKNOWN", ("PUBLICATION_COMMIT_UNCERTAIN",)),
+        ("SUCCEEDED", ()),
+    ]
 
 
 def test_cross_build_publication_failure_keeps_the_committed_fact_identity(
