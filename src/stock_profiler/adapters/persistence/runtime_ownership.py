@@ -145,7 +145,7 @@ def initialize_runtime_storage(settings: Settings) -> RuntimeStorage:
     application_path.parent.mkdir(parents=True, exist_ok=True)
     run_store_path.parent.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(settings.app_database_url)
+    engine = create_engine(settings.app_database_url, connect_args={"timeout": 30})
     assert_application_schema_current(engine)
     run_store = SQLiteRunStore(run_store_path, PlaintextPayloadCodec())
     return RuntimeStorage(

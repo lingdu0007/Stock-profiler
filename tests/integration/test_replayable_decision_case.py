@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 
 from stock_profiler.adapters.persistence.decision_ledger import (
@@ -40,10 +43,33 @@ def test_replay_reuses_the_original_business_object_framework_run_event_and_repo
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
 
 
+def test_concurrent_replay_resolves_to_the_one_committed_identity_set(
+    migrated_settings: Settings,
+) -> None:
+    start_together = Barrier(2)
+
+    def replay() -> object:
+        start_together.wait(timeout=5)
+        return run_default_frozen_decision_case(migrated_settings)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(replay)
+        second_future = executor.submit(replay)
+        first = first_future.result(timeout=10)
+        second = second_future.result(timeout=10)
+
+    assert first == second
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 1,
+        "reports": 1,
+    }
+
+
 def test_event_commit_failure_never_leaves_a_readable_formal_report(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail_commit(self: DecisionLedger, **_: object) -> None:
+    def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
         raise DecisionEventCommitError("synthetic event storage failure")
 
     monkeypatch.setattr(DecisionLedger, "commit_event_and_report", fail_commit)
@@ -52,4 +78,4 @@ def test_event_commit_failure_never_leaves_a_readable_formal_report(
         run_default_frozen_decision_case(migrated_settings)
 
     ledger = DecisionLedger.from_settings(migrated_settings)
-    assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
+    assert ledger.counts() == {"business_objects": 0, "decision_events": 0, "reports": 0}

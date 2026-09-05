@@ -1,17 +1,23 @@
-:8080 {
-    root * /srv
-    encode zstd gzip
+{
+	auto_https disable_redirects
+}
 
-    handle /api/v1/* {
-        reverse_proxy api:8000
-    }
+https://{$STOCK_PROFILER_GATEWAY_HOSTNAME}:8443 {
+	tls /run/secrets/gateway_tls_certificate /run/secrets/gateway_tls_private_key
 
-    handle /healthz {
-        respond 200
-    }
+	root * /srv
+	encode zstd gzip
 
-    handle {
-        try_files {path} /index.html
-        file_server
-    }
+	handle /api/v1/* {
+		reverse_proxy api:8000
+	}
+
+	handle /healthz {
+		respond 200
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
 }

@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from webauthn.helpers import bytes_to_base64url
 
+from stock_profiler.adapters.authentication.passkeys import PasskeyAuthenticator
+from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
 from stock_profiler.modules.decision_cases.service import run_default_frozen_decision_case
@@ -67,13 +69,9 @@ def test_passkey_ceremonies_require_the_configured_origin_and_the_session_cookie
     settings = _auth_settings(migrated_settings)
     client = TestClient(create_app(settings), base_url=ORIGIN)
 
-    rejected = client.post(
-        "/api/v1/auth/host-console/grants",
-        headers={"X-Host-Token": BOOTSTRAP_TOKEN},
-        json={"purpose": "bootstrap"},
-    )
+    rejected = client.post("/api/v1/auth/host-console/grants")
 
-    assert rejected.status_code == 403
+    assert rejected.status_code == 404
 
     _, csrf_token = _authenticated_client_with_csrf(migrated_settings, monkeypatch)
     assert csrf_token
@@ -105,14 +103,12 @@ def _authenticated_client_with_csrf(
         lambda **_: SimpleNamespace(new_sign_count=2),
     )
     client = TestClient(create_app(settings), base_url=ORIGIN)
-    grant = client.post(
-        "/api/v1/auth/host-console/grants",
-        headers={"Origin": ORIGIN, "X-Host-Token": BOOTSTRAP_TOKEN},
-        json={"purpose": "bootstrap"},
-    )
+    grant_id = PasskeyAuthenticator(
+        initialize_runtime_storage(settings).engine, settings
+    ).create_host_console_grant("bootstrap")
     registration = client.post(
         "/api/v1/auth/passkeys/registration/options",
-        headers={"Origin": ORIGIN, "X-Host-Console-Grant": grant.json()["grant_id"]},
+        headers={"Origin": ORIGIN, "X-Host-Console-Grant": grant_id},
     )
     registered = client.post(
         "/api/v1/auth/passkeys/registration/verify",
@@ -134,7 +130,6 @@ def _authenticated_client_with_csrf(
         },
     )
 
-    assert grant.status_code == 200
     assert registration.status_code == 200
     assert registered.status_code == 204
     assert authentication.status_code == 200

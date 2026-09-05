@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from stock_profiler.adapters.persistence.runtime_ownership import (
     DECISION_CASE_BUSINESS_OBJECTS,
@@ -36,36 +38,53 @@ class DecisionLedger:
     def from_settings(cls, settings: Settings) -> DecisionLedger:
         return cls(initialize_runtime_storage(settings).engine)
 
-    def ensure_business_object(self, case: FrozenDecisionCase) -> None:
+    @contextmanager
+    def serialize_case_execution(self) -> Iterator[Connection]:
+        """Serialize one D0 identity from lookup through event/report publication."""
+        connection = self._engine.connect()
+        try:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            yield connection
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
+        finally:
+            connection.close()
+
+    def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
         """Persist the one host-to-framework mapping before running the framework."""
-        with self._engine.begin() as connection:
-            existing = connection.execute(
-                select(
-                    DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
-                    DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
-                ).where(
-                    DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id == case.business_object_id
+        existing = connection.execute(
+            select(
+                DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
+                DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
+            ).where(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id == case.business_object_id)
+        ).one_or_none()
+        if existing is None:
+            connection.execute(
+                DECISION_CASE_BUSINESS_OBJECTS.insert().values(
+                    business_object_id=case.business_object_id,
+                    case_id=case.case_id,
+                    frozen_input_fingerprint=case.frozen_input_fingerprint,
+                    framework_run_id=case.framework_run_id,
+                    created_at=datetime.now(UTC).isoformat(),
                 )
-            ).one_or_none()
-            if existing is None:
-                connection.execute(
-                    DECISION_CASE_BUSINESS_OBJECTS.insert().values(
-                        business_object_id=case.business_object_id,
-                        case_id=case.case_id,
-                        frozen_input_fingerprint=case.frozen_input_fingerprint,
-                        framework_run_id=case.framework_run_id,
-                        created_at=datetime.now(UTC).isoformat(),
-                    )
-                )
-                return
-            if (
-                existing.frozen_input_fingerprint != case.frozen_input_fingerprint
-                or existing.framework_run_id != case.framework_run_id
-            ):
-                raise DecisionEventCommitError("business identity maps to different frozen input")
+            )
+            return
+        if (
+            existing.frozen_input_fingerprint != case.frozen_input_fingerprint
+            or existing.framework_run_id != case.framework_run_id
+        ):
+            raise DecisionEventCommitError("business identity maps to different frozen input")
 
     def commit_event_and_report(
-        self, *, case: FrozenDecisionCase, framework_run_id: str, result: ExternalResult
+        self,
+        connection: Connection,
+        *,
+        case: FrozenDecisionCase,
+        framework_run_id: str,
+        result: ExternalResult,
     ) -> FormalReport:
         """Atomically append the event and its only formal report projection."""
         fact = DecisionEventFact(
@@ -79,38 +98,46 @@ class DecisionLedger:
         )
         report = _report_from_fact(case.report_version_id, fact)
         try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    DECISION_EVENTS.insert().values(
-                        decision_event_id=case.decision_event_id,
-                        business_object_id=case.business_object_id,
-                        framework_run_id=framework_run_id,
-                        event_payload=fact.model_dump_json(),
-                        committed_at=fact.committed_at,
-                    )
+            connection.execute(
+                DECISION_EVENTS.insert().values(
+                    decision_event_id=case.decision_event_id,
+                    business_object_id=case.business_object_id,
+                    framework_run_id=framework_run_id,
+                    event_payload=fact.model_dump_json(),
+                    committed_at=fact.committed_at,
                 )
-                connection.execute(
-                    FORMAL_REPORTS.insert().values(
-                        report_version_id=report.report_version_id,
-                        decision_event_id=report.event_id,
-                        generated_at=report.generated_at,
-                    )
+            )
+            connection.execute(
+                FORMAL_REPORTS.insert().values(
+                    report_version_id=report.report_version_id,
+                    decision_event_id=report.event_id,
+                    generated_at=report.generated_at,
                 )
+            )
         except Exception as error:
             raise DecisionEventCommitError("decision event commit failed") from error
         return report
 
-    def get_formal_report(self, report_version_id: str) -> FormalReport | None:
+    def get_formal_report(
+        self, report_version_id: str, connection: Connection | None = None
+    ) -> FormalReport | None:
         """Read a report only when the report row references a committed event."""
-        with self._engine.connect() as connection:
-            row = connection.execute(
-                select(FORMAL_REPORTS.c.report_version_id, DECISION_EVENTS.c.event_payload)
-                .join(
-                    DECISION_EVENTS,
-                    FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
-                )
-                .where(FORMAL_REPORTS.c.report_version_id == report_version_id)
-            ).one_or_none()
+        if connection is not None:
+            return self._formal_report_from_connection(connection, report_version_id)
+        with self._engine.connect() as read_connection:
+            return self._formal_report_from_connection(read_connection, report_version_id)
+
+    def _formal_report_from_connection(
+        self, connection: Connection, report_version_id: str
+    ) -> FormalReport | None:
+        row = connection.execute(
+            select(FORMAL_REPORTS.c.report_version_id, DECISION_EVENTS.c.event_payload)
+            .join(
+                DECISION_EVENTS,
+                FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+            )
+            .where(FORMAL_REPORTS.c.report_version_id == report_version_id)
+        ).one_or_none()
         if row is None:
             return None
         fact = DecisionEventFact.model_validate_json(row.event_payload)
@@ -121,13 +148,19 @@ class DecisionLedger:
         with self._engine.connect() as connection:
             return {
                 "business_objects": int(
-                    connection.execute(select(func.count()).select_from(DECISION_CASE_BUSINESS_OBJECTS)).scalar_one()
+                    connection.execute(
+                        select(func.count()).select_from(DECISION_CASE_BUSINESS_OBJECTS)
+                    ).scalar_one()
                 ),
                 "decision_events": int(
-                    connection.execute(select(func.count()).select_from(DECISION_EVENTS)).scalar_one()
+                    connection.execute(
+                        select(func.count()).select_from(DECISION_EVENTS)
+                    ).scalar_one()
                 ),
                 "reports": int(
-                    connection.execute(select(func.count()).select_from(FORMAL_REPORTS)).scalar_one()
+                    connection.execute(
+                        select(func.count()).select_from(FORMAL_REPORTS)
+                    ).scalar_one()
                 ),
             }
 

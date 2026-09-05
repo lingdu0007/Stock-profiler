@@ -20,6 +20,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
+COPY tests/fixtures/synthetic/replayable_frozen_decision_case.json ./tests/fixtures/synthetic/replayable_frozen_decision_case.json
 COPY alembic.ini ./
 COPY migrations ./migrations
 RUN uv sync --frozen --no-dev

@@ -4,23 +4,6 @@
  */
 
 export interface paths {
-    "/api/v1/auth/host-console/grants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Host Console Grant */
-        post: operations["host_console_grant_api_v1_auth_host_console_grants_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/auth/passkeys/authentication/options": {
         parameters: {
             query?: never;
@@ -306,14 +289,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** HostGrantRequest */
-        HostGrantRequest: {
-            /**
-             * Purpose
-             * @enum {string}
-             */
-            purpose: "bootstrap" | "recovery";
-        };
         /**
          * SafetyCapabilitiesDiagnosticDto
          * @description Machine-readable official-project safety invariants.
@@ -366,44 +341,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    host_console_grant_api_v1_auth_host_console_grants_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Host-Token"?: string | null;
-                origin?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HostGrantRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     authentication_options_api_v1_auth_passkeys_authentication_options_post: {
         parameters: {
             query?: never;
@@ -423,6 +360,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ChallengeDto"];
                 };
+            };
+            /** @description No enrolled passkey is available */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -461,6 +405,13 @@ export interface operations {
                     };
                 };
             };
+            /** @description Authentication verification failed */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -494,6 +445,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ChallengeDto"];
                 };
+            };
+            /** @description Recent authenticated session required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -534,6 +492,13 @@ export interface operations {
                         [key: string]: string;
                     };
                 };
+            };
+            /** @description Reauthentication verification failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -641,6 +606,13 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Origin, CSRF token, or session was invalid */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -114,12 +114,24 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      STOCK_PROFILER_GATEWAY_HOSTNAME: ${STOCK_PROFILER_GATEWAY_HOSTNAME:?set a stable private HTTPS hostname}
+    extra_hosts:
+      - "${STOCK_PROFILER_GATEWAY_HOSTNAME}:127.0.0.1"
+    secrets:
+      - gateway_tls_certificate
+      - gateway_tls_private_key
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${STOCK_PROFILER_GATEWAY_BIND_ADDRESS:?set a private VPN bind address}:443:8443"
     networks:
+      - edge
       - application
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-check-certificate -q -O /dev/null https://$$STOCK_PROFILER_GATEWAY_HOSTNAME:8443/healthz"
+        ]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -136,10 +148,15 @@ secrets:
     file: ${STOCK_PROFILER_AUTH_BOOTSTRAP_TOKEN_FILE:?set an absolute path outside the repository}
   auth_recovery_token:
     file: ${STOCK_PROFILER_AUTH_RECOVERY_TOKEN_FILE:?set an absolute path outside the repository}
+  gateway_tls_certificate:
+    file: ${STOCK_PROFILER_GATEWAY_TLS_CERTIFICATE_FILE:?set an absolute path outside the repository}
+  gateway_tls_private_key:
+    file: ${STOCK_PROFILER_GATEWAY_TLS_PRIVATE_KEY_FILE:?set an absolute path outside the repository}
 
 volumes:
   application-state:
 
 networks:
+  edge:
   application:
     internal: true

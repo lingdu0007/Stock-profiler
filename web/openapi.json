@@ -237,18 +237,6 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "HostGrantRequest": {
-        "properties": {
-          "purpose": {
-            "enum": ["bootstrap", "recovery"],
-            "title": "Purpose",
-            "type": "string"
-          }
-        },
-        "required": ["purpose"],
-        "title": "HostGrantRequest",
-        "type": "object"
-      },
       "SafetyCapabilitiesDiagnosticDto": {
         "description": "Machine-readable official-project safety invariants.",
         "properties": {
@@ -347,87 +335,11 @@
     }
   },
   "info": {
-    "title": "Stock Profiler Diagnostics",
+    "title": "Stock Profiler",
     "version": "0.1.0.dev0"
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/auth/host-console/grants": {
-      "post": {
-        "operationId": "host_console_grant_api_v1_auth_host_console_grants_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Host-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Host-Token"
-            }
-          },
-          {
-            "in": "header",
-            "name": "origin",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Origin"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HostGrantRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Host Console Grant Api V1 Auth Host Console Grants Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Host Console Grant"
-      }
-    },
     "/api/v1/auth/passkeys/authentication/options": {
       "post": {
         "operationId": "authentication_options_api_v1_auth_passkeys_authentication_options_post",
@@ -459,6 +371,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "No enrolled passkey is available"
           },
           "422": {
             "content": {
@@ -519,6 +434,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication verification failed"
           },
           "422": {
             "content": {
@@ -597,6 +515,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "Recent authenticated session required"
           },
           "422": {
             "content": {
@@ -689,6 +610,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "Reauthentication verification failed"
           },
           "422": {
             "content": {
@@ -870,6 +794,9 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "Origin, CSRF token, or session was invalid"
           },
           "422": {
             "content": {

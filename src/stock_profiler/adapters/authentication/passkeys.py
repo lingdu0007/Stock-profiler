@@ -6,7 +6,7 @@ import json
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from sqlalchemy import select, update
@@ -32,6 +32,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import (
     AUTH_SESSIONS,
 )
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.foundation.clock import Clock, UtcClock
 
 
 class AuthenticationError(RuntimeError):
@@ -49,22 +50,20 @@ class SessionAccess:
 class PasskeyAuthenticator:
     """Own the WebAuthn ceremony and server-side session state."""
 
-    def __init__(self, engine: Engine, settings: Settings) -> None:
+    def __init__(self, engine: Engine, settings: Settings, clock: Clock | None = None) -> None:
         self._engine = engine
         self._settings = settings
+        self._clock = clock or UtcClock()
 
-    def create_host_grant(self, purpose: str, token: str) -> str:
+    def create_host_console_grant(self, purpose: str) -> str:
+        """Mint one 10-minute enrollment grant from the directly operated host console."""
         expected_secret = (
             self._settings.auth_bootstrap_token
             if purpose == "bootstrap"
             else self._settings.auth_recovery_token
         )
         expected = expected_secret.get_secret_value() if expected_secret else ""
-        if (
-            purpose not in {"bootstrap", "recovery"}
-            or not expected
-            or not secrets.compare_digest(token, expected)
-        ):
+        if purpose not in {"bootstrap", "recovery"} or not expected:
             raise AuthenticationError("host console authorization failed")
         grant_id = secrets.token_urlsafe(32)
         with self._engine.begin() as connection:
@@ -72,7 +71,11 @@ class PasskeyAuthenticator:
                 AUTH_HOST_GRANTS.insert().values(
                     grant_id=grant_id,
                     purpose=purpose,
-                    expires_at=self._expires(self._settings.auth_bootstrap_token_ttl_seconds),
+                    expires_at=self._expires(
+                        self._settings.auth_bootstrap_token_ttl_seconds
+                        if purpose == "bootstrap"
+                        else self._settings.auth_recovery_token_ttl_seconds
+                    ),
                 )
             )
         return grant_id
@@ -354,9 +357,7 @@ class PasskeyAuthenticator:
             cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
         )
 
-    def _validate_session_mutation(
-        self, stored: object, csrf_token: str | None
-    ) -> None:
+    def _validate_session_mutation(self, stored: object, csrf_token: str | None) -> None:
         if not isinstance(stored, Mapping) or not csrf_token:
             raise AuthenticationError("session logout was not authorized")
         if (
@@ -367,27 +368,31 @@ class PasskeyAuthenticator:
             raise AuthenticationError("session logout was not authorized")
 
     def _now(self) -> str:
-        return datetime.now(UTC).isoformat()
+        return self._clock.now().isoformat()
 
     def _expires(self, seconds: int) -> str:
-        return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat()
+        return (self._clock.now() + timedelta(seconds=seconds)).isoformat()
 
     def _expired(self, timestamp: str) -> bool:
-        return datetime.fromisoformat(timestamp) <= datetime.now(UTC)
+        return datetime.fromisoformat(timestamp) <= self._clock.now()
 
     def _idle_expired(self, timestamp: str) -> bool:
-        return datetime.fromisoformat(timestamp) + timedelta(
-            seconds=self._settings.auth_session_idle_ttl_seconds
-        ) <= datetime.now(UTC)
+        return (
+            datetime.fromisoformat(timestamp)
+            + timedelta(seconds=self._settings.auth_session_idle_ttl_seconds)
+            <= self._clock.now()
+        )
 
     def _recent_reauthentication_expired(self, timestamp: str) -> bool:
-        return datetime.fromisoformat(timestamp) + timedelta(
-            seconds=self._settings.auth_recent_reauthentication_ttl_seconds
-        ) <= datetime.now(UTC)
+        return (
+            datetime.fromisoformat(timestamp)
+            + timedelta(seconds=self._settings.auth_recent_reauthentication_ttl_seconds)
+            <= self._clock.now()
+        )
 
     def _cookie_max_age_seconds(self, absolute_expires_at: str) -> int:
         absolute_remaining = int(
-            (datetime.fromisoformat(absolute_expires_at) - datetime.now(UTC)).total_seconds()
+            (datetime.fromisoformat(absolute_expires_at) - self._clock.now()).total_seconds()
         )
         return max(0, min(self._settings.auth_session_idle_ttl_seconds, absolute_remaining))
 

@@ -18,8 +18,11 @@ SBOM inputs. Local artifact output is ignored by Git.
 Compose uses the same backend image for API, scheduler, worker, and migration.
 Before rendering it, set a complete Git SHA, its commit epoch,
 `STOCK_PROFILER_AUTH_ORIGIN` to a complete HTTPS origin, and
-`STOCK_PROFILER_AUTH_RP_ID` to the matching relying-party ID. Production
-secrets are deployment-local files mounted at `/run/secrets`; set the three
+`STOCK_PROFILER_AUTH_RP_ID` to the matching relying-party ID. Set
+`STOCK_PROFILER_GATEWAY_HOSTNAME` to that stable private hostname and
+`STOCK_PROFILER_GATEWAY_BIND_ADDRESS` to its private VPN address. Production
+secrets, including the gateway TLS certificate and private key, are
+deployment-local files mounted at `/run/secrets`; set the corresponding
 `STOCK_PROFILER_*_FILE` variables to absolute paths outside the repository.
 Only the API mounts authentication secrets; scheduler, worker, and migration
 processes receive no authentication secret files. Secret environment variables
