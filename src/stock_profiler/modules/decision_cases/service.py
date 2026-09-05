@@ -188,6 +188,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
+    ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
             case.business_object_id,
@@ -200,9 +201,8 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
         if fact is None:
             mapping = ledger.get_business_object_mapping(case.business_object_id, connection)
             if mapping is None:
-                ledger.ensure_business_object(connection, case)
-                execution_case = case
-            elif mapping.case is None:
+                raise RuntimeError("durable business mapping is missing before framework execution")
+            if mapping.case is None:
                 if mapping.frozen_input_fingerprint != case.frozen_input_fingerprint:
                     raise DecisionEventCommitError(
                         "business mapping has no recoverable frozen case snapshot"
@@ -218,6 +218,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 connection,
                 case=execution_case,
                 stage_result=framework_result,
+                append=framework_result.status != "SUCCEEDED",
             )
             if framework.run_id != execution_case.framework_run_id:
                 return _unpublished_execution(
@@ -250,6 +251,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 connection,
                 case=execution_case,
                 stage_result=validation_result,
+                append=validation_result.status not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
             )
             stage_results_before_commit = (framework_result, validation_result)
             if not is_committable_host_validation_result(validation_result):
@@ -305,6 +307,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                         connection,
                         case=execution_case,
                         stage_result=uncertain_commit,
+                        append=True,
                     )
                     return _unpublished_execution(
                         execution_case,
@@ -340,6 +343,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                         connection,
                         case=execution_case,
                         stage_result=failed_commit,
+                        append=True,
                     )
                     return _unpublished_execution(
                         execution_case,
@@ -370,6 +374,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 case=fact.case,
                 stage_result=publication_failure,
                 decision_event_id=fact.decision_event_id,
+                append=True,
             )
             return _unpublished_execution(
                 fact.case,

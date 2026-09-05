@@ -19,4 +19,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    snapshot_count = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT COUNT(*) FROM decision_case_business_objects WHERE case_payload IS NOT NULL"
+            )
+        )
+        .scalar_one()
+    )
+    if snapshot_count:
+        raise RuntimeError("cannot downgrade while frozen case snapshots exist")
     op.drop_column("decision_case_business_objects", "case_payload")

@@ -409,8 +409,9 @@ class FrozenDecisionCase(FrozenContract):
         other_bundle = other_payload["version_bundle"]
         assert isinstance(own_bundle, dict)
         assert isinstance(other_bundle, dict)
-        own_bundle.pop("host_source_sha")
-        other_bundle.pop("host_source_sha")
+        for build_identity_field in ("host_application_version", "host_source_sha"):
+            own_bundle.pop(build_identity_field)
+            other_bundle.pop(build_identity_field)
         return own_payload == other_payload
 
     @property
