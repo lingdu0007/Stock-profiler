@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Literal, cast
+from typing import cast
 
 from sqlalchemy import Column, Integer, MetaData, String, Table, func, select
 from sqlalchemy.engine import Connection, Engine
@@ -20,6 +20,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FormalReport,
     FrozenDecisionCase,
     NotificationAttempt,
+    NotificationAttemptStatus,
     StageResult,
 )
 
@@ -196,7 +197,7 @@ class DecisionLedger:
         connection: Connection,
         *,
         report: FormalReport,
-        status: Literal["SUCCEEDED", "FAILED"],
+        status: NotificationAttemptStatus,
         reasons: tuple[str, ...],
     ) -> NotificationAttempt:
         """Append one notification attempt without mutating its source report."""
@@ -258,7 +259,7 @@ class DecisionLedger:
                 notification_attempt_id=row.notification_attempt_id,
                 report_version_id=row.report_version_id,
                 event_id=row.decision_event_id,
-                status=cast(Literal["SUCCEEDED", "FAILED"], row.status),
+                status=cast(NotificationAttemptStatus, row.status),
                 reasons=tuple(json.loads(row.reasons_payload)),
             )
             for row in rows
@@ -274,6 +275,8 @@ class DecisionLedger:
         stage_results: tuple[StageResult, ...],
         decision_event_id: str | None = None,
         corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
     ) -> DecisionEventFact:
         """Reliably append the host event before any report projection is made."""
         event_id = decision_event_id or case.decision_event_id
@@ -284,9 +287,10 @@ class DecisionLedger:
             case=case,
             result=result,
             validation_status="PASSED",
-            committed_at=case.report_generated_at,
+            committed_at=committed_at or case.report_generated_at,
             stage_results=stage_results,
             corrects_event_id=corrects_event_id,
+            generated_at=generated_at or case.report_generated_at,
         )
         existing = self.get_decision_event(event_id, connection)
         if existing is not None:
@@ -309,6 +313,23 @@ class DecisionLedger:
         except Exception as error:
             raise DecisionEventCommitError("decision event commit failed") from error
         return fact
+
+    def ensure_event_stage_results(
+        self, connection: Connection, fact: DecisionEventFact
+    ) -> None:
+        """Backfill stage rows from an already committed append-only event."""
+        for stage_result in fact.stage_results:
+            decision_event_id = (
+                fact.decision_event_id
+                if stage_result.phase in {"BUSINESS_COMMIT", "CORRECTION"}
+                else None
+            )
+            self.record_stage_result(
+                connection,
+                case=fact.case,
+                stage_result=stage_result,
+                decision_event_id=decision_event_id,
+            )
 
     def publish_report(
         self,

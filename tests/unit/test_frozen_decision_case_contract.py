@@ -23,7 +23,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
     ExternalResult,
-    host_validates_external_result,
+    host_validation_result,
     load_frozen_decision_case,
 )
 
@@ -141,7 +141,10 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     case = load_frozen_decision_case(migrated_settings)
     contradictory_scope = case.model_copy(update={"qualification_scope": "D0_REAL_RECOMMENDATION"})
 
-    assert not host_validates_external_result(contradictory_scope, case.expected_external_result)
+    assert host_validation_result(
+        contradictory_scope,
+        case.expected_external_result,
+    ).status == "FAILED"
 
 
 def test_adapter_resumes_the_original_waiting_m_agent_run(

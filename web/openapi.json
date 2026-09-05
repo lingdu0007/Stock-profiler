@@ -269,7 +269,7 @@
             "type": "string"
           },
           "status": {
-            "enum": ["PASSED", "FAILED"],
+            "enum": ["PASSED", "FAILED", "UNKNOWN"],
             "title": "Status",
             "type": "string"
           }

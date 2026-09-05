@@ -19,6 +19,7 @@ FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.1.0"
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
 FROZEN_CORRECTION_CONTRACT_VERSION = "1.0.0"
+FROZEN_CORRECTION_GENERATED_AT = "2042-05-17T16:02:00Z"
 
 
 class FrozenContract(BaseModel):
@@ -85,7 +86,7 @@ class GateResult(FrozenContract):
     """One deterministic gate evaluated during a saved decision stage."""
 
     gate_id: str
-    status: Literal["PASSED", "FAILED"]
+    status: Literal["PASSED", "FAILED", "UNKNOWN"]
 
 
 DecisionResultStatus = Literal[
@@ -98,6 +99,14 @@ DecisionResultStatus = Literal[
     "EXECUTION_BLOCKED",
     "UNKNOWN",
 ]
+BusinessResultStatus = Literal["SUCCEEDED", "REJECTED", "ABSTAINED", "FAILED"]
+BusinessLifecycleStatus = Literal[
+    "PENDING",
+    "EXPIRED",
+    "EXECUTION_BLOCKED",
+    "UNKNOWN",
+]
+NotificationAttemptStatus = Literal["SUCCEEDED", "FAILED"]
 
 FrameworkRunStatus = Literal[
     "CREATED",
@@ -123,6 +132,26 @@ StageStatus = Literal[
     "CANCELLED",
 ]
 BusinessCommitStatus = Literal["NOT_ATTEMPTED", "COMMITTED", "UNKNOWN"]
+_STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
+    "FRAMEWORK_RUN": frozenset(
+        {"CREATED", "RUNNING", "WAITING", "SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}
+    ),
+    "HOST_VALIDATION": frozenset(
+        {
+            "SUCCEEDED",
+            "REJECTED",
+            "ABSTAINED",
+            "FAILED",
+            "PENDING",
+            "EXPIRED",
+            "EXECUTION_BLOCKED",
+        }
+    ),
+    "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "UNKNOWN"}),
+    "PUBLICATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "CORRECTION": frozenset({"SUCCEEDED"}),
+}
 
 
 class StageResult(FrozenContract):
@@ -139,6 +168,13 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_phase_status(self) -> StageResult:
+        """Keep lifecycle states in the phase that owns their meaning."""
+        if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
+            raise ValueError(f"{self.phase} cannot record status {self.status}")
+        return self
 
 
 class FormalReport(FrozenContract):
@@ -166,7 +202,7 @@ class NotificationAttempt(FrozenContract):
     notification_attempt_id: str
     report_version_id: str
     event_id: str
-    status: Literal["SUCCEEDED", "FAILED"]
+    status: NotificationAttemptStatus
     reasons: tuple[str, ...]
 
 
@@ -178,7 +214,8 @@ class DecisionCaseExecution(FrozenContract):
     decision_event_id: str
     report_version_id: str
     framework_run_status: FrameworkRunStatus
-    business_result_status: DecisionResultStatus | None
+    business_result_status: BusinessResultStatus | None
+    business_lifecycle_status: BusinessLifecycleStatus | None
     business_commit_status: BusinessCommitStatus
     publication_status: Literal["PUBLISHED", "CLOSED"]
     report: FormalReport | None
@@ -205,6 +242,7 @@ class DecisionEventFact(FrozenContract):
     committed_at: str
     stage_results: tuple[StageResult, ...]
     corrects_event_id: str | None = None
+    generated_at: str | None = None
 
     def formal_report(self, report_version_id: str) -> FormalReport:
         """Project this complete append-only fact into its one read-only report."""
@@ -216,7 +254,7 @@ class DecisionEventFact(FrozenContract):
             case_id=self.case.case_id,
             synthetic=True,
             qualification_scope=self.case.qualification_scope,
-            generated_at=self.case.report_generated_at,
+            generated_at=self.generated_at or self.case.report_generated_at,
             knowledge_cutoff=self.case.knowledge_cutoff,
             evidence_clock=self.case.evidence_clock,
             version_bundle=self.case.version_bundle,
@@ -402,11 +440,6 @@ _COMPLETE_SYNTHETIC_INPUT = {
         },
     ],
 }
-
-
-def host_validates_external_result(case: FrozenDecisionCase, result: ExternalResult) -> bool:
-    """Accept only the expected result from the complete frozen synthetic input."""
-    return host_validation_result(case, result).status == "SUCCEEDED"
 
 
 def host_validation_result(
