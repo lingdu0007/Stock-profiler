@@ -77,6 +77,10 @@ _CONCURRENT_RUN_RECOVERY_ERRORS = (
 )
 
 
+class MappedDurableRunMissingError(ValueError):
+    """A host mapping names an original Run that is no longer durable."""
+
+
 @dataclass(frozen=True)
 class FrameworkRunResult:
     """Framework details expressed without leaking framework types to the host module."""
@@ -238,7 +242,9 @@ async def execute_frozen_decision_case(
         run = await runner.get_run(case.framework_run_id)
     except RunNotFoundError:
         if case.recovery_framework_run_id is not None:
-            raise ValueError("mapped durable M-Agent Run is missing") from None
+            raise MappedDurableRunMissingError(
+                "mapped durable M-Agent Run is missing"
+            ) from None
         try:
             created = await runner.create_run(
                 definition.definition_id,

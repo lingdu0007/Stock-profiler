@@ -7,13 +7,6 @@ from hashlib import sha256
 
 import sqlalchemy as sa
 from alembic import op
-from pydantic import ValidationError
-
-from stock_profiler.modules.decision_cases.domain import (
-    DecisionEventFact,
-    FormalReport,
-    StageResult,
-)
 
 revision = "0004_corrections_and_notification_attempts"
 down_revision = "0003_decision_stage_events"
@@ -57,6 +50,74 @@ _DECISION_EVENT_STRING_COLUMN_LENGTHS = {
     "event_payload": None,
     "committed_at": 40,
 }
+_STAGE_STATUS_BY_PHASE = {
+    "FRAMEWORK_RUN": frozenset(
+        {"CREATED", "RUNNING", "WAITING", "SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}
+    ),
+    "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "BUSINESS_DECISION": frozenset({"SUCCEEDED", "REJECTED", "ABSTAINED", "FAILED"}),
+    "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
+    "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
+    "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
+    "COMMIT_RECONCILIATION": frozenset({"UNKNOWN"}),
+    "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "FAILED"}),
+    "PUBLICATION": frozenset({"SUCCEEDED", "FAILED", "UNKNOWN"}),
+    "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "CORRECTION": frozenset({"SUCCEEDED"}),
+}
+_REQUIRED_STAGE_RESULT_FIELDS = frozenset({"phase", "status", "gate_results", "reasons"})
+_REQUIRED_GATE_RESULT_FIELDS = frozenset({"gate_id", "status"})
+_REQUIRED_EVENT_FIELDS = frozenset(
+    {
+        "decision_event_id",
+        "business_object_id",
+        "framework_run_id",
+        "case",
+        "result",
+        "validation_status",
+        "committed_at",
+    }
+)
+_OPTIONAL_EVENT_FIELDS = frozenset({"stage_results", "corrects_event_id", "generated_at"})
+_REQUIRED_CASE_FIELDS = frozenset(
+    {
+        "synthetic",
+        "generator_version",
+        "seed",
+        "case_id",
+        "business_identity",
+        "knowledge_cutoff",
+        "report_generated_at",
+        "evidence_clock",
+        "qualification_scope",
+        "version_bundle",
+        "agent_definition",
+        "input",
+        "expected_external_result",
+    }
+)
+_REQUIRED_RESULT_FIELDS = frozenset({"outcome_code", "summary", "key_reasons"})
+_REQUIRED_VERSION_BUNDLE_FIELDS = frozenset(
+    {
+        "case_contract_version",
+        "host_contract_version",
+        "host_application_version",
+        "host_source_sha",
+        "agent_definition_id",
+        "agent_definition_version",
+        "model_adapter_id",
+        "routing_policy_version",
+        "output_contract_version",
+        "report_projection_contract_version",
+        "m_agent_version",
+        "m_agent_wheel_url",
+        "m_agent_wheel_sha256",
+        "m_agent_release_commit",
+    }
+)
+_REQUIRED_EVIDENCE_CLOCK_FIELDS = frozenset(
+    {"fact_effective_at", "source_published_at", "acquired_at", "validated_at"}
+)
 
 
 def _canonical_json(value: object) -> str:
@@ -153,13 +214,33 @@ def _validated_stage_results(payload: dict[str, object]) -> list[dict[str, objec
     )
     if not candidates or not all(isinstance(stage_result, dict) for stage_result in candidates):
         raise RuntimeError("legacy decision stage contract is invalid")
-    try:
-        return [
-            StageResult.model_validate(stage_result).model_dump(mode="json")
-            for stage_result in candidates
-        ]
-    except ValidationError as error:
-        raise RuntimeError("legacy decision stage contract is invalid") from error
+    normalized_results: list[dict[str, object]] = []
+    for stage_result in candidates:
+        if set(stage_result) != _REQUIRED_STAGE_RESULT_FIELDS:
+            raise RuntimeError("legacy decision stage contract is invalid")
+        phase = stage_result.get("phase")
+        status = stage_result.get("status")
+        gates = stage_result.get("gate_results")
+        reasons = stage_result.get("reasons")
+        if (
+            not isinstance(phase, str)
+            or not isinstance(status, str)
+            or status not in _STAGE_STATUS_BY_PHASE.get(phase, ())
+            or not isinstance(gates, list)
+            or not isinstance(reasons, list)
+            or not all(isinstance(reason, str) for reason in reasons)
+        ):
+            raise RuntimeError("legacy decision stage contract is invalid")
+        for gate in gates:
+            if (
+                not isinstance(gate, dict)
+                or set(gate) != _REQUIRED_GATE_RESULT_FIELDS
+                or not isinstance(gate.get("gate_id"), str)
+                or gate.get("status") not in {"PASSED", "FAILED", "UNKNOWN"}
+            ):
+                raise RuntimeError("legacy decision stage contract is invalid")
+        normalized_results.append(stage_result)
+    return normalized_results
 
 
 def _validated_event_fact(
@@ -168,24 +249,33 @@ def _validated_event_fact(
     decision_event_id: str,
     business_object_id: str,
     framework_run_id: str,
-) -> DecisionEventFact:
-    _validated_stage_results(payload)
-    try:
-        fact = DecisionEventFact.model_validate(payload)
-    except ValidationError as error:
-        raise RuntimeError("legacy decision event contract is invalid") from error
+) -> dict[str, object]:
     if (
-        fact.decision_event_id != decision_event_id
-        or fact.business_object_id != business_object_id
-        or fact.framework_run_id != framework_run_id
-        or fact.case.business_object_id != business_object_id
-        or fact.case.framework_run_id != framework_run_id
-        or fact.corrects_event_id is not None
-        or fact.decision_event_id
-        != fact.case.decision_event_id_for_framework_run(framework_run_id)
+        not payload.keys() >= _REQUIRED_EVENT_FIELDS
+        or not payload.keys() <= (_REQUIRED_EVENT_FIELDS | _OPTIONAL_EVENT_FIELDS)
+        or payload.get("corrects_event_id") is not None
+        or not isinstance(payload.get("decision_event_id"), str)
+        or not isinstance(payload.get("business_object_id"), str)
+        or not isinstance(payload.get("framework_run_id"), str)
+        or not isinstance(payload.get("validation_status"), str)
+        or not isinstance(payload.get("committed_at"), str)
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+    _validated_stage_results(payload)
+    case = _validated_case_payload(payload.get("case"))
+    _validated_result(payload.get("result"))
+    if payload.get("generated_at") is not None and not isinstance(payload.get("generated_at"), str):
+        raise RuntimeError("legacy decision event contract is invalid")
+    if (
+        payload["decision_event_id"] != decision_event_id
+        or payload["business_object_id"] != business_object_id
+        or payload["framework_run_id"] != framework_run_id
+        or _business_object_id(case) != business_object_id
+        or _framework_run_id(case) != framework_run_id
+        or _decision_event_id(case, framework_run_id) != decision_event_id
     ):
         raise RuntimeError("legacy decision event identity does not match its row")
-    return fact
+    return payload
 
 
 def _validated_report_stage_results(
@@ -194,20 +284,156 @@ def _validated_report_stage_results(
     report_version_id: str,
     decision_event_id: str,
     generated_at: str,
-    event: DecisionEventFact,
+    event: dict[str, object],
 ) -> list[dict[str, object]]:
+    case = _validated_case_payload(event.get("case"))
+    event_stage_results = _validated_stage_results(event)
+    expected_payload = _formal_report_payload(
+        event,
+        case,
+        report_version_id,
+        event_stage_results,
+    )
     stage_results = _validated_stage_results(payload)
-    try:
-        report = FormalReport.model_validate(payload)
-    except ValidationError as error:
-        raise RuntimeError("legacy formal report contract is invalid") from error
     if (
-        report != event.formal_report(report_version_id)
-        or report.event_id != decision_event_id
-        or report.generated_at != generated_at
+        payload != expected_payload
+        or payload.get("event_id") != decision_event_id
+        or payload.get("generated_at") != generated_at
     ):
         raise RuntimeError("legacy formal report identity does not match its row or event")
     return stage_results
+
+
+def _validated_case_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _REQUIRED_CASE_FIELDS:
+        raise RuntimeError("legacy decision event contract is invalid")
+    if (
+        not isinstance(value.get("synthetic"), bool)
+        or not isinstance(value.get("generator_version"), str)
+        or not isinstance(value.get("seed"), int)
+        or not isinstance(value.get("case_id"), str)
+        or not isinstance(value.get("business_identity"), str)
+        or not isinstance(value.get("knowledge_cutoff"), str)
+        or not isinstance(value.get("report_generated_at"), str)
+        or not isinstance(value.get("qualification_scope"), str)
+        or not isinstance(value.get("input"), dict)
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+    evidence_clock = value.get("evidence_clock")
+    if (
+        not isinstance(evidence_clock, dict)
+        or set(evidence_clock) != _REQUIRED_EVIDENCE_CLOCK_FIELDS
+        or not all(isinstance(clock, str) for clock in evidence_clock.values())
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+    version_bundle = value.get("version_bundle")
+    if (
+        not isinstance(version_bundle, dict)
+        or set(version_bundle) != _REQUIRED_VERSION_BUNDLE_FIELDS
+        or not all(isinstance(item, str) for item in version_bundle.values())
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+    agent_definition = value.get("agent_definition")
+    if (
+        not isinstance(agent_definition, dict)
+        or not isinstance(agent_definition.get("definition_id"), str)
+        or not isinstance(agent_definition.get("version"), str)
+        or agent_definition.get("definition_id") != version_bundle["agent_definition_id"]
+        or agent_definition.get("version") != version_bundle["agent_definition_version"]
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+    _validated_result(value.get("expected_external_result"))
+    return value
+
+
+def _validated_result(value: object) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != _REQUIRED_RESULT_FIELDS
+        or not isinstance(value.get("outcome_code"), str)
+        or not isinstance(value.get("summary"), str)
+        or not isinstance(value.get("key_reasons"), list)
+        or not all(isinstance(reason, str) for reason in value["key_reasons"])
+    ):
+        raise RuntimeError("legacy decision event contract is invalid")
+
+
+def _stable_id(kind: str, value: object) -> str:
+    return f"{kind}-{sha256(_canonical_json(value).encode()).hexdigest()}"
+
+
+def _business_object_id(case: dict[str, object]) -> str:
+    version_bundle = case["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    return _stable_id(
+        "business-object",
+        {
+            "business_identity": case["business_identity"],
+            "case_contract_version": version_bundle["case_contract_version"],
+        },
+    )
+
+
+def _framework_run_id(case: dict[str, object]) -> str:
+    version_bundle = case["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    return _stable_id(
+        "framework-run",
+        {
+            "business_object_id": _business_object_id(case),
+            "frozen_input_fingerprint": sha256(_canonical_json(case).encode()).hexdigest(),
+            "definition_id": version_bundle["agent_definition_id"],
+            "definition_version": version_bundle["agent_definition_version"],
+        },
+    )
+
+
+def _decision_event_id(case: dict[str, object], framework_run_id: str) -> str:
+    version_bundle = dict(case["version_bundle"])
+    version_bundle.pop("host_application_version")
+    version_bundle.pop("host_source_sha")
+    return _stable_id(
+        "decision-event",
+        {
+            "business_object_id": _business_object_id(case),
+            "framework_run_id": framework_run_id,
+            "expected_external_result": case["expected_external_result"],
+            "version_bundle": version_bundle,
+        },
+    )
+
+
+def _formal_report_payload(
+    event: dict[str, object],
+    case: dict[str, object],
+    report_version_id: str,
+    stage_results: list[dict[str, object]],
+) -> dict[str, object]:
+    version_bundle = case["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    generated_at = event.get("generated_at") or case["report_generated_at"]
+    payload: dict[str, object] = {
+        "report_version_id": report_version_id,
+        "event_id": event["decision_event_id"],
+        "business_object_id": event["business_object_id"],
+        "framework_run_id": event["framework_run_id"],
+        "case_id": case["case_id"],
+        "synthetic": True,
+        "qualification_scope": case["qualification_scope"],
+        "generated_at": generated_at,
+        "knowledge_cutoff": case["knowledge_cutoff"],
+        "evidence_clock": case["evidence_clock"],
+        "version_bundle": version_bundle,
+        "result": event["result"],
+    }
+    if version_bundle["report_projection_contract_version"] == "1.0.0":
+        return payload
+    payload["stage_results"] = [
+        *stage_results,
+        _publication_stage_result(),
+    ]
+    payload["corrects_event_id"] = None
+    return payload
 
 
 def _event_rows_for_preflight(event_table: str) -> sa.MappingResult:
@@ -260,7 +486,7 @@ def _preflight_legacy_stage_history(event_table: str) -> None:
             )
         ).mappings()
     }
-    event_facts: dict[str, DecisionEventFact] = {}
+    event_facts: dict[str, dict[str, object]] = {}
     for row in _event_rows_for_preflight(event_table):
         event = _validated_event_fact(
             _payload(row["event_payload"]),
@@ -268,12 +494,14 @@ def _preflight_legacy_stage_history(event_table: str) -> None:
             business_object_id=row["business_object_id"],
             framework_run_id=row["framework_run_id"],
         )
+        case = _validated_case_payload(event["case"])
         mapping = mappings.get(row["business_object_id"])
         if (
             mapping is None
-            or mapping["case_id"] != event.case.case_id
-            or mapping["frozen_input_fingerprint"] != event.case.frozen_input_fingerprint
-            or mapping["framework_run_id"] != event.framework_run_id
+            or mapping["case_id"] != case["case_id"]
+            or mapping["frozen_input_fingerprint"]
+            != sha256(_canonical_json(case).encode()).hexdigest()
+            or mapping["framework_run_id"] != event["framework_run_id"]
         ):
             raise RuntimeError(
                 "legacy decision event identity does not match its durable business mapping"

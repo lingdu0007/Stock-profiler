@@ -13,10 +13,12 @@ from sqlalchemy.engine import Connection
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     FrameworkRunResult,
     FrameworkRunTransition,
+    MappedDurableRunMissingError,
     execute_frozen_decision_case,
     find_unmapped_legacy_frozen_decision_case,
 )
 from stock_profiler.adapters.persistence.decision_ledger import (
+    BusinessObjectMapping,
     DecisionEventCommitError,
     DecisionEventCommitUncertainError,
     DecisionLedger,
@@ -167,7 +169,7 @@ def correct_default_frozen_decision_case(
                     reasons=(),
                 ),
             )
-            correction_written_at = correction_case.report_generated_at
+            correction_written_at = ledger.observed_at()
             attempted_fact = ledger.build_event_fact(
                 case=correction_case,
                 framework_run_id=original_event.framework_run_id,
@@ -176,7 +178,7 @@ def correct_default_frozen_decision_case(
                 decision_event_id=correction_event_id,
                 corrects_event_id=original_event.decision_event_id,
                 committed_at=correction_written_at,
-                generated_at=correction_written_at,
+                generated_at=correction_case.report_generated_at,
             )
             try:
                 correction_event = ledger.commit_event(
@@ -188,7 +190,7 @@ def correct_default_frozen_decision_case(
                     decision_event_id=correction_event_id,
                     corrects_event_id=original_event.decision_event_id,
                     committed_at=correction_written_at,
-                    generated_at=correction_written_at,
+                    generated_at=correction_case.report_generated_at,
                 )
             except DecisionEventCommitUncertainError as error:
                 correction_event = ledger.reconcile_event_commit(connection, attempted_fact)
@@ -199,7 +201,6 @@ def correct_default_frozen_decision_case(
                         correction_case,
                         correction_event_id,
                         original_event.framework_run_id,
-                        correction_stages[0],
                         uncertain=True,
                     )
                     correction_error = error
@@ -212,7 +213,6 @@ def correct_default_frozen_decision_case(
                         correction_case,
                         correction_event_id,
                         original_event.framework_run_id,
-                        correction_stages[0],
                         uncertain=False,
                     )
                     correction_error = error
@@ -288,13 +288,12 @@ def _run_frozen_decision_case(
                         raise RuntimeError(
                             "durable business mapping is missing before framework execution"
                         )
-                    if mapping.case is None:
-                        raise DecisionEventCommitError(
-                            "durable business mapping lacks a frozen case snapshot"
-                        )
-                    else:
-                        execution_case = mapping.case
-                        ledger.ensure_business_object(connection, execution_case)
+                    execution_case = mapping.case or _snapshotless_recovery_case(
+                        case,
+                        business_object_id,
+                        mapping,
+                    )
+                    ledger.ensure_business_object(connection, execution_case)
                     if _has_durable_framework_history(
                         ledger.get_stage_results(business_object_id, connection)
                     ):
@@ -317,12 +316,12 @@ def _run_frozen_decision_case(
                             ),
                         )
                     )
+                except MappedDurableRunMissingError as error:
+                    raise DecisionEventCommitError(
+                        "business identity maps to a missing durable framework Run; "
+                        "durable framework recovery failed"
+                    ) from error
                 except ValueError as error:
-                    if str(error) == "mapped durable M-Agent Run is missing":
-                        raise DecisionEventCommitError(
-                            "business identity maps to a missing durable framework Run; "
-                            "durable framework recovery failed"
-                        ) from error
                     raise DecisionEventCommitError(
                         "durable framework recovery failed"
                     ) from error
@@ -389,6 +388,32 @@ def _serialize_local_framework_execution(business_object_id: str) -> Iterator[No
 def _has_durable_framework_history(stage_results: tuple[StageResult, ...]) -> bool:
     """Require the persisted M-Agent Run once the host observed a transition."""
     return any(stage_result.phase == "FRAMEWORK_RUN" for stage_result in stage_results)
+
+
+def _snapshotless_recovery_case(
+    current_case: FrozenDecisionCase,
+    business_object_id: str,
+    mapping: BusinessObjectMapping,
+) -> FrozenDecisionCase:
+    """Recover a pre-snapshot mapping only through its original durable Run."""
+    candidates = (
+        current_case,
+        current_case.legacy_projection_recovery_case(mapping.framework_run_id),
+        *current_case.legacy_contract_recovery_cases,
+    )
+    for candidate in candidates:
+        if (
+            candidate.business_object_id == business_object_id
+            and candidate.case_id == mapping.case_id
+            and candidate.frozen_input_fingerprint == mapping.frozen_input_fingerprint
+            and candidate.matches_legacy_recovery_input()
+        ):
+            return candidate.model_copy(
+                update={"recovery_framework_run_id": mapping.framework_run_id}
+            )
+    raise DecisionEventCommitError(
+        "durable business mapping lacks a frozen case snapshot for this build"
+    )
 
 
 def _commit_framework_result(
@@ -496,14 +521,14 @@ def _commit_framework_result(
             reasons=(),
         ),
     )
-    committed_at = execution_case.report_generated_at
+    committed_at = ledger.observed_at()
     attempted_fact = ledger.build_event_fact(
         case=execution_case,
         framework_run_id=framework.run_id,
         result=result,
         stage_results=stage_results,
         committed_at=committed_at,
-        generated_at=committed_at,
+        generated_at=execution_case.report_generated_at,
     )
     try:
         return ledger.commit_event(
@@ -513,7 +538,7 @@ def _commit_framework_result(
             result=result,
             stage_results=stage_results,
             committed_at=committed_at,
-            generated_at=committed_at,
+            generated_at=execution_case.report_generated_at,
         )
     except DecisionEventCommitUncertainError:
         committed = ledger.reconcile_event_commit(connection, attempted_fact)
@@ -901,18 +926,10 @@ def _record_correction_commit_failure(
     case: FrozenDecisionCase,
     correction_event_id: str,
     framework_run_id: str,
-    correction_stage: StageResult,
     *,
     uncertain: bool,
 ) -> None:
     """Keep correction intent and its failed save boundary as append-only evidence."""
-    ledger.record_stage_result(
-        connection,
-        case=case,
-        decision_event_id=correction_event_id,
-        framework_run_id=framework_run_id,
-        stage_result=correction_stage,
-    )
     ledger.record_stage_result(
         connection,
         case=case,
