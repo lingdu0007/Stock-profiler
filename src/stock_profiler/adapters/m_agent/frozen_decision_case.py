@@ -24,7 +24,10 @@ from stock_profiler.foundation.versioning import (
     M_AGENT_WHEEL_SHA256,
     M_AGENT_WHEEL_URL,
 )
-from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+from stock_profiler.modules.decision_cases.domain import (
+    FrozenDecisionCase,
+    has_complete_synthetic_input,
+)
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
 D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
@@ -113,15 +116,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
 
 def _deterministic_model_response(case: FrozenDecisionCase) -> str:
     """Make the test model respond to the frozen input, never its expected output field."""
-    evidence = case.input.get("evidence")
-    if not isinstance(evidence, list):
-        return _incomplete_synthetic_response()
-    evidence_ids = {
-        item.get("evidence_id")
-        for item in evidence
-        if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
-    }
-    if evidence_ids == {"synthetic-evidence-001", "synthetic-evidence-002"}:
+    if has_complete_synthetic_input(case.input):
         return (
             '{"key_reasons":["All required fictional evidence records are present.",'
             '"The output is D0 synthetic evidence and is not a recommendation."],'

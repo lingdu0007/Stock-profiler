@@ -125,6 +125,8 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "RFC1918" in entrypoint
     assert "CGNAT" in entrypoint
     assert "-checkend 0" in entrypoint
+    assert "-startdate" in entrypoint
+    assert "certificate is not yet valid" in entrypoint
     assert "-checkhost" in entrypoint
     assert "install -m 600 -o 10001 -g 10001" in entrypoint
     assert "COPY tests/fixtures/synthetic/replayable_frozen_decision_case.json" in dockerfile
