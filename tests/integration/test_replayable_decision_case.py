@@ -758,6 +758,45 @@ def test_replay_reuses_the_original_business_object_framework_run_event_and_repo
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
 
 
+def test_report_reads_fail_closed_when_the_stored_payload_breaks_its_event_identity(
+    migrated_settings: Settings,
+) -> None:
+    execution = run_default_frozen_decision_case(migrated_settings)
+    assert execution.report is not None
+    engine = create_engine(migrated_settings.app_database_url)
+    tampered_report_payload = execution.report.model_dump(mode="json")
+    tampered_report_payload["report_version_id"] = "report-version-tampered"
+    tampered_report_payload["event_id"] = "decision-event-tampered"
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE formal_reports
+                SET report_payload = :report_payload
+                WHERE report_version_id = :report_version_id
+                """
+            ),
+            {
+                "report_payload": json.dumps(
+                    tampered_report_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "report_version_id": execution.report_version_id,
+            },
+        )
+
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    with pytest.raises(DecisionEventCommitError, match="stored formal report"):
+        ledger.get_formal_report(execution.report_version_id)
+    with ledger.serialize_case_execution() as connection:
+        with pytest.raises(DecisionEventCommitError, match="stored formal report"):
+            ledger.get_original_formal_report(execution.business_object_id, connection)
+        with pytest.raises(DecisionEventCommitError, match="stored formal report"):
+            ledger.get_formal_report_for_event(execution.decision_event_id, connection)
+
+
 def test_snapshot_mapping_rejects_a_tampered_frozen_case_before_replay(
     migrated_settings: Settings,
 ) -> None:
@@ -1060,6 +1099,41 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
     assert [
         stage.status for stage in recovered.stage_results if stage.phase == "FRAMEWORK_RUN"
     ] == ["CREATED", "RUNNING", "SUCCEEDED", "SUCCEEDED"]
+
+
+def test_unmapped_v1_framework_run_recovers_without_creating_a_v2_replacement(
+    migrated_settings: Settings,
+) -> None:
+    current_case = load_frozen_decision_case(migrated_settings)
+    legacy_case = current_case.model_copy(
+        update={
+            "version_bundle": current_case.version_bundle.model_copy(
+                update={
+                    "case_contract_version": "1.0.0",
+                    "host_contract_version": "1.0.0",
+                    "report_projection_contract_version": "1.0.0",
+                }
+            )
+        }
+    )
+    runtime = initialize_runtime_storage(migrated_settings)
+    framework = asyncio.run(frozen_adapter.execute_frozen_decision_case(legacy_case, runtime))
+
+    assert framework.run_id == legacy_case.framework_run_id
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 0,
+        "decision_events": 0,
+        "reports": 0,
+    }
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.business_object_id == legacy_case.business_object_id
+    assert recovered.framework_run_id == legacy_case.framework_run_id
+    assert recovered.decision_event_id == legacy_case.decision_event_id
+    assert recovered.report_version_id == legacy_case.report_version_id
+    with sqlite3.connect(runtime.m_agent_run_store_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
 
 
 def test_legacy_mapping_without_a_snapshot_fails_closed_before_reusing_a_run(
@@ -2583,6 +2657,34 @@ def test_snapshot_migration_retries_after_column_addition_is_interrupted(
     load_settings.cache_clear()
 
 
+def test_snapshot_migration_rejects_a_nullable_nonstring_payload_column(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0004_corrections_and_notification_attempts")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE decision_case_business_objects "
+                "ADD COLUMN case_payload INTEGER DEFAULT 0"
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="snapshot migration has incompatible column"):
+        command.upgrade(config, "0005_persist_frozen_case_snapshots")
+
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0004_corrections_and_notification_attempts"
+        )
+
+    load_settings.cache_clear()
+
+
 def test_correction_migration_downgrade_retries_from_a_replacement_only_state(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2668,6 +2770,32 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
     )
     engine = create_engine(settings.app_database_url)
     with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": case.business_object_id,
+                "case_id": case.case_id,
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+                "framework_run_id": case.framework_run_id,
+                "created_at": case.report_generated_at,
+            },
+        )
         connection.execute(
             text(
                 """
@@ -2878,6 +3006,32 @@ def test_correction_migration_rejects_a_report_with_mismatched_durable_identitie
         connection.execute(
             text(
                 """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": case.business_object_id,
+                "case_id": case.case_id,
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+                "framework_run_id": case.framework_run_id,
+                "created_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
                 INSERT INTO decision_events (
                     decision_event_id,
                     business_object_id,
@@ -2983,7 +3137,7 @@ def test_correction_migration_retries_after_notification_table_creation_is_inter
             text(
                 """
                 CREATE TABLE decision_notification_attempts (
-                    sequence INTEGER PRIMARY KEY,
+                    sequence INTEGER NOT NULL PRIMARY KEY,
                     notification_attempt_id VARCHAR(96) NOT NULL UNIQUE,
                     report_version_id VARCHAR(96) NOT NULL,
                     decision_event_id VARCHAR(96) NOT NULL,
@@ -3031,6 +3185,237 @@ def test_correction_migration_rejects_an_incomplete_notification_attempts_table(
         )
 
     with pytest.raises(RuntimeError, match="notification attempts table has unexpected schema"):
+        command.upgrade(config, "head")
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_rejects_semantically_incompatible_notification_attempts(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_notification_attempts (
+                    sequence INTEGER PRIMARY KEY,
+                    notification_attempt_id VARCHAR(96) NOT NULL UNIQUE,
+                    report_version_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96) NOT NULL,
+                    status VARCHAR(16),
+                    reasons_payload INTEGER NOT NULL DEFAULT 0,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="notification attempts table has unexpected schema"):
+        command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_preflights_a_replacement_table_before_repairing_it(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    case = load_frozen_decision_case(settings)
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_events_replacement (
+                    decision_event_id VARCHAR(96) PRIMARY KEY,
+                    business_object_id VARCHAR(96) NOT NULL,
+                    framework_run_id VARCHAR(96) NOT NULL,
+                    corrects_event_id VARCHAR(96),
+                    event_payload VARCHAR NOT NULL,
+                    committed_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events_replacement (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    corrects_event_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    NULL,
+                    '{invalid-json',
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "committed_at": case.report_generated_at,
+            },
+        )
+        connection.execute(text("DROP TABLE decision_events"))
+
+    with pytest.raises(RuntimeError, match="valid JSON"):
+        command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_events'"
+                )
+            ).scalar_one_or_none()
+            is None
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_events_replacement'"
+                )
+            ).scalar_one()
+            == "decision_events_replacement"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_rejects_a_nested_case_that_breaks_the_mapping_lineage(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    current_case = load_frozen_decision_case(settings)
+    case = current_case.model_copy(
+        update={
+            "version_bundle": current_case.version_bundle.model_copy(
+                update={"report_projection_contract_version": "1.0.0"}
+            )
+        }
+    )
+    nested_case = case.model_copy(
+        update={"business_identity": "synthetic:decision:unrelated-legacy-lineage"}
+    )
+    event_payload = {
+        "decision_event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case": nested_case.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+        "validation_status": "PASSED",
+        "committed_at": case.report_generated_at,
+    }
+    event = DecisionEventFact.model_validate(event_payload)
+    report = event.formal_report(case.report_version_id)
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": case.business_object_id,
+                "case_id": case.case_id,
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+                "framework_run_id": case.framework_run_id,
+                "created_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    :event_payload,
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "event_payload": event.model_dump_json(),
+                "committed_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO formal_reports (
+                    report_version_id,
+                    decision_event_id,
+                    report_payload,
+                    generated_at
+                ) VALUES (
+                    :report_version_id,
+                    :decision_event_id,
+                    :report_payload,
+                    :generated_at
+                )
+                """
+            ),
+            {
+                "report_version_id": case.report_version_id,
+                "decision_event_id": case.decision_event_id,
+                "report_payload": report.model_dump_json(),
+                "generated_at": case.report_generated_at,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="legacy decision event identity"):
         command.upgrade(config, "head")
 
     load_settings.cache_clear()

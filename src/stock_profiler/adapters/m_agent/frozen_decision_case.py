@@ -99,6 +99,8 @@ class FrameworkRunTransition:
 
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
+_PLAINTEXT_PAYLOAD_PREFIX = b"m-agent-plaintext:"
+_RUN_INPUT_FIELD = "run:input"
 
 
 @dataclass
@@ -123,6 +125,58 @@ class _RunStatusCollector:
             "CANCELLED",
         }:
             self.statuses.append(cast(FrameworkRunStatus, value))
+
+
+def find_unmapped_legacy_frozen_decision_case(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+) -> FrozenDecisionCase | None:
+    """Find one historical Run by its frozen input without mutating the M-Agent store."""
+    expected_input = json.dumps(
+        case.input,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    candidates: list[FrozenDecisionCase] = []
+    try:
+        with sqlite3.connect(
+            f"{runtime.m_agent_run_store_path.resolve().as_uri()}?mode=ro",
+            uri=True,
+        ) as connection:
+            for legacy_case in case.legacy_contract_recovery_cases:
+                rows = connection.execute(
+                    """
+                    SELECT runs.run_id
+                    FROM runs
+                    JOIN run_payloads
+                      ON run_payloads.run_id = runs.run_id
+                    WHERE runs.run_id = ?
+                      AND runs.definition_id = ?
+                      AND runs.definition_version = ?
+                      AND run_payloads.field = ?
+                      AND run_payloads.encoded = ?
+                    ORDER BY runs.run_id
+                    """,
+                    (
+                        legacy_case.framework_run_id,
+                        legacy_case.agent_definition.definition_id,
+                        legacy_case.agent_definition.version,
+                        _RUN_INPUT_FIELD,
+                        _PLAINTEXT_PAYLOAD_PREFIX + expected_input.encode(),
+                    ),
+                ).fetchall()
+                candidates.extend(
+                    legacy_case.model_copy(update={"recovery_framework_run_id": row[0]})
+                    for row in rows
+                )
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error).lower():
+            return None
+        raise ValueError("cannot inspect durable M-Agent Run history") from error
+    if len(candidates) > 1:
+        raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
+    return candidates[0] if candidates else None
 
 
 async def execute_frozen_decision_case(

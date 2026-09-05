@@ -534,6 +534,31 @@ class FrozenDecisionCase(FrozenContract):
         )
 
     @property
+    def legacy_contract_recovery_cases(self) -> tuple[FrozenDecisionCase, ...]:
+        """Reconstruct only supported historical cases when an old host mapping is absent."""
+        current_pair = (
+            self.version_bundle.case_contract_version,
+            self.version_bundle.host_contract_version,
+        )
+        return tuple(
+            self.model_copy(
+                update={
+                    "version_bundle": self.version_bundle.model_copy(
+                        update={
+                            "case_contract_version": case_contract_version,
+                            "host_contract_version": host_contract_version,
+                            "report_projection_contract_version": "1.0.0",
+                        }
+                    )
+                }
+            )
+            for case_contract_version, host_contract_version in sorted(
+                _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
+            )
+            if (case_contract_version, host_contract_version) != current_pair
+        )
+
+    @property
     def framework_run_id(self) -> str:
         """Allocate a deterministic M-Agent identity for this complete frozen replay."""
         if self.recovery_framework_run_id is not None:

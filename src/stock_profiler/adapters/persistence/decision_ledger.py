@@ -10,8 +10,9 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 
+from pydantic import ValidationError
 from sqlalchemy import Column, Integer, MetaData, String, Table, func, select
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Connection, Engine, Row
 
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
@@ -145,15 +146,19 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
+        try:
+            case = (
+                FrozenDecisionCase.model_validate_json(row.case_payload)
+                if row.case_payload is not None
+                else None
+            )
+        except ValidationError as error:
+            raise DecisionEventCommitError("stored frozen case snapshot is invalid") from error
         return BusinessObjectMapping(
             case_id=row.case_id,
             frozen_input_fingerprint=row.frozen_input_fingerprint,
             framework_run_id=row.framework_run_id,
-            case=(
-                FrozenDecisionCase.model_validate_json(row.case_payload)
-                if row.case_payload is not None
-                else None
-            ),
+            case=case,
         )
 
     def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
@@ -220,37 +225,128 @@ class DecisionLedger:
         self, decision_event_id: str, connection: Connection
     ) -> DecisionEventFact | None:
         """Read the committed host fact before attempting a report projection."""
-        payload = connection.execute(
-            select(DECISION_EVENTS.c.event_payload).where(
+        row = connection.execute(
+            select(
+                DECISION_EVENTS.c.decision_event_id,
+                DECISION_EVENTS.c.business_object_id,
+                DECISION_EVENTS.c.framework_run_id,
+                DECISION_EVENTS.c.corrects_event_id,
+                DECISION_EVENTS.c.event_payload,
+            ).where(
                 DECISION_EVENTS.c.decision_event_id == decision_event_id
             )
-        ).scalar_one_or_none()
-        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+        ).one_or_none()
+        return self._stored_decision_event(connection, row) if row is not None else None
 
     def get_original_decision_event(
         self, business_object_id: str, connection: Connection
     ) -> DecisionEventFact | None:
         """Read the original fact by stable business identity across host builds."""
-        payload = connection.execute(
-            select(DECISION_EVENTS.c.event_payload)
+        row = connection.execute(
+            select(
+                DECISION_EVENTS.c.decision_event_id,
+                DECISION_EVENTS.c.business_object_id,
+                DECISION_EVENTS.c.framework_run_id,
+                DECISION_EVENTS.c.corrects_event_id,
+                DECISION_EVENTS.c.event_payload,
+            )
             .where(
                 DECISION_EVENTS.c.business_object_id == business_object_id,
                 DECISION_EVENTS.c.corrects_event_id.is_(None),
             )
             .order_by(DECISION_EVENTS.c.committed_at)
-        ).scalar_one_or_none()
-        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+        ).one_or_none()
+        return self._stored_decision_event(connection, row) if row is not None else None
 
     def get_correction_event(
         self, original_event_id: str, connection: Connection
     ) -> DecisionEventFact | None:
         """Read the sole D0 correction that already references one original fact."""
-        payload = connection.execute(
-            select(DECISION_EVENTS.c.event_payload).where(
+        row = connection.execute(
+            select(
+                DECISION_EVENTS.c.decision_event_id,
+                DECISION_EVENTS.c.business_object_id,
+                DECISION_EVENTS.c.framework_run_id,
+                DECISION_EVENTS.c.corrects_event_id,
+                DECISION_EVENTS.c.event_payload,
+            ).where(
                 DECISION_EVENTS.c.corrects_event_id == original_event_id
             )
-        ).scalar_one_or_none()
-        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+        ).one_or_none()
+        return self._stored_decision_event(connection, row) if row is not None else None
+
+    def _stored_decision_event(
+        self,
+        connection: Connection,
+        row: Row[tuple[str, str, str, str | None, str]],
+    ) -> DecisionEventFact:
+        """Bind persisted event JSON to its row and stable business mapping before use."""
+        decision_event_id = row.decision_event_id
+        business_object_id = row.business_object_id
+        framework_run_id = row.framework_run_id
+        corrects_event_id = row.corrects_event_id
+        payload = row.event_payload
+        try:
+            fact = DecisionEventFact.model_validate_json(payload)
+        except ValidationError as error:
+            raise DecisionEventCommitError("stored decision event is invalid") from error
+        expected_event_id = (
+            fact.case.correction_event_id(fact.corrects_event_id)
+            if fact.corrects_event_id is not None
+            else fact.case.decision_event_id_for_framework_run(framework_run_id)
+        )
+        is_correction = fact.corrects_event_id is not None
+        if (
+            fact.decision_event_id != decision_event_id
+            or fact.business_object_id != business_object_id
+            or fact.framework_run_id != framework_run_id
+            or fact.corrects_event_id != corrects_event_id
+            or fact.case.business_object_id != business_object_id
+            or (
+                not is_correction and fact.case.framework_run_id != framework_run_id
+            )
+            or fact.decision_event_id != expected_event_id
+        ):
+            raise DecisionEventCommitError(
+                "stored decision event does not match its durable lineage"
+            )
+        if corrects_event_id is not None:
+            if corrects_event_id == decision_event_id:
+                raise DecisionEventCommitError(
+                    "stored decision event does not match its durable lineage"
+                )
+            original_event = self.get_decision_event(corrects_event_id, connection)
+            if (
+                original_event is None
+                or original_event.corrects_event_id is not None
+                or original_event.business_object_id != business_object_id
+                or original_event.framework_run_id != framework_run_id
+            ):
+                raise DecisionEventCommitError(
+                    "stored decision event does not match its durable lineage"
+                )
+        mapping = self.get_business_object_mapping(business_object_id, connection)
+        if (
+            mapping is None
+            or mapping.case_id != fact.case.case_id
+            or mapping.framework_run_id != framework_run_id
+            or (
+                fact.corrects_event_id is None
+                and mapping.frozen_input_fingerprint != fact.case.frozen_input_fingerprint
+            )
+            or (
+                mapping.case is not None
+                and not (
+                    mapping.case.matches_recovery_input(fact.case)
+                    if fact.corrects_event_id is None
+                    else mapping.case.matches_legacy_recovery_input(fact.case)
+                )
+            )
+        ):
+            raise DecisionEventCommitError(
+                "stored decision event does not match its durable business mapping"
+            )
+        return fact
 
     def record_stage_result(
         self,
@@ -633,7 +729,12 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read the original published report by its stable business identity."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
+            select(
+                FORMAL_REPORTS.c.report_version_id,
+                FORMAL_REPORTS.c.decision_event_id,
+                FORMAL_REPORTS.c.report_payload,
+                FORMAL_REPORTS.c.generated_at,
+            )
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -650,7 +751,7 @@ class DecisionLedger:
             return None
         return self._with_publication_history(
             connection,
-            FormalReport.model_validate_json(row.report_payload),
+            self._stored_formal_report_from_row(connection, row),
         )
 
     def get_formal_report_for_event(
@@ -658,7 +759,12 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read one existing projection without deriving a new report identity."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
+            select(
+                FORMAL_REPORTS.c.report_version_id,
+                FORMAL_REPORTS.c.decision_event_id,
+                FORMAL_REPORTS.c.report_payload,
+                FORMAL_REPORTS.c.generated_at,
+            )
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -671,7 +777,7 @@ class DecisionLedger:
             return None
         return self._with_publication_history(
             connection,
-            FormalReport.model_validate_json(row.report_payload),
+            self._stored_formal_report_from_row(connection, row),
         )
 
     def _stored_formal_report(
@@ -679,17 +785,27 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read a report row for idempotent recovery before public confirmation."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload).where(
+            select(
+                FORMAL_REPORTS.c.report_version_id,
+                FORMAL_REPORTS.c.decision_event_id,
+                FORMAL_REPORTS.c.report_payload,
+                FORMAL_REPORTS.c.generated_at,
+            ).where(
                 FORMAL_REPORTS.c.report_version_id == report_version_id
             )
         ).one_or_none()
-        return FormalReport.model_validate_json(row.report_payload) if row is not None else None
+        return self._stored_formal_report_from_row(connection, row) if row is not None else None
 
     def _confirmed_formal_report_from_connection(
         self, connection: Connection, report_version_id: str
     ) -> FormalReport | None:
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload, FORMAL_REPORTS.c.decision_event_id)
+            select(
+                FORMAL_REPORTS.c.report_version_id,
+                FORMAL_REPORTS.c.decision_event_id,
+                FORMAL_REPORTS.c.report_payload,
+                FORMAL_REPORTS.c.generated_at,
+            )
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -702,8 +818,40 @@ class DecisionLedger:
             return None
         return self._with_publication_history(
             connection,
-            FormalReport.model_validate_json(row.report_payload),
+            self._stored_formal_report_from_row(connection, row),
         )
+
+    def _stored_formal_report_from_row(
+        self,
+        connection: Connection,
+        row: Row[tuple[str, str, str, str]],
+    ) -> FormalReport:
+        """Bind persisted report JSON to its row and exact source event projection."""
+        report_version_id = row.report_version_id
+        decision_event_id = row.decision_event_id
+        payload = row.report_payload
+        generated_at = row.generated_at
+        event = self.get_decision_event(decision_event_id, connection)
+        if event is None:
+            raise DecisionEventCommitError(
+                "stored formal report references an unknown decision event"
+            )
+        try:
+            serialized_payload = _canonical_json(json.loads(payload))
+            report = FormalReport.model_validate_json(payload)
+        except (json.JSONDecodeError, ValidationError) as error:
+            raise DecisionEventCommitError("stored formal report is invalid") from error
+        if (
+            report.report_version_id != report_version_id
+            or report.event_id != decision_event_id
+            or report.generated_at != generated_at
+            or serialized_payload
+            != _canonical_json(_formal_report_payload_for_event(event, report_version_id))
+        ):
+            raise DecisionEventCommitError(
+                "stored formal report does not match its durable event"
+            )
+        return report
 
     def _with_publication_history(
         self,
@@ -822,6 +970,41 @@ def _stage_event_id(
 
 def _canonical_json(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+
+def _formal_report_payload_for_event(
+    event: DecisionEventFact,
+    report_version_id: str,
+) -> dict[str, object]:
+    """Rebuild the immutable storage projection without invoking the public read builder."""
+    payload: dict[str, object] = {
+        "report_version_id": report_version_id,
+        "event_id": event.decision_event_id,
+        "business_object_id": event.business_object_id,
+        "framework_run_id": event.framework_run_id,
+        "case_id": event.case.case_id,
+        "synthetic": True,
+        "qualification_scope": event.case.qualification_scope,
+        "generated_at": event.generated_at or event.case.report_generated_at,
+        "knowledge_cutoff": event.case.knowledge_cutoff,
+        "evidence_clock": event.case.evidence_clock.model_dump(mode="json"),
+        "version_bundle": event.case.version_bundle.model_dump(mode="json"),
+        "result": event.result.model_dump(mode="json"),
+        "stage_results": [
+            *(stage_result.model_dump(mode="json") for stage_result in event.stage_results),
+            {
+                "phase": "PUBLICATION",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "EVENT_COMMITTED", "status": "PASSED"}],
+                "reasons": [],
+            },
+        ],
+        "corrects_event_id": event.corrects_event_id,
+    }
+    if event.case.version_bundle.report_projection_contract_version == "1.0.0":
+        payload.pop("stage_results")
+        payload.pop("corrects_event_id")
+    return payload
 
 
 def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:
