@@ -14,7 +14,6 @@ import {
 import {
   ApiResponseError,
   completePasskeyAuthentication,
-  completePasskeyRegistration,
   fetchFormalReport,
   type FormalReport
 } from "./api/client";
@@ -163,68 +162,6 @@ function SignInPage() {
   );
 }
 
-function HostConsolePage() {
-  const [purpose, setPurpose] = useState<"bootstrap" | "recovery">("bootstrap");
-  const [hostToken, setHostToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  async function enroll() {
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      await completePasskeyRegistration(hostToken, purpose);
-      setHostToken("");
-    } catch {
-      setError("Passkey enrollment was not completed.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  return (
-    <Shell>
-      <section aria-label="Host console enrollment" className="sign-in">
-        <h2>Host console</h2>
-        <label className="field-label" htmlFor="host-console-purpose">
-          Grant
-        </label>
-        <select
-          id="host-console-purpose"
-          value={purpose}
-          onChange={(event) => setPurpose(event.target.value as "bootstrap" | "recovery")}
-        >
-          <option value="bootstrap">Bootstrap</option>
-          <option value="recovery">Recovery</option>
-        </select>
-        <label className="field-label" htmlFor="host-console-token">
-          Console token
-        </label>
-        <input
-          id="host-console-token"
-          autoComplete="off"
-          onChange={(event) => setHostToken(event.target.value)}
-          type="password"
-          value={hostToken}
-        />
-        <button
-          className="passkey-button"
-          disabled={isSubmitting || hostToken.length === 0}
-          onClick={() => void enroll()}
-        >
-          <KeyRound aria-hidden="true" size={18} />
-          {isSubmitting ? "Enrolling Passkey" : "Enroll Passkey"}
-        </button>
-        {error && (
-          <p aria-live="polite" className="error-message">
-            {error}
-          </p>
-        )}
-      </section>
-    </Shell>
-  );
-}
-
 function safeReturnPath(value: string | null): string {
   return value?.startsWith("/reports/") ? value : "/";
 }
@@ -236,7 +173,6 @@ export function App() {
         <Routes>
           <Route path="/reports/:reportVersionId" element={<ReportPage />} />
           <Route path="/sign-in" element={<SignInPage />} />
-          <Route path="/host-console/enroll" element={<HostConsolePage />} />
           <Route path="*" element={<Navigate replace to="/sign-in" />} />
         </Routes>
       </BrowserRouter>

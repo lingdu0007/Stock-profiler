@@ -241,8 +241,12 @@ export interface components {
             m_agent_wheel_sha256: string;
             /** M Agent Wheel Url */
             m_agent_wheel_url: string;
+            /** Model Adapter Id */
+            model_adapter_id: string;
             /** Output Contract Version */
             output_contract_version: string;
+            /** Routing Policy Version */
+            routing_policy_version: string;
         };
         /**
          * EvidenceClock
@@ -563,6 +567,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChallengeDto"];
                 };
             };
+            /** @description Host console grant required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -591,6 +602,13 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Registration verification failed */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -703,6 +721,13 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Formal report not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

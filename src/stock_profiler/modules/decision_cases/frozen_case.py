@@ -11,7 +11,7 @@ FROZEN_CASE_PAYLOAD: Final[dict[str, object]] = {
     "case_id": "d0-orbital-mosaic-001",
     "business_identity": "synthetic:decision:orbital-mosaic:001",
     "knowledge_cutoff": "2042-05-17T16:00:00Z",
-    "report_generated_at": "2042-05-17T15:19:00Z",
+    "report_generated_at": "2042-05-17T16:01:00Z",
     "evidence_clock": {
         "fact_effective_at": "2042-05-17T15:00:00Z",
         "source_published_at": "2042-05-17T15:12:00Z",
@@ -23,9 +23,11 @@ FROZEN_CASE_PAYLOAD: Final[dict[str, object]] = {
         "case_contract_version": "1.0.0",
         "host_contract_version": "1.0.0",
         "host_application_version": "0.1.0.dev0",
-        "host_source_sha": "fcd1645cd18b88eb81c6af46ee81c2012e2e083b",
+        "host_source_sha": "d0-synthetic-host-contract-1",
         "agent_definition_id": "synthetic-frozen-decision-case",
         "agent_definition_version": "1.0.0",
+        "model_adapter_id": "m-agent-deterministic-model-adapter",
+        "routing_policy_version": "d0-single-definition-route-v1",
         "output_contract_version": "1.0.0",
         "m_agent_version": "0.5.0",
         "m_agent_wheel_url": (
