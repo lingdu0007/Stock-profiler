@@ -101,6 +101,16 @@ describe("App", () => {
     expect(screen.queryByText(report.result.outcome_code)).not.toBeInTheDocument();
   });
 
+  it("does not render a closed report when the delivery API returns not found", async () => {
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    render(<App />);
+
+    expect(await screen.findByText("Report unavailable")).toBeVisible();
+    expect(screen.queryByText(report.result.outcome_code)).not.toBeInTheDocument();
+  });
+
   it("does not expose a public enrollment action without a host-console grant fragment", async () => {
     window.history.pushState({}, "", "/enroll");
 

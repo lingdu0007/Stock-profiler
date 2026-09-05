@@ -12,6 +12,10 @@ from stock_profiler.adapters.authentication.passkeys import (
     HostGrantPurpose,
     PasskeyAuthenticator,
 )
+from stock_profiler.adapters.persistence.decision_ledger import (
+    DecisionEventCommitError,
+    DecisionLedger,
+)
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
@@ -107,6 +111,24 @@ def test_reports_are_inaccessible_without_a_session_and_logout_requires_origin_a
     assert logged_out.status_code == 204
     assert logged_out.headers["cache-control"] == "no-store"
     assert after_logout.status_code == 401
+
+
+def test_api_does_not_expose_a_report_while_a_business_commit_is_closed(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
+        raise DecisionEventCommitError("synthetic event storage failure")
+
+    monkeypatch.setattr(DecisionLedger, "commit_event", fail_commit)
+    closed = run_default_frozen_decision_case(migrated_settings)
+    client, _ = _authenticated_client_with_csrf(migrated_settings, monkeypatch)
+
+    response = client.get(f"/api/v1/reports/{closed.report_version_id}")
+
+    assert closed.publication_status == "CLOSED"
+    assert closed.report is None
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_passkey_ceremonies_require_the_configured_origin_and_the_session_cookie_is_host_only(

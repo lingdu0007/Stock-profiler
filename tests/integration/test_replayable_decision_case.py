@@ -319,7 +319,7 @@ def test_definite_event_commit_failure_closes_publication_until_the_original_ide
     assert failed.framework_run_status == "SUCCEEDED"
     assert failed.business_result_status == "SUCCEEDED"
     assert failed.business_lifecycle_status is None
-    assert failed.business_commit_status == "NOT_ATTEMPTED"
+    assert failed.business_commit_status == "FAILED"
     assert failed.publication_status == "CLOSED"
     assert failed.report is None
     assert failed.stage_results[-1].phase == "BUSINESS_COMMIT"
@@ -645,7 +645,8 @@ def test_stage_result_migration_refuses_to_drop_append_only_history(
 def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_reports(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case = load_frozen_decision_case(settings)
+    legacy_settings = settings.model_copy(update={"source_sha": "b" * 40})
+    case = load_frozen_decision_case(legacy_settings)
     monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
     load_settings.cache_clear()
     config = Config(str(ROOT / "alembic.ini"))
@@ -675,6 +676,18 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
         "version_bundle": case.version_bundle.model_dump(mode="json"),
         "result": case.expected_external_result.model_dump(mode="json"),
     }
+    legacy_event_payload_json = json.dumps(
+        legacy_event_payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    legacy_report_payload_json = json.dumps(
+        legacy_report_payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     engine = create_engine(settings.app_database_url)
     with engine.begin() as connection:
         connection.execute(
@@ -725,12 +738,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
                 "decision_event_id": case.decision_event_id,
                 "business_object_id": case.business_object_id,
                 "framework_run_id": case.framework_run_id,
-                "event_payload": json.dumps(
-                    legacy_event_payload,
-                    ensure_ascii=True,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
+                "event_payload": legacy_event_payload_json,
                 "committed_at": case.report_generated_at,
             },
         )
@@ -753,17 +761,33 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
             {
                 "report_version_id": case.report_version_id,
                 "decision_event_id": case.decision_event_id,
-                "report_payload": json.dumps(
-                    legacy_report_payload,
-                    ensure_ascii=True,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
+                "report_payload": legacy_report_payload_json,
                 "generated_at": case.report_generated_at,
             },
         )
 
     command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT event_payload FROM decision_events "
+                    "WHERE decision_event_id = :decision_event_id"
+                ),
+                {"decision_event_id": case.decision_event_id},
+            ).scalar_one()
+            == legacy_event_payload_json
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT report_payload FROM formal_reports "
+                    "WHERE report_version_id = :report_version_id"
+                ),
+                {"report_version_id": case.report_version_id},
+            ).scalar_one()
+            == legacy_report_payload_json
+        )
 
     ledger = DecisionLedger.from_settings(settings)
     report = ledger.get_formal_report(case.report_version_id)
@@ -789,6 +813,20 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     assert replayed.framework_run_id == case.framework_run_id
     assert replayed.decision_event_id == case.decision_event_id
     assert replayed.report_version_id == case.report_version_id
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM formal_reports "
+                "WHERE report_version_id = :report_version_id"
+            ),
+            {"report_version_id": case.report_version_id},
+        )
+
+    recovered_without_projection = run_default_frozen_decision_case(settings)
+    assert recovered_without_projection.report == report
+    assert recovered_without_projection.framework_run_id == case.framework_run_id
+    assert recovered_without_projection.decision_event_id == case.decision_event_id
+    assert recovered_without_projection.report_version_id == case.report_version_id
 
     load_settings.cache_clear()
 

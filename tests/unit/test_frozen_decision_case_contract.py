@@ -23,10 +23,10 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
-    ExternalResult,
     host_validation_result,
     load_frozen_decision_case,
 )
+from stock_profiler.modules.decision_cases.service import run_default_frozen_decision_case
 
 
 def test_frozen_synthetic_case_has_stable_independent_identities(settings: Settings) -> None:
@@ -148,7 +148,7 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     ).status == "FAILED"
 
 
-def test_adapter_resumes_the_original_m_agent_model_checkpoint(
+def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_identity_set(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -207,9 +207,14 @@ def test_adapter_resumes_the_original_m_agent_model_checkpoint(
 
     asyncio.run(create_checkpointed_run())
 
-    recovered = asyncio.run(execute_frozen_decision_case(case, runtime))
+    recovered = run_default_frozen_decision_case(migrated_settings)
 
-    assert recovered.run_id == case.framework_run_id
-    assert recovered.status == "SUCCEEDED"
-    assert recovered.output is not None
-    assert ExternalResult.model_validate_json(recovered.output) == case.expected_external_result
+    assert recovered.business_object_id == case.business_object_id
+    assert recovered.framework_run_id == case.framework_run_id
+    assert recovered.decision_event_id == case.decision_event_id
+    assert recovered.report_version_id == case.report_version_id
+    assert recovered.framework_run_status == "SUCCEEDED"
+    assert recovered.business_commit_status == "COMMITTED"
+    assert recovered.publication_status == "PUBLISHED"
+    assert recovered.report is not None
+    assert recovered.report.result == case.expected_external_result

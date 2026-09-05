@@ -130,7 +130,7 @@ def _record_legacy_stage_result(
         )
 
 
-def _upgrade_legacy_payloads() -> None:
+def _append_legacy_stage_history() -> None:
     bind = op.get_bind()
     event_context: dict[str, tuple[str, str, list[dict[str, object]]]] = {}
     event_rows = bind.execute(
@@ -150,20 +150,11 @@ def _upgrade_legacy_payloads() -> None:
     for row in event_rows:
         event_payload = _payload(row["event_payload"])
         stage_results = event_payload.get("stage_results")
-        if not isinstance(stage_results, list):
-            stage_results = _legacy_stage_results(event_payload)
-            event_payload["stage_results"] = stage_results
-            bind.execute(
-                sa.text(
-                    "UPDATE decision_events SET event_payload = :event_payload "
-                    "WHERE decision_event_id = :decision_event_id"
-                ),
-                {
-                    "event_payload": _canonical_json(event_payload),
-                    "decision_event_id": row["decision_event_id"],
-                },
-            )
-            for stage_result in stage_results:
+        if isinstance(stage_results, list):
+            validated_stage_results = stage_results
+        else:
+            validated_stage_results = _legacy_stage_results(event_payload)
+            for stage_result in validated_stage_results:
                 if not isinstance(stage_result, dict):
                     raise RuntimeError("legacy decision stage result must be a JSON object")
                 _record_legacy_stage_result(
@@ -180,7 +171,7 @@ def _upgrade_legacy_payloads() -> None:
         event_context[row["decision_event_id"]] = (
             row["business_object_id"],
             row["framework_run_id"],
-            stage_results,
+            validated_stage_results,
         )
 
     report_rows = bind.execute(
@@ -204,19 +195,8 @@ def _upgrade_legacy_payloads() -> None:
         event = event_context.get(row["decision_event_id"])
         if event is None:
             raise RuntimeError("legacy formal report references an unknown decision event")
-        business_object_id, framework_run_id, event_stages = event
+        business_object_id, framework_run_id, _ = event
         publication_stage = _publication_stage_result()
-        report_payload["stage_results"] = [*event_stages, publication_stage]
-        bind.execute(
-            sa.text(
-                "UPDATE formal_reports SET report_payload = :report_payload "
-                "WHERE report_version_id = :report_version_id"
-            ),
-            {
-                "report_payload": _canonical_json(report_payload),
-                "report_version_id": row["report_version_id"],
-            },
-        )
         _record_legacy_stage_result(
             business_object_id=business_object_id,
             framework_run_id=framework_run_id,
@@ -259,7 +239,7 @@ def upgrade() -> None:
     )
     op.drop_table("decision_events")
     op.rename_table("decision_events_replacement", "decision_events")
-    _upgrade_legacy_payloads()
+    _append_legacy_stage_history()
     op.create_table(
         "decision_notification_attempts",
         sa.Column("sequence", sa.Integer(), autoincrement=True, nullable=False),

@@ -177,11 +177,14 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
     with ledger.serialize_case_execution() as connection:
-        existing_report = ledger.get_formal_report(case.report_version_id, connection)
+        existing_report = ledger.get_original_formal_report(
+            case.business_object_id,
+            connection,
+        )
         if existing_report is not None:
-            return _published_execution(case, existing_report)
+            return _published_execution(existing_report)
 
-        fact = ledger.get_decision_event(case.decision_event_id, connection)
+        fact = ledger.get_original_decision_event(case.business_object_id, connection)
         if fact is None:
             ledger.ensure_business_object(connection, case)
             framework = asyncio.run(execute_frozen_decision_case(case, runtime))
@@ -316,7 +319,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                             validation_result
                         ),
                         business_lifecycle_status=None,
-                        business_commit_status="NOT_ATTEMPTED",
+                        business_commit_status="FAILED",
                         stage_results=(
                             *stage_results[:-1],
                             failed_commit,
@@ -355,7 +358,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             stage_result=report.stage_results[-1],
             decision_event_id=fact.decision_event_id,
         )
-    return _published_execution(case, report)
+    return _published_execution(report)
 
 
 def get_formal_report(report_version_id: str, settings: Settings) -> FormalReport | None:
@@ -363,12 +366,12 @@ def get_formal_report(report_version_id: str, settings: Settings) -> FormalRepor
     return DecisionLedger.from_settings(settings).get_formal_report(report_version_id)
 
 
-def _published_execution(case: FrozenDecisionCase, report: FormalReport) -> DecisionCaseExecution:
+def _published_execution(report: FormalReport) -> DecisionCaseExecution:
     return DecisionCaseExecution(
-        business_object_id=case.business_object_id,
-        framework_run_id=case.framework_run_id,
-        decision_event_id=case.decision_event_id,
-        report_version_id=case.report_version_id,
+        business_object_id=report.business_object_id,
+        framework_run_id=report.framework_run_id,
+        decision_event_id=report.event_id,
+        report_version_id=report.report_version_id,
         framework_run_status=framework_run_status_from_stage(report.stage_results[0]),
         business_result_status=_business_result_status_from_stages(report.stage_results),
         business_lifecycle_status=None,
