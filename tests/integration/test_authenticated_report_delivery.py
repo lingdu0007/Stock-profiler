@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from webauthn.helpers import bytes_to_base64url
 
-from stock_profiler.adapters.authentication.passkeys import HostGrantPurpose, PasskeyAuthenticator
+from stock_profiler.adapters.authentication.passkeys import (
+    AUTH_SESSIONS,
+    HostGrantPurpose,
+    PasskeyAuthenticator,
+)
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
@@ -22,15 +26,28 @@ def test_authenticated_api_reads_the_same_committed_report_and_never_caches_it(
 ) -> None:
     report = run_default_frozen_decision_case(migrated_settings).report
     client = _authenticated_client(migrated_settings, monkeypatch)
+    storage = initialize_runtime_storage(migrated_settings)
+    with storage.engine.connect() as connection:
+        last_seen_before = connection.execute(
+            AUTH_SESSIONS.select().with_only_columns(AUTH_SESSIONS.c.last_seen_at)
+        ).scalar_one()
 
     response = client.get(f"/api/v1/reports/{report.report_version_id}")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
     assert response.json() == report.model_dump(mode="json")
     assert response.json()["event_id"] == report.event_id
     assert response.json()["framework_run_id"] == report.framework_run_id
     assert response.json()["evidence_clock"]["validated_at"] == "2042-05-17T15:18:00Z"
+    with storage.engine.connect() as connection:
+        assert (
+            connection.execute(
+                AUTH_SESSIONS.select().with_only_columns(AUTH_SESSIONS.c.last_seen_at)
+            ).scalar_one()
+            == last_seen_before
+        )
 
 
 def test_reports_are_inaccessible_without_a_session_and_logout_requires_origin_and_csrf(

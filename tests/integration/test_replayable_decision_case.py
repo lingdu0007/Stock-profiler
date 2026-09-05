@@ -125,6 +125,25 @@ def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_publ
         "reports": 0,
     }
 
+    altered_evidence = [*case.input["evidence"]]
+    altered_evidence[0] = {
+        **altered_evidence[0],
+        "statement": "A changed statement with the same synthetic evidence identifier.",
+    }
+    altered_snapshot = case.model_copy(
+        update={"input": {**case.input, "evidence": altered_evidence}}
+    )
+    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: altered_snapshot)
+
+    with pytest.raises(DecisionEventCommitError, match="host validation rejected"):
+        run_default_frozen_decision_case(migrated_settings)
+
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 0,
+        "decision_events": 0,
+        "reports": 0,
+    }
+
     changed_definition = case.model_copy(
         update={
             "agent_definition": case.agent_definition.model_copy(

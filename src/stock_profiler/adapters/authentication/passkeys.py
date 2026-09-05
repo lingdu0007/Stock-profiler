@@ -223,7 +223,11 @@ class PasskeyAuthenticator:
         return credential_id
 
     def require_session(
-        self, session_token: str | None, require_recent_reauthentication: bool = False
+        self,
+        session_token: str | None,
+        require_recent_reauthentication: bool = False,
+        *,
+        touch: bool = True,
     ) -> SessionAccess:
         if not session_token:
             raise AuthenticationError("authentication required")
@@ -247,12 +251,13 @@ class PasskeyAuthenticator:
             )
         ):
             raise AuthenticationError("session expired")
-        with self._engine.begin() as connection:
-            connection.execute(
-                update(AUTH_SESSIONS)
-                .where(AUTH_SESSIONS.c.session_hash == _digest(session_token))
-                .values(last_seen_at=self._now())
-            )
+        if touch:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    update(AUTH_SESSIONS)
+                    .where(AUTH_SESSIONS.c.session_hash == _digest(session_token))
+                    .values(last_seen_at=self._now())
+                )
         return SessionAccess(
             credential_id=str(stored["credential_id"]),
             cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
