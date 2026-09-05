@@ -54,7 +54,6 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     assert outcome.report.qualification_scope == "D0_SYNTHETIC_CONTRACT_ONLY"
     assert outcome.report.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
     assert outcome.stage_results[1].reasons == (
-        "SYNTHETIC_REVIEW_COMPLETE",
         "All required fictional evidence records are present.",
         "The output is D0 synthetic evidence and is not a recommendation.",
     )
@@ -93,10 +92,7 @@ def test_framework_success_and_host_rejection_remain_distinct_committed_results(
         ("PUBLICATION", "SUCCEEDED"),
     ]
     assert outcome.stage_results[1].gate_results[0].gate_id == "FROZEN_RESULT_MATCH"
-    assert outcome.stage_results[1].reasons == (
-        "SYNTHETIC_INPUT_REJECTED",
-        "The host rejected the frozen input.",
-    )
+    assert outcome.stage_results[1].reasons == ("The host rejected the frozen input.",)
 
 
 @pytest.mark.parametrize(
@@ -151,10 +147,7 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
             expected_business_status or expected_lifecycle_status,
         ),
     ]
-    assert outcome.stage_results[1].reasons == (
-        outcome_code,
-        f"Reason for {outcome_code}.",
-    )
+    assert outcome.stage_results[1].reasons == (f"Reason for {outcome_code}.",)
     counts = DecisionLedger.from_settings(migrated_settings).counts()
     assert counts == {
         "business_objects": 1,
