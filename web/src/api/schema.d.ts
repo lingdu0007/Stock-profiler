@@ -228,6 +228,8 @@ export interface components {
             model_adapter_id: string;
             /** Output Contract Version */
             output_contract_version: string;
+            /** Report Projection Contract Version */
+            report_projection_contract_version: string;
             /** Routing Policy Version */
             routing_policy_version: string;
         };

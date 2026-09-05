@@ -39,6 +39,7 @@ class DecisionCaseVersionBundle(FrozenContract):
     model_adapter_id: str
     routing_policy_version: str
     output_contract_version: str
+    report_projection_contract_version: str
     m_agent_version: str
     m_agent_wheel_url: str
     m_agent_wheel_sha256: str
@@ -217,7 +218,9 @@ class FrozenDecisionCase(FrozenContract):
             "report-version",
             {
                 "decision_event_id": self.decision_event_id,
-                "report_contract_version": self.version_bundle.output_contract_version,
+                "report_projection_contract_version": (
+                    self.version_bundle.report_projection_contract_version
+                ),
             },
         )
 
@@ -231,6 +234,35 @@ def load_frozen_decision_case(settings: Settings) -> FrozenDecisionCase:
     version_bundle["host_application_version"] = settings.configuration_version
     version_bundle["host_source_sha"] = settings.source_sha
     return FrozenDecisionCase.model_validate(payload)
+
+
+def host_validates_external_result(case: FrozenDecisionCase, result: ExternalResult) -> bool:
+    """Accept only the expected result when the frozen synthetic evidence is complete."""
+    return _has_required_synthetic_input(case.input) and result == case.expected_external_result
+
+
+def _has_required_synthetic_input(value: dict[str, Any]) -> bool:
+    security = value.get("security")
+    account = value.get("account")
+    evidence = value.get("evidence")
+    if (
+        not isinstance(security, dict)
+        or not isinstance(account, dict)
+        or not isinstance(evidence, list)
+    ):
+        return False
+    evidence_ids = {
+        item.get("evidence_id")
+        for item in evidence
+        if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+    }
+    return (
+        security.get("issuer_id") == "FICTIONAL-ORBITAL-MOSAIC"
+        and security.get("symbol") == "XQZ-4017"
+        and account.get("account_id") == "synthetic-account-4017"
+        and account.get("account_kind") == "SIMULATED_CASH"
+        and evidence_ids == {"synthetic-evidence-001", "synthetic-evidence-002"}
+    )
 
 
 def _fingerprint(value: object) -> str:

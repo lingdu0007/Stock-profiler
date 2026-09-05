@@ -25,6 +25,7 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.version_bundle.host_source_sha == settings.source_sha
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
     assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
+    assert first.version_bundle.report_projection_contract_version == "1.0.0"
     assert first.agent_definition.instructions == (
         "Return only the frozen synthetic decision-case external result as JSON."
     )
@@ -45,6 +46,15 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
         )
         == 4
     )
+
+    revised_report_contract = first.model_copy(
+        update={
+            "version_bundle": first.version_bundle.model_copy(
+                update={"report_projection_contract_version": "2.0.0"}
+            )
+        }
+    )
+    assert revised_report_contract.report_version_id != first.report_version_id
 
 
 def test_runtime_rejects_a_case_whose_declared_m_agent_release_is_not_installed(

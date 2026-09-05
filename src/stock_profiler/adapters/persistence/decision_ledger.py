@@ -6,21 +6,44 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import Column, MetaData, String, Table, func, select
 from sqlalchemy.engine import Connection, Engine
 
-from stock_profiler.adapters.persistence.runtime_ownership import (
-    DECISION_CASE_BUSINESS_OBJECTS,
-    DECISION_EVENTS,
-    FORMAL_REPORTS,
-    initialize_runtime_storage,
-)
+from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
     DecisionEventFact,
     ExternalResult,
     FormalReport,
     FrozenDecisionCase,
+)
+
+METADATA = MetaData()
+DECISION_CASE_BUSINESS_OBJECTS = Table(
+    "decision_case_business_objects",
+    METADATA,
+    Column("business_object_id", String(96), primary_key=True),
+    Column("case_id", String(96), nullable=False),
+    Column("frozen_input_fingerprint", String(64), nullable=False),
+    Column("framework_run_id", String(96), nullable=False, unique=True),
+    Column("created_at", String(40), nullable=False),
+)
+DECISION_EVENTS = Table(
+    "decision_events",
+    METADATA,
+    Column("decision_event_id", String(96), primary_key=True),
+    Column("business_object_id", String(96), nullable=False),
+    Column("framework_run_id", String(96), nullable=False, unique=True),
+    Column("event_payload", String, nullable=False),
+    Column("committed_at", String(40), nullable=False),
+)
+FORMAL_REPORTS = Table(
+    "formal_reports",
+    METADATA,
+    Column("report_version_id", String(96), primary_key=True),
+    Column("decision_event_id", String(96), nullable=False, unique=True),
+    Column("report_payload", String, nullable=False),
+    Column("generated_at", String(40), nullable=False),
 )
 
 
@@ -139,6 +162,7 @@ class DecisionLedger:
                 FORMAL_REPORTS.insert().values(
                     report_version_id=report.report_version_id,
                     decision_event_id=report.event_id,
+                    report_payload=report.model_dump_json(),
                     generated_at=report.generated_at,
                 )
             )
@@ -159,7 +183,7 @@ class DecisionLedger:
         self, connection: Connection, report_version_id: str
     ) -> FormalReport | None:
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_version_id, DECISION_EVENTS.c.event_payload)
+            select(FORMAL_REPORTS.c.report_payload)
             .join(
                 DECISION_EVENTS,
                 FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
@@ -168,8 +192,7 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
-        fact = DecisionEventFact.model_validate_json(row.event_payload)
-        return fact.formal_report(str(row.report_version_id))
+        return FormalReport.model_validate_json(row.report_payload)
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""
