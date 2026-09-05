@@ -90,7 +90,7 @@
     "outcome_code": "SYNTHETIC_RESULT_EXECUTION_BLOCKED",
     "summary": "Frozen synthetic result SYNTHETIC_RESULT_EXECUTION_BLOCKED.",
     "key_reasons": [
-      "Reason for SYNTHETIC_RESULT_EXECUTION_BLOCKED."
+      "The frozen D0 execution path is unavailable."
     ]
   }
 }

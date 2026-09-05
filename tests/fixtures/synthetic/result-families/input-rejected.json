@@ -90,7 +90,7 @@
     "outcome_code": "SYNTHETIC_INPUT_REJECTED",
     "summary": "Frozen synthetic result SYNTHETIC_INPUT_REJECTED.",
     "key_reasons": [
-      "Reason for SYNTHETIC_INPUT_REJECTED."
+      "The frozen host input was deliberately rejected by the D0 contract."
     ]
   }
 }

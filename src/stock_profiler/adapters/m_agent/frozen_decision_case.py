@@ -348,7 +348,7 @@ def _deterministic_model_response(case: FrozenDecisionCase) -> str:
     if outcome_code is not None:
         return json.dumps(
             {
-                "key_reasons": [f"Reason for {outcome_code}."],
+                "key_reasons": [_SYNTHETIC_OUTCOME_REASONS[outcome_code]],
                 "outcome_code": outcome_code,
                 "summary": f"Frozen synthetic result {outcome_code}.",
             },
@@ -357,6 +357,21 @@ def _deterministic_model_response(case: FrozenDecisionCase) -> str:
             sort_keys=True,
         )
     return _incomplete_synthetic_response()
+
+
+_SYNTHETIC_OUTCOME_REASONS: dict[str, str] = {
+    "SYNTHETIC_INPUT_REJECTED": (
+        "The frozen host input was deliberately rejected by the D0 contract."
+    ),
+    "SYNTHETIC_RESULT_ABSTAINED": (
+        "The frozen D0 case records an intentional business abstention."
+    ),
+    "SYNTHETIC_RESULT_FAILED": ("The frozen D0 case records a deterministic business failure."),
+    "SYNTHETIC_RESULT_PENDING": "The frozen D0 case remains pending adjudication.",
+    "SYNTHETIC_RESULT_EXPIRED": "The frozen D0 validity window has expired.",
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": "The frozen D0 execution path is unavailable.",
+    "SYNTHETIC_RESULT_UNKNOWN": "The frozen D0 adjudication outcome remains unknown.",
+}
 
 
 def _incomplete_synthetic_response() -> str:
