@@ -605,6 +605,19 @@ class FrozenDecisionCase(FrozenContract):
         version_bundle = self.version_bundle.model_dump(mode="json")
         version_bundle.pop("host_application_version")
         version_bundle.pop("host_source_sha")
+        return self._decision_event_id_for_version_bundle(
+            framework_run_id, version_bundle
+        )
+
+    def legacy_decision_event_id_for_framework_run(self, framework_run_id: str) -> str:
+        """Read a pre-migration event ID that bound full host provenance."""
+        return self._decision_event_id_for_version_bundle(
+            framework_run_id, self.version_bundle.model_dump(mode="json")
+        )
+
+    def _decision_event_id_for_version_bundle(
+        self, framework_run_id: str, version_bundle: dict[str, Any]
+    ) -> str:
         return _stable_id(
             "decision-event",
             {

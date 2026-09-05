@@ -316,10 +316,13 @@ class DecisionLedger:
                 or has_snapshotless_legacy_mapping_for_fact
             )
         )
-        expected_event_id = (
-            fact.case.correction_event_id(fact.corrects_event_id)
+        expected_event_ids = (
+            (fact.case.correction_event_id(fact.corrects_event_id),)
             if fact.corrects_event_id is not None
-            else fact.case.decision_event_id_for_framework_run(framework_run_id)
+            else (
+                fact.case.decision_event_id_for_framework_run(framework_run_id),
+                fact.case.legacy_decision_event_id_for_framework_run(framework_run_id),
+            )
         )
         is_correction = fact.corrects_event_id is not None
         if (
@@ -333,7 +336,7 @@ class DecisionLedger:
                 and fact.case.framework_run_id != framework_run_id
                 and not has_recovered_mapping_for_fact
             )
-            or fact.decision_event_id != expected_event_id
+            or fact.decision_event_id not in expected_event_ids
         ):
             raise DecisionEventCommitError(
                 "stored decision event does not match its durable lineage"
