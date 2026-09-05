@@ -451,10 +451,13 @@ class DecisionLedger:
         recorded_at: str,
     ) -> None:
         existing = connection.execute(
-            select(DECISION_STAGE_EVENTS.c.stage_payload).where(
-                DECISION_STAGE_EVENTS.c.stage_event_id == stage_event_id
-            )
-        ).scalar_one_or_none()
+            select(
+                DECISION_STAGE_EVENTS.c.business_object_id,
+                DECISION_STAGE_EVENTS.c.framework_run_id,
+                DECISION_STAGE_EVENTS.c.decision_event_id,
+                DECISION_STAGE_EVENTS.c.stage_payload,
+            ).where(DECISION_STAGE_EVENTS.c.stage_event_id == stage_event_id)
+        ).one_or_none()
         if existing is None:
             connection.execute(
                 DECISION_STAGE_EVENTS.insert().values(
@@ -467,7 +470,12 @@ class DecisionLedger:
                 )
             )
             return
-        if StageResult.model_validate_json(existing) != stage_result:
+        if (
+            existing.business_object_id != case.business_object_id
+            or existing.framework_run_id != framework_run_id
+            or existing.decision_event_id != decision_event_id
+            or StageResult.model_validate_json(existing.stage_payload) != stage_result
+        ):
             raise DecisionEventCommitError("stage event identity maps to different results")
 
     def get_stage_results(
@@ -711,6 +719,8 @@ class DecisionLedger:
         report_version_id: str | None = None,
     ) -> FormalReport:
         """Create a report only after its source business event is durably committed."""
+        if not self._has_confirmed_business_commit(connection, fact.decision_event_id):
+            raise DecisionEventCommitError("report source has no confirmed business commit")
         resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(
             fact.decision_event_id
         )
@@ -778,7 +788,9 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
-        if not self._has_confirmed_publication(connection, row.decision_event_id):
+        if not self._has_confirmed_business_commit(
+            connection, row.decision_event_id
+        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -804,7 +816,9 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
-        if not self._has_confirmed_publication(connection, row.decision_event_id):
+        if not self._has_confirmed_business_commit(
+            connection, row.decision_event_id
+        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -845,7 +859,9 @@ class DecisionLedger:
         ).one_or_none()
         if row is None:
             return None
-        if not self._has_confirmed_publication(connection, row.decision_event_id):
+        if not self._has_confirmed_business_commit(
+            connection, row.decision_event_id
+        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -876,6 +892,7 @@ class DecisionLedger:
             report.report_version_id != report_version_id
             or report.event_id != decision_event_id
             or report.generated_at != generated_at
+            or report_version_id != _report_version_id_for_event(event)
             or serialized_payload
             != _canonical_json(_formal_report_payload_for_event(event, report_version_id))
         ):
@@ -883,6 +900,22 @@ class DecisionLedger:
                 "stored formal report does not match its durable event"
             )
         return report
+
+    def _has_confirmed_business_commit(
+        self, connection: Connection, decision_event_id: str
+    ) -> bool:
+        """Require a saved successful host commit before any report is exposed."""
+        stage_payloads = connection.execute(
+            select(DECISION_STAGE_EVENTS.c.stage_payload).where(
+                DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id
+            )
+        ).scalars()
+        return any(
+            stage_result.phase == "BUSINESS_COMMIT" and stage_result.status == "SUCCEEDED"
+            for stage_result in (
+                StageResult.model_validate_json(payload) for payload in stage_payloads
+            )
+        )
 
     def _with_publication_history(
         self,
@@ -1036,6 +1069,12 @@ def _formal_report_payload_for_event(
         payload.pop("stage_results")
         payload.pop("corrects_event_id")
     return payload
+
+
+def _report_version_id_for_event(event: DecisionEventFact) -> str:
+    if event.corrects_event_id is not None:
+        return event.case.correction_report_version_id(event.corrects_event_id)
+    return event.case.report_version_id_for_event(event.decision_event_id)
 
 
 def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:

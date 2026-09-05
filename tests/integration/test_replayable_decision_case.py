@@ -1124,14 +1124,9 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
 
 def test_unmapped_v1_framework_run_recovers_without_creating_a_v2_replacement(
     migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    legacy_settings = migrated_settings.model_copy(
-        update={
-            "configuration_version": "0.1.1.dev0",
-            "source_sha": "b" * 40,
-        }
-    )
-    legacy_current_case = load_frozen_decision_case(legacy_settings)
+    legacy_current_case = load_frozen_decision_case(migrated_settings)
     legacy_case = legacy_current_case.model_copy(
         update={
             "version_bundle": legacy_current_case.version_bundle.model_copy(
@@ -1152,6 +1147,22 @@ def test_unmapped_v1_framework_run_recovers_without_creating_a_v2_replacement(
         "decision_events": 0,
         "reports": 0,
     }
+
+    observed_run_ids: list[str] = []
+    original_get_run = runtime.run_store.get_run
+
+    async def observe_public_run_lookup(run_id: str) -> Any:
+        observed_run_ids.append(run_id)
+        return await original_get_run(run_id)
+
+    monkeypatch.setattr(runtime.run_store, "get_run", observe_public_run_lookup)
+    recovered_legacy_case = asyncio.run(
+        frozen_adapter.find_unmapped_legacy_frozen_decision_case(legacy_current_case, runtime)
+    )
+
+    assert recovered_legacy_case is not None
+    assert recovered_legacy_case.framework_run_id == legacy_case.framework_run_id
+    assert observed_run_ids == [legacy_case.framework_run_id]
 
     recovered = run_default_frozen_decision_case(migrated_settings)
 
@@ -2918,11 +2929,7 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
                         "business_object_id": case.business_object_id,
                         "framework_run_id": case.framework_run_id,
                         "case": case.model_dump(mode="json"),
-                        "result": {
-                            "outcome_code": "SYNTHETIC_REVIEW_COMPLETE",
-                            "key_reasons": [],
-                            "summary": "A complete legacy event remains readable after retry.",
-                        },
+                        "result": case.expected_external_result.model_dump(mode="json"),
                         "validation_status": "PASSED",
                         "committed_at": case.report_generated_at,
                     },
@@ -3022,6 +3029,116 @@ def test_correction_migration_rejects_a_valid_event_with_an_invalid_stage_contra
     load_settings.cache_clear()
 
 
+def test_correction_migration_rejects_an_event_without_a_confirmed_business_commit(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    case = load_frozen_decision_case(settings)
+    event_payload = {
+        "decision_event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case": case.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+        "validation_status": "PASSED",
+        "committed_at": case.report_generated_at,
+        "stage_results": [
+            {
+                "phase": "FRAMEWORK_RUN",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "RUN_TERMINAL", "status": "PASSED"}],
+                "reasons": [],
+            },
+            {
+                "phase": "HOST_VALIDATION",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}],
+                "reasons": [],
+            },
+            {
+                "phase": "BUSINESS_DECISION",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "DECISION_DETERMINED", "status": "PASSED"}],
+                "reasons": [],
+            },
+            {
+                "phase": "BUSINESS_COMMIT",
+                "status": "FAILED",
+                "gate_results": [{"gate_id": "HOST_RESULT_SAVED", "status": "FAILED"}],
+                "reasons": ["COMMIT_STORAGE_FAILED"],
+            },
+        ],
+    }
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": case.business_object_id,
+                "case_id": case.case_id,
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+                "framework_run_id": case.framework_run_id,
+                "created_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    :event_payload,
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "event_payload": json.dumps(
+                    event_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "committed_at": case.report_generated_at,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="confirmed business commit"):
+        command.upgrade(config, "head")
+
+    load_settings.cache_clear()
+
+
 def test_correction_migration_rejects_a_report_with_mismatched_durable_identities(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3050,12 +3167,12 @@ def test_correction_migration_rejects_a_report_with_mismatched_durable_identitie
     report_payload = {
         "report_version_id": "report-version-mismatched-legacy-payload",
         "event_id": case.decision_event_id,
-        "business_object_id": "business-object-mismatched-legacy-payload",
-        "framework_run_id": "framework-run-mismatched-legacy-payload",
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
         "case_id": case.case_id,
         "synthetic": True,
         "qualification_scope": case.qualification_scope,
-        "generated_at": "2042-05-17T16:02:00Z",
+        "generated_at": case.report_generated_at,
         "knowledge_cutoff": case.knowledge_cutoff,
         "evidence_clock": case.evidence_clock.model_dump(mode="json"),
         "version_bundle": case.version_bundle.model_dump(mode="json"),
@@ -3137,7 +3254,7 @@ def test_correction_migration_rejects_a_report_with_mismatched_durable_identitie
                 """
             ),
             {
-                "report_version_id": case.report_version_id,
+                "report_version_id": report_payload["report_version_id"],
                 "decision_event_id": case.decision_event_id,
                 "report_payload": json.dumps(
                     report_payload,

@@ -254,7 +254,7 @@ def _run_frozen_decision_case(
         )
     if not has_existing_mapping:
         try:
-            legacy_case = find_unmapped_legacy_frozen_decision_case(case, runtime)
+            legacy_case = asyncio.run(find_unmapped_legacy_frozen_decision_case(case, runtime))
         except ValueError as error:
             raise DecisionEventCommitError("durable legacy framework recovery failed") from error
         if legacy_case is not None:

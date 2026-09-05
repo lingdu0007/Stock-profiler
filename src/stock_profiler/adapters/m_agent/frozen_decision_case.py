@@ -103,8 +103,6 @@ class FrameworkRunTransition:
 
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
-_PLAINTEXT_PAYLOAD_PREFIX = b"m-agent-plaintext:"
-_RUN_INPUT_FIELD = "run:input"
 
 
 @dataclass
@@ -131,51 +129,23 @@ class _RunStatusCollector:
             self.statuses.append(cast(FrameworkRunStatus, value))
 
 
-def find_unmapped_legacy_frozen_decision_case(
+async def find_unmapped_legacy_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
 ) -> FrozenDecisionCase | None:
-    """Find one historical Run by its frozen input without mutating the M-Agent store."""
-    expected_input = json.dumps(
-        case.input,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    """Find a deterministic historical Run through the public M-Agent store."""
     candidates: dict[str, FrozenDecisionCase] = {}
-    try:
-        with sqlite3.connect(
-            f"{runtime.m_agent_run_store_path.resolve().as_uri()}?mode=ro",
-            uri=True,
-        ) as connection:
-            for legacy_case in case.legacy_contract_recovery_cases:
-                rows = connection.execute(
-                    """
-                    SELECT runs.run_id
-                    FROM runs
-                    JOIN run_payloads
-                      ON run_payloads.run_id = runs.run_id
-                    WHERE runs.definition_id = ?
-                      AND runs.definition_version = ?
-                      AND run_payloads.field = ?
-                      AND run_payloads.encoded = ?
-                    ORDER BY runs.run_id
-                    """,
-                    (
-                        legacy_case.agent_definition.definition_id,
-                        legacy_case.agent_definition.version,
-                        _RUN_INPUT_FIELD,
-                        _PLAINTEXT_PAYLOAD_PREFIX + expected_input.encode(),
-                    ),
-                ).fetchall()
-                for row in rows:
-                    run_id = str(row[0])
-                    if run_id != case.framework_run_id:
-                        candidates[run_id] = legacy_case
-    except sqlite3.OperationalError as error:
-        if "no such table" in str(error).lower():
-            return None
-        raise ValueError("cannot inspect durable M-Agent Run history") from error
+    for legacy_case in case.legacy_contract_recovery_cases:
+        _assert_runtime_version_bundle(legacy_case)
+        run = await runtime.run_store.get_run(legacy_case.framework_run_id)
+        if run is None:
+            continue
+        _assert_existing_run_matches_case(
+            run,
+            legacy_case,
+            _frozen_definition(legacy_case),
+        )
+        candidates[run.run_id] = legacy_case
     if len(candidates) > 1:
         raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
     if not candidates:
@@ -186,18 +156,13 @@ def find_unmapped_legacy_frozen_decision_case(
     )
 
 
-async def execute_frozen_decision_case(
-    case: FrozenDecisionCase,
-    runtime: RuntimeStorage,
-    record_transition: FrameworkTransitionRecorder | None = None,
-) -> FrameworkRunResult:
-    """Create or reuse the exact durable Run for one frozen host identity."""
-    _assert_runtime_version_bundle(case)
+def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
+    """Build the exact public M-Agent definition that owns a frozen Run."""
     adapter = DeterministicModelAdapter(
         responses=(_deterministic_model_response(case),),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
     )
-    definition = AgentDefinition.for_adapter(
+    return AgentDefinition.for_adapter(
         definition_id=case.agent_definition.definition_id,
         version=case.agent_definition.version,
         instructions=case.agent_definition.instructions,
@@ -209,6 +174,16 @@ async def execute_frozen_decision_case(
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
     )
+
+
+async def execute_frozen_decision_case(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    record_transition: FrameworkTransitionRecorder | None = None,
+) -> FrameworkRunResult:
+    """Create or reuse the exact durable Run for one frozen host identity."""
+    _assert_runtime_version_bundle(case)
+    definition = _frozen_definition(case)
     registry = DefinitionRegistry()
     registry.register(definition)
     status_collector = _RunStatusCollector(case.framework_run_id, [])

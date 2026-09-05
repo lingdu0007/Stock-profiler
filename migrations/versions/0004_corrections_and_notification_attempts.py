@@ -261,11 +261,19 @@ def _validated_event_fact(
         or not isinstance(payload.get("committed_at"), str)
     ):
         raise RuntimeError("legacy decision event contract is invalid")
-    _validated_stage_results(payload)
+    stage_results = _validated_stage_results(payload)
     case = _validated_case_payload(payload.get("case"))
-    _validated_result(payload.get("result"))
+    result = _validated_result(payload.get("result"))
     if payload.get("generated_at") is not None and not isinstance(payload.get("generated_at"), str):
         raise RuntimeError("legacy decision event contract is invalid")
+    if (
+        payload["validation_status"] != "PASSED"
+        or result != case["expected_external_result"]
+        or not _has_succeeded_stage(stage_results, "HOST_VALIDATION")
+    ):
+        raise RuntimeError("legacy decision event lacks a confirmed host validation")
+    if not _has_succeeded_stage(stage_results, "BUSINESS_COMMIT"):
+        raise RuntimeError("legacy decision event lacks a confirmed business commit")
     if (
         payload["decision_event_id"] != decision_event_id
         or payload["business_object_id"] != business_object_id
@@ -301,6 +309,7 @@ def _validated_report_stage_results(
     stage_results = _validated_stage_results(payload)
     if (
         payload != expected_payload
+        or report_version_id != _report_version_id(case, decision_event_id)
         or payload.get("event_id") != decision_event_id
         or payload.get("generated_at") != generated_at
     ):
@@ -350,7 +359,7 @@ def _validated_case_payload(value: object) -> dict[str, object]:
     return value
 
 
-def _validated_result(value: object) -> None:
+def _validated_result(value: object) -> dict[str, object]:
     if (
         not isinstance(value, dict)
         or set(value) != _REQUIRED_RESULT_FIELDS
@@ -360,6 +369,17 @@ def _validated_result(value: object) -> None:
         or not all(isinstance(reason, str) for reason in value["key_reasons"])
     ):
         raise RuntimeError("legacy decision event contract is invalid")
+    return value
+
+
+def _has_succeeded_stage(
+    stage_results: list[dict[str, object]],
+    phase: str,
+) -> bool:
+    return any(
+        stage_result["phase"] == phase and stage_result["status"] == "SUCCEEDED"
+        for stage_result in stage_results
+    )
 
 
 def _stable_id(kind: str, value: object) -> str:
@@ -417,6 +437,20 @@ def _decision_event_id_for_version_bundle(
             "framework_run_id": framework_run_id,
             "expected_external_result": case["expected_external_result"],
             "version_bundle": version_bundle,
+        },
+    )
+
+
+def _report_version_id(case: dict[str, object], decision_event_id: str) -> str:
+    version_bundle = case["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    return _stable_id(
+        "report-version",
+        {
+            "decision_event_id": decision_event_id,
+            "report_projection_contract_version": version_bundle[
+                "report_projection_contract_version"
+            ],
         },
     )
 
