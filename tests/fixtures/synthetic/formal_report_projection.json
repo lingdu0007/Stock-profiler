@@ -53,7 +53,6 @@
           }
         ],
         "reasons": [
-          "SYNTHETIC_REVIEW_COMPLETE",
           "All required fictional evidence records are present.",
           "The output is D0 synthetic evidence and is not a recommendation."
         ]

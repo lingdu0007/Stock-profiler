@@ -428,7 +428,7 @@ def host_validation_result(
     case: FrozenDecisionCase, result: ExternalResult
 ) -> StageResult:
     """Classify a typed framework result without collapsing host outcomes."""
-    recorded_reasons = (result.outcome_code, *result.key_reasons)
+    recorded_reasons = result.key_reasons
     valid_frozen_input = (
         case.synthetic
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
