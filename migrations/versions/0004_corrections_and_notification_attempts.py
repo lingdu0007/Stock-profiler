@@ -272,7 +272,11 @@ def _validated_event_fact(
         or payload["framework_run_id"] != framework_run_id
         or _business_object_id(case) != business_object_id
         or _framework_run_id(case) != framework_run_id
-        or _decision_event_id(case, framework_run_id) != decision_event_id
+        or decision_event_id
+        not in {
+            _decision_event_id(case, framework_run_id),
+            _legacy_decision_event_id(case, framework_run_id),
+        }
     ):
         raise RuntimeError("legacy decision event identity does not match its row")
     return payload
@@ -392,6 +396,20 @@ def _decision_event_id(case: dict[str, object], framework_run_id: str) -> str:
     version_bundle = dict(case["version_bundle"])
     version_bundle.pop("host_application_version")
     version_bundle.pop("host_source_sha")
+    return _decision_event_id_for_version_bundle(case, framework_run_id, version_bundle)
+
+
+def _legacy_decision_event_id(case: dict[str, object], framework_run_id: str) -> str:
+    return _decision_event_id_for_version_bundle(
+        case, framework_run_id, dict(case["version_bundle"])
+    )
+
+
+def _decision_event_id_for_version_bundle(
+    case: dict[str, object],
+    framework_run_id: str,
+    version_bundle: dict[str, object],
+) -> str:
     return _stable_id(
         "decision-event",
         {

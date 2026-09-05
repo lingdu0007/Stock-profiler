@@ -178,7 +178,7 @@ def correct_default_frozen_decision_case(
                 decision_event_id=correction_event_id,
                 corrects_event_id=original_event.decision_event_id,
                 committed_at=correction_written_at,
-                generated_at=correction_case.report_generated_at,
+                generated_at=correction_written_at,
             )
             try:
                 correction_event = ledger.commit_event(
@@ -190,7 +190,7 @@ def correct_default_frozen_decision_case(
                     decision_event_id=correction_event_id,
                     corrects_event_id=original_event.decision_event_id,
                     committed_at=correction_written_at,
-                    generated_at=correction_case.report_generated_at,
+                    generated_at=correction_written_at,
                 )
             except DecisionEventCommitUncertainError as error:
                 correction_event = ledger.reconcile_event_commit(connection, attempted_fact)

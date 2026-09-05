@@ -1917,7 +1917,7 @@ def test_correction_appends_a_new_report_that_references_the_original_event(
     assert correction.report.framework_run_id == original_report.framework_run_id
     assert correction.report.knowledge_cutoff == original_report.knowledge_cutoff
     assert correction.report.evidence_clock == original_report.evidence_clock
-    assert correction.report.generated_at == original_report.generated_at
+    assert correction.report.generated_at == "2042-05-17T16:02:00Z"
     assert (
         get_formal_report(original_report.report_version_id, migrated_settings) == original_report
     )
@@ -3527,9 +3527,11 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", settings.app_database_url)
     command.upgrade(config, "0002_decision_case_ledger")
+    legacy_event_id = case.legacy_decision_event_id_for_framework_run(case.framework_run_id)
+    legacy_report_version_id = case.report_version_id_for_event(legacy_event_id)
 
     legacy_event_payload = {
-        "decision_event_id": case.decision_event_id,
+        "decision_event_id": legacy_event_id,
         "business_object_id": case.business_object_id,
         "framework_run_id": case.framework_run_id,
         "case": case.model_dump(mode="json"),
@@ -3538,8 +3540,8 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
         "committed_at": case.report_generated_at,
     }
     legacy_report_payload = {
-        "report_version_id": case.report_version_id,
-        "event_id": case.decision_event_id,
+        "report_version_id": legacy_report_version_id,
+        "event_id": legacy_event_id,
         "business_object_id": case.business_object_id,
         "framework_run_id": case.framework_run_id,
         "case_id": case.case_id,
@@ -3610,7 +3612,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
                 """
             ),
             {
-                "decision_event_id": case.decision_event_id,
+                "decision_event_id": legacy_event_id,
                 "business_object_id": case.business_object_id,
                 "framework_run_id": case.framework_run_id,
                 "event_payload": legacy_event_payload_json,
@@ -3634,8 +3636,8 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
                 """
             ),
             {
-                "report_version_id": case.report_version_id,
-                "decision_event_id": case.decision_event_id,
+                "report_version_id": legacy_report_version_id,
+                "decision_event_id": legacy_event_id,
                 "report_payload": legacy_report_payload_json,
                 "generated_at": case.report_generated_at,
             },
@@ -3649,7 +3651,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
                     "SELECT event_payload FROM decision_events "
                     "WHERE decision_event_id = :decision_event_id"
                 ),
-                {"decision_event_id": case.decision_event_id},
+                {"decision_event_id": legacy_event_id},
             ).scalar_one()
             == legacy_event_payload_json
         )
@@ -3659,13 +3661,13 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
                     "SELECT report_payload FROM formal_reports "
                     "WHERE report_version_id = :report_version_id"
                 ),
-                {"report_version_id": case.report_version_id},
+                {"report_version_id": legacy_report_version_id},
             ).scalar_one()
             == legacy_report_payload_json
         )
 
     ledger = DecisionLedger.from_settings(settings)
-    report = ledger.get_formal_report(case.report_version_id)
+    report = ledger.get_formal_report(legacy_report_version_id)
 
     assert report is not None
     assert [(stage.phase, stage.status) for stage in report.stage_results] == [
@@ -3687,8 +3689,8 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     replayed = run_default_frozen_decision_case(settings)
     assert replayed.report == report
     assert replayed.framework_run_id == case.framework_run_id
-    assert replayed.decision_event_id == case.decision_event_id
-    assert replayed.report_version_id == case.report_version_id
+    assert replayed.decision_event_id == legacy_event_id
+    assert replayed.report_version_id == legacy_report_version_id
     assert replayed.business_result_status == "SUCCEEDED"
     assert ledger.counts() == {
         "business_objects": 1,
@@ -3700,30 +3702,30 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
         current_case.business_identity,
         "FAILED",
     )
-    assert notification.report_version_id == case.report_version_id
-    assert notification.event_id == case.decision_event_id
+    assert notification.report_version_id == legacy_report_version_id
+    assert notification.event_id == legacy_event_id
     with engine.begin() as connection:
         connection.execute(
             text("DELETE FROM formal_reports WHERE report_version_id = :report_version_id"),
-            {"report_version_id": case.report_version_id},
+            {"report_version_id": legacy_report_version_id},
         )
 
     recovered_without_projection = run_default_frozen_decision_case(settings)
     assert recovered_without_projection.report == report
     assert recovered_without_projection.framework_run_id == case.framework_run_id
-    assert recovered_without_projection.decision_event_id == case.decision_event_id
-    assert recovered_without_projection.report_version_id == case.report_version_id
+    assert recovered_without_projection.decision_event_id == legacy_event_id
+    assert recovered_without_projection.report_version_id == legacy_report_version_id
 
     correction = correct_default_frozen_decision_case(
         settings,
         current_case.business_identity,
     )
-    assert correction.original_event_id == case.decision_event_id
+    assert correction.original_event_id == legacy_event_id
     assert correction.report.version_bundle.report_projection_contract_version == "2.0.0"
-    assert correction.report.event_id == case.correction_event_id(case.decision_event_id)
+    assert correction.report.event_id == case.correction_event_id(legacy_event_id)
     assert (
         correction.report.report_version_id
-        == case.correction_report_version_id(case.decision_event_id)
+        == case.correction_report_version_id(legacy_event_id)
     )
 
     load_settings.cache_clear()
