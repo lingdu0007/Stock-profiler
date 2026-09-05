@@ -124,14 +124,14 @@ def _validated_stage_results(payload: dict[str, object]) -> list[dict[str, objec
         raise RuntimeError("legacy decision stage contract is invalid") from error
 
 
-def _validated_event_stage_results(
+def _validated_event_fact(
     payload: dict[str, object],
     *,
     decision_event_id: str,
     business_object_id: str,
     framework_run_id: str,
-) -> list[dict[str, object]]:
-    stage_results = _validated_stage_results(payload)
+) -> DecisionEventFact:
+    _validated_stage_results(payload)
     try:
         fact = DecisionEventFact.model_validate(payload)
     except ValidationError as error:
@@ -142,31 +142,35 @@ def _validated_event_stage_results(
         or fact.framework_run_id != framework_run_id
     ):
         raise RuntimeError("legacy decision event identity does not match its row")
-    return stage_results
+    return fact
 
 
 def _validated_report_stage_results(
     payload: dict[str, object],
     *,
+    report_version_id: str,
     decision_event_id: str,
-    event_ids: set[str],
+    generated_at: str,
+    event: DecisionEventFact,
 ) -> list[dict[str, object]]:
     stage_results = _validated_stage_results(payload)
-    if decision_event_id not in event_ids:
-        raise RuntimeError("legacy formal report references an unknown decision event")
     try:
         report = FormalReport.model_validate(payload)
     except ValidationError as error:
         raise RuntimeError("legacy formal report contract is invalid") from error
-    if report.event_id != decision_event_id:
-        raise RuntimeError("legacy formal report identity does not match its row")
+    if (
+        report != event.formal_report(report_version_id)
+        or report.event_id != decision_event_id
+        or report.generated_at != generated_at
+    ):
+        raise RuntimeError("legacy formal report identity does not match its row or event")
     return stage_results
 
 
 def _preflight_legacy_stage_history() -> None:
     """Validate every legacy payload before SQLite's non-transactional DDL begins."""
     bind = op.get_bind()
-    event_ids: set[str] = set()
+    event_facts: dict[str, DecisionEventFact] = {}
     event_rows = bind.execute(
         sa.text(
             """
@@ -180,27 +184,31 @@ def _preflight_legacy_stage_history() -> None:
         )
     ).mappings()
     for row in event_rows:
-        _validated_event_stage_results(
+        event_facts[row["decision_event_id"]] = _validated_event_fact(
             _payload(row["event_payload"]),
             decision_event_id=row["decision_event_id"],
             business_object_id=row["business_object_id"],
             framework_run_id=row["framework_run_id"],
         )
-        event_ids.add(row["decision_event_id"])
 
     report_rows = bind.execute(
         sa.text(
             """
-            SELECT decision_event_id, report_payload
+            SELECT report_version_id, decision_event_id, report_payload, generated_at
             FROM formal_reports
             """
         )
     ).mappings()
     for row in report_rows:
+        event = event_facts.get(row["decision_event_id"])
+        if event is None:
+            raise RuntimeError("legacy formal report references an unknown decision event")
         _validated_report_stage_results(
             _payload(row["report_payload"]),
+            report_version_id=row["report_version_id"],
             decision_event_id=row["decision_event_id"],
-            event_ids=event_ids,
+            generated_at=row["generated_at"],
+            event=event,
         )
 
 

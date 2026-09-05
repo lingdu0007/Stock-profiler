@@ -1375,7 +1375,7 @@ def test_connection_commit_failure_recovers_a_usable_transaction_before_closing_
     monkeypatch.setattr(
         DecisionLedger,
         "persist_business_mapping_before_framework",
-        lambda _self, _case: None,
+        lambda _self, _case: case.business_object_id,
     )
     monkeypatch.setattr(DecisionLedger, "commit_event", mark_event_commit)
     monkeypatch.setattr(Connection, "commit", lose_first_commit_confirmation)
@@ -2834,6 +2834,121 @@ def test_correction_migration_rejects_a_valid_event_with_an_invalid_stage_contra
     load_settings.cache_clear()
 
 
+def test_correction_migration_rejects_a_report_with_mismatched_durable_identities(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    current_case = load_frozen_decision_case(settings)
+    case = current_case.model_copy(
+        update={
+            "version_bundle": current_case.version_bundle.model_copy(
+                update={"report_projection_contract_version": "1.0.0"}
+            )
+        }
+    )
+    event_payload = {
+        "decision_event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case": case.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+        "validation_status": "PASSED",
+        "committed_at": case.report_generated_at,
+    }
+    report_payload = {
+        "report_version_id": "report-version-mismatched-legacy-payload",
+        "event_id": case.decision_event_id,
+        "business_object_id": "business-object-mismatched-legacy-payload",
+        "framework_run_id": "framework-run-mismatched-legacy-payload",
+        "case_id": case.case_id,
+        "synthetic": True,
+        "qualification_scope": case.qualification_scope,
+        "generated_at": "2042-05-17T16:02:00Z",
+        "knowledge_cutoff": case.knowledge_cutoff,
+        "evidence_clock": case.evidence_clock.model_dump(mode="json"),
+        "version_bundle": case.version_bundle.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+    }
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    :event_payload,
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "event_payload": json.dumps(
+                    event_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "committed_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO formal_reports (
+                    report_version_id,
+                    decision_event_id,
+                    report_payload,
+                    generated_at
+                ) VALUES (
+                    :report_version_id,
+                    :decision_event_id,
+                    :report_payload,
+                    :generated_at
+                )
+                """
+            ),
+            {
+                "report_version_id": case.report_version_id,
+                "decision_event_id": case.decision_event_id,
+                "report_payload": json.dumps(
+                    report_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "generated_at": case.report_generated_at,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="formal report identity"):
+        command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert "corrects_event_id" not in {
+            row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
+        }
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
+        )
+
+    load_settings.cache_clear()
+
+
 def test_correction_migration_retries_after_notification_table_creation_is_interrupted(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2929,7 +3044,11 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     case = current_case.model_copy(
         update={
             "version_bundle": current_case.version_bundle.model_copy(
-                update={"report_projection_contract_version": "1.0.0"}
+                update={
+                    "case_contract_version": "1.0.0",
+                    "host_contract_version": "1.0.0",
+                    "report_projection_contract_version": "1.0.0",
+                }
             )
         }
     )
@@ -3101,6 +3220,18 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     assert replayed.decision_event_id == case.decision_event_id
     assert replayed.report_version_id == case.report_version_id
     assert replayed.business_result_status == "SUCCEEDED"
+    assert ledger.counts() == {
+        "business_objects": 1,
+        "decision_events": 1,
+        "reports": 1,
+    }
+    notification = retry_default_frozen_decision_case_notification(
+        settings,
+        current_case.business_identity,
+        "FAILED",
+    )
+    assert notification.report_version_id == case.report_version_id
+    assert notification.event_id == case.decision_event_id
     with engine.begin() as connection:
         connection.execute(
             text("DELETE FROM formal_reports WHERE report_version_id = :report_version_id"),
@@ -3119,13 +3250,10 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     )
     assert correction.original_event_id == case.decision_event_id
     assert correction.report.version_bundle.report_projection_contract_version == "2.0.0"
-    current_correction_case = load_frozen_decision_case(settings)
-    assert correction.report.event_id == current_correction_case.correction_event_id(
-        case.decision_event_id
-    )
+    assert correction.report.event_id == case.correction_event_id(case.decision_event_id)
     assert (
         correction.report.report_version_id
-        == current_correction_case.correction_report_version_id(case.decision_event_id)
+        == case.correction_report_version_id(case.decision_event_id)
     )
 
     load_settings.cache_clear()

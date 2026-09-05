@@ -511,6 +511,29 @@ class FrozenDecisionCase(FrozenContract):
         )
 
     @property
+    def recovery_business_object_ids(self) -> tuple[str, ...]:
+        """Locate the one durable business lineage across explicitly supported contracts."""
+        supported_pairs = (
+            (
+                self.version_bundle.case_contract_version,
+                self.version_bundle.host_contract_version,
+            ),
+            *_SUPPORTED_CASE_HOST_CONTRACT_PAIRS,
+        )
+        return tuple(
+            dict.fromkeys(
+                _stable_id(
+                    "business-object",
+                    {
+                        "business_identity": self.business_identity,
+                        "case_contract_version": case_contract_version,
+                    },
+                )
+                for case_contract_version, _host_contract_version in supported_pairs
+            )
+        )
+
+    @property
     def framework_run_id(self) -> str:
         """Allocate a deterministic M-Agent identity for this complete frozen replay."""
         if self.recovery_framework_run_id is not None:
