@@ -121,7 +121,7 @@ StageStatus = Literal[
     "UNKNOWN",
     "CANCELLED",
 ]
-BusinessCommitStatus = Literal["NOT_ATTEMPTED", "COMMITTED", "UNKNOWN"]
+BusinessCommitStatus = Literal["NOT_ATTEMPTED", "FAILED", "COMMITTED", "UNKNOWN"]
 _BUSINESS_RESULT_STATUSES = frozenset(get_args(BusinessResultStatus))
 _BUSINESS_LIFECYCLE_STATUSES = frozenset(get_args(BusinessLifecycleStatus))
 _FRAMEWORK_RUN_STATUSES = frozenset(get_args(FrameworkRunStatus))
@@ -159,6 +159,44 @@ class StageResult(FrozenContract):
         return self
 
 
+def _legacy_stage_result_payloads(
+    result: object, *, include_publication: bool
+) -> list[dict[str, object]]:
+    """Project the pre-stage ledger shape without changing its stored payload."""
+    result_reasons = result.get("key_reasons", []) if isinstance(result, dict) else []
+    reasons = [reason for reason in result_reasons if isinstance(reason, str)]
+    stage_results: list[dict[str, object]] = [
+        {
+            "phase": "FRAMEWORK_RUN",
+            "status": "SUCCEEDED",
+            "gate_results": [{"gate_id": "RUN_TERMINAL", "status": "PASSED"}],
+            "reasons": [],
+        },
+        {
+            "phase": "HOST_VALIDATION",
+            "status": "SUCCEEDED",
+            "gate_results": [{"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}],
+            "reasons": reasons,
+        },
+        {
+            "phase": "BUSINESS_COMMIT",
+            "status": "SUCCEEDED",
+            "gate_results": [{"gate_id": "HOST_RESULT_SAVED", "status": "PASSED"}],
+            "reasons": [],
+        },
+    ]
+    if include_publication:
+        stage_results.append(
+            {
+                "phase": "PUBLICATION",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "EVENT_COMMITTED", "status": "PASSED"}],
+                "reasons": [],
+            }
+        )
+    return stage_results
+
+
 class FormalReport(FrozenContract):
     """Read-only delivery projection derived from one committed host event."""
 
@@ -176,6 +214,19 @@ class FormalReport(FrozenContract):
     result: ExternalResult
     stage_results: tuple[StageResult, ...]
     corrects_event_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_legacy_stage_results(cls, value: Any) -> Any:
+        """Read pre-stage reports without rewriting their immutable JSON."""
+        if not isinstance(value, dict) or "stage_results" in value:
+            return value
+        payload = dict(value)
+        payload["stage_results"] = _legacy_stage_result_payloads(
+            payload.get("result"),
+            include_publication=True,
+        )
+        return payload
 
 
 class NotificationAttempt(FrozenContract):
@@ -225,6 +276,19 @@ class DecisionEventFact(FrozenContract):
     stage_results: tuple[StageResult, ...]
     corrects_event_id: str | None = None
     generated_at: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_legacy_stage_results(cls, value: Any) -> Any:
+        """Read pre-stage event facts without mutating their committed payload."""
+        if not isinstance(value, dict) or "stage_results" in value:
+            return value
+        payload = dict(value)
+        payload["stage_results"] = _legacy_stage_result_payloads(
+            payload.get("result"),
+            include_publication=False,
+        )
+        return payload
 
     def formal_report(self, report_version_id: str) -> FormalReport:
         """Project this complete append-only fact into its one read-only report."""

@@ -145,6 +145,20 @@ class DecisionLedger:
         ).scalar_one_or_none()
         return DecisionEventFact.model_validate_json(payload) if payload is not None else None
 
+    def get_original_decision_event(
+        self, business_object_id: str, connection: Connection
+    ) -> DecisionEventFact | None:
+        """Read the original fact by stable business identity across host builds."""
+        payload = connection.execute(
+            select(DECISION_EVENTS.c.event_payload)
+            .where(
+                DECISION_EVENTS.c.business_object_id == business_object_id,
+                DECISION_EVENTS.c.corrects_event_id.is_(None),
+            )
+            .order_by(DECISION_EVENTS.c.committed_at)
+        ).scalar_one_or_none()
+        return DecisionEventFact.model_validate_json(payload) if payload is not None else None
+
     def record_stage_result(
         self,
         connection: Connection,
@@ -378,6 +392,26 @@ class DecisionLedger:
             return self._formal_report_from_connection(connection, report_version_id)
         with self._engine.connect() as read_connection:
             return self._formal_report_from_connection(read_connection, report_version_id)
+
+    def get_original_formal_report(
+        self, business_object_id: str, connection: Connection
+    ) -> FormalReport | None:
+        """Read the original published report by its stable business identity."""
+        row = connection.execute(
+            select(FORMAL_REPORTS.c.report_payload)
+            .join(
+                DECISION_EVENTS,
+                FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+            )
+            .where(
+                DECISION_EVENTS.c.business_object_id == business_object_id,
+                DECISION_EVENTS.c.corrects_event_id.is_(None),
+            )
+            .order_by(FORMAL_REPORTS.c.generated_at)
+        ).one_or_none()
+        if row is None:
+            return None
+        return FormalReport.model_validate_json(row.report_payload)
 
     def _formal_report_from_connection(
         self, connection: Connection, report_version_id: str

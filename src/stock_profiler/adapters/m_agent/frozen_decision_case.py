@@ -154,9 +154,9 @@ def _deterministic_model_response(case: FrozenDecisionCase) -> str:
 
 
 def _incomplete_synthetic_response() -> str:
-    """Return the non-publishable typed response for an incomplete frozen snapshot."""
+    """Return an invalid-input response, not a synthetic business rejection."""
     return (
         '{"key_reasons":["The frozen synthetic evidence records are incomplete."],'
-        '"outcome_code":"SYNTHETIC_INPUT_REJECTED",'
+        '"outcome_code":"SYNTHETIC_INPUT_INVALID",'
         '"summary":"Frozen synthetic input did not satisfy the deterministic contract."}'
     )
