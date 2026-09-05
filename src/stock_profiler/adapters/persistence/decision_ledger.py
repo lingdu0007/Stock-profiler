@@ -6,7 +6,6 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 
@@ -161,7 +160,7 @@ class DecisionLedger:
                     frozen_input_fingerprint=case.frozen_input_fingerprint,
                     framework_run_id=case.framework_run_id,
                     case_payload=case.model_dump_json(),
-                    created_at=datetime.now(UTC).isoformat(),
+                    created_at=case.report_generated_at,
                 )
             )
             return
@@ -305,7 +304,7 @@ class DecisionLedger:
                     framework_run_id=framework_run_id,
                     decision_event_id=decision_event_id,
                     stage_payload=stage_payload,
-                    recorded_at=datetime.now(UTC).isoformat(),
+                    recorded_at=case.report_generated_at,
                 )
             )
             return
@@ -368,7 +367,7 @@ class DecisionLedger:
                     ensure_ascii=True,
                     separators=(",", ":"),
                 ),
-                recorded_at=datetime.now(UTC).isoformat(),
+                recorded_at=report.generated_at,
             )
         )
         return attempt

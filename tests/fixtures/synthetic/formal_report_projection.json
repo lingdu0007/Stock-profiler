@@ -81,7 +81,7 @@
                 "status": "SUCCEEDED",
                 "gate_results": [
                     {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
-                    {"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}
+                    {"gate_id": "DECISION_ACCEPTED", "status": "PASSED"}
                 ],
                 "reasons": [
                     "All required fictional evidence records are present.",

@@ -347,6 +347,31 @@ def _ensure_notification_attempts_table() -> None:
     )
 
 
+def _notification_attempt_count() -> int:
+    if not _has_table("decision_notification_attempts"):
+        return 0
+    return int(
+        op.get_bind()
+        .execute(sa.text("SELECT COUNT(*) FROM decision_notification_attempts"))
+        .scalar_one()
+    )
+
+
+def _repair_interrupted_event_table_downgrade() -> bool:
+    """Restore the old event table when a SQLite downgrade stopped mid-replacement."""
+    has_events = _has_table("decision_events")
+    has_replacement = _has_table("decision_events_replacement")
+    if has_replacement:
+        if has_events:
+            op.drop_table("decision_events_replacement")
+        else:
+            op.rename_table("decision_events_replacement", "decision_events")
+            has_events = True
+    if not has_events:
+        raise RuntimeError("interrupted decision event downgrade has no recoverable event table")
+    return not _decision_events_have_correction_lineage()
+
+
 def upgrade() -> None:
     _repair_interrupted_event_table_replacement()
     _preflight_legacy_stage_history()
@@ -357,17 +382,23 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
+    if _repair_interrupted_event_table_downgrade():
+        notification_count = _notification_attempt_count()
+        if notification_count:
+            raise RuntimeError("cannot downgrade while append-only notification attempts exist")
+        if _has_table("decision_notification_attempts"):
+            op.drop_table("decision_notification_attempts")
+        return
     correction_count = bind.execute(
         sa.text("SELECT COUNT(*) FROM decision_events WHERE corrects_event_id IS NOT NULL")
     ).scalar_one()
     if correction_count:
         raise RuntimeError("cannot downgrade while append-only correction facts exist")
-    notification_count = bind.execute(
-        sa.text("SELECT COUNT(*) FROM decision_notification_attempts")
-    ).scalar_one()
+    notification_count = _notification_attempt_count()
     if notification_count:
         raise RuntimeError("cannot downgrade while append-only notification attempts exist")
-    op.drop_table("decision_notification_attempts")
+    if _has_table("decision_notification_attempts"):
+        op.drop_table("decision_notification_attempts")
     op.create_table(
         "decision_events_replacement",
         sa.Column("decision_event_id", sa.String(length=96), nullable=False),

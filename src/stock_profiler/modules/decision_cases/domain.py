@@ -153,7 +153,14 @@ BusinessCommitStatus = Literal["NOT_ATTEMPTED", "FAILED", "COMMITTED", "UNKNOWN"
 _BUSINESS_RESULT_STATUSES = frozenset(get_args(BusinessResultStatus))
 _BUSINESS_LIFECYCLE_STATUSES = frozenset(get_args(BusinessLifecycleStatus))
 _FRAMEWORK_RUN_STATUSES = frozenset(get_args(FrameworkRunStatus))
-_COMMITTABLE_HOST_RESULT_STATUSES = _BUSINESS_RESULT_STATUSES
+_COMMITTABLE_HOST_OUTCOME_PHASES = frozenset(
+    {
+        "BUSINESS_DECISION",
+        "ADJUDICATION_LIFECYCLE",
+        "VALIDITY_LIFECYCLE",
+        "EXECUTION_LIFECYCLE",
+    }
+)
 _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
     "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
@@ -670,7 +677,7 @@ def business_outcome_result(case: FrozenDecisionCase, result: ExternalResult) ->
         status=status,
         gate_results=(
             GateResult(gate_id="OUTPUT_CONTRACT", status="PASSED"),
-            GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),
+            _SYNTHETIC_OUTCOME_GATES[result.outcome_code],
         ),
         reasons=result.key_reasons,
     )
@@ -684,17 +691,29 @@ _SYNTHETIC_OUTCOME_STAGES: dict[str, tuple[StagePhase, StageStatus]] = {
     "SYNTHETIC_RESULT_PENDING": ("ADJUDICATION_LIFECYCLE", "PENDING"),
     "SYNTHETIC_RESULT_EXPIRED": ("VALIDITY_LIFECYCLE", "EXPIRED"),
     "SYNTHETIC_RESULT_EXECUTION_BLOCKED": ("EXECUTION_LIFECYCLE", "EXECUTION_BLOCKED"),
-    "SYNTHETIC_RESULT_UNKNOWN": ("COMMIT_RECONCILIATION", "UNKNOWN"),
+    "SYNTHETIC_RESULT_UNKNOWN": ("ADJUDICATION_LIFECYCLE", "UNKNOWN"),
+}
+_SYNTHETIC_OUTCOME_GATES: dict[str, GateResult] = {
+    "SYNTHETIC_REVIEW_COMPLETE": GateResult(gate_id="DECISION_ACCEPTED", status="PASSED"),
+    "SYNTHETIC_INPUT_REJECTED": GateResult(gate_id="DECISION_ACCEPTED", status="FAILED"),
+    "SYNTHETIC_RESULT_ABSTAINED": GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
+    "SYNTHETIC_RESULT_FAILED": GateResult(gate_id="DECISION_COMPLETED", status="FAILED"),
+    "SYNTHETIC_RESULT_PENDING": GateResult(
+        gate_id="ADJUDICATION_COMPLETED",
+        status="UNKNOWN",
+    ),
+    "SYNTHETIC_RESULT_EXPIRED": GateResult(gate_id="VALIDITY_WINDOW", status="FAILED"),
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": GateResult(
+        gate_id="EXECUTION_AVAILABLE",
+        status="FAILED",
+    ),
+    "SYNTHETIC_RESULT_UNKNOWN": GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
 }
 
 
-def is_committable_business_outcome(stage_result: StageResult) -> bool:
-    """Permit only host business outcomes that may become a committed fact."""
-    return (
-        stage_result.phase == "BUSINESS_DECISION"
-        and stage_result.status in _COMMITTABLE_HOST_RESULT_STATUSES
-        and all(gate_result.status == "PASSED" for gate_result in stage_result.gate_results)
-    )
+def is_committable_host_outcome(stage_result: StageResult) -> bool:
+    """Permit validated business and lifecycle outcomes to become host facts."""
+    return stage_result.phase in _COMMITTABLE_HOST_OUTCOME_PHASES
 
 
 def business_result_status_from_stage(

@@ -45,7 +45,7 @@ from stock_profiler.modules.decision_cases.domain import (
     business_result_status_from_stage,
     framework_run_status_from_stage,
     host_validation_result,
-    is_committable_business_outcome,
+    is_committable_host_outcome,
     load_frozen_decision_case,
 )
 
@@ -488,7 +488,7 @@ def _commit_framework_result(
         execution_case.business_object_id,
         connection,
     )
-    if business_result is None or not is_committable_business_outcome(business_result):
+    if business_result is None or not is_committable_host_outcome(business_result):
         return _unpublished_execution(
             execution_case,
             framework_run_status=framework.status,
@@ -688,7 +688,7 @@ def _published_execution(report: FormalReport) -> DecisionCaseExecution:
         report_version_id=report.report_version_id,
         framework_run_status=_framework_run_status_from_stage_history(report.stage_results),
         business_result_status=_business_result_status_from_stages(report.stage_results),
-        business_lifecycle=None,
+        business_lifecycle=_business_lifecycle_from_stages(report.stage_results),
         business_commit_status="COMMITTED",
         publication_status="PUBLISHED",
         report=report,
@@ -837,6 +837,16 @@ def _business_result_status_from_stages(
     for stage_result in reversed(stage_results):
         if stage_result.phase == "BUSINESS_DECISION":
             return business_result_status_from_stage(stage_result)
+    return None
+
+
+def _business_lifecycle_from_stages(
+    stage_results: tuple[StageResult, ...],
+) -> BusinessLifecycle | None:
+    for stage_result in reversed(stage_results):
+        lifecycle = business_lifecycle_from_stage(stage_result)
+        if lifecycle is not None:
+            return lifecycle
     return None
 
 
