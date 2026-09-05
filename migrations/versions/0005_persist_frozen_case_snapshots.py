@@ -11,7 +11,23 @@ branch_labels = None
 depends_on = None
 
 
+def _case_payload_column() -> dict[str, object] | None:
+    return next(
+        (
+            column
+            for column in sa.inspect(op.get_bind()).get_columns("decision_case_business_objects")
+            if column["name"] == "case_payload"
+        ),
+        None,
+    )
+
+
 def upgrade() -> None:
+    existing_column = _case_payload_column()
+    if existing_column is not None:
+        if existing_column["nullable"] is True:
+            return
+        raise RuntimeError("interrupted frozen case snapshot migration has incompatible column")
     op.add_column(
         "decision_case_business_objects",
         sa.Column("case_payload", sa.String(), nullable=True),
@@ -19,6 +35,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if _case_payload_column() is None:
+        return
     snapshot_count = (
         op.get_bind()
         .execute(

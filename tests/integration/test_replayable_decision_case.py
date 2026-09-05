@@ -120,6 +120,50 @@ def test_formal_report_projection_fixture_matches_the_frozen_runtime(
     assert fixture["report"] == outcome.report.model_dump(mode="json")
 
 
+def test_append_only_ledger_records_use_the_frozen_case_and_report_clocks(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    execution = run_default_frozen_decision_case(migrated_settings)
+    assert execution.report is not None
+    retry_default_frozen_decision_case_notification(
+        migrated_settings,
+        case.business_identity,
+        "FAILED",
+    )
+
+    engine = create_engine(migrated_settings.app_database_url)
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT created_at FROM decision_case_business_objects "
+                    "WHERE business_object_id = :business_object_id"
+                ),
+                {"business_object_id": case.business_object_id},
+            ).scalar_one()
+            == case.report_generated_at
+        )
+        assert set(
+            connection.execute(
+                text(
+                    "SELECT recorded_at FROM decision_stage_events "
+                    "WHERE business_object_id = :business_object_id"
+                ),
+                {"business_object_id": case.business_object_id},
+            ).scalars()
+        ) == {case.report_generated_at}
+        assert set(
+            connection.execute(
+                text(
+                    "SELECT recorded_at FROM decision_notification_attempts "
+                    "WHERE report_version_id = :report_version_id"
+                ),
+                {"report_version_id": execution.report.report_version_id},
+            ).scalars()
+        ) == {execution.report.generated_at}
+
+
 def test_report_lookup_by_event_requires_a_committed_event(
     migrated_settings: Settings,
 ) -> None:
@@ -203,7 +247,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
         "expected_business_status",
         "expected_lifecycle_owner",
         "expected_phase",
-        "published",
+        "expected_outcome_gate_id",
+        "expected_outcome_gate_status",
     ),
     (
         (
@@ -212,7 +257,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             "REJECTED",
             None,
             "BUSINESS_DECISION",
-            True,
+            "DECISION_ACCEPTED",
+            "FAILED",
         ),
         (
             "result-abstained",
@@ -220,7 +266,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             "ABSTAINED",
             None,
             "BUSINESS_DECISION",
-            True,
+            "DECISION_DETERMINED",
+            "UNKNOWN",
         ),
         (
             "result-failed",
@@ -228,7 +275,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             "FAILED",
             None,
             "BUSINESS_DECISION",
-            True,
+            "DECISION_COMPLETED",
+            "FAILED",
         ),
         (
             "result-pending",
@@ -236,7 +284,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             None,
             "ADJUDICATION",
             "ADJUDICATION_LIFECYCLE",
-            False,
+            "ADJUDICATION_COMPLETED",
+            "UNKNOWN",
         ),
         (
             "result-expired",
@@ -244,7 +293,8 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             None,
             "VALIDITY",
             "VALIDITY_LIFECYCLE",
-            False,
+            "VALIDITY_WINDOW",
+            "FAILED",
         ),
         (
             "result-execution-blocked",
@@ -252,15 +302,17 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             None,
             "EXECUTION",
             "EXECUTION_LIFECYCLE",
-            False,
+            "EXECUTION_AVAILABLE",
+            "FAILED",
         ),
         (
             "result-unknown",
             "SYNTHETIC_RESULT_UNKNOWN",
             None,
-            "COMMIT_RECONCILIATION",
-            "COMMIT_RECONCILIATION",
-            False,
+            "ADJUDICATION",
+            "ADJUDICATION_LIFECYCLE",
+            "DECISION_DETERMINED",
+            "UNKNOWN",
         ),
     ),
 )
@@ -272,7 +324,8 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     expected_business_status: str | None,
     expected_lifecycle_owner: str | None,
     expected_phase: str,
-    published: bool,
+    expected_outcome_gate_id: str,
+    expected_outcome_gate_status: str,
 ) -> None:
     variant_case = _load_result_family_fixture(fixture_name)
     expected_result = variant_case.expected_external_result
@@ -291,9 +344,9 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     ) == (
         None if expected_lifecycle_owner is None else outcome_code.removeprefix("SYNTHETIC_RESULT_")
     )
-    assert outcome.publication_status == ("PUBLISHED" if published else "CLOSED")
-    assert outcome.business_commit_status == ("COMMITTED" if published else "NOT_ATTEMPTED")
-    assert outcome.report is not None if published else outcome.report is None
+    assert outcome.publication_status == "PUBLISHED"
+    assert outcome.business_commit_status == "COMMITTED"
+    assert outcome.report is not None
     assert [
         result.status for result in outcome.stage_results if result.phase == "FRAMEWORK_RUN"
     ] == ["CREATED", "RUNNING", "SUCCEEDED"]
@@ -308,19 +361,22 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     assert outcome_stage.status == (
         expected_business_status or outcome_code.removeprefix("SYNTHETIC_RESULT_")
     )
-    assert all(gate.status == "PASSED" for gate in outcome_stage.gate_results)
+    assert [(gate.gate_id, gate.status) for gate in outcome_stage.gate_results] == [
+        ("OUTPUT_CONTRACT", "PASSED"),
+        (expected_outcome_gate_id, expected_outcome_gate_status),
+    ]
     assert outcome_stage.reasons == expected_result.key_reasons
-    if published:
-        assert outcome.report is not None
-        assert outcome.report.result == expected_result
+    assert outcome.report.result == expected_result
+    assert outcome.report.event_id == variant_case.decision_event_id
+    assert outcome.report.report_version_id == variant_case.report_version_id
     assert replayed.framework_run_id == variant_case.framework_run_id
     assert replayed.decision_event_id == variant_case.decision_event_id
     assert replayed.report_version_id == variant_case.report_version_id
     counts = DecisionLedger.from_settings(migrated_settings).counts()
     assert counts == {
         "business_objects": 1,
-        "decision_events": 1 if published else 0,
-        "reports": 1 if published else 0,
+        "decision_events": 1,
+        "reports": 1,
     }
 
 
@@ -1751,6 +1807,184 @@ def test_stage_result_migration_refuses_to_drop_append_only_history(
 
     with pytest.raises(RuntimeError, match="append-only stage results"):
         command.downgrade(config, "0002_decision_case_ledger")
+
+    load_settings.cache_clear()
+
+
+def test_stage_result_migration_retries_after_table_creation_is_interrupted(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0002_decision_case_ledger")
+    original_create_table: Any = op.create_table
+    interrupted = False
+
+    def create_stage_table_then_interrupt(name: str, *columns: Any, **kwargs: Any) -> Any:
+        nonlocal interrupted
+        table = original_create_table(name, *columns, **kwargs)
+        if name == "decision_stage_events" and not interrupted:
+            interrupted = True
+            raise RuntimeError("synthetic interruption after stage table creation")
+        return table
+
+    with monkeypatch.context() as patch:
+        patch.setattr(op, "create_table", create_stage_table_then_interrupt)
+        with pytest.raises(RuntimeError, match="stage table creation"):
+            command.upgrade(config, "0003_decision_stage_events")
+
+    engine = create_engine(settings.app_database_url)
+    with engine.connect() as connection:
+        stage_table_exists = (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_stage_events'"
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+    if not stage_table_exists:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE decision_stage_events (
+                        sequence INTEGER PRIMARY KEY,
+                        stage_event_id VARCHAR(96) NOT NULL UNIQUE,
+                        business_object_id VARCHAR(96) NOT NULL,
+                        framework_run_id VARCHAR(96) NOT NULL,
+                        decision_event_id VARCHAR(96),
+                        stage_payload VARCHAR NOT NULL,
+                        recorded_at VARCHAR(40) NOT NULL
+                    )
+                    """
+                )
+            )
+
+    command.upgrade(config, "0003_decision_stage_events")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_snapshot_migration_retries_after_column_addition_is_interrupted(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0004_corrections_and_notification_attempts")
+    original_add_column: Any = op.add_column
+    interrupted = False
+
+    def add_snapshot_column_then_interrupt(*args: Any, **kwargs: Any) -> Any:
+        nonlocal interrupted
+        result = original_add_column(*args, **kwargs)
+        if (
+            args[0] == "decision_case_business_objects"
+            and getattr(args[1], "name", None) == "case_payload"
+            and not interrupted
+        ):
+            interrupted = True
+            raise RuntimeError("synthetic interruption after snapshot column addition")
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(op, "add_column", add_snapshot_column_then_interrupt)
+        with pytest.raises(RuntimeError, match="snapshot column addition"):
+            command.upgrade(config, "0005_persist_frozen_case_snapshots")
+
+    engine = create_engine(settings.app_database_url)
+    with engine.connect() as connection:
+        snapshot_column_exists = "case_payload" in {
+            row.name
+            for row in connection.execute(text("PRAGMA table_info(decision_case_business_objects)"))
+        }
+    if not snapshot_column_exists:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE decision_case_business_objects ADD COLUMN case_payload VARCHAR")
+            )
+
+    command.upgrade(config, "0005_persist_frozen_case_snapshots")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0005_persist_frozen_case_snapshots"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_downgrade_retries_from_a_replacement_only_state(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0004_corrections_and_notification_attempts")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_events_replacement (
+                    decision_event_id VARCHAR(96) PRIMARY KEY,
+                    business_object_id VARCHAR(96) NOT NULL,
+                    framework_run_id VARCHAR(96) NOT NULL UNIQUE,
+                    event_payload VARCHAR NOT NULL,
+                    committed_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events_replacement (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                )
+                SELECT
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                FROM decision_events
+                """
+            )
+        )
+        connection.execute(text("DROP TABLE decision_events"))
+        connection.execute(text("DROP TABLE decision_notification_attempts"))
+
+    command.downgrade(config, "0003_decision_stage_events")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
+        )
+        assert "corrects_event_id" not in {
+            row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
+        }
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_notification_attempts'"
+                )
+            ).scalar_one_or_none()
+            is None
+        )
 
     load_settings.cache_clear()
 
