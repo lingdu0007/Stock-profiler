@@ -16,7 +16,10 @@ FROZEN_HOST_CONTRACT_VERSION = "1.0.0"
 FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
-FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.0.0"
+FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
+_SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
+    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION}
+)
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
 FROZEN_CORRECTION_CONTRACT_VERSION = "1.0.0"
 FROZEN_CORRECTION_GENERATED_AT = "2042-05-17T16:02:00Z"
@@ -96,6 +99,31 @@ BusinessLifecycleStatus = Literal[
     "EXECUTION_BLOCKED",
     "UNKNOWN",
 ]
+BusinessLifecycleOwner = Literal[
+    "ADJUDICATION",
+    "VALIDITY",
+    "EXECUTION",
+    "COMMIT_RECONCILIATION",
+]
+LifecycleStagePhase = Literal[
+    "ADJUDICATION_LIFECYCLE",
+    "VALIDITY_LIFECYCLE",
+    "EXECUTION_LIFECYCLE",
+    "COMMIT_RECONCILIATION",
+]
+StagePhase = Literal[
+    "FRAMEWORK_RUN",
+    "HOST_VALIDATION",
+    "BUSINESS_DECISION",
+    "ADJUDICATION_LIFECYCLE",
+    "VALIDITY_LIFECYCLE",
+    "EXECUTION_LIFECYCLE",
+    "COMMIT_RECONCILIATION",
+    "BUSINESS_COMMIT",
+    "PUBLICATION",
+    "NOTIFICATION",
+    "CORRECTION",
+]
 NotificationAttemptStatus = Literal["SUCCEEDED", "FAILED"]
 
 FrameworkRunStatus = Literal[
@@ -125,28 +153,32 @@ BusinessCommitStatus = Literal["NOT_ATTEMPTED", "FAILED", "COMMITTED", "UNKNOWN"
 _BUSINESS_RESULT_STATUSES = frozenset(get_args(BusinessResultStatus))
 _BUSINESS_LIFECYCLE_STATUSES = frozenset(get_args(BusinessLifecycleStatus))
 _FRAMEWORK_RUN_STATUSES = frozenset(get_args(FrameworkRunStatus))
-_COMMITTABLE_HOST_RESULT_STATUSES = _BUSINESS_RESULT_STATUSES - {"FAILED"}
+_COMMITTABLE_HOST_RESULT_STATUSES = _BUSINESS_RESULT_STATUSES
 _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
-    "HOST_VALIDATION": _BUSINESS_RESULT_STATUSES | _BUSINESS_LIFECYCLE_STATUSES,
-    "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "FAILED", "UNKNOWN"}),
+    "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "BUSINESS_DECISION": _BUSINESS_RESULT_STATUSES,
+    "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
+    "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
+    "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
+    "COMMIT_RECONCILIATION": frozenset({"UNKNOWN"}),
+    "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "FAILED"}),
     "PUBLICATION": frozenset({"SUCCEEDED", "FAILED"}),
     "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
     "CORRECTION": frozenset({"SUCCEEDED"}),
+}
+_LIFECYCLE_OWNER_BY_PHASE: dict[str, BusinessLifecycleOwner] = {
+    "ADJUDICATION_LIFECYCLE": "ADJUDICATION",
+    "VALIDITY_LIFECYCLE": "VALIDITY",
+    "EXECUTION_LIFECYCLE": "EXECUTION",
+    "COMMIT_RECONCILIATION": "COMMIT_RECONCILIATION",
 }
 
 
 class StageResult(FrozenContract):
     """A phase-specific outcome; lifecycle states have no global terminal meaning."""
 
-    phase: Literal[
-        "FRAMEWORK_RUN",
-        "HOST_VALIDATION",
-        "BUSINESS_COMMIT",
-        "PUBLICATION",
-        "NOTIFICATION",
-        "CORRECTION",
-    ]
+    phase: StagePhase
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
@@ -154,6 +186,24 @@ class StageResult(FrozenContract):
     @model_validator(mode="after")
     def validate_phase_status(self) -> StageResult:
         """Keep lifecycle states in the phase that owns their meaning."""
+        if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
+            raise ValueError(f"{self.phase} cannot record status {self.status}")
+        return self
+
+
+class BusinessLifecycle(FrozenContract):
+    """Expose a lifecycle state only together with the phase that owns it."""
+
+    owner: BusinessLifecycleOwner
+    phase: LifecycleStagePhase
+    status: BusinessLifecycleStatus
+
+    @model_validator(mode="after")
+    def validate_owner_status(self) -> BusinessLifecycle:
+        """Disallow a lifecycle phase from being presented under another owner."""
+        expected_owner = _LIFECYCLE_OWNER_BY_PHASE[self.phase]
+        if self.owner != expected_owner:
+            raise ValueError(f"{self.phase} belongs to {expected_owner}")
         if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
             raise ValueError(f"{self.phase} cannot record status {self.status}")
         return self
@@ -178,13 +228,32 @@ def _legacy_stage_result_payloads(
             "gate_results": [{"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}],
             "reasons": reasons,
         },
+    ]
+    outcome_code = result.get("outcome_code") if isinstance(result, dict) else None
+    outcome_stage = (
+        _SYNTHETIC_OUTCOME_STAGES.get(outcome_code) if isinstance(outcome_code, str) else None
+    )
+    if outcome_stage is not None:
+        phase, status = outcome_stage
+        stage_results.append(
+            {
+                "phase": phase,
+                "status": status,
+                "gate_results": [
+                    {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
+                    {"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"},
+                ],
+                "reasons": reasons,
+            }
+        )
+    stage_results.append(
         {
             "phase": "BUSINESS_COMMIT",
             "status": "SUCCEEDED",
             "gate_results": [{"gate_id": "HOST_RESULT_SAVED", "status": "PASSED"}],
             "reasons": [],
-        },
-    ]
+        }
+    )
     if include_publication:
         stage_results.append(
             {
@@ -195,6 +264,23 @@ def _legacy_stage_result_payloads(
             }
         )
     return stage_results
+
+
+def _uses_legacy_report_projection(value: dict[str, Any]) -> bool:
+    """Recognize an omitted stage ledger only for the historical projection contract."""
+    version_bundle = value.get("version_bundle")
+    if not isinstance(version_bundle, dict):
+        case = value.get("case")
+        version_bundle = case.get("version_bundle") if isinstance(case, dict) else None
+    return (
+        isinstance(version_bundle, dict)
+        and version_bundle.get("report_projection_contract_version") == "1.0.0"
+    )
+
+
+def supports_report_projection_contract(version: str) -> bool:
+    """Return whether a frozen report projection version can be read by D0."""
+    return version in _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS
 
 
 class FormalReport(FrozenContract):
@@ -219,7 +305,11 @@ class FormalReport(FrozenContract):
     @classmethod
     def project_legacy_stage_results(cls, value: Any) -> Any:
         """Read pre-stage reports without rewriting their immutable JSON."""
-        if not isinstance(value, dict) or "stage_results" in value:
+        if (
+            not isinstance(value, dict)
+            or "stage_results" in value
+            or not _uses_legacy_report_projection(value)
+        ):
             return value
         payload = dict(value)
         payload["stage_results"] = _legacy_stage_result_payloads(
@@ -248,7 +338,7 @@ class DecisionCaseExecution(FrozenContract):
     report_version_id: str
     framework_run_status: FrameworkRunStatus
     business_result_status: BusinessResultStatus | None
-    business_lifecycle_status: BusinessLifecycleStatus | None
+    business_lifecycle: BusinessLifecycle | None
     business_commit_status: BusinessCommitStatus
     publication_status: Literal["PUBLISHED", "CLOSED"]
     report: FormalReport | None
@@ -281,7 +371,11 @@ class DecisionEventFact(FrozenContract):
     @classmethod
     def project_legacy_stage_results(cls, value: Any) -> Any:
         """Read pre-stage event facts without mutating their committed payload."""
-        if not isinstance(value, dict) or "stage_results" in value:
+        if (
+            not isinstance(value, dict)
+            or "stage_results" in value
+            or not _uses_legacy_report_projection(value)
+        ):
             return value
         payload = dict(value)
         payload["stage_results"] = _legacy_stage_result_payloads(
@@ -317,6 +411,14 @@ class DecisionEventFact(FrozenContract):
             corrects_event_id=self.corrects_event_id,
         )
 
+    def formal_report_payload(self, report_version_id: str) -> dict[str, object]:
+        """Serialize a report using the source event's immutable projection contract."""
+        payload = self.formal_report(report_version_id).model_dump(mode="json")
+        if self.case.version_bundle.report_projection_contract_version == "1.0.0":
+            payload.pop("stage_results")
+            payload.pop("corrects_event_id")
+        return payload
+
 
 class FrozenDecisionCase(FrozenContract):
     """One replayable synthetic decision input with all clocks and contracts fixed."""
@@ -334,6 +436,7 @@ class FrozenDecisionCase(FrozenContract):
     agent_definition: FrozenAgentDefinition
     input: dict[str, Any]
     expected_external_result: ExternalResult
+    recovery_framework_run_id: str | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
@@ -349,8 +452,9 @@ class FrozenDecisionCase(FrozenContract):
         if (
             self.version_bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
             or self.version_bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
-            or self.version_bundle.report_projection_contract_version
-            != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+            or not supports_report_projection_contract(
+                self.version_bundle.report_projection_contract_version
+            )
             or self.version_bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
             or self.version_bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
             or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
@@ -391,6 +495,8 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def framework_run_id(self) -> str:
         """Allocate a deterministic M-Agent identity for this complete frozen replay."""
+        if self.recovery_framework_run_id is not None:
+            return self.recovery_framework_run_id
         return _stable_id(
             "framework-run",
             {
@@ -403,16 +509,25 @@ class FrozenDecisionCase(FrozenContract):
 
     def matches_recovery_input(self, other: FrozenDecisionCase) -> bool:
         """Allow source identity updates while rejecting a changed frozen input."""
-        own_payload = self.model_dump(mode="json")
-        other_payload = other.model_dump(mode="json")
-        own_bundle = own_payload["version_bundle"]
-        other_bundle = other_payload["version_bundle"]
-        assert isinstance(own_bundle, dict)
-        assert isinstance(other_bundle, dict)
-        for build_identity_field in ("host_application_version", "host_source_sha"):
-            own_bundle.pop(build_identity_field)
-            other_bundle.pop(build_identity_field)
-        return own_payload == other_payload
+        return _recovery_input_payload(self) == _recovery_input_payload(other)
+
+    def matches_legacy_recovery_input(self, other: FrozenDecisionCase | None = None) -> bool:
+        """Compare legacy projections without relaxing the immutable D0 input."""
+        comparison_case = other or FrozenDecisionCase.model_validate(load_frozen_case_payload())
+        return _legacy_recovery_input_payload(self) == _legacy_recovery_input_payload(
+            comparison_case
+        )
+
+    def legacy_projection_recovery_case(self, framework_run_id: str) -> FrozenDecisionCase:
+        """Recover a v1 mapping with its original Run and event/report identities."""
+        return self.model_copy(
+            update={
+                "version_bundle": self.version_bundle.model_copy(
+                    update={"report_projection_contract_version": "1.0.0"}
+                ),
+                "recovery_framework_run_id": framework_run_id,
+            }
+        )
 
     @property
     def decision_event_id(self) -> str:
@@ -421,13 +536,16 @@ class FrozenDecisionCase(FrozenContract):
 
     def decision_event_id_for_framework_run(self, framework_run_id: str) -> str:
         """Allocate an event identity for a recovered original M-Agent Run."""
+        version_bundle = self.version_bundle.model_dump(mode="json")
+        version_bundle.pop("host_application_version")
+        version_bundle.pop("host_source_sha")
         return _stable_id(
             "decision-event",
             {
                 "business_object_id": self.business_object_id,
                 "framework_run_id": framework_run_id,
                 "expected_external_result": self.expected_external_result.model_dump(mode="json"),
-                "version_bundle": self.version_bundle.model_dump(mode="json"),
+                "version_bundle": version_bundle,
             },
         )
 
@@ -510,51 +628,70 @@ _COMPLETE_SYNTHETIC_INPUT = {
 
 
 def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
-    """Classify a typed framework result without collapsing host outcomes."""
+    """Record the host-owned contract gate before classifying a business outcome."""
     recorded_reasons = result.key_reasons
     valid_frozen_input = (
         case.synthetic
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
         and has_complete_synthetic_input(case.input)
     )
-    if valid_frozen_input and result == case.expected_external_result:
+    if not recorded_reasons:
         return StageResult(
             phase="HOST_VALIDATION",
-            status="SUCCEEDED",
-            gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),),
-            reasons=recorded_reasons,
+            status="FAILED",
+            gate_results=(GateResult(gate_id="KEY_REASONS_PRESENT", status="FAILED"),),
+            reasons=("RESULT_REASONS_REQUIRED",),
         )
-    status = _SYNTHETIC_OUTCOME_STATUSES.get(result.outcome_code)
-    if valid_frozen_input and status is not None:
+    outcome_stage = _SYNTHETIC_OUTCOME_STAGES.get(result.outcome_code)
+    if not valid_frozen_input or outcome_stage is None or result != case.expected_external_result:
         return StageResult(
             phase="HOST_VALIDATION",
-            status=status,
+            status="FAILED",
             gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="FAILED"),),
-            reasons=recorded_reasons,
+            reasons=("UNSUPPORTED_SYNTHETIC_RESULT",),
         )
     return StageResult(
         phase="HOST_VALIDATION",
-        status="FAILED",
-        gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="FAILED"),),
-        reasons=("UNSUPPORTED_SYNTHETIC_RESULT",),
+        status="SUCCEEDED",
+        gate_results=(
+            GateResult(gate_id="OUTPUT_CONTRACT", status="PASSED"),
+            GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),
+        ),
+        reasons=recorded_reasons,
     )
 
 
-_SYNTHETIC_OUTCOME_STATUSES: dict[str, BusinessResultStatus | BusinessLifecycleStatus] = {
-    "SYNTHETIC_INPUT_REJECTED": "REJECTED",
-    "SYNTHETIC_RESULT_ABSTAINED": "ABSTAINED",
-    "SYNTHETIC_RESULT_FAILED": "FAILED",
-    "SYNTHETIC_RESULT_PENDING": "PENDING",
-    "SYNTHETIC_RESULT_EXPIRED": "EXPIRED",
-    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": "EXECUTION_BLOCKED",
-    "SYNTHETIC_RESULT_UNKNOWN": "UNKNOWN",
+def business_outcome_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
+    """Classify an already validated typed output into its owning business family."""
+    del case
+    phase, status = _SYNTHETIC_OUTCOME_STAGES[result.outcome_code]
+    return StageResult(
+        phase=phase,
+        status=status,
+        gate_results=(
+            GateResult(gate_id="OUTPUT_CONTRACT", status="PASSED"),
+            GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),
+        ),
+        reasons=result.key_reasons,
+    )
+
+
+_SYNTHETIC_OUTCOME_STAGES: dict[str, tuple[StagePhase, StageStatus]] = {
+    "SYNTHETIC_REVIEW_COMPLETE": ("BUSINESS_DECISION", "SUCCEEDED"),
+    "SYNTHETIC_INPUT_REJECTED": ("BUSINESS_DECISION", "REJECTED"),
+    "SYNTHETIC_RESULT_ABSTAINED": ("BUSINESS_DECISION", "ABSTAINED"),
+    "SYNTHETIC_RESULT_FAILED": ("BUSINESS_DECISION", "FAILED"),
+    "SYNTHETIC_RESULT_PENDING": ("ADJUDICATION_LIFECYCLE", "PENDING"),
+    "SYNTHETIC_RESULT_EXPIRED": ("VALIDITY_LIFECYCLE", "EXPIRED"),
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": ("EXECUTION_LIFECYCLE", "EXECUTION_BLOCKED"),
+    "SYNTHETIC_RESULT_UNKNOWN": ("COMMIT_RECONCILIATION", "UNKNOWN"),
 }
 
 
-def is_committable_host_validation_result(stage_result: StageResult) -> bool:
+def is_committable_business_outcome(stage_result: StageResult) -> bool:
     """Permit only host business outcomes that may become a committed fact."""
     return (
-        stage_result.phase == "HOST_VALIDATION"
+        stage_result.phase == "BUSINESS_DECISION"
         and stage_result.status in _COMMITTABLE_HOST_RESULT_STATUSES
         and all(gate_result.status == "PASSED" for gate_result in stage_result.gate_results)
     )
@@ -564,20 +701,25 @@ def business_result_status_from_stage(
     stage_result: StageResult,
 ) -> BusinessResultStatus | None:
     """Extract a host business outcome while preserving lifecycle-only states."""
-    if stage_result.phase == "HOST_VALIDATION" and stage_result.status in _BUSINESS_RESULT_STATUSES:
+    if (
+        stage_result.phase == "BUSINESS_DECISION"
+        and stage_result.status in _BUSINESS_RESULT_STATUSES
+    ):
         return cast(BusinessResultStatus, stage_result.status)
     return None
 
 
-def business_lifecycle_status_from_stage(
+def business_lifecycle_from_stage(
     stage_result: StageResult,
-) -> BusinessLifecycleStatus | None:
-    """Extract a lifecycle status only from the phase that owns it."""
-    if (
-        stage_result.phase == "HOST_VALIDATION"
-        and stage_result.status in _BUSINESS_LIFECYCLE_STATUSES
-    ):
-        return cast(BusinessLifecycleStatus, stage_result.status)
+) -> BusinessLifecycle | None:
+    """Extract a lifecycle state together with its owning phase."""
+    owner = _LIFECYCLE_OWNER_BY_PHASE.get(stage_result.phase)
+    if owner is not None and stage_result.status in _BUSINESS_LIFECYCLE_STATUSES:
+        return BusinessLifecycle(
+            owner=owner,
+            phase=cast(LifecycleStagePhase, stage_result.phase),
+            status=cast(BusinessLifecycleStatus, stage_result.status),
+        )
     return None
 
 
@@ -595,6 +737,25 @@ def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
 
 def _fingerprint(value: object) -> str:
     return sha256(_canonical_json(value).encode()).hexdigest()
+
+
+def _recovery_input_payload(case: FrozenDecisionCase) -> dict[str, Any]:
+    """Normalize only host build provenance when comparing retained snapshots."""
+    payload = case.model_dump(mode="json")
+    version_bundle = payload["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    for build_identity_field in ("host_application_version", "host_source_sha"):
+        version_bundle.pop(build_identity_field)
+    return payload
+
+
+def _legacy_recovery_input_payload(case: FrozenDecisionCase) -> dict[str, Any]:
+    """Compare snapshotless records to the canonical D0 input across old projections."""
+    payload = _recovery_input_payload(case)
+    version_bundle = payload["version_bundle"]
+    assert isinstance(version_bundle, dict)
+    version_bundle.pop("report_projection_contract_version")
+    return payload
 
 
 def _stable_id(kind: str, value: object) -> str:

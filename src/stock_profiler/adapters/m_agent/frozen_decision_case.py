@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import version
+from typing import cast
 
 from m_agent.adapters import DeterministicModelAdapter
 from m_agent.runtime import (
     AgentDefinition,
     DefinitionRegistry,
+    DuplicateRunError,
+    IllegalRunTransitionError,
+    LeaseNotHeldError,
     ModelCapabilities,
     OutputContract,
     Runner,
     RunNotFoundError,
+    RunRecord,
+    StaleRunVersionError,
     StructuredOutputMode,
 )
 
@@ -30,10 +39,10 @@ from stock_profiler.modules.decision_cases.domain import (
     FROZEN_CASE_CONTRACT_VERSION,
     FROZEN_HOST_CONTRACT_VERSION,
     FROZEN_OUTPUT_CONTRACT_VERSION,
-    FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     FrameworkRunStatus,
     FrozenDecisionCase,
     has_complete_synthetic_input,
+    supports_report_projection_contract,
 )
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
@@ -52,6 +61,21 @@ FROZEN_OUTPUT_SCHEMA = {
     "required": ["outcome_code", "summary", "key_reasons"],
     "additionalProperties": False,
 }
+DEFAULT_SYNTHETIC_MODEL_RESPONSE = (
+    '{"key_reasons":['
+    '"All required fictional evidence records are present.",'
+    '"The output is D0 synthetic evidence and is not a recommendation."'
+    '],"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
+    '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
+)
+_CONCURRENT_RUN_RECOVERY_ATTEMPTS = 50
+_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS = 0.01
+_CONCURRENT_RUN_RECOVERY_ERRORS = (
+    DuplicateRunError,
+    IllegalRunTransitionError,
+    LeaseNotHeldError,
+    StaleRunVersionError,
+)
 
 
 @dataclass(frozen=True)
@@ -63,11 +87,25 @@ class FrameworkRunResult:
     output: str | None
     waiting_reason: str | None = None
     error_code: str | None = None
+    transitions: tuple[FrameworkRunTransition, ...] = ()
+    transitions_durably_recorded: bool = False
+
+
+@dataclass(frozen=True)
+class FrameworkRunTransition:
+    """One durable framework state observed before its terminal result."""
+
+    status: FrameworkRunStatus
+    reason: str
+
+
+FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
 
 
 async def execute_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
+    record_transition: FrameworkTransitionRecorder | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
     _assert_runtime_version_bundle(case)
@@ -89,25 +127,114 @@ async def execute_frozen_decision_case(
     )
     registry = DefinitionRegistry()
     registry.register(definition)
-    runner = Runner(registry=registry, store=runtime.run_store, owner="stock-profiler-d0")
+    runner = Runner(registry=registry, store=runtime.run_store)
+    transitions: list[FrameworkRunTransition] = []
+
+    async def observe(transition: FrameworkRunTransition) -> None:
+        transitions.append(transition)
+        if record_transition is not None:
+            await record_transition(transition)
+
     try:
         run = await runner.get_run(case.framework_run_id)
     except RunNotFoundError:
-        created = await runner.create_run(
-            definition.definition_id,
-            definition.version,
-            json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
-            run_id=case.framework_run_id,
-        )
-        run = await runner.start_run(created.run_id)
+        if case.recovery_framework_run_id is not None:
+            raise ValueError("mapped durable M-Agent Run is missing") from None
+        try:
+            created = await runner.create_run(
+                definition.definition_id,
+                definition.version,
+                json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                run_id=case.framework_run_id,
+            )
+            await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
+            run = await runner.start_run(created.run_id)
+        except _CONCURRENT_RUN_RECOVERY_ERRORS:
+            run = await _recover_concurrent_run(
+                runner,
+                case,
+                observe,
+            )
+        except sqlite3.Error as error:
+            if not _is_concurrent_creation_error(error):
+                raise
+            run = await _recover_concurrent_run(
+                runner,
+                case,
+                observe,
+            )
+        else:
+            if run.status.value == "RUNNING":
+                await observe(
+                    FrameworkRunTransition(
+                        status="RUNNING",
+                        reason="FRAMEWORK_RUN_STARTED",
+                    )
+                )
     else:
-        run = run if run.status.is_terminal else await runner.resume_run(run.run_id)
+        _assert_existing_run_matches_case(run, case)
+        if not run.status.is_terminal:
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_RECOVERED",
+                )
+            )
+            try:
+                run = await runner.resume_run(run.run_id)
+            except _CONCURRENT_RUN_RECOVERY_ERRORS:
+                run = await _recover_concurrent_run(
+                    runner,
+                    case,
+                    observe,
+                )
     return FrameworkRunResult(
         run_id=run.run_id,
-        status=run.status.value,
+        status=cast(FrameworkRunStatus, run.status.value),
         output=run.output,
         waiting_reason=run.waiting_reason,
         error_code=run.error_code,
+        transitions=tuple(transitions),
+        transitions_durably_recorded=record_transition is not None,
+    )
+
+
+async def _recover_concurrent_run(
+    runner: Runner,
+    case: FrozenDecisionCase,
+    observe: FrameworkTransitionRecorder,
+) -> RunRecord:
+    """Converge on a competing owner without creating a replacement Run."""
+    for _ in range(_CONCURRENT_RUN_RECOVERY_ATTEMPTS):
+        try:
+            run = await runner.get_run(case.framework_run_id)
+        except RunNotFoundError:
+            await asyncio.sleep(_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS)
+            continue
+        _assert_existing_run_matches_case(run, case)
+        if run.status.is_terminal or run.status.value == "WAITING":
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_CONCURRENT_RECOVERY",
+                )
+            )
+            return run
+        try:
+            return await runner.resume_run(run.run_id)
+        except _CONCURRENT_RUN_RECOVERY_ERRORS:
+            await asyncio.sleep(_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS)
+    raise ValueError("concurrent durable M-Agent Run did not become recoverable")
+
+
+def _is_concurrent_creation_error(error: sqlite3.Error) -> bool:
+    """Recognize SQLite's unwrapped duplicate or transient writer-conflict errors."""
+    return isinstance(error, sqlite3.IntegrityError) or (
+        isinstance(error, sqlite3.OperationalError)
+        and any(
+            marker in str(error).lower()
+            for marker in ("database is locked", "database is busy")
+        )
     )
 
 
@@ -117,7 +244,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     if (
         bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
         or bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
-        or bundle.report_projection_contract_version != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+        or not supports_report_projection_contract(bundle.report_projection_contract_version)
         or bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
         or bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
         or bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
@@ -144,15 +271,26 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
 
 
+def _assert_existing_run_matches_case(run: RunRecord, case: FrozenDecisionCase) -> None:
+    """Bind a recovered run to the same frozen definition and input before reuse."""
+    expected_input = json.dumps(
+        case.input,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if (
+        run.definition_id != case.agent_definition.definition_id
+        or run.definition_version != case.agent_definition.version
+        or run.input != expected_input
+    ):
+        raise ValueError("durable M-Agent Run does not match the frozen recovery input")
+
+
 def _deterministic_model_response(case: FrozenDecisionCase) -> str:
     """Make the test model respond to the frozen input, never its expected output field."""
     if has_complete_synthetic_input(case.input):
-        return (
-            '{"key_reasons":["All required fictional evidence records are present.",'
-            '"The output is D0 synthetic evidence and is not a recommendation."],'
-            '"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
-            '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
-        )
+        return DEFAULT_SYNTHETIC_MODEL_RESPONSE
     return _incomplete_synthetic_response()
 
 

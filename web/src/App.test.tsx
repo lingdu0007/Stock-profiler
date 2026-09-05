@@ -32,10 +32,10 @@ describe("App", () => {
     expect(screen.getByText(report.framework_run_id)).toBeVisible();
     expect(screen.getByText("D0 synthetic")).toBeVisible();
     expect(screen.getByRole("region", { name: "Decision stages" })).toHaveTextContent(
-      "HOST_VALIDATION"
+      "BUSINESS_DECISION"
     );
     expect(screen.getByRole("region", { name: "Decision stages" })).toHaveTextContent(
-      "FROZEN_RESULT_MATCH"
+      "OUTPUT_CONTRACT"
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(

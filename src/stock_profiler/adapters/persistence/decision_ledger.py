@@ -90,6 +90,7 @@ class DecisionEventCommitUncertainError(DecisionEventCommitError):
 class BusinessObjectMapping:
     """The durable case snapshot and original Run bound to one business object."""
 
+    case_id: str
     frozen_input_fingerprint: str
     framework_run_id: str
     case: FrozenDecisionCase | None
@@ -126,6 +127,7 @@ class DecisionLedger:
         """Load a saved case snapshot before deriving any current-build Run identity."""
         row = connection.execute(
             select(
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
                 DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
@@ -134,6 +136,7 @@ class DecisionLedger:
         if row is None:
             return None
         return BusinessObjectMapping(
+            case_id=row.case_id,
             frozen_input_fingerprint=row.frozen_input_fingerprint,
             framework_run_id=row.framework_run_id,
             case=(
@@ -158,12 +161,21 @@ class DecisionLedger:
                 )
             )
             return
-        if mapping.case is not None and mapping.case.matches_recovery_input(case):
-            return
+        if mapping.case is not None:
+            if (
+                mapping.frozen_input_fingerprint != mapping.case.frozen_input_fingerprint
+                or mapping.framework_run_id != mapping.case.framework_run_id
+            ):
+                raise DecisionEventCommitError("business identity maps to different frozen input")
+            if mapping.case.matches_recovery_input(
+                case
+            ) or mapping.case.matches_legacy_recovery_input(case):
+                return
+            raise DecisionEventCommitError("business identity maps to different frozen input")
         if (
             mapping.case is None
-            and mapping.frozen_input_fingerprint == case.frozen_input_fingerprint
-            and mapping.framework_run_id == case.framework_run_id
+            and mapping.case_id == case.case_id
+            and case.matches_legacy_recovery_input()
         ):
             return
         raise DecisionEventCommitError("business identity maps to different frozen input")
@@ -402,20 +414,17 @@ class DecisionLedger:
         generated_at: str | None = None,
     ) -> DecisionEventFact:
         """Reliably append the host event before any report projection is made."""
-        event_id = decision_event_id or case.decision_event_id
-        fact = DecisionEventFact(
-            decision_event_id=event_id,
-            business_object_id=case.business_object_id,
-            framework_run_id=framework_run_id,
+        fact = self.build_event_fact(
             case=case,
+            framework_run_id=framework_run_id,
             result=result,
-            validation_status="PASSED",
-            committed_at=committed_at or case.report_generated_at,
             stage_results=stage_results,
+            decision_event_id=decision_event_id,
             corrects_event_id=corrects_event_id,
-            generated_at=generated_at or case.report_generated_at,
+            committed_at=committed_at,
+            generated_at=generated_at,
         )
-        existing = self.get_decision_event(event_id, connection)
+        existing = self.get_decision_event(fact.decision_event_id, connection)
         if existing is not None:
             if existing != fact:
                 raise DecisionEventCommitError("decision event identity maps to different facts")
@@ -423,7 +432,7 @@ class DecisionLedger:
         try:
             connection.execute(
                 DECISION_EVENTS.insert().values(
-                    decision_event_id=event_id,
+                    decision_event_id=fact.decision_event_id,
                     business_object_id=case.business_object_id,
                     framework_run_id=framework_run_id,
                     corrects_event_id=corrects_event_id,
@@ -437,17 +446,68 @@ class DecisionLedger:
             connection.commit()
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         except Exception as error:
+            connection.rollback()
             raise DecisionEventCommitUncertainError(
                 "decision event commit acknowledgement is uncertain"
             ) from error
         return fact
 
+    def build_event_fact(
+        self,
+        *,
+        case: FrozenDecisionCase,
+        framework_run_id: str,
+        result: ExternalResult,
+        stage_results: tuple[StageResult, ...],
+        decision_event_id: str | None = None,
+        corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
+    ) -> DecisionEventFact:
+        """Construct the exact append-only fact that a commit attempt must preserve."""
+        event_id = decision_event_id or case.decision_event_id
+        return DecisionEventFact(
+            decision_event_id=event_id,
+            business_object_id=case.business_object_id,
+            framework_run_id=framework_run_id,
+            case=case,
+            result=result,
+            validation_status="PASSED",
+            committed_at=committed_at or case.report_generated_at,
+            stage_results=stage_results,
+            corrects_event_id=corrects_event_id,
+            generated_at=generated_at or case.report_generated_at,
+        )
+
+    def reconcile_event_commit(
+        self, connection: Connection, attempted: DecisionEventFact
+    ) -> DecisionEventFact | None:
+        """Verify an acknowledged-uncertain event on a fresh read connection."""
+        connection.rollback()
+        with self._engine.connect() as verification_connection:
+            committed = self.get_decision_event(
+                attempted.decision_event_id,
+                verification_connection,
+            )
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        if committed is not None and committed != attempted:
+            raise DecisionEventCommitError("committed event does not match attempted fact")
+        return committed
+
     def ensure_event_stage_results(self, connection: Connection, fact: DecisionEventFact) -> None:
         """Backfill stage rows from an already committed append-only event."""
-        for stage_result in fact.stage_results:
+        latest_business_commit_index = max(
+            (
+                index
+                for index, stage_result in enumerate(fact.stage_results)
+                if stage_result.phase == "BUSINESS_COMMIT"
+            ),
+            default=None,
+        )
+        for index, stage_result in enumerate(fact.stage_results):
             decision_event_id = (
                 fact.decision_event_id
-                if stage_result.phase in {"BUSINESS_COMMIT", "CORRECTION"}
+                if (stage_result.phase == "CORRECTION" or index == latest_business_commit_index)
                 else None
             )
             self.record_stage_result(
@@ -475,6 +535,8 @@ class DecisionLedger:
         )
         existing = self.get_formal_report(resolved_report_version_id, connection)
         if existing is not None:
+            if existing != fact.formal_report(resolved_report_version_id):
+                raise DecisionEventCommitError("report identity maps to different projection")
             return existing
         report = fact.formal_report(resolved_report_version_id)
         try:
@@ -482,7 +544,9 @@ class DecisionLedger:
                 FORMAL_REPORTS.insert().values(
                     report_version_id=report.report_version_id,
                     decision_event_id=report.event_id,
-                    report_payload=report.model_dump_json(),
+                    report_payload=_canonical_json(
+                        fact.formal_report_payload(resolved_report_version_id)
+                    ),
                     generated_at=report.generated_at,
                 )
             )
