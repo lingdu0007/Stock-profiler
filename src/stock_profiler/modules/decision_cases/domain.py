@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal, cast, get_args
 
@@ -170,7 +171,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
     "COMMIT_RECONCILIATION": frozenset({"UNKNOWN"}),
     "BUSINESS_COMMIT": frozenset({"SUCCEEDED", "FAILED"}),
-    "PUBLICATION": frozenset({"SUCCEEDED", "FAILED"}),
+    "PUBLICATION": frozenset({"SUCCEEDED", "FAILED", "UNKNOWN"}),
     "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
     "CORRECTION": frozenset({"SUCCEEDED"}),
 }
@@ -237,15 +238,12 @@ def _legacy_stage_result_payloads(
         },
     ]
     outcome_code = result.get("outcome_code") if isinstance(result, dict) else None
-    outcome_stage = (
-        _SYNTHETIC_OUTCOME_STAGES.get(outcome_code) if isinstance(outcome_code, str) else None
-    )
-    if outcome_stage is not None:
-        phase, status = outcome_stage
+    outcome = _SYNTHETIC_OUTCOMES.get(outcome_code) if isinstance(outcome_code, str) else None
+    if outcome is not None:
         stage_results.append(
             {
-                "phase": phase,
-                "status": status,
+                "phase": outcome.phase,
+                "status": outcome.status,
                 "gate_results": [
                     {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
                     {"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"},
@@ -653,8 +651,8 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
             gate_results=(GateResult(gate_id="KEY_REASONS_PRESENT", status="FAILED"),),
             reasons=("RESULT_REASONS_REQUIRED",),
         )
-    outcome_stage = _SYNTHETIC_OUTCOME_STAGES.get(result.outcome_code)
-    if not valid_frozen_input or outcome_stage is None or result != case.expected_external_result:
+    outcome = _SYNTHETIC_OUTCOMES.get(result.outcome_code)
+    if not valid_frozen_input or outcome is None or result != case.expected_external_result:
         return StageResult(
             phase="HOST_VALIDATION",
             status="FAILED",
@@ -674,43 +672,66 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
 
 def business_outcome_result(result: ExternalResult) -> StageResult:
     """Classify an already validated typed output into its owning business family."""
-    phase, status = _SYNTHETIC_OUTCOME_STAGES[result.outcome_code]
+    outcome = _SYNTHETIC_OUTCOMES[result.outcome_code]
     return StageResult(
-        phase=phase,
-        status=status,
+        phase=outcome.phase,
+        status=outcome.status,
         gate_results=(
             GateResult(gate_id="OUTPUT_CONTRACT", status="PASSED"),
-            _SYNTHETIC_OUTCOME_GATES[result.outcome_code],
+            outcome.gate,
         ),
         reasons=result.key_reasons,
     )
 
 
-_SYNTHETIC_OUTCOME_STAGES: dict[str, tuple[StagePhase, StageStatus]] = {
-    "SYNTHETIC_REVIEW_COMPLETE": ("BUSINESS_DECISION", "SUCCEEDED"),
-    "SYNTHETIC_INPUT_REJECTED": ("BUSINESS_DECISION", "REJECTED"),
-    "SYNTHETIC_RESULT_ABSTAINED": ("BUSINESS_DECISION", "ABSTAINED"),
-    "SYNTHETIC_RESULT_FAILED": ("BUSINESS_DECISION", "FAILED"),
-    "SYNTHETIC_RESULT_PENDING": ("ADJUDICATION_LIFECYCLE", "PENDING"),
-    "SYNTHETIC_RESULT_EXPIRED": ("VALIDITY_LIFECYCLE", "EXPIRED"),
-    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": ("EXECUTION_LIFECYCLE", "EXECUTION_BLOCKED"),
-    "SYNTHETIC_RESULT_UNKNOWN": ("ADJUDICATION_LIFECYCLE", "UNKNOWN"),
-}
-_SYNTHETIC_OUTCOME_GATES: dict[str, GateResult] = {
-    "SYNTHETIC_REVIEW_COMPLETE": GateResult(gate_id="DECISION_ACCEPTED", status="PASSED"),
-    "SYNTHETIC_INPUT_REJECTED": GateResult(gate_id="DECISION_ACCEPTED", status="FAILED"),
-    "SYNTHETIC_RESULT_ABSTAINED": GateResult(gate_id="ABSTENTION_RECORDED", status="PASSED"),
-    "SYNTHETIC_RESULT_FAILED": GateResult(gate_id="DECISION_COMPLETED", status="FAILED"),
-    "SYNTHETIC_RESULT_PENDING": GateResult(
-        gate_id="ADJUDICATION_COMPLETED",
-        status="UNKNOWN",
+@dataclass(frozen=True)
+class _SyntheticOutcomeDefinition:
+    phase: StagePhase
+    status: StageStatus
+    gate: GateResult
+
+
+_SYNTHETIC_OUTCOMES: dict[str, _SyntheticOutcomeDefinition] = {
+    "SYNTHETIC_REVIEW_COMPLETE": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "SUCCEEDED",
+        GateResult(gate_id="DECISION_ACCEPTED", status="PASSED"),
     ),
-    "SYNTHETIC_RESULT_EXPIRED": GateResult(gate_id="VALIDITY_WINDOW", status="FAILED"),
-    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": GateResult(
-        gate_id="EXECUTION_AVAILABLE",
-        status="FAILED",
+    "SYNTHETIC_INPUT_REJECTED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "REJECTED",
+        GateResult(gate_id="DECISION_ACCEPTED", status="FAILED"),
     ),
-    "SYNTHETIC_RESULT_UNKNOWN": GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
+    "SYNTHETIC_RESULT_ABSTAINED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "ABSTAINED",
+        GateResult(gate_id="ABSTENTION_RECORDED", status="PASSED"),
+    ),
+    "SYNTHETIC_RESULT_FAILED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "FAILED",
+        GateResult(gate_id="DECISION_COMPLETED", status="FAILED"),
+    ),
+    "SYNTHETIC_RESULT_PENDING": _SyntheticOutcomeDefinition(
+        "ADJUDICATION_LIFECYCLE",
+        "PENDING",
+        GateResult(gate_id="ADJUDICATION_COMPLETED", status="UNKNOWN"),
+    ),
+    "SYNTHETIC_RESULT_EXPIRED": _SyntheticOutcomeDefinition(
+        "VALIDITY_LIFECYCLE",
+        "EXPIRED",
+        GateResult(gate_id="VALIDITY_WINDOW", status="FAILED"),
+    ),
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": _SyntheticOutcomeDefinition(
+        "EXECUTION_LIFECYCLE",
+        "EXECUTION_BLOCKED",
+        GateResult(gate_id="EXECUTION_AVAILABLE", status="FAILED"),
+    ),
+    "SYNTHETIC_RESULT_UNKNOWN": _SyntheticOutcomeDefinition(
+        "ADJUDICATION_LIFECYCLE",
+        "UNKNOWN",
+        GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
+    ),
 }
 
 
@@ -763,7 +784,7 @@ def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
     if input_without_scenario != _COMPLETE_SYNTHETIC_INPUT:
         return None
-    return outcome_code if outcome_code in _SYNTHETIC_OUTCOME_STAGES else None
+    return outcome_code if outcome_code in _SYNTHETIC_OUTCOMES else None
 
 
 def _fingerprint(value: object) -> str:
