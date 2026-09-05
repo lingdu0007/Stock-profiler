@@ -31,10 +31,35 @@ describe("App", () => {
     expect(screen.getByText(report.event_id)).toBeVisible();
     expect(screen.getByText(report.framework_run_id)).toBeVisible();
     expect(screen.getByText("D0 synthetic")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Decision stages" })).toHaveTextContent(
+      "HOST_VALIDATION"
+    );
+    expect(screen.getByRole("region", { name: "Decision stages" })).toHaveTextContent(
+      "FROZEN_RESULT_MATCH"
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(
       `/api/v1/reports/${report.report_version_id}`
     );
+  });
+
+  it("shows correction lineage supplied by the committed report projection", async () => {
+    const correctedReport = { ...report, corrects_event_id: "decision-event-original-4017" };
+    window.history.pushState({}, "", `/reports/${correctedReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(correctedReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("decision-event-original-4017")).toBeVisible();
+    expect(screen.getByText("Corrects event")).toBeVisible();
   });
 
   it("refreshes a CSRF-protected session before reading the committed report", async () => {

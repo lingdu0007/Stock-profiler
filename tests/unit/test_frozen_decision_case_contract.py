@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
+from m_agent.adapters import DeterministicModelAdapter
+from m_agent.runtime import (
+    AgentDefinition,
+    DefinitionRegistry,
+    ModelCapabilities,
+    OutputContract,
+    Runner,
+    StructuredOutputMode,
+)
 
-from stock_profiler.adapters.m_agent.frozen_decision_case import execute_frozen_decision_case
+from stock_profiler.adapters.m_agent.frozen_decision_case import (
+    FROZEN_OUTPUT_SCHEMA,
+    _deterministic_model_response,
+    execute_frozen_decision_case,
+)
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
+    ExternalResult,
     host_validates_external_result,
     load_frozen_decision_case,
 )
@@ -28,7 +43,8 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.version_bundle.host_source_sha == settings.source_sha
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
     assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
-    assert first.version_bundle.report_projection_contract_version == "1.0.0"
+    assert first.version_bundle.host_contract_version == "1.1.0"
+    assert first.version_bundle.report_projection_contract_version == "1.1.0"
     assert first.agent_definition.instructions == (
         "Return only the frozen synthetic decision-case external result as JSON."
     )
@@ -100,8 +116,8 @@ def test_runtime_rejects_any_unsupported_host_contract_version(
         )
 
 
-@pytest.mark.parametrize("field_name", ("definition_id", "version"))
-def test_runtime_rejects_tampered_agent_definition_identity(
+@pytest.mark.parametrize("field_name", ("definition_id", "version", "instructions"))
+def test_runtime_rejects_tampered_agent_definition_contract(
     migrated_settings: Settings, field_name: str
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -126,3 +142,59 @@ def test_host_validation_rejects_any_scope_except_the_frozen_d0_scope(
     contradictory_scope = case.model_copy(update={"qualification_scope": "D0_REAL_RECOMMENDATION"})
 
     assert not host_validates_external_result(contradictory_scope, case.expected_external_result)
+
+
+def test_adapter_resumes_the_original_waiting_m_agent_run(
+    migrated_settings: Settings,
+) -> None:
+    case = load_frozen_decision_case(migrated_settings)
+    runtime = initialize_runtime_storage(migrated_settings)
+
+    async def create_waiting_run() -> None:
+        definition = AgentDefinition.for_adapter(
+            definition_id=case.agent_definition.definition_id,
+            version=case.agent_definition.version,
+            instructions=case.agent_definition.instructions,
+            model_adapter=DeterministicModelAdapter(
+                responses=(_deterministic_model_response(case),),
+                capabilities=ModelCapabilities(
+                    structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT
+                ),
+            ),
+            output_contract=OutputContract(
+                contract_id=case.agent_definition.output_contract.contract_id,
+                version=case.agent_definition.output_contract.version,
+                schema=FROZEN_OUTPUT_SCHEMA,
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            ),
+        )
+        registry = DefinitionRegistry()
+        registry.register(definition)
+        creator = Runner(registry=registry, store=runtime.run_store, owner="test-creator")
+        await creator.create_run(
+            definition.definition_id,
+            definition.version,
+            json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            run_id=case.framework_run_id,
+        )
+        waiting_runner = Runner(
+            registry=DefinitionRegistry(),
+            store=runtime.run_store,
+            owner="test-interrupted-worker",
+        )
+        waiting = await waiting_runner.resume_run(case.framework_run_id)
+        assert waiting.status.value == "WAITING"
+        await runtime.run_store.release_lease(
+            waiting.run_id,
+            "test-interrupted-worker",
+            expected_version=waiting.version,
+        )
+
+    asyncio.run(create_waiting_run())
+
+    recovered = asyncio.run(execute_frozen_decision_case(case, runtime))
+
+    assert recovered.run_id == case.framework_run_id
+    assert recovered.status == "SUCCEEDED"
+    assert recovered.output is not None
+    assert ExternalResult.model_validate_json(recovered.output) == case.expected_external_result

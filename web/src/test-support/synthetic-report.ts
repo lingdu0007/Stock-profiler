@@ -9,6 +9,6 @@ type SyntheticReportFixture = {
   report: FormalReport;
 };
 
-const syntheticReportFixture = fixture satisfies SyntheticReportFixture;
+const syntheticReportFixture = fixture as unknown as SyntheticReportFixture;
 
 export const syntheticReport = syntheticReportFixture.report;

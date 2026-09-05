@@ -20,7 +20,7 @@
     },
     "version_bundle": {
       "case_contract_version": "1.0.0",
-      "host_contract_version": "1.0.0",
+      "host_contract_version": "1.1.0",
       "host_application_version": "0.1.0.dev0",
       "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "agent_definition_id": "synthetic-frozen-decision-case",
@@ -28,7 +28,7 @@
       "model_adapter_id": "m-agent-deterministic-model-adapter",
       "routing_policy_version": "d0-single-definition-route-v1",
       "output_contract_version": "1.0.0",
-      "report_projection_contract_version": "1.0.0",
+      "report_projection_contract_version": "1.1.0",
       "m_agent_version": "0.5.0",
       "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl",
       "m_agent_wheel_sha256": "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
@@ -41,6 +41,53 @@
         "All required fictional evidence records are present.",
         "The output is D0 synthetic evidence and is not a recommendation."
       ]
-    }
+    },
+    "stage_results": [
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_TERMINAL",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": []
+      },
+      {
+        "phase": "HOST_VALIDATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "FROZEN_RESULT_MATCH",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": []
+      },
+      {
+        "phase": "BUSINESS_COMMIT",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "HOST_RESULT_SAVED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": []
+      },
+      {
+        "phase": "PUBLICATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "EVENT_COMMITTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": []
+      }
+    ],
+    "corrects_event_id": null
   }
 }

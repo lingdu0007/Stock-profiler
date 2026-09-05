@@ -12,12 +12,13 @@ from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 
 FROZEN_CASE_CONTRACT_VERSION = "1.0.0"
-FROZEN_HOST_CONTRACT_VERSION = "1.0.0"
+FROZEN_HOST_CONTRACT_VERSION = "1.1.0"
 FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
-FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.0.0"
+FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "1.1.0"
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
+FROZEN_CORRECTION_CONTRACT_VERSION = "1.0.0"
 
 
 class FrozenContract(BaseModel):
@@ -80,6 +81,66 @@ class ExternalResult(FrozenContract):
     key_reasons: tuple[str, ...]
 
 
+class GateResult(FrozenContract):
+    """One deterministic gate evaluated during a saved decision stage."""
+
+    gate_id: str
+    status: Literal["PASSED", "FAILED"]
+
+
+DecisionResultStatus = Literal[
+    "SUCCEEDED",
+    "REJECTED",
+    "ABSTAINED",
+    "FAILED",
+    "PENDING",
+    "EXPIRED",
+    "EXECUTION_BLOCKED",
+    "UNKNOWN",
+]
+
+FrameworkRunStatus = Literal[
+    "CREATED",
+    "RUNNING",
+    "WAITING",
+    "SUCCEEDED",
+    "REJECTED",
+    "FAILED",
+    "CANCELLED",
+]
+StageStatus = Literal[
+    "CREATED",
+    "RUNNING",
+    "WAITING",
+    "SUCCEEDED",
+    "REJECTED",
+    "ABSTAINED",
+    "FAILED",
+    "PENDING",
+    "EXPIRED",
+    "EXECUTION_BLOCKED",
+    "UNKNOWN",
+    "CANCELLED",
+]
+BusinessCommitStatus = Literal["NOT_ATTEMPTED", "COMMITTED", "UNKNOWN"]
+
+
+class StageResult(FrozenContract):
+    """A phase-specific outcome; lifecycle states have no global terminal meaning."""
+
+    phase: Literal[
+        "FRAMEWORK_RUN",
+        "HOST_VALIDATION",
+        "BUSINESS_COMMIT",
+        "PUBLICATION",
+        "NOTIFICATION",
+        "CORRECTION",
+    ]
+    status: StageStatus
+    gate_results: tuple[GateResult, ...]
+    reasons: tuple[str, ...]
+
+
 class FormalReport(FrozenContract):
     """Read-only delivery projection derived from one committed host event."""
 
@@ -95,6 +156,18 @@ class FormalReport(FrozenContract):
     evidence_clock: EvidenceClock
     version_bundle: DecisionCaseVersionBundle
     result: ExternalResult
+    stage_results: tuple[StageResult, ...]
+    corrects_event_id: str | None = None
+
+
+class NotificationAttempt(FrozenContract):
+    """One append-only attempt to point a user back to an existing formal report."""
+
+    notification_attempt_id: str
+    report_version_id: str
+    event_id: str
+    status: Literal["SUCCEEDED", "FAILED"]
+    reasons: tuple[str, ...]
 
 
 class DecisionCaseExecution(FrozenContract):
@@ -104,9 +177,19 @@ class DecisionCaseExecution(FrozenContract):
     framework_run_id: str
     decision_event_id: str
     report_version_id: str
-    framework_run_status: Literal["SUCCEEDED"]
-    business_commit_status: Literal["COMMITTED"]
-    publication_status: Literal["PUBLISHED"]
+    framework_run_status: FrameworkRunStatus
+    business_result_status: DecisionResultStatus | None
+    business_commit_status: BusinessCommitStatus
+    publication_status: Literal["PUBLISHED", "CLOSED"]
+    report: FormalReport | None
+    stage_results: tuple[StageResult, ...]
+
+
+class DecisionCaseCorrection(FrozenContract):
+    """A replayable correction that preserves the original report as a separate fact."""
+
+    original_event_id: str
+    original_report_version_id: str
     report: FormalReport
 
 
@@ -120,6 +203,8 @@ class DecisionEventFact(FrozenContract):
     result: ExternalResult
     validation_status: str
     committed_at: str
+    stage_results: tuple[StageResult, ...]
+    corrects_event_id: str | None = None
 
     def formal_report(self, report_version_id: str) -> FormalReport:
         """Project this complete append-only fact into its one read-only report."""
@@ -136,6 +221,16 @@ class DecisionEventFact(FrozenContract):
             evidence_clock=self.case.evidence_clock,
             version_bundle=self.case.version_bundle,
             result=self.result,
+            stage_results=(
+                *self.stage_results,
+                StageResult(
+                    phase="PUBLICATION",
+                    status="SUCCEEDED",
+                    gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
+                    reasons=(),
+                ),
+            ),
+            corrects_event_id=self.corrects_event_id,
         )
 
 
@@ -248,6 +343,30 @@ class FrozenDecisionCase(FrozenContract):
             },
         )
 
+    def correction_event_id(self, original_event_id: str) -> str:
+        """Allocate a separate append-only event identity for the sole D0 correction."""
+        return _stable_id(
+            "decision-correction",
+            {
+                "business_object_id": self.business_object_id,
+                "original_event_id": original_event_id,
+                "correction_contract_version": FROZEN_CORRECTION_CONTRACT_VERSION,
+                "version_bundle": self.version_bundle.model_dump(mode="json"),
+            },
+        )
+
+    def correction_report_version_id(self, original_event_id: str) -> str:
+        """Keep a correction report identity distinct from both source identities."""
+        return _stable_id(
+            "report-correction",
+            {
+                "correction_event_id": self.correction_event_id(original_event_id),
+                "report_projection_contract_version": (
+                    self.version_bundle.report_projection_contract_version
+                ),
+            },
+        )
+
 
 def load_frozen_decision_case(settings: Settings) -> FrozenDecisionCase:
     """Bind the declared synthetic case to the exact configured host build."""
@@ -287,12 +406,49 @@ _COMPLETE_SYNTHETIC_INPUT = {
 
 def host_validates_external_result(case: FrozenDecisionCase, result: ExternalResult) -> bool:
     """Accept only the expected result from the complete frozen synthetic input."""
-    return (
+    return host_validation_result(case, result).status == "SUCCEEDED"
+
+
+def host_validation_result(
+    case: FrozenDecisionCase, result: ExternalResult
+) -> StageResult:
+    """Classify a typed framework result without collapsing host outcomes."""
+    valid_frozen_input = (
         case.synthetic
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
         and has_complete_synthetic_input(case.input)
-        and result == case.expected_external_result
     )
+    if valid_frozen_input and result == case.expected_external_result:
+        return StageResult(
+            phase="HOST_VALIDATION",
+            status="SUCCEEDED",
+            gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="PASSED"),),
+            reasons=(),
+        )
+    status = _SYNTHETIC_OUTCOME_STATUSES.get(result.outcome_code)
+    if valid_frozen_input and status is not None:
+        return StageResult(
+            phase="HOST_VALIDATION",
+            status=status,
+            gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="FAILED"),),
+            reasons=(result.outcome_code,),
+        )
+    return StageResult(
+        phase="HOST_VALIDATION",
+        status="FAILED",
+        gate_results=(GateResult(gate_id="FROZEN_RESULT_MATCH", status="FAILED"),),
+        reasons=("UNSUPPORTED_SYNTHETIC_RESULT",),
+    )
+
+
+_SYNTHETIC_OUTCOME_STATUSES: dict[str, DecisionResultStatus] = {
+    "SYNTHETIC_INPUT_REJECTED": "REJECTED",
+    "SYNTHETIC_RESULT_ABSTAINED": "ABSTAINED",
+    "SYNTHETIC_RESULT_FAILED": "FAILED",
+    "SYNTHETIC_RESULT_PENDING": "PENDING",
+    "SYNTHETIC_RESULT_EXPIRED": "EXPIRED",
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": "EXECUTION_BLOCKED",
+}
 
 
 def has_complete_synthetic_input(value: dict[str, Any]) -> bool:

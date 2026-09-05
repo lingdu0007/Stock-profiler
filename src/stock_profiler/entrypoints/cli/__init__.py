@@ -18,6 +18,7 @@ from stock_profiler.entrypoints.cli.service import (
     version_snapshot,
 )
 from stock_profiler.modules.decision_cases.service import (
+    correct_default_frozen_decision_case,
     replay_default_frozen_decision_case,
     run_default_frozen_decision_case,
 )
@@ -34,6 +35,7 @@ def main() -> None:
             "process-health",
             "decision-case-run",
             "decision-case-replay",
+            "decision-case-correct",
             "host-console-grant",
         ),
     )
@@ -56,6 +58,15 @@ def main() -> None:
         except ValueError as error:
             parser.error(str(error))
         print(execution.model_dump_json())
+        return
+    if args.command == "decision-case-correct":
+        if args.business_identity is None:
+            parser.error("decision-case-correct requires --business-identity")
+        try:
+            correction = correct_default_frozen_decision_case(settings, args.business_identity)
+        except ValueError as error:
+            parser.error(str(error))
+        print(correction.model_dump_json())
         return
     if args.command == "host-console-grant":
         if args.purpose is None:
