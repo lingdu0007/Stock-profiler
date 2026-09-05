@@ -574,16 +574,12 @@ class FrozenDecisionCase(FrozenContract):
 
     def correction_event_id(self, original_event_id: str) -> str:
         """Allocate a separate append-only event identity for the sole D0 correction."""
-        version_bundle = self.version_bundle.model_dump(mode="json")
-        version_bundle.pop("host_application_version")
-        version_bundle.pop("host_source_sha")
         return _stable_id(
             "decision-correction",
             {
                 "business_object_id": self.business_object_id,
                 "original_event_id": original_event_id,
                 "correction_contract_version": FROZEN_CORRECTION_CONTRACT_VERSION,
-                "version_bundle": version_bundle,
             },
         )
 
@@ -593,9 +589,7 @@ class FrozenDecisionCase(FrozenContract):
             "report-correction",
             {
                 "correction_event_id": self.correction_event_id(original_event_id),
-                "report_projection_contract_version": (
-                    self.version_bundle.report_projection_contract_version
-                ),
+                "report_projection_contract_version": FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
             },
         )
 

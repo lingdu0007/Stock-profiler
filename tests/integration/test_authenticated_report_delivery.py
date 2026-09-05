@@ -15,6 +15,7 @@ from stock_profiler.adapters.authentication.passkeys import (
 from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
     DecisionLedger,
+    FormalReportCommitUncertainError,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
@@ -129,6 +130,42 @@ def test_api_does_not_expose_a_report_while_a_business_commit_is_closed(
     assert closed.report is None
     assert response.status_code == 404
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_api_keeps_an_uncertain_publication_closed_until_the_original_report_recovers(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_report_commit(self: DecisionLedger, _connection: object, _fact: object) -> None:
+        raise FormalReportCommitUncertainError("synthetic report commit uncertainty")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "publish_report", fail_report_commit)
+        closed = run_default_frozen_decision_case(migrated_settings)
+
+    client, _ = _authenticated_client_with_csrf(migrated_settings, monkeypatch)
+    closed_response = client.get(f"/api/v1/reports/{closed.report_version_id}")
+
+    assert closed.publication_status == "CLOSED"
+    assert closed.report is None
+    assert closed_response.status_code == 404
+    assert closed_response.headers["cache-control"] == "no-store"
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+    recovered_response = client.get(f"/api/v1/reports/{closed.report_version_id}")
+
+    assert recovered.publication_status == "PUBLISHED"
+    assert recovered.report is not None
+    assert recovered.report.event_id == closed.decision_event_id
+    assert recovered_response.status_code == 200
+    assert recovered_response.headers["cache-control"] == "no-store"
+    assert [
+        (stage["status"], stage["reasons"])
+        for stage in recovered_response.json()["stage_results"]
+        if stage["phase"] == "PUBLICATION"
+    ] == [
+        ("UNKNOWN", ["PUBLICATION_COMMIT_UNCERTAIN"]),
+        ("SUCCEEDED", []),
+    ]
 
 
 def test_passkey_ceremonies_require_the_configured_origin_and_the_session_cookie_is_host_only(

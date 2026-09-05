@@ -134,7 +134,7 @@ def correct_default_frozen_decision_case(
             connection,
         )
         if correction_event is None:
-            correction_case = _current_report_projection_case(original_event.case, case)
+            correction_case = _correction_case(original_event.case)
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
@@ -278,6 +278,12 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                         )
                     else:
                         execution_case = mapping.case
+                    if _has_durable_framework_history(
+                        ledger.get_stage_results(case.business_object_id, connection)
+                    ):
+                        execution_case = execution_case.model_copy(
+                            update={"recovery_framework_run_id": mapping.framework_run_id}
+                        )
                 else:
                     execution_case = None
             if fact is None:
@@ -354,6 +360,11 @@ def _serialize_local_framework_execution(business_object_id: str) -> Iterator[No
         lock = _FRAMEWORK_EXECUTION_LOCKS.setdefault(business_object_id, Lock())
     with lock:
         yield
+
+
+def _has_durable_framework_history(stage_results: tuple[StageResult, ...]) -> bool:
+    """Require the persisted M-Agent Run once the host observed a transition."""
+    return any(stage_result.phase == "FRAMEWORK_RUN" for stage_result in stage_results)
 
 
 def _commit_framework_result(
@@ -502,7 +513,10 @@ def _commit_framework_result(
             execution_case,
             framework_run_status=framework.status,
             business_result_status=business_result_status_from_stage(business_result),
-            business_lifecycle=business_lifecycle_from_stage(uncertain_commit),
+            business_lifecycle=(
+                business_lifecycle_from_stage(business_result)
+                or business_lifecycle_from_stage(uncertain_commit)
+            ),
             business_commit_status="UNKNOWN",
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
@@ -533,7 +547,7 @@ def _commit_framework_result(
             execution_case,
             framework_run_status=framework.status,
             business_result_status=business_result_status_from_stage(business_result),
-            business_lifecycle=None,
+            business_lifecycle=business_lifecycle_from_stage(business_result),
             business_commit_status="FAILED",
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
@@ -558,7 +572,7 @@ def _publish_committed_fact(
             report_version_id=fact.case.report_version_id_for_event(fact.decision_event_id),
             framework_run_status="SUCCEEDED",
             business_result_status=_business_result_status_from_stages(fact.stage_results),
-            business_lifecycle=None,
+            business_lifecycle=_business_lifecycle_from_stages(fact.stage_results),
             business_commit_status="COMMITTED",
             stage_results=ledger.get_stage_results(fact.business_object_id, connection),
         )
@@ -903,14 +917,11 @@ def _record_correction_commit_failure(
     )
 
 
-def _current_report_projection_case(
-    original_case: FrozenDecisionCase,
-    current_case: FrozenDecisionCase,
-) -> FrozenDecisionCase:
-    """Write corrections under the build that creates them without replacing old evidence."""
+def _correction_case(original_case: FrozenDecisionCase) -> FrozenDecisionCase:
+    """Keep the sole D0 correction on the original frozen event contract."""
     return original_case.model_copy(
         update={
-            "version_bundle": current_case.version_bundle.model_copy(
+            "version_bundle": original_case.version_bundle.model_copy(
                 update={
                     "report_projection_contract_version": (
                         FROZEN_REPORT_PROJECTION_CONTRACT_VERSION

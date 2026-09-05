@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import get_context
 from pathlib import Path
@@ -483,7 +484,7 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
     }
 
 
-def test_actual_runtime_waiting_run_recovers_without_a_replacement_identity(
+def test_actual_runtime_waiting_run_recovers_to_a_terminal_result_without_a_replacement_identity(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -521,7 +522,7 @@ def test_actual_runtime_waiting_run_recovers_without_a_replacement_identity(
             created.run_id,
             expected_version=created.version,
             status=RunStatus.WAITING,
-            waiting_reason="UNCERTAIN_NON_IDEMPOTENT",
+            waiting_reason="DEFINITION_UNAVAILABLE",
         )
         assert waiting.status is RunStatus.WAITING
 
@@ -532,16 +533,16 @@ def test_actual_runtime_waiting_run_recovers_without_a_replacement_identity(
 
     assert recovered.framework_run_id == case.framework_run_id
     assert replayed.framework_run_id == case.framework_run_id
-    assert recovered.framework_run_status == "WAITING"
-    assert replayed.framework_run_status == "WAITING"
-    assert recovered.publication_status == "CLOSED"
-    assert replayed.publication_status == "CLOSED"
-    assert recovered.report is None
-    assert replayed.report is None
+    assert recovered.framework_run_status == "SUCCEEDED"
+    assert replayed.framework_run_status == "SUCCEEDED"
+    assert recovered.publication_status == "PUBLISHED"
+    assert replayed.publication_status == "PUBLISHED"
+    assert recovered.report is not None
+    assert replayed.report == recovered.report
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
-        "decision_events": 0,
-        "reports": 0,
+        "decision_events": 1,
+        "reports": 1,
     }
 
 
@@ -580,11 +581,15 @@ def test_durable_framework_creation_is_recorded_before_framework_start_completes
         ("CREATED", ("FRAMEWORK_RUN_CREATED",)),
     ]
 
-    recovered = run_default_frozen_decision_case(migrated_settings)
+    with sqlite3.connect(runtime.m_agent_run_store_path) as connection:
+        connection.execute("DELETE FROM run_payloads WHERE run_id = ?", (case.framework_run_id,))
+        connection.execute("DELETE FROM runs WHERE run_id = ?", (case.framework_run_id,))
 
-    assert recovered.framework_run_id == case.framework_run_id
-    assert recovered.publication_status == "PUBLISHED"
-    assert recovered.stage_results[0] == saved[0]
+    with pytest.raises(DecisionEventCommitError, match="durable framework recovery failed"):
+        run_default_frozen_decision_case(migrated_settings)
+
+    assert ledger.get_stage_results(case.business_object_id) == saved
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
 
 
 def test_repeated_framework_waiting_observations_are_preserved(
@@ -1985,6 +1990,137 @@ def test_cross_build_correction_recovery_reuses_the_first_attempt_identity(
     assert recovered.report.report_version_id == case.correction_report_version_id(
         original.report.event_id
     )
+
+
+def test_correction_recovery_keeps_the_first_identity_across_semantic_bundle_changes(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = run_default_frozen_decision_case(migrated_settings)
+    assert original.report is not None
+    case = load_frozen_decision_case(migrated_settings)
+    original_commit_event = DecisionLedger.commit_event
+    attempted_correction_event_ids: list[str] = []
+
+    def fail_correction_commit(
+        self: DecisionLedger,
+        connection: Connection,
+        *,
+        case: FrozenDecisionCase,
+        framework_run_id: str,
+        result: ExternalResult,
+        stage_results: tuple[StageResult, ...],
+        decision_event_id: str | None = None,
+        corrects_event_id: str | None = None,
+        committed_at: str | None = None,
+        generated_at: str | None = None,
+    ) -> DecisionEventFact:
+        if corrects_event_id is not None:
+            assert decision_event_id is not None
+            attempted_correction_event_ids.append(decision_event_id)
+            raise DecisionEventCommitUncertainError("synthetic correction commit interruption")
+        return original_commit_event(
+            self,
+            connection,
+            case=case,
+            framework_run_id=framework_run_id,
+            result=result,
+            stage_results=stage_results,
+            decision_event_id=decision_event_id,
+            corrects_event_id=corrects_event_id,
+            committed_at=committed_at,
+            generated_at=generated_at,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "commit_event", fail_correction_commit)
+        with pytest.raises(DecisionEventCommitError, match="correction commit"):
+            correct_default_frozen_decision_case(
+                migrated_settings,
+                case.business_identity,
+            )
+
+    changed_bundle = case.version_bundle.model_copy(
+        update={
+            "model_adapter_id": "d0-replacement-model-adapter",
+            "routing_policy_version": "d0-replacement-routing-policy",
+        }
+    )
+    changed_case = case.model_copy(
+        update={
+            "version_bundle": changed_bundle,
+            "agent_definition": case.agent_definition.model_copy(
+                update={"model_adapter_id": changed_bundle.model_adapter_id}
+            ),
+        }
+    )
+    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: changed_case)
+
+    recovered = correct_default_frozen_decision_case(
+        migrated_settings,
+        case.business_identity,
+    )
+
+    assert attempted_correction_event_ids == [recovered.report.event_id]
+    assert recovered.report.event_id == case.correction_event_id(original.report.event_id)
+    assert recovered.report.report_version_id == case.correction_report_version_id(
+        original.report.event_id
+    )
+    assert recovered.report.version_bundle == case.version_bundle
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "failure_boundary"),
+    (
+        ("result-pending", "BUSINESS_COMMIT"),
+        ("result-expired", "PUBLICATION"),
+        ("result-execution-blocked", "PUBLICATION"),
+        ("result-unknown", "BUSINESS_COMMIT"),
+    ),
+)
+def test_lifecycle_owner_survives_closed_commit_and_publication_boundaries(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_name: str,
+    failure_boundary: Literal["BUSINESS_COMMIT", "PUBLICATION"],
+) -> None:
+    case = _load_result_family_fixture(fixture_name)
+    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: case)
+
+    if failure_boundary == "BUSINESS_COMMIT":
+
+        def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
+            raise DecisionEventCommitError("synthetic event storage failure")
+
+        monkeypatch.setattr(DecisionLedger, "commit_event", fail_commit)
+    else:
+
+        def fail_publication(
+            self: DecisionLedger,
+            _connection: object,
+            _fact: object,
+            _report_version_id: str | None = None,
+        ) -> FormalReport:
+            raise DecisionEventCommitError("synthetic report storage failure")
+
+        monkeypatch.setattr(DecisionLedger, "publish_report", fail_publication)
+
+    closed = run_default_frozen_decision_case(migrated_settings)
+    expected_stage = next(
+        stage
+        for stage in closed.stage_results
+        if stage.phase
+        in {
+            "ADJUDICATION_LIFECYCLE",
+            "VALIDITY_LIFECYCLE",
+            "EXECUTION_LIFECYCLE",
+        }
+    )
+
+    assert closed.publication_status == "CLOSED"
+    assert closed.business_lifecycle is not None
+    assert closed.business_lifecycle.phase == expected_stage.phase
+    assert closed.business_lifecycle.status == expected_stage.status
 
 
 def test_read_failure_does_not_remove_the_published_report(

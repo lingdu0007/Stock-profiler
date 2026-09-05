@@ -90,7 +90,7 @@
     "outcome_code": "SYNTHETIC_RESULT_EXPIRED",
     "summary": "Frozen synthetic result SYNTHETIC_RESULT_EXPIRED.",
     "key_reasons": [
-      "Reason for SYNTHETIC_RESULT_EXPIRED."
+      "The frozen D0 validity window has expired."
     ]
   }
 }
