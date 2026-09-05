@@ -4,6 +4,108 @@
  */
 
 export interface paths {
+    "/api/v1/auth/host-console/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Host Console Grant */
+        post: operations["host_console_grant_api_v1_auth_host_console_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/authentication/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authentication Options */
+        post: operations["authentication_options_api_v1_auth_passkeys_authentication_options_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/authentication/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authentication Verify */
+        post: operations["authentication_verify_api_v1_auth_passkeys_authentication_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/registration/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Registration Options */
+        post: operations["registration_options_api_v1_auth_passkeys_registration_options_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/registration/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Registration Verify */
+        post: operations["registration_verify_api_v1_auth_passkeys_registration_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Logout */
+        delete: operations["logout_api_v1_auth_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/diagnostics/safety-capabilities": {
         parameters: {
             query?: never;
@@ -41,10 +143,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/{report_version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Formal Report */
+        get: operations["formal_report_api_v1_reports__report_version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ChallengeDto */
+        ChallengeDto: {
+            /** Challenge Id */
+            challenge_id: string;
+            /** Options */
+            options: {
+                [key: string]: unknown;
+            };
+        };
+        /** CredentialRequest */
+        CredentialRequest: {
+            /** Challenge Id */
+            challenge_id: string;
+            /** Credential */
+            credential: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * DecisionCaseVersionBundle
+         * @description The complete version set that participates in replay identity.
+         */
+        DecisionCaseVersionBundle: {
+            /** Agent Definition Id */
+            agent_definition_id: string;
+            /** Agent Definition Version */
+            agent_definition_version: string;
+            /** Case Contract Version */
+            case_contract_version: string;
+            /** Host Contract Version */
+            host_contract_version: string;
+            /** M Agent Release Commit */
+            m_agent_release_commit: string;
+            /** M Agent Version */
+            m_agent_version: string;
+            /** Output Contract Version */
+            output_contract_version: string;
+        };
+        /**
+         * EvidenceClock
+         * @description The immutable fact, publication, acquisition, and validation clocks.
+         */
+        EvidenceClock: {
+            /** Acquired At */
+            acquired_at: string;
+            /** Fact Effective At */
+            fact_effective_at: string;
+            /** Source Published At */
+            source_published_at: string;
+            /** Validated At */
+            validated_at: string;
+        };
+        /**
+         * ExternalResult
+         * @description The user-visible result expected from this original synthetic fixture.
+         */
+        ExternalResult: {
+            /** Key Reasons */
+            key_reasons: string[];
+            /** Outcome Code */
+            outcome_code: string;
+            /** Summary */
+            summary: string;
+        };
+        /**
+         * FormalReport
+         * @description Read-only delivery projection derived from one committed host event.
+         */
+        FormalReport: {
+            /** Business Object Id */
+            business_object_id: string;
+            /** Case Id */
+            case_id: string;
+            /** Event Id */
+            event_id: string;
+            evidence_clock: components["schemas"]["EvidenceClock"];
+            /** Framework Run Id */
+            framework_run_id: string;
+            /** Generated At */
+            generated_at: string;
+            /** Knowledge Cutoff */
+            knowledge_cutoff: string;
+            /** Qualification Scope */
+            qualification_scope: string;
+            /** Report Version Id */
+            report_version_id: string;
+            result: components["schemas"]["ExternalResult"];
+            /** Synthetic */
+            synthetic: boolean;
+            version_bundle: components["schemas"]["DecisionCaseVersionBundle"];
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HostGrantRequest */
+        HostGrantRequest: {
+            /**
+             * Purpose
+             * @enum {string}
+             */
+            purpose: "bootstrap" | "recovery";
+        };
         /**
          * SafetyCapabilitiesDiagnosticDto
          * @description Machine-readable official-project safety invariants.
@@ -56,6 +279,19 @@ export interface components {
             public_recommendation_service: boolean;
             /** Single User */
             single_user: boolean;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
         };
         /**
          * VersionDiagnosticDto
@@ -84,6 +320,209 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    host_console_grant_api_v1_auth_host_console_grants_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Host-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authentication_options_api_v1_auth_passkeys_authentication_options_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeDto"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authentication_verify_api_v1_auth_passkeys_authentication_verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    registration_options_api_v1_auth_passkeys_registration_options_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Host-Console-Grant": string;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeDto"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    registration_verify_api_v1_auth_passkeys_registration_verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    logout_api_v1_auth_session_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     safety_capabilities_diagnostic_api_v1_diagnostics_safety_capabilities_get: {
         parameters: {
             query?: never;
@@ -120,6 +559,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionDiagnosticDto"];
+                };
+            };
+        };
+    };
+    formal_report_api_v1_reports__report_version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_version_id: string;
+            };
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormalReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

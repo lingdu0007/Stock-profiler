@@ -8,18 +8,21 @@ order-writing capability.
 The current `0.1.0.dev0` baseline provides:
 
 - a Python 3.11 host with a pinned M-Agent `0.5.0` release wheel;
-- a CLI and a FastAPI `/api/v1/diagnostics/version` contract that expose one
-  version bundle;
+- one frozen, original D0 synthetic decision case with immutable clocks,
+  version bundle, independent business/Run/event/report identities, and
+  deterministic replay;
+- a CLI acceptance path and authenticated, read-only FastAPI report projection;
 - startup-frozen configuration, privacy-safe structured logging, health
   diagnostics, and separate SQLite ownership for application state and
   M-Agent run state;
-- a React/PWA shell generated from the OpenAPI contract;
+- a React/PWA report viewer generated from the OpenAPI contract, with no
+  runtime API cache;
 - reproducible dependency locks, container build inputs, and public synthetic
   verification only.
 
-It does not implement investment conclusions, durable agent runs, account
-access, authentication flows, market or broker integrations, reports,
-notifications, or orders.
+It does not implement real data access, investment conclusions, real
+qualification, provider or broker integrations, notifications, order writing,
+or account actions.
 
 ## Quick Start
 
@@ -29,15 +32,21 @@ make verify
 make dev
 ```
 
-The CLI has no network business behavior:
+The CLI calls host application modules directly and makes no HTTP request:
 
 ```bash
 uv run stock-profiler version
 uv run stock-profiler doctor
+uv run stock-profiler decision-case-run
+uv run stock-profiler decision-case-replay \
+  --business-identity synthetic:decision:orbital-mosaic:001
 ```
 
-The development API serves the diagnostic contract at
-`http://127.0.0.1:8000/api/v1/diagnostics/version`.
+The D0 case is explicitly synthetic and cannot be read as a recommendation,
+historical result, qualification, or order path. The report endpoint is
+`GET /api/v1/reports/{report_version_id}` and requires a valid Passkey session.
+Passkey registration has no public browser entry: it begins from a host-console
+bootstrap or recovery grant that expires after ten minutes.
 
 ## Controlled Compose
 
@@ -59,9 +68,13 @@ Replace every angle-bracket and absolute-path placeholder with deployment-local
 values outside Git. Sensitive values are read only from `/run/secrets`; they
 are not accepted as environment variables. The tracked files under
 `deploy/secrets/` are immutable synthetic templates used only for public CI
-Compose rendering and must never be used for a production deployment. The
-current baseline declares authentication configuration but does not provide an
-authentication route.
+Compose rendering and must never be used for a production deployment.
+
+The API accepts only the configured Origin for authentication-state changes.
+Its opaque `__Host-stock_profiler_session` cookie is `Secure`, `HttpOnly`, and
+`SameSite=Lax`; sessions use a five-minute challenge, seven-day idle expiry,
+thirty-day absolute expiry, and ten-minute recent-reauthentication contract.
+Private authentication and report responses send `Cache-Control: no-store`.
 
 ```bash
 make compose-config

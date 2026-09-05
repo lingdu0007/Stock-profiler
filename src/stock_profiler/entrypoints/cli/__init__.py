@@ -11,17 +11,43 @@ from stock_profiler.entrypoints.cli.service import (
     process_health_snapshot,
     version_snapshot,
 )
+from stock_profiler.modules.decision_cases.service import (
+    replay_default_frozen_decision_case,
+    run_default_frozen_decision_case,
+)
 
 
 def main() -> None:
     """Render a version or diagnostic snapshot without making an HTTP request."""
     parser = argparse.ArgumentParser(prog="stock-profiler")
-    parser.add_argument("command", choices=("version", "doctor", "process-health"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "version",
+            "doctor",
+            "process-health",
+            "decision-case-run",
+            "decision-case-replay",
+        ),
+    )
     parser.add_argument("process", nargs="?", choices=("api", "scheduler", "worker"))
+    parser.add_argument("--business-identity")
     args = parser.parse_args()
     settings = load_settings()
     if args.command == "version":
         print(json.dumps(version_snapshot(settings), sort_keys=True))
+        return
+    if args.command == "decision-case-run":
+        print(run_default_frozen_decision_case(settings).model_dump_json())
+        return
+    if args.command == "decision-case-replay":
+        if args.business_identity is None:
+            parser.error("decision-case-replay requires --business-identity")
+        try:
+            execution = replay_default_frozen_decision_case(settings, args.business_identity)
+        except ValueError as error:
+            parser.error(str(error))
+        print(execution.model_dump_json())
         return
     if args.command == "doctor":
         diagnostic = diagnostic_snapshot(settings)
