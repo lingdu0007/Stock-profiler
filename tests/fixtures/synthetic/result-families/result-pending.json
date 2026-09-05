@@ -90,7 +90,7 @@
     "outcome_code": "SYNTHETIC_RESULT_PENDING",
     "summary": "Frozen synthetic result SYNTHETIC_RESULT_PENDING.",
     "key_reasons": [
-      "The frozen D0 case remains pending adjudication."
+      "The scenario leaves the adjudication gate unresolved."
     ]
   }
 }

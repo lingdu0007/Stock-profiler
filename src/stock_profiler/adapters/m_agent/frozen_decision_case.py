@@ -222,7 +222,11 @@ async def execute_frozen_decision_case(
             await observe(
                 FrameworkRunTransition(
                     status=cast(FrameworkRunStatus, run.status.value),
-                    reason="FRAMEWORK_RUN_RECOVERED",
+                    reason=(
+                        run.waiting_reason
+                        if run.status.value == "WAITING" and run.waiting_reason is not None
+                        else "FRAMEWORK_RUN_RECOVERED"
+                    ),
                 )
             )
             try:
@@ -269,13 +273,7 @@ async def _recover_concurrent_run(
         try:
             return await runner.resume_run(run.run_id)
         except LeaseNotHeldError:
-            await observe(
-                FrameworkRunTransition(
-                    status=cast(FrameworkRunStatus, run.status.value),
-                    reason="FRAMEWORK_RUN_LEASE_HELD",
-                )
-            )
-            return run
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
         except _CONCURRENT_RUN_RECOVERY_ERRORS:
             await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
     raise ValueError("concurrent durable M-Agent Run did not become recoverable")
@@ -361,16 +359,16 @@ def _deterministic_model_response(case: FrozenDecisionCase) -> str:
 
 _SYNTHETIC_OUTCOME_REASONS: dict[str, str] = {
     "SYNTHETIC_INPUT_REJECTED": (
-        "The frozen host input was deliberately rejected by the D0 contract."
+        "The scenario's D0 host-input gate rejects the requested decision."
     ),
-    "SYNTHETIC_RESULT_ABSTAINED": (
-        "The frozen D0 case records an intentional business abstention."
+    "SYNTHETIC_RESULT_ABSTAINED": ("The scenario has no eligible synthetic action to record."),
+    "SYNTHETIC_RESULT_FAILED": "The scenario injects a deterministic business-stage fault.",
+    "SYNTHETIC_RESULT_PENDING": "The scenario leaves the adjudication gate unresolved.",
+    "SYNTHETIC_RESULT_EXPIRED": "The scenario's synthetic validity deadline has passed.",
+    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": (
+        "The scenario's synthetic host execution gate is unavailable."
     ),
-    "SYNTHETIC_RESULT_FAILED": ("The frozen D0 case records a deterministic business failure."),
-    "SYNTHETIC_RESULT_PENDING": "The frozen D0 case remains pending adjudication.",
-    "SYNTHETIC_RESULT_EXPIRED": "The frozen D0 validity window has expired.",
-    "SYNTHETIC_RESULT_EXECUTION_BLOCKED": "The frozen D0 execution path is unavailable.",
-    "SYNTHETIC_RESULT_UNKNOWN": "The frozen D0 adjudication outcome remains unknown.",
+    "SYNTHETIC_RESULT_UNKNOWN": "The scenario withholds a resolved adjudication outcome.",
 }
 
 

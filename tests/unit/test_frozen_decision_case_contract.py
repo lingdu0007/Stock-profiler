@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
+from threading import Thread
+from time import sleep
 
 import pytest
 from m_agent.adapters import DeterministicModelAdapter
@@ -296,7 +298,7 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
     ] == ["RUNNING", "SUCCEEDED"]
 
 
-def test_active_m_agent_lease_closes_publication_until_the_original_run_can_resume(
+def test_active_m_agent_lease_waits_for_the_original_run_to_resume(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -338,37 +340,36 @@ def test_active_m_agent_lease_closes_publication_until_the_original_run_can_resu
 
     asyncio.run(create_leased_run())
 
-    blocked = run_default_frozen_decision_case(migrated_settings)
-
-    assert blocked.framework_run_status == "CREATED"
-    assert blocked.business_commit_status == "NOT_ATTEMPTED"
-    assert blocked.publication_status == "CLOSED"
-    assert blocked.report is None
-    assert any(
-        stage.phase == "FRAMEWORK_RUN" and stage.reasons == ("FRAMEWORK_RUN_LEASE_HELD",)
-        for stage in blocked.stage_results
-    )
-
     async def release_leased_run() -> None:
-        run = await runtime.run_store.get_run(case.framework_run_id)
-        assert run is not None
-        await runtime.run_store.release_lease(
-            run.run_id,
-            "test-active-owner",
-            expected_version=run.version,
-        )
+        release_runtime = initialize_runtime_storage(migrated_settings)
+        try:
+            run = await release_runtime.run_store.get_run(case.framework_run_id)
+            assert run is not None
+            await release_runtime.run_store.release_lease(
+                run.run_id,
+                "test-active-owner",
+                expected_version=run.version,
+            )
+        finally:
+            release_runtime.run_store.close()
 
-    asyncio.run(release_leased_run())
+    def release_after_observation_starts() -> None:
+        sleep(0.05)
+        asyncio.run(release_leased_run())
 
+    release_worker = Thread(target=release_after_observation_starts)
+    release_worker.start()
     recovered = run_default_frozen_decision_case(migrated_settings)
+    release_worker.join(timeout=5)
 
+    assert not release_worker.is_alive()
     assert recovered.framework_run_id == case.framework_run_id
     assert recovered.decision_event_id == case.decision_event_id
     assert recovered.publication_status == "PUBLISHED"
     assert recovered.report is not None
 
 
-def test_framework_waiting_transition_keeps_the_final_waiting_reason(
+def test_framework_waiting_transition_preserves_the_observed_waiting_reason(
     migrated_settings: Settings,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -382,13 +383,13 @@ def test_framework_waiting_transition_keeps_the_final_waiting_reason(
             transitions=(
                 frozen_adapter.FrameworkRunTransition(
                     status="WAITING",
-                    reason="FRAMEWORK_RUN_RECOVERED",
+                    reason="FRAMEWORK_AWAITING_RESOLUTION",
                 ),
             ),
         ),
     )
 
     assert [(stage.status, stage.reasons) for stage in stages] == [
-        ("WAITING", ("FRAMEWORK_RUN_RECOVERED",)),
+        ("WAITING", ("FRAMEWORK_AWAITING_RESOLUTION",)),
         ("WAITING", ("FRAMEWORK_AWAITING_RESOLUTION",)),
     ]

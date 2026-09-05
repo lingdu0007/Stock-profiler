@@ -90,7 +90,7 @@
     "outcome_code": "SYNTHETIC_RESULT_FAILED",
     "summary": "Frozen synthetic result SYNTHETIC_RESULT_FAILED.",
     "key_reasons": [
-      "The frozen D0 case records a deterministic business failure."
+      "The scenario injects a deterministic business-stage fault."
     ]
   }
 }
