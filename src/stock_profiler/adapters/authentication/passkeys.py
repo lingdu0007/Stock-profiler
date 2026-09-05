@@ -257,9 +257,7 @@ class PasskeyAuthenticator:
             cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
         )
 
-    def refresh_session(
-        self, session_token: str | None, csrf_token: str | None
-    ) -> SessionAccess:
+    def refresh_session(self, session_token: str | None, csrf_token: str | None) -> SessionAccess:
         """Advance the idle clock only from a same-origin CSRF-protected request."""
         access = self.require_mutable_session(session_token, csrf_token)
         with self._engine.begin() as connection:
