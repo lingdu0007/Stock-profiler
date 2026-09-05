@@ -100,6 +100,7 @@ def _replay_frozen_case_in_child(
 def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     migrated_settings: Settings,
 ) -> None:
+    case = load_frozen_decision_case(migrated_settings)
     outcome = run_default_frozen_decision_case(migrated_settings)
 
     assert outcome.framework_run_status == "SUCCEEDED"
@@ -113,6 +114,7 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     assert outcome.report.synthetic is True
     assert outcome.report.qualification_scope == "D0_SYNTHETIC_CONTRACT_ONLY"
     assert outcome.report.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
+    assert outcome.report.generated_at == case.report_generated_at
     assert [stage.status for stage in outcome.stage_results if stage.phase == "FRAMEWORK_RUN"] == [
         "CREATED",
         "RUNNING",
@@ -1104,10 +1106,16 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
 def test_unmapped_v1_framework_run_recovers_without_creating_a_v2_replacement(
     migrated_settings: Settings,
 ) -> None:
-    current_case = load_frozen_decision_case(migrated_settings)
-    legacy_case = current_case.model_copy(
+    legacy_settings = migrated_settings.model_copy(
         update={
-            "version_bundle": current_case.version_bundle.model_copy(
+            "configuration_version": "0.1.1.dev0",
+            "source_sha": "b" * 40,
+        }
+    )
+    legacy_current_case = load_frozen_decision_case(legacy_settings)
+    legacy_case = legacy_current_case.model_copy(
+        update={
+            "version_bundle": legacy_current_case.version_bundle.model_copy(
                 update={
                     "case_contract_version": "1.0.0",
                     "host_contract_version": "1.0.0",
@@ -1849,6 +1857,7 @@ def test_cross_build_notification_and_correction_reuse_the_original_published_id
     )
     assert replayed_correction == initial_correction
     assert initial_correction.report.framework_run_id == initial.framework_run_id
+    assert initial_correction.report.version_bundle.host_source_sha == upgraded_settings.source_sha
     correction_case = load_frozen_decision_case(upgraded_settings)
     assert initial_correction.report.event_id == correction_case.correction_event_id(
         initial.decision_event_id
@@ -1888,7 +1897,7 @@ def test_correction_appends_a_new_report_that_references_the_original_event(
     assert correction.report.framework_run_id == original_report.framework_run_id
     assert correction.report.knowledge_cutoff == original_report.knowledge_cutoff
     assert correction.report.evidence_clock == original_report.evidence_clock
-    assert correction.report.generated_at != original_report.generated_at
+    assert correction.report.generated_at == original_report.generated_at
     assert (
         get_formal_report(original_report.report_version_id, migrated_settings) == original_report
     )
@@ -2492,7 +2501,7 @@ def test_stage_result_migration_retries_after_table_creation_is_interrupted(
                 text(
                     """
                     CREATE TABLE decision_stage_events (
-                        sequence INTEGER PRIMARY KEY,
+                        sequence INTEGER NOT NULL PRIMARY KEY,
                         stage_event_id VARCHAR(96) NOT NULL UNIQUE,
                         business_object_id VARCHAR(96) NOT NULL,
                         framework_run_id VARCHAR(96) NOT NULL,
@@ -2595,6 +2604,38 @@ def test_stage_result_migration_rejects_an_incompatible_nullable_column(
                     business_object_id VARCHAR(96) NOT NULL,
                     framework_run_id VARCHAR(96) NOT NULL,
                     decision_event_id VARCHAR(96) NOT NULL,
+                    stage_payload VARCHAR NOT NULL,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="incompatible table"):
+        command.upgrade(config, "0003_decision_stage_events")
+
+    load_settings.cache_clear()
+
+
+def test_stage_result_migration_rejects_an_extra_unique_constraint(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0002_decision_case_ledger")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_stage_events (
+                    sequence INTEGER NOT NULL PRIMARY KEY,
+                    stage_event_id VARCHAR(96) NOT NULL UNIQUE,
+                    business_object_id VARCHAR(96) NOT NULL UNIQUE,
+                    framework_run_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96),
                     stage_payload VARCHAR NOT NULL,
                     recorded_at VARCHAR(40) NOT NULL
                 )
@@ -3154,6 +3195,31 @@ def test_correction_migration_retries_after_notification_table_creation_is_inter
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
             "0005_persist_frozen_case_snapshots"
         )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_rebuilds_an_event_table_with_legacy_run_uniqueness(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE decision_events ADD COLUMN corrects_event_id VARCHAR(96)")
+        )
+
+    command.upgrade(config, "head")
+    original = run_default_frozen_decision_case(settings)
+    case = load_frozen_decision_case(settings)
+    correction = correct_default_frozen_decision_case(settings, case.business_identity)
+
+    assert original.report is not None
+    assert correction.report.framework_run_id == original.framework_run_id
 
     load_settings.cache_clear()
 
