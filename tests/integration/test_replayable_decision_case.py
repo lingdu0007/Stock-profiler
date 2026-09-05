@@ -9,7 +9,7 @@ from threading import Barrier
 from typing import Any, Literal
 
 import pytest
-from alembic import command
+from alembic import command, op
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
@@ -46,6 +46,15 @@ from stock_profiler.modules.decision_cases.service import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _load_result_family_fixture(name: str) -> FrozenDecisionCase:
+    payload = json.loads(
+        (ROOT / "tests" / "fixtures" / "synthetic" / "result-families" / f"{name}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return FrozenDecisionCase.model_validate(payload)
+
+
 def _replay_frozen_case_in_child(
     settings: Settings,
     start_together: Any,
@@ -79,6 +88,7 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     assert outcome.report.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
     assert [stage.status for stage in outcome.stage_results if stage.phase == "FRAMEWORK_RUN"] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
     ]
     assert [
@@ -153,6 +163,7 @@ def test_framework_success_and_unmatched_host_rejection_remain_distinct_and_clos
     assert outcome.report is None
     assert [stage.status for stage in outcome.stage_results if stage.phase == "FRAMEWORK_RUN"] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
     ]
     validation_stage = next(
@@ -187,6 +198,7 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
 
 @pytest.mark.parametrize(
     (
+        "fixture_name",
         "outcome_code",
         "expected_business_status",
         "expected_lifecycle_owner",
@@ -194,12 +206,48 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
         "published",
     ),
     (
-        ("SYNTHETIC_INPUT_REJECTED", "REJECTED", None, "BUSINESS_DECISION", True),
-        ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", None, "BUSINESS_DECISION", True),
-        ("SYNTHETIC_RESULT_FAILED", "FAILED", None, "BUSINESS_DECISION", True),
-        ("SYNTHETIC_RESULT_PENDING", None, "ADJUDICATION", "ADJUDICATION_LIFECYCLE", False),
-        ("SYNTHETIC_RESULT_EXPIRED", None, "VALIDITY", "VALIDITY_LIFECYCLE", False),
         (
+            "input-rejected",
+            "SYNTHETIC_INPUT_REJECTED",
+            "REJECTED",
+            None,
+            "BUSINESS_DECISION",
+            True,
+        ),
+        (
+            "result-abstained",
+            "SYNTHETIC_RESULT_ABSTAINED",
+            "ABSTAINED",
+            None,
+            "BUSINESS_DECISION",
+            True,
+        ),
+        (
+            "result-failed",
+            "SYNTHETIC_RESULT_FAILED",
+            "FAILED",
+            None,
+            "BUSINESS_DECISION",
+            True,
+        ),
+        (
+            "result-pending",
+            "SYNTHETIC_RESULT_PENDING",
+            None,
+            "ADJUDICATION",
+            "ADJUDICATION_LIFECYCLE",
+            False,
+        ),
+        (
+            "result-expired",
+            "SYNTHETIC_RESULT_EXPIRED",
+            None,
+            "VALIDITY",
+            "VALIDITY_LIFECYCLE",
+            False,
+        ),
+        (
+            "result-execution-blocked",
             "SYNTHETIC_RESULT_EXECUTION_BLOCKED",
             None,
             "EXECUTION",
@@ -207,6 +255,7 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
             False,
         ),
         (
+            "result-unknown",
             "SYNTHETIC_RESULT_UNKNOWN",
             None,
             "COMMIT_RECONCILIATION",
@@ -218,31 +267,16 @@ def test_terminal_framework_outcomes_pass_the_terminal_gate(
 def test_host_result_families_keep_their_own_saved_lifecycle(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
+    fixture_name: str,
     outcome_code: str,
     expected_business_status: str | None,
     expected_lifecycle_owner: str | None,
     expected_phase: str,
     published: bool,
 ) -> None:
-    case = load_frozen_decision_case(migrated_settings)
-
-    expected_result = ExternalResult(
-        outcome_code=outcome_code,
-        summary=f"Frozen synthetic result {outcome_code}.",
-        key_reasons=(f"Reason for {outcome_code}.",),
-    )
-    model_result = ExternalResult(
-        outcome_code=outcome_code,
-        summary=f"Frozen synthetic result {outcome_code}.",
-        key_reasons=(f"Reason for {outcome_code}.",),
-    )
-    variant_case = case.model_copy(update={"expected_external_result": expected_result})
+    variant_case = _load_result_family_fixture(fixture_name)
+    expected_result = variant_case.expected_external_result
     monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: variant_case)
-    monkeypatch.setattr(
-        frozen_adapter,
-        "_deterministic_model_response",
-        lambda _: model_result.model_dump_json(),
-    )
 
     outcome = run_default_frozen_decision_case(migrated_settings)
     replayed = run_default_frozen_decision_case(migrated_settings)
@@ -262,7 +296,7 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     assert outcome.report is not None if published else outcome.report is None
     assert [
         result.status for result in outcome.stage_results if result.phase == "FRAMEWORK_RUN"
-    ] == ["CREATED", "SUCCEEDED"]
+    ] == ["CREATED", "RUNNING", "SUCCEEDED"]
     assert [
         (result.phase, result.status)
         for result in outcome.stage_results
@@ -505,6 +539,7 @@ def test_real_m_agent_output_contract_failure_keeps_its_explicit_reason(
     assert outcome.report is None
     assert [(stage.phase, stage.status) for stage in outcome.stage_results] == [
         ("FRAMEWORK_RUN", "CREATED"),
+        ("FRAMEWORK_RUN", "RUNNING"),
         ("FRAMEWORK_RUN", "FAILED"),
     ]
     assert outcome.stage_results[-1].reasons == ("MODEL_CONTRACT_VIOLATION",)
@@ -712,6 +747,7 @@ def test_definite_event_commit_failure_closes_publication_until_the_original_ide
     assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
     assert [result.status for result in ledger.get_stage_results(failed.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
@@ -726,20 +762,24 @@ def test_definite_event_commit_failure_closes_publication_until_the_original_ide
     assert recovered.publication_status == "PUBLISHED"
     assert [(stage.phase, stage.status) for stage in recovered.report.stage_results] == [
         ("FRAMEWORK_RUN", "CREATED"),
+        ("FRAMEWORK_RUN", "RUNNING"),
         ("FRAMEWORK_RUN", "SUCCEEDED"),
         ("HOST_VALIDATION", "SUCCEEDED"),
         ("BUSINESS_DECISION", "SUCCEEDED"),
         ("BUSINESS_COMMIT", "FAILED"),
+        ("FRAMEWORK_RUN", "SUCCEEDED"),
         ("BUSINESS_COMMIT", "SUCCEEDED"),
         ("PUBLICATION", "SUCCEEDED"),
     ]
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
         "FAILED",
+        "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
     ]
@@ -813,7 +853,7 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
     assert recovered.publication_status == "PUBLISHED"
     assert [
         stage.status for stage in recovered.stage_results if stage.phase == "FRAMEWORK_RUN"
-    ] == ["CREATED", "SUCCEEDED"]
+    ] == ["CREATED", "RUNNING", "SUCCEEDED", "SUCCEEDED"]
 
 
 def test_legacy_mapping_without_a_snapshot_reuses_its_original_m_agent_run(
@@ -1051,6 +1091,7 @@ def test_uncertain_event_commit_closes_publication_until_the_original_identity_r
     assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
     assert [result.status for result in ledger.get_stage_results(uncertain.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
@@ -1066,10 +1107,12 @@ def test_uncertain_event_commit_closes_publication_until_the_original_identity_r
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
         "UNKNOWN",
+        "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
     ]
@@ -1148,6 +1191,7 @@ def test_connection_commit_failure_recovers_a_usable_transaction_before_closing_
     }
     assert [stage.status for stage in outcome.stage_results] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
@@ -1242,7 +1286,7 @@ def test_commit_reconciliation_rejects_a_mismatched_original_event(
     }
 
 
-def test_report_projection_failure_preserves_the_committed_event_but_never_publishes_it(
+def test_report_projection_failure_preserves_the_unconfirmed_report_but_never_exposes_it(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original_publish = DecisionLedger.publish_report
@@ -1274,7 +1318,7 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
     assert unpublished.stage_results[-1].reasons == ("PUBLICATION_STORAGE_FAILED",)
 
     ledger = DecisionLedger.from_settings(migrated_settings)
-    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 0}
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert get_formal_report(unpublished.report_version_id, migrated_settings) is None
 
     recovered = run_default_frozen_decision_case(migrated_settings)
@@ -1283,6 +1327,7 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
     assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",
@@ -1290,6 +1335,46 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
         "FAILED",
         "SUCCEEDED",
     ]
+
+
+def test_report_commit_acknowledgement_loss_reconciles_the_original_report_before_exposure(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_publish = DecisionLedger.publish_report
+    original_commit = Connection.commit
+    report_commit_started = False
+    acknowledgement_lost = False
+
+    def publish_with_report_commit_pending(
+        self: DecisionLedger,
+        connection: Connection,
+        fact: DecisionEventFact,
+    ) -> FormalReport:
+        nonlocal report_commit_started
+        report_commit_started = True
+        return original_publish(self, connection, fact)
+
+    def commit_then_lose_report_acknowledgement(self: Connection) -> None:
+        nonlocal acknowledgement_lost
+        original_commit(self)
+        if report_commit_started and not acknowledgement_lost:
+            acknowledgement_lost = True
+            raise RuntimeError("synthetic report commit acknowledgement loss")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "publish_report", publish_with_report_commit_pending)
+        patch.setattr(Connection, "commit", commit_then_lose_report_acknowledgement)
+        outcome = run_default_frozen_decision_case(migrated_settings)
+
+    assert acknowledgement_lost is True
+    assert outcome.publication_status == "PUBLISHED"
+    assert outcome.report is not None
+    assert get_formal_report(outcome.report_version_id, migrated_settings) == outcome.report
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 1,
+        "reports": 1,
+    }
 
 
 def test_cross_build_publication_failure_keeps_the_committed_fact_identity(
@@ -1704,12 +1789,15 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
         command.upgrade(config, "head")
 
     with engine.connect() as connection:
-        assert connection.execute(
-            text(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'table' AND name = 'decision_events_replacement'"
-            )
-        ).scalar_one_or_none() is None
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_events_replacement'"
+                )
+            ).scalar_one_or_none()
+            is None
+        )
         assert "corrects_event_id" not in {
             row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
         }
@@ -1746,6 +1834,61 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
         assert "corrects_event_id" in {
             row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
         }
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0005_persist_frozen_case_snapshots"
+        )
+
+    load_settings.cache_clear()
+
+
+def test_correction_migration_retries_after_notification_table_creation_is_interrupted(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0003_decision_stage_events")
+    original_create_table: Any = op.create_table
+    interrupted = False
+
+    def create_notification_table_then_interrupt(name: str, *columns: Any, **kwargs: Any) -> Any:
+        nonlocal interrupted
+        table = original_create_table(name, *columns, **kwargs)
+        if name == "decision_notification_attempts" and not interrupted:
+            interrupted = True
+            raise RuntimeError("synthetic interruption after notification table creation")
+        return table
+
+    with monkeypatch.context() as patch:
+        patch.setattr(op, "create_table", create_notification_table_then_interrupt)
+        with pytest.raises(RuntimeError, match="notification table creation"):
+            command.upgrade(config, "head")
+
+    engine = create_engine(settings.app_database_url)
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_decision_stage_events"
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE decision_notification_attempts (
+                    sequence INTEGER PRIMARY KEY,
+                    notification_attempt_id VARCHAR(96) NOT NULL UNIQUE,
+                    report_version_id VARCHAR(96) NOT NULL,
+                    decision_event_id VARCHAR(96) NOT NULL,
+                    status VARCHAR(16) NOT NULL,
+                    reasons_payload VARCHAR NOT NULL,
+                    recorded_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
             "0005_persist_frozen_case_snapshots"
         )
@@ -2040,6 +2183,7 @@ def test_recovery_backfills_event_stage_results_before_publication(
     assert recovered.publication_status == "PUBLISHED"
     assert [stage.status for stage in ledger.get_stage_results(recovered.business_object_id)] == [
         "CREATED",
+        "RUNNING",
         "SUCCEEDED",
         "SUCCEEDED",
         "SUCCEEDED",

@@ -41,8 +41,8 @@ from stock_profiler.modules.decision_cases.domain import (
     FROZEN_OUTPUT_CONTRACT_VERSION,
     FrameworkRunStatus,
     FrozenDecisionCase,
-    has_complete_synthetic_input,
     supports_report_projection_contract,
+    synthetic_outcome_code_from_input,
 )
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
@@ -68,8 +68,8 @@ DEFAULT_SYNTHETIC_MODEL_RESPONSE = (
     '],"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
     '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
 )
-_CONCURRENT_RUN_RECOVERY_ATTEMPTS = 50
-_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS = 0.01
+_CONCURRENT_RUN_OBSERVATION_ATTEMPTS = 50
+_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS = 0.01
 _CONCURRENT_RUN_RECOVERY_ERRORS = (
     DuplicateRunError,
     IllegalRunTransitionError,
@@ -102,6 +102,30 @@ class FrameworkRunTransition:
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
 
 
+@dataclass
+class _RunStatusCollector:
+    """Collect framework-emitted, already-durable statuses without changing a Run."""
+
+    run_id: str
+    statuses: list[FrameworkRunStatus]
+
+    def emit(self, event: object) -> None:
+        if getattr(event, "run_id", None) != self.run_id:
+            return
+        status = getattr(event, "run_status", None)
+        value = getattr(status, "value", None)
+        if value in {
+            "CREATED",
+            "RUNNING",
+            "WAITING",
+            "SUCCEEDED",
+            "REJECTED",
+            "FAILED",
+            "CANCELLED",
+        }:
+            self.statuses.append(cast(FrameworkRunStatus, value))
+
+
 async def execute_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
@@ -127,13 +151,32 @@ async def execute_frozen_decision_case(
     )
     registry = DefinitionRegistry()
     registry.register(definition)
-    runner = Runner(registry=registry, store=runtime.run_store)
+    status_collector = _RunStatusCollector(case.framework_run_id, [])
+    runner = Runner(
+        registry=registry,
+        store=runtime.run_store,
+        telemetry_sink=status_collector,
+    )
     transitions: list[FrameworkRunTransition] = []
+    collected_status_count = 0
 
     async def observe(transition: FrameworkRunTransition) -> None:
         transitions.append(transition)
         if record_transition is not None:
             await record_transition(transition)
+
+    async def record_framework_statuses() -> None:
+        nonlocal collected_status_count
+        status_reasons = {
+            "CREATED": "FRAMEWORK_RUN_CREATED",
+            "RUNNING": "FRAMEWORK_RUN_STARTED",
+            "WAITING": "FRAMEWORK_RUN_WAITING",
+        }
+        for status in status_collector.statuses[collected_status_count:]:
+            reason = status_reasons.get(status)
+            if reason is not None:
+                await observe(FrameworkRunTransition(status=status, reason=reason))
+        collected_status_count = len(status_collector.statuses)
 
     try:
         run = await runner.get_run(case.framework_run_id)
@@ -147,14 +190,16 @@ async def execute_frozen_decision_case(
                 json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
                 run_id=case.framework_run_id,
             )
-            await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
+            await record_framework_statuses()
             run = await runner.start_run(created.run_id)
+            await record_framework_statuses()
         except _CONCURRENT_RUN_RECOVERY_ERRORS:
             run = await _recover_concurrent_run(
                 runner,
                 case,
                 observe,
             )
+            await record_framework_statuses()
         except sqlite3.Error as error:
             if not _is_concurrent_creation_error(error):
                 raise
@@ -163,17 +208,17 @@ async def execute_frozen_decision_case(
                 case,
                 observe,
             )
-        else:
-            if run.status.value == "RUNNING":
-                await observe(
-                    FrameworkRunTransition(
-                        status="RUNNING",
-                        reason="FRAMEWORK_RUN_STARTED",
-                    )
-                )
+            await record_framework_statuses()
     else:
         _assert_existing_run_matches_case(run, case)
-        if not run.status.is_terminal:
+        if run.status.is_terminal:
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_RECOVERED_TERMINAL",
+                )
+            )
+        else:
             await observe(
                 FrameworkRunTransition(
                     status=cast(FrameworkRunStatus, run.status.value),
@@ -188,6 +233,7 @@ async def execute_frozen_decision_case(
                     case,
                     observe,
                 )
+            await record_framework_statuses()
     return FrameworkRunResult(
         run_id=run.run_id,
         status=cast(FrameworkRunStatus, run.status.value),
@@ -205,11 +251,11 @@ async def _recover_concurrent_run(
     observe: FrameworkTransitionRecorder,
 ) -> RunRecord:
     """Converge on a competing owner without creating a replacement Run."""
-    for _ in range(_CONCURRENT_RUN_RECOVERY_ATTEMPTS):
+    for _ in range(_CONCURRENT_RUN_OBSERVATION_ATTEMPTS):
         try:
             run = await runner.get_run(case.framework_run_id)
         except RunNotFoundError:
-            await asyncio.sleep(_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS)
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
             continue
         _assert_existing_run_matches_case(run, case)
         if run.status.is_terminal or run.status.value == "WAITING":
@@ -222,8 +268,16 @@ async def _recover_concurrent_run(
             return run
         try:
             return await runner.resume_run(run.run_id)
+        except LeaseNotHeldError:
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_LEASE_HELD",
+                )
+            )
+            return run
         except _CONCURRENT_RUN_RECOVERY_ERRORS:
-            await asyncio.sleep(_CONCURRENT_RUN_RECOVERY_DELAY_SECONDS)
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
     raise ValueError("concurrent durable M-Agent Run did not become recoverable")
 
 
@@ -232,8 +286,7 @@ def _is_concurrent_creation_error(error: sqlite3.Error) -> bool:
     return isinstance(error, sqlite3.IntegrityError) or (
         isinstance(error, sqlite3.OperationalError)
         and any(
-            marker in str(error).lower()
-            for marker in ("database is locked", "database is busy")
+            marker in str(error).lower() for marker in ("database is locked", "database is busy")
         )
     )
 
@@ -289,8 +342,20 @@ def _assert_existing_run_matches_case(run: RunRecord, case: FrozenDecisionCase) 
 
 def _deterministic_model_response(case: FrozenDecisionCase) -> str:
     """Make the test model respond to the frozen input, never its expected output field."""
-    if has_complete_synthetic_input(case.input):
+    outcome_code = synthetic_outcome_code_from_input(case.input)
+    if outcome_code == "SYNTHETIC_REVIEW_COMPLETE":
         return DEFAULT_SYNTHETIC_MODEL_RESPONSE
+    if outcome_code is not None:
+        return json.dumps(
+            {
+                "key_reasons": [f"Reason for {outcome_code}."],
+                "outcome_code": outcome_code,
+                "summary": f"Frozen synthetic result {outcome_code}.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
     return _incomplete_synthetic_response()
 
 

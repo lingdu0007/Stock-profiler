@@ -270,8 +270,32 @@ def _append_legacy_stage_history() -> None:
         )
 
 
-def upgrade() -> None:
-    _preflight_legacy_stage_history()
+def _has_table(name: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(name)
+
+
+def _decision_events_have_correction_lineage() -> bool:
+    return any(
+        column["name"] == "corrects_event_id"
+        for column in sa.inspect(op.get_bind()).get_columns("decision_events")
+    )
+
+
+def _repair_interrupted_event_table_replacement() -> None:
+    """Complete or discard the only non-transactional DDL intermediate state."""
+    has_events = _has_table("decision_events")
+    has_replacement = _has_table("decision_events_replacement")
+    if not has_replacement:
+        return
+    if has_events:
+        op.drop_table("decision_events_replacement")
+        return
+    op.rename_table("decision_events_replacement", "decision_events")
+
+
+def _ensure_event_correction_lineage() -> None:
+    if _decision_events_have_correction_lineage():
+        return
     op.create_table(
         "decision_events_replacement",
         sa.Column("decision_event_id", sa.String(length=96), nullable=False),
@@ -304,7 +328,11 @@ def upgrade() -> None:
     )
     op.drop_table("decision_events")
     op.rename_table("decision_events_replacement", "decision_events")
-    _append_legacy_stage_history()
+
+
+def _ensure_notification_attempts_table() -> None:
+    if _has_table("decision_notification_attempts"):
+        return
     op.create_table(
         "decision_notification_attempts",
         sa.Column("sequence", sa.Integer(), autoincrement=True, nullable=False),
@@ -317,6 +345,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("sequence"),
         sa.UniqueConstraint("notification_attempt_id"),
     )
+
+
+def upgrade() -> None:
+    _repair_interrupted_event_table_replacement()
+    _preflight_legacy_stage_history()
+    _ensure_event_correction_lineage()
+    _append_legacy_stage_history()
+    _ensure_notification_attempts_table()
 
 
 def downgrade() -> None:

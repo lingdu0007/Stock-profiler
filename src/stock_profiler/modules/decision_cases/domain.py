@@ -731,8 +731,17 @@ def framework_run_status_from_stage(stage_result: StageResult) -> FrameworkRunSt
 
 
 def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
-    """Recognize the exact versioned input contract of this sole frozen case."""
-    return value == _COMPLETE_SYNTHETIC_INPUT
+    """Recognize one complete, versioned synthetic result-family input."""
+    return synthetic_outcome_code_from_input(value) is not None
+
+
+def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
+    """Read the explicit synthetic scenario without consulting expected output."""
+    input_without_scenario = dict(value)
+    outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    if input_without_scenario != _COMPLETE_SYNTHETIC_INPUT:
+        return None
+    return outcome_code if outcome_code in _SYNTHETIC_OUTCOME_STAGES else None
 
 
 def _fingerprint(value: object) -> str:
