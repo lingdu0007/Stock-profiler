@@ -25,6 +25,12 @@ from stock_profiler.foundation.versioning import (
     M_AGENT_WHEEL_URL,
 )
 from stock_profiler.modules.decision_cases.domain import (
+    FROZEN_AGENT_DEFINITION_ID,
+    FROZEN_AGENT_DEFINITION_VERSION,
+    FROZEN_CASE_CONTRACT_VERSION,
+    FROZEN_HOST_CONTRACT_VERSION,
+    FROZEN_OUTPUT_CONTRACT_VERSION,
+    FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     FrozenDecisionCase,
     has_complete_synthetic_input,
 )
@@ -97,11 +103,24 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     """Reject frozen metadata that does not describe the installed deterministic route."""
     bundle = case.version_bundle
     if (
+        bundle.case_contract_version != FROZEN_CASE_CONTRACT_VERSION
+        or bundle.host_contract_version != FROZEN_HOST_CONTRACT_VERSION
+        or bundle.report_projection_contract_version
+        != FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+        or bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
+        or bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
+        or bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
+    ):
+        raise ValueError("full frozen version bundle is not supported by this runtime")
+    if (
         bundle.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
         or bundle.routing_policy_version != D0_ROUTING_POLICY_VERSION
+        or case.agent_definition.definition_id != FROZEN_AGENT_DEFINITION_ID
+        or case.agent_definition.version != FROZEN_AGENT_DEFINITION_VERSION
         or case.agent_definition.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
         or case.agent_definition.instructions != FROZEN_DEFINITION_INSTRUCTIONS
         or case.agent_definition.output_contract.contract_id != FROZEN_OUTPUT_CONTRACT_ID
+        or case.agent_definition.output_contract.version != FROZEN_OUTPUT_CONTRACT_VERSION
         or case.agent_definition.output_contract.json_schema != FROZEN_OUTPUT_SCHEMA
     ):
         raise ValueError("frozen AgentDefinition does not match the runtime adapter")

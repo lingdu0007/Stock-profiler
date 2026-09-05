@@ -25,7 +25,7 @@ def test_authenticated_api_reads_the_same_committed_report_and_never_caches_it(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     report = run_default_frozen_decision_case(migrated_settings).report
-    client = _authenticated_client(migrated_settings, monkeypatch)
+    client, csrf_token = _authenticated_client_with_csrf(migrated_settings, monkeypatch)
     storage = initialize_runtime_storage(migrated_settings)
     with storage.engine.connect() as connection:
         last_seen_before = connection.execute(
@@ -47,6 +47,33 @@ def test_authenticated_api_reads_the_same_committed_report_and_never_caches_it(
                 AUTH_SESSIONS.select().with_only_columns(AUTH_SESSIONS.c.last_seen_at)
             ).scalar_one()
             == last_seen_before
+        )
+
+    missing_csrf = client.post(
+        "/api/v1/auth/session/refresh",
+        headers={"Origin": ORIGIN},
+    )
+    wrong_origin = client.post(
+        "/api/v1/auth/session/refresh",
+        headers={"Origin": "https://wrong.example", "X-CSRF-Token": csrf_token},
+    )
+    refreshed = client.post(
+        "/api/v1/auth/session/refresh",
+        headers={"Origin": ORIGIN, "X-CSRF-Token": csrf_token},
+    )
+
+    assert missing_csrf.status_code == 403
+    assert wrong_origin.status_code == 403
+    assert refreshed.status_code == 200
+    assert refreshed.json() == {"status": "authenticated"}
+    refresh_max_age = int(refreshed.headers["set-cookie"].split("Max-Age=")[1].split(";", 1)[0])
+    assert 0 < refresh_max_age <= 2_592_000
+    with storage.engine.connect() as connection:
+        assert (
+            connection.execute(
+                AUTH_SESSIONS.select().with_only_columns(AUTH_SESSIONS.c.last_seen_at)
+            ).scalar_one()
+            != last_seen_before
         )
 
 
@@ -156,7 +183,8 @@ def _authenticated_client_with_csrf(
     assert "HttpOnly" in authenticated.headers["set-cookie"]
     assert "Secure" in authenticated.headers["set-cookie"]
     assert "SameSite=lax" in authenticated.headers["set-cookie"]
-    assert "Max-Age=604800" in authenticated.headers["set-cookie"]
+    assert "Max-Age=2592000" in authenticated.headers["set-cookie"]
+    assert "__Host-stock_profiler_csrf=" in authenticated.headers["set-cookie"]
     return client, str(authenticated.json()["csrf_token"])
 
 

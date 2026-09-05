@@ -8,11 +8,18 @@ certificate=$runtime_secret_directory/gateway_tls_certificate
 private_key=$runtime_secret_directory/gateway_tls_private_key
 hostname=${STOCK_PROFILER_GATEWAY_HOSTNAME:?set a stable private HTTPS hostname}
 bind_address=${STOCK_PROFILER_GATEWAY_BIND_ADDRESS:?set a permitted private IPv4 bind address}
+auth_origin=${STOCK_PROFILER_AUTH_ORIGIN:?set the same HTTPS origin used by the API}
+auth_rp_id=${STOCK_PROFILER_AUTH_RP_ID:?set the same relying-party ID used by the API}
 
 case "$hostname" in
   "" | .* | *.) echo "gateway hostname is invalid" >&2; exit 1 ;;
   *[!A-Za-z0-9.-]*) echo "gateway hostname is invalid" >&2; exit 1 ;;
 esac
+
+if [ "$auth_origin" != "https://$hostname" ] || [ "$auth_rp_id" != "$hostname" ]; then
+  echo "gateway hostname must match the authentication origin and relying-party ID" >&2
+  exit 1
+fi
 
 case "$bind_address" in
   127.*.*.* | 10.*.*.* | 192.168.*.* | 172.1[6-9].*.* | 172.2[0-9].*.* | 172.3[0-1].*.*) ;;

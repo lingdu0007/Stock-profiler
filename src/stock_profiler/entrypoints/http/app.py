@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from starlette.middleware.base import RequestResponseEndpoint
 
 from stock_profiler.adapters.authentication.passkeys import (
+    CSRF_COOKIE_NAME,
     AuthenticationError,
     ChallengePurpose,
     PasskeyAuthenticator,
@@ -65,6 +66,30 @@ class CredentialRequest(BaseModel):
 
     challenge_id: str
     credential: dict[str, object]
+
+
+class AuthenticationVerificationDto(BaseModel):
+    """Pydantic transport contract for a completed passkey authentication."""
+
+    model_config = ConfigDict(frozen=True)
+
+    csrf_token: str
+
+
+class ReauthenticationVerificationDto(BaseModel):
+    """Pydantic transport contract for a completed recent reauthentication."""
+
+    model_config = ConfigDict(frozen=True)
+
+    credential_id: str
+
+
+class SessionRefreshDto(BaseModel):
+    """Pydantic transport contract for a CSRF-protected idle-session refresh."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str
 
 
 def _challenge_dto(payload: dict[str, object]) -> ChallengeDto:
@@ -150,13 +175,14 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
 
     @app.post(
         "/api/v1/auth/passkeys/authentication/verify",
+        response_model=AuthenticationVerificationDto,
         responses={401: {"description": "Authentication verification failed"}},
     )
     def authentication_verify(
         request: CredentialRequest,
         response: Response,
         _: None = Depends(require_expected_origin),
-    ) -> dict[str, str]:
+    ) -> AuthenticationVerificationDto:
         try:
             session_token, csrf_token = authenticator().authentication_verify(
                 request.challenge_id, request.credential
@@ -170,9 +196,17 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
             secure=True,
             samesite="lax",
             path="/",
-            max_age=app_settings.auth_session_idle_ttl_seconds,
+            max_age=app_settings.auth_session_absolute_ttl_seconds,
         )
-        return {"csrf_token": csrf_token}
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=csrf_token,
+            secure=True,
+            samesite="lax",
+            path="/",
+            max_age=app_settings.auth_session_absolute_ttl_seconds,
+        )
+        return AuthenticationVerificationDto(csrf_token=csrf_token)
 
     @app.post(
         "/api/v1/auth/passkeys/reauthentication/options",
@@ -194,6 +228,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
 
     @app.post(
         "/api/v1/auth/passkeys/reauthentication/verify",
+        response_model=ReauthenticationVerificationDto,
         responses={403: {"description": "Reauthentication verification failed"}},
     )
     def reauthentication_verify(
@@ -201,7 +236,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
         csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
         _: None = Depends(require_expected_origin),
-    ) -> dict[str, str]:
+    ) -> ReauthenticationVerificationDto:
         try:
             credential_id = authenticator().verify_assertion(
                 request.challenge_id, request.credential, ChallengePurpose.REAUTHENTICATION
@@ -209,7 +244,33 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
             access = authenticator().reauthenticate(session_token, csrf_token, credential_id)
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
-        return {"credential_id": access.credential_id}
+        return ReauthenticationVerificationDto(credential_id=access.credential_id)
+
+    @app.post(
+        "/api/v1/auth/session/refresh",
+        response_model=SessionRefreshDto,
+        responses={403: {"description": "Origin, CSRF token, or session was invalid"}},
+    )
+    def refresh_session(
+        response: Response,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
+        csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+        _: None = Depends(require_expected_origin),
+    ) -> SessionRefreshDto:
+        try:
+            access = authenticator().refresh_session(session_token, csrf_token)
+        except AuthenticationError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        response.set_cookie(
+            key=app_settings.auth_session_cookie_name,
+            value=session_token or "",
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+            max_age=access.cookie_max_age_seconds,
+        )
+        return SessionRefreshDto(status="authenticated")
 
     @app.delete(
         "/api/v1/auth/session",
@@ -229,6 +290,12 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         response.delete_cookie(
             key=app_settings.auth_session_cookie_name,
             httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
+        response.delete_cookie(
+            key=CSRF_COOKIE_NAME,
             secure=True,
             samesite="lax",
             path="/",
@@ -306,7 +373,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
     ) -> FormalReport:
         try:
-            authenticator().require_session(session_token, touch=False)
+            authenticator().require_session(session_token)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=str(error)) from error
         report = get_formal_report(report_version_id, app_settings)

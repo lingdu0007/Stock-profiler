@@ -50,6 +50,9 @@ class ChallengePurpose(StrEnum):
     REAUTHENTICATION = "reauthentication"
 
 
+CSRF_COOKIE_NAME = "__Host-stock_profiler_csrf"
+
+
 METADATA = MetaData()
 AUTH_CREDENTIALS = Table(
     "auth_credentials",
@@ -90,7 +93,7 @@ AUTH_SESSIONS = Table(
 
 @dataclass(frozen=True)
 class SessionAccess:
-    """Validated session identity plus the remaining browser-cookie lifetime."""
+    """Validated session identity plus its remaining hard expiry lifetime."""
 
     credential_id: str
     cookie_max_age_seconds: int
@@ -226,8 +229,6 @@ class PasskeyAuthenticator:
         self,
         session_token: str | None,
         require_recent_reauthentication: bool = False,
-        *,
-        touch: bool = True,
     ) -> SessionAccess:
         if not session_token:
             raise AuthenticationError("authentication required")
@@ -251,17 +252,23 @@ class PasskeyAuthenticator:
             )
         ):
             raise AuthenticationError("session expired")
-        if touch:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    update(AUTH_SESSIONS)
-                    .where(AUTH_SESSIONS.c.session_hash == _digest(session_token))
-                    .values(last_seen_at=self._now())
-                )
         return SessionAccess(
             credential_id=str(stored["credential_id"]),
             cookie_max_age_seconds=self._cookie_max_age_seconds(stored["absolute_expires_at"]),
         )
+
+    def refresh_session(
+        self, session_token: str | None, csrf_token: str | None
+    ) -> SessionAccess:
+        """Advance the idle clock only from a same-origin CSRF-protected request."""
+        access = self.require_mutable_session(session_token, csrf_token)
+        with self._engine.begin() as connection:
+            connection.execute(
+                update(AUTH_SESSIONS)
+                .where(AUTH_SESSIONS.c.session_hash == _digest(session_token or ""))
+                .values(last_seen_at=self._now())
+            )
+        return access
 
     def reauthenticate(
         self, session_token: str | None, csrf_token: str | None, credential_id: str
@@ -274,7 +281,7 @@ class PasskeyAuthenticator:
             connection.execute(
                 update(AUTH_SESSIONS)
                 .where(AUTH_SESSIONS.c.session_hash == _digest(session_token or ""))
-                .values(recent_reauth_at=self._now())
+                .values(recent_reauth_at=self._now(), last_seen_at=self._now())
             )
         return access
 
@@ -451,7 +458,7 @@ class PasskeyAuthenticator:
         absolute_remaining = int(
             (datetime.fromisoformat(absolute_expires_at) - self._clock.now()).total_seconds()
         )
-        return max(0, min(self._settings.auth_session_idle_ttl_seconds, absolute_remaining))
+        return max(0, absolute_remaining)
 
 
 def _digest(value: str) -> str:

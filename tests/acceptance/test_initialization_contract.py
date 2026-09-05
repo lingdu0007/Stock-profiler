@@ -95,6 +95,9 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert '"process-health", "scheduler"' in compose
     assert '"process-health", "worker"' in compose
     assert "stock-profiler-gateway:${STOCK_PROFILER_SOURCE_SHA" in compose
+    gateway_section = compose.split("  gateway:", maxsplit=1)[1]
+    assert "STOCK_PROFILER_AUTH_ORIGIN: ${STOCK_PROFILER_AUTH_ORIGIN" in gateway_section
+    assert "STOCK_PROFILER_AUTH_RP_ID: ${STOCK_PROFILER_AUTH_RP_ID" in gateway_section
     assert "healthcheck:" in compose
     assert "SOURCE_SHA: ${STOCK_PROFILER_SOURCE_SHA" in compose
     assert "x-api-secrets:" in compose
@@ -129,6 +132,10 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "-dateopt iso_8601" in entrypoint
     assert 'certificate_not_before%Z' in entrypoint
     assert "certificate is not yet valid" in entrypoint
+    assert (
+        "gateway hostname must match the authentication origin and relying-party ID"
+        in entrypoint
+    )
     assert "-checkhost" in entrypoint
     assert "install -m 600 -o 10001 -g 10001" in entrypoint
     assert "COPY tests/fixtures/synthetic/replayable_frozen_decision_case.json" in dockerfile
@@ -165,6 +172,7 @@ def test_web_authn_and_read_only_report_contracts_are_declared() -> None:
     assert "/api/v1/auth/host-console/grants" not in openapi
     assert "/api/v1/auth/passkeys/authentication/options" in openapi
     assert "/api/v1/auth/passkeys/authentication/verify" in openapi
+    assert "/api/v1/auth/session/refresh" in openapi
     assert "/api/v1/auth/passkeys/registration/options" in openapi
     assert "/api/v1/auth/passkeys/registration/verify" in openapi
     assert "/api/v1/reports/{report_version_id}" in openapi

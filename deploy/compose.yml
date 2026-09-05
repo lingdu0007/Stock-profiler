@@ -117,6 +117,8 @@ services:
     environment:
       STOCK_PROFILER_GATEWAY_HOSTNAME: ${STOCK_PROFILER_GATEWAY_HOSTNAME:?set a stable private HTTPS hostname}
       STOCK_PROFILER_GATEWAY_BIND_ADDRESS: ${STOCK_PROFILER_GATEWAY_BIND_ADDRESS:?set a permitted private IPv4 bind address}
+      STOCK_PROFILER_AUTH_ORIGIN: ${STOCK_PROFILER_AUTH_ORIGIN:?set an HTTPS origin}
+      STOCK_PROFILER_AUTH_RP_ID: ${STOCK_PROFILER_AUTH_RP_ID:?set a relying-party ID}
     extra_hosts:
       - "${STOCK_PROFILER_GATEWAY_HOSTNAME}:127.0.0.1"
     secrets:

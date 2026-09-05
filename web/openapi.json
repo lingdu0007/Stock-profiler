@@ -1,6 +1,18 @@
 {
   "components": {
     "schemas": {
+      "AuthenticationVerificationDto": {
+        "description": "Pydantic transport contract for a completed passkey authentication.",
+        "properties": {
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          }
+        },
+        "required": ["csrf_token"],
+        "title": "AuthenticationVerificationDto",
+        "type": "object"
+      },
       "ChallengeDto": {
         "properties": {
           "challenge_id": {
@@ -242,6 +254,18 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "ReauthenticationVerificationDto": {
+        "description": "Pydantic transport contract for a completed recent reauthentication.",
+        "properties": {
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          }
+        },
+        "required": ["credential_id"],
+        "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
       "SafetyCapabilitiesDiagnosticDto": {
         "description": "Machine-readable official-project safety invariants.",
         "properties": {
@@ -260,6 +284,18 @@
         },
         "required": ["single_user", "public_recommendation_service", "order_writing"],
         "title": "SafetyCapabilitiesDiagnosticDto",
+        "type": "object"
+      },
+      "SessionRefreshDto": {
+        "description": "Pydantic transport contract for a CSRF-protected idle-session refresh.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["status"],
+        "title": "SessionRefreshDto",
         "type": "object"
       },
       "ValidationError": {
@@ -430,11 +466,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Authentication Verify Api V1 Auth Passkeys Authentication Verify Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuthenticationVerificationDto"
                 }
               }
             },
@@ -606,11 +638,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Reauthentication Verify Api V1 Auth Passkeys Reauthentication Verify Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReauthenticationVerificationDto"
                 }
               }
             },
@@ -815,6 +843,87 @@
           }
         },
         "summary": "Logout"
+      }
+    },
+    "/api/v1/auth/session/refresh": {
+      "post": {
+        "operationId": "refresh_session_api_v1_auth_session_refresh_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRefreshDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Origin, CSRF token, or session was invalid"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Session"
       }
     },
     "/api/v1/diagnostics/safety-capabilities": {
