@@ -20,6 +20,7 @@ const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const browserOrigin = "https://localhost:4174";
 const vitePort = 4173;
 const proxyPort = 4174;
+const apiReadyTimeoutMilliseconds = 15_000;
 let apiPort = 0;
 let temporaryDirectory = "";
 let report: FormalReport;
@@ -171,7 +172,9 @@ function reportUrl() {
 }
 
 async function waitForApi() {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  const retryDelayMilliseconds = 100;
+  const maximumAttempts = apiReadyTimeoutMilliseconds / retryDelayMilliseconds;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${apiPort}/readyz`);
       if (response.ok && (await response.json()).status === "ready") {
@@ -182,7 +185,7 @@ async function waitForApi() {
         throw new Error(`FastAPI process exited with code ${apiProcess.exitCode}.`);
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMilliseconds));
   }
   throw new Error("FastAPI test server did not become ready.");
 }

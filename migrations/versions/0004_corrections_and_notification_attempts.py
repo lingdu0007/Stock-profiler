@@ -257,9 +257,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     correction_count = bind.execute(
-        sa.text(
-            "SELECT COUNT(*) FROM decision_events WHERE corrects_event_id IS NOT NULL"
-        )
+        sa.text("SELECT COUNT(*) FROM decision_events WHERE corrects_event_id IS NOT NULL")
     ).scalar_one()
     if correction_count:
         raise RuntimeError("cannot downgrade while append-only correction facts exist")

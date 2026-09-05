@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
@@ -32,6 +33,7 @@ DECISION_CASE_BUSINESS_OBJECTS = Table(
     Column("case_id", String(96), nullable=False),
     Column("frozen_input_fingerprint", String(64), nullable=False),
     Column("framework_run_id", String(96), nullable=False, unique=True),
+    Column("case_payload", String, nullable=True),
     Column("created_at", String(40), nullable=False),
 )
 DECISION_EVENTS = Table(
@@ -84,6 +86,15 @@ class DecisionEventCommitUncertainError(DecisionEventCommitError):
     """A database acknowledgement was lost, so the event may or may not exist."""
 
 
+@dataclass(frozen=True)
+class BusinessObjectMapping:
+    """The durable case snapshot and original Run bound to one business object."""
+
+    frozen_input_fingerprint: str
+    framework_run_id: str
+    case: FrozenDecisionCase | None
+
+
 class DecisionLedger:
     """Persistence boundary for the host's business identity, event, and report."""
 
@@ -109,28 +120,49 @@ class DecisionLedger:
         finally:
             connection.close()
 
-    def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
-        """Persist the one host-to-framework mapping before running the framework."""
-        existing = connection.execute(
+    def get_business_object_mapping(
+        self, business_object_id: str, connection: Connection
+    ) -> BusinessObjectMapping | None:
+        """Load a saved case snapshot before deriving any current-build Run identity."""
+        row = connection.execute(
             select(
                 DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
                 DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
-            ).where(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id == case.business_object_id)
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+            ).where(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id == business_object_id)
         ).one_or_none()
-        if existing is None:
+        if row is None:
+            return None
+        return BusinessObjectMapping(
+            frozen_input_fingerprint=row.frozen_input_fingerprint,
+            framework_run_id=row.framework_run_id,
+            case=(
+                FrozenDecisionCase.model_validate_json(row.case_payload)
+                if row.case_payload is not None
+                else None
+            ),
+        )
+
+    def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
+        """Persist the one host-to-framework mapping before running the framework."""
+        mapping = self.get_business_object_mapping(case.business_object_id, connection)
+        if mapping is None:
             connection.execute(
                 DECISION_CASE_BUSINESS_OBJECTS.insert().values(
                     business_object_id=case.business_object_id,
                     case_id=case.case_id,
                     frozen_input_fingerprint=case.frozen_input_fingerprint,
                     framework_run_id=case.framework_run_id,
+                    case_payload=case.model_dump_json(),
                     created_at=datetime.now(UTC).isoformat(),
                 )
             )
             return
+        if mapping.case is not None and mapping.case.matches_recovery_input(case):
+            return
         if (
-            existing.frozen_input_fingerprint != case.frozen_input_fingerprint
-            or existing.framework_run_id != case.framework_run_id
+            mapping.frozen_input_fingerprint != case.frozen_input_fingerprint
+            or mapping.framework_run_id != case.framework_run_id
         ):
             raise DecisionEventCommitError("business identity maps to different frozen input")
 
@@ -230,16 +262,19 @@ class DecisionLedger:
         reasons: tuple[str, ...],
     ) -> NotificationAttempt:
         """Append one notification attempt without mutating its source report."""
-        attempt_number = int(
-            connection.execute(
-                select(func.count())
-                .select_from(DECISION_NOTIFICATION_ATTEMPTS)
-                .where(
-                    DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id
-                    == report.report_version_id
-                )
-            ).scalar_one()
-        ) + 1
+        attempt_number = (
+            int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(DECISION_NOTIFICATION_ATTEMPTS)
+                    .where(
+                        DECISION_NOTIFICATION_ATTEMPTS.c.report_version_id
+                        == report.report_version_id
+                    )
+                ).scalar_one()
+            )
+            + 1
+        )
         attempt = NotificationAttempt(
             notification_attempt_id=_notification_attempt_id(report, attempt_number),
             report_version_id=report.report_version_id,
@@ -348,9 +383,7 @@ class DecisionLedger:
             ) from error
         return fact
 
-    def ensure_event_stage_results(
-        self, connection: Connection, fact: DecisionEventFact
-    ) -> None:
+    def ensure_event_stage_results(self, connection: Connection, fact: DecisionEventFact) -> None:
         """Backfill stage rows from an already committed append-only event."""
         for stage_result in fact.stage_results:
             decision_event_id = (

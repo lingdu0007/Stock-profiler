@@ -146,9 +146,7 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     assert outcome.business_result_status == expected_business_status
     assert outcome.business_lifecycle_status == expected_lifecycle_status
     assert outcome.publication_status == ("PUBLISHED" if published else "CLOSED")
-    assert outcome.business_commit_status == (
-        "COMMITTED" if published else "NOT_ATTEMPTED"
-    )
+    assert outcome.business_commit_status == ("COMMITTED" if published else "NOT_ATTEMPTED")
     assert outcome.report is not None if published else outcome.report is None
     assert [(result.phase, result.status) for result in outcome.stage_results[:2]] == [
         ("FRAMEWORK_RUN", "SUCCEEDED"),
@@ -374,6 +372,32 @@ def test_definite_event_commit_failure_closes_publication_until_the_original_ide
     ]
 
 
+def test_cross_build_commit_recovery_resumes_the_original_m_agent_run(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
+        raise DecisionEventCommitError("synthetic event storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "commit_event", fail_commit)
+        failed = run_default_frozen_decision_case(migrated_settings)
+
+    upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
+    recovered = run_default_frozen_decision_case(upgraded_settings)
+
+    assert failed.publication_status == "CLOSED"
+    assert recovered.publication_status == "PUBLISHED"
+    assert recovered.business_object_id == failed.business_object_id
+    assert recovered.framework_run_id == failed.framework_run_id
+    assert recovered.report is not None
+    assert recovered.report.framework_run_id == failed.framework_run_id
+    assert DecisionLedger.from_settings(upgraded_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 1,
+        "reports": 1,
+    }
+
+
 def test_uncertain_event_commit_closes_publication_until_the_original_identity_recovers(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -456,9 +480,9 @@ def test_uncertain_commit_lookup_reuses_the_original_committed_identity(
     assert outcome.publication_status == "PUBLISHED"
     assert outcome.report is not None
     assert outcome.framework_run_id == load_frozen_decision_case(migrated_settings).framework_run_id
-    assert outcome.decision_event_id == load_frozen_decision_case(
-        migrated_settings
-    ).decision_event_id
+    assert (
+        outcome.decision_event_id == load_frozen_decision_case(migrated_settings).decision_event_id
+    )
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
         "decision_events": 1,
@@ -512,6 +536,50 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
         "FAILED",
         "SUCCEEDED",
     ]
+
+
+def test_cross_build_publication_failure_keeps_the_committed_fact_identity(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_publication(
+        self: DecisionLedger,
+        _connection: Connection,
+        _fact: DecisionEventFact,
+    ) -> FormalReport:
+        raise DecisionEventCommitError("synthetic report storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "publish_report", fail_publication)
+        initial = run_default_frozen_decision_case(migrated_settings)
+
+    upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "publish_report", fail_publication)
+        recovered = run_default_frozen_decision_case(upgraded_settings)
+
+    assert initial.publication_status == "CLOSED"
+    assert recovered.publication_status == "CLOSED"
+    assert recovered.business_object_id == initial.business_object_id
+    assert recovered.framework_run_id == initial.framework_run_id
+    assert recovered.decision_event_id == initial.decision_event_id
+    assert recovered.report_version_id == initial.report_version_id
+    engine = create_engine(upgraded_settings.app_database_url)
+    with engine.connect() as connection:
+        framework_run_ids = (
+            connection.execute(
+                text(
+                    """
+                SELECT DISTINCT framework_run_id
+                FROM decision_stage_events
+                WHERE decision_event_id = :decision_event_id
+                """
+                ),
+                {"decision_event_id": initial.decision_event_id},
+            )
+            .scalars()
+            .all()
+        )
+    assert framework_run_ids == [initial.framework_run_id]
 
 
 def test_notification_failure_and_retry_preserve_the_original_published_report(
@@ -572,10 +640,6 @@ def test_cross_build_notification_and_correction_reuse_the_original_published_id
         case.business_identity,
         "FAILED",
     )
-    initial_correction = correct_default_frozen_decision_case(
-        migrated_settings,
-        case.business_identity,
-    )
     upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
 
     replayed = run_default_frozen_decision_case(upgraded_settings)
@@ -584,8 +648,12 @@ def test_cross_build_notification_and_correction_reuse_the_original_published_id
         case.business_identity,
         "SUCCEEDED",
     )
-    replayed_correction = correct_default_frozen_decision_case(
+    initial_correction = correct_default_frozen_decision_case(
         upgraded_settings,
+        case.business_identity,
+    )
+    replayed_correction = correct_default_frozen_decision_case(
+        migrated_settings,
         case.business_identity,
     )
 
@@ -596,10 +664,14 @@ def test_cross_build_notification_and_correction_reuse_the_original_published_id
     assert retried_notification.report_version_id == initial.report_version_id
     assert retried_notification.event_id == initial.decision_event_id
     assert (
-        retried_notification.notification_attempt_id
-        != initial_notification.notification_attempt_id
+        retried_notification.notification_attempt_id != initial_notification.notification_attempt_id
     )
     assert replayed_correction == initial_correction
+    assert initial_correction.report.framework_run_id == initial.framework_run_id
+    assert initial_correction.report.event_id == case.correction_event_id(initial.decision_event_id)
+    assert initial_correction.report.report_version_id == case.correction_report_version_id(
+        initial.decision_event_id
+    )
 
 
 def test_correction_appends_a_new_report_that_references_the_original_event(
@@ -864,8 +936,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
         ("PUBLICATION", "SUCCEEDED"),
     ]
     assert [
-        (stage.phase, stage.status)
-        for stage in ledger.get_stage_results(case.business_object_id)
+        (stage.phase, stage.status) for stage in ledger.get_stage_results(case.business_object_id)
     ] == [
         ("FRAMEWORK_RUN", "SUCCEEDED"),
         ("HOST_VALIDATION", "SUCCEEDED"),
@@ -879,10 +950,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     assert replayed.report_version_id == case.report_version_id
     with engine.begin() as connection:
         connection.execute(
-            text(
-                "DELETE FROM formal_reports "
-                "WHERE report_version_id = :report_version_id"
-            ),
+            text("DELETE FROM formal_reports WHERE report_version_id = :report_version_id"),
             {"report_version_id": case.report_version_id},
         )
 
@@ -996,6 +1064,7 @@ def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_publ
         "decision_events": 0,
         "reports": 0,
     }
+
 
 def test_reading_a_published_report_does_not_rebuild_it_from_current_code(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
