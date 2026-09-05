@@ -44,8 +44,8 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.version_bundle.host_source_sha == settings.source_sha
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
     assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
-    assert first.version_bundle.host_contract_version == "1.1.0"
-    assert first.version_bundle.report_projection_contract_version == "1.1.0"
+    assert first.version_bundle.host_contract_version == "1.0.0"
+    assert first.version_bundle.report_projection_contract_version == "1.0.0"
     assert first.agent_definition.instructions == (
         "Return only the frozen synthetic decision-case external result as JSON."
     )

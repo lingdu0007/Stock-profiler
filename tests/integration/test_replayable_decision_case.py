@@ -12,9 +12,11 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
+from stock_profiler.adapters.m_agent import frozen_decision_case as frozen_adapter
 from stock_profiler.adapters.m_agent.frozen_decision_case import FrameworkRunResult
 from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
+    DecisionEventCommitUncertainError,
     DecisionLedger,
 )
 from stock_profiler.bootstrap.settings import Settings, load_settings
@@ -60,23 +62,32 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     assert get_formal_report(outcome.report_version_id, migrated_settings) == outcome.report
 
 
+def test_formal_report_projection_fixture_matches_the_frozen_runtime(
+    migrated_settings: Settings,
+) -> None:
+    fixture = json.loads(
+        (ROOT / "tests" / "fixtures" / "synthetic" / "formal_report_projection.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    outcome = run_default_frozen_decision_case(migrated_settings)
+
+    assert outcome.report is not None
+    assert fixture["report"] == outcome.report.model_dump(mode="json")
+
+
 def test_framework_success_and_host_rejection_remain_distinct_committed_results(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case = load_frozen_decision_case(migrated_settings)
-
-    async def rejected_framework_run(*_: object) -> FrameworkRunResult:
-        return FrameworkRunResult(
-            run_id=case.framework_run_id,
-            status="SUCCEEDED",
-            output=(
-                '{"key_reasons":["The host rejected the frozen input."],'
-                '"outcome_code":"SYNTHETIC_INPUT_REJECTED",'
-                '"summary":"Synthetic D0 decision case was rejected by a host gate."}'
-            ),
-        )
-
-    monkeypatch.setattr(service, "execute_frozen_decision_case", rejected_framework_run)
+    monkeypatch.setattr(
+        frozen_adapter,
+        "_deterministic_model_response",
+        lambda _: (
+            '{"key_reasons":["The host rejected the frozen input."],'
+            '"outcome_code":"SYNTHETIC_INPUT_REJECTED",'
+            '"summary":"Synthetic D0 decision case was rejected by a host gate."}'
+        ),
+    )
 
     outcome = run_default_frozen_decision_case(migrated_settings)
 
@@ -101,6 +112,7 @@ def test_framework_success_and_host_rejection_remain_distinct_committed_results(
         ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", None, True),
         ("SYNTHETIC_RESULT_EXPIRED", None, "EXPIRED", False),
         ("SYNTHETIC_RESULT_EXECUTION_BLOCKED", None, "EXECUTION_BLOCKED", False),
+        ("SYNTHETIC_RESULT_UNKNOWN", None, "UNKNOWN", False),
         ("SYNTHETIC_RESULT_PENDING", None, "PENDING", False),
         ("SYNTHETIC_RESULT_FAILED", "FAILED", None, False),
     ),
@@ -115,22 +127,20 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def framework_run(*_: object) -> FrameworkRunResult:
-        return FrameworkRunResult(
-            run_id=case.framework_run_id,
-            status="SUCCEEDED",
-            output=json.dumps(
-                {
-                    "outcome_code": outcome_code,
-                    "summary": f"Frozen synthetic result {outcome_code}.",
-                    "key_reasons": [f"Reason for {outcome_code}."],
-                }
-            ),
-        )
-
-    monkeypatch.setattr(service, "execute_frozen_decision_case", framework_run)
+    monkeypatch.setattr(
+        frozen_adapter,
+        "_deterministic_model_response",
+        lambda _: json.dumps(
+            {
+                "outcome_code": outcome_code,
+                "summary": f"Frozen synthetic result {outcome_code}.",
+                "key_reasons": [f"Reason for {outcome_code}."],
+            }
+        ),
+    )
 
     outcome = run_default_frozen_decision_case(migrated_settings)
+    replayed = run_default_frozen_decision_case(migrated_settings)
 
     assert outcome.framework_run_status == "SUCCEEDED"
     assert outcome.business_result_status == expected_business_status
@@ -148,6 +158,10 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
         ),
     ]
     assert outcome.stage_results[1].reasons == (f"Reason for {outcome_code}.",)
+    assert replayed == outcome
+    assert replayed.framework_run_id == case.framework_run_id
+    assert replayed.decision_event_id == case.decision_event_id
+    assert replayed.report_version_id == case.report_version_id
     counts = DecisionLedger.from_settings(migrated_settings).counts()
     assert counts == {
         "business_objects": 1,
@@ -291,7 +305,7 @@ def test_concurrent_replay_resolves_to_the_one_committed_identity_set(
     }
 
 
-def test_uncertain_event_commit_closes_publication_until_the_original_identity_recovers(
+def test_definite_event_commit_failure_closes_publication_until_the_original_identity_recovers(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
@@ -300,11 +314,57 @@ def test_uncertain_event_commit_closes_publication_until_the_original_identity_r
     with monkeypatch.context() as patch:
         patch.setattr(DecisionLedger, "commit_event", fail_commit)
 
+        failed = run_default_frozen_decision_case(migrated_settings)
+
+    assert failed.framework_run_status == "SUCCEEDED"
+    assert failed.business_result_status == "SUCCEEDED"
+    assert failed.business_lifecycle_status is None
+    assert failed.business_commit_status == "NOT_ATTEMPTED"
+    assert failed.publication_status == "CLOSED"
+    assert failed.report is None
+    assert failed.stage_results[-1].phase == "BUSINESS_COMMIT"
+    assert failed.stage_results[-1].status == "FAILED"
+    assert failed.stage_results[-1].gate_results[0].status == "FAILED"
+    assert failed.stage_results[-1].reasons == ("COMMIT_STORAGE_FAILED",)
+
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
+    assert [result.status for result in ledger.get_stage_results(failed.business_object_id)] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "FAILED",
+    ]
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.framework_run_id == failed.framework_run_id
+    assert recovered.decision_event_id == failed.decision_event_id
+    assert recovered.report is not None
+    assert recovered.publication_status == "PUBLISHED"
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
+    assert [result.status for result in ledger.get_stage_results(recovered.business_object_id)] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "FAILED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
+
+
+def test_uncertain_event_commit_closes_publication_until_the_original_identity_recovers(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_commit(self: DecisionLedger, _connection: object, **_: object) -> None:
+        raise DecisionEventCommitUncertainError("synthetic uncertain commit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "commit_event", fail_commit)
+
         uncertain = run_default_frozen_decision_case(migrated_settings)
 
     assert uncertain.framework_run_status == "SUCCEEDED"
     assert uncertain.business_result_status == "SUCCEEDED"
-    assert uncertain.business_lifecycle_status == "UNKNOWN"
+    assert uncertain.business_lifecycle_status is None
     assert uncertain.business_commit_status == "UNKNOWN"
     assert uncertain.publication_status == "CLOSED"
     assert uncertain.report is None
@@ -578,6 +638,157 @@ def test_stage_result_migration_refuses_to_drop_append_only_history(
 
     with pytest.raises(RuntimeError, match="append-only stage results"):
         command.downgrade(config, "0002_decision_case_ledger")
+
+    load_settings.cache_clear()
+
+
+def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_reports(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = load_frozen_decision_case(settings)
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "0002_decision_case_ledger")
+
+    legacy_event_payload = {
+        "decision_event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case": case.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+        "validation_status": "PASSED",
+        "committed_at": case.report_generated_at,
+    }
+    legacy_report_payload = {
+        "report_version_id": case.report_version_id,
+        "event_id": case.decision_event_id,
+        "business_object_id": case.business_object_id,
+        "framework_run_id": case.framework_run_id,
+        "case_id": case.case_id,
+        "synthetic": True,
+        "qualification_scope": case.qualification_scope,
+        "generated_at": case.report_generated_at,
+        "knowledge_cutoff": case.knowledge_cutoff,
+        "evidence_clock": case.evidence_clock.model_dump(mode="json"),
+        "version_bundle": case.version_bundle.model_dump(mode="json"),
+        "result": case.expected_external_result.model_dump(mode="json"),
+    }
+    engine = create_engine(settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": case.business_object_id,
+                "case_id": case.case_id,
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+                "framework_run_id": case.framework_run_id,
+                "created_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_events (
+                    decision_event_id,
+                    business_object_id,
+                    framework_run_id,
+                    event_payload,
+                    committed_at
+                ) VALUES (
+                    :decision_event_id,
+                    :business_object_id,
+                    :framework_run_id,
+                    :event_payload,
+                    :committed_at
+                )
+                """
+            ),
+            {
+                "decision_event_id": case.decision_event_id,
+                "business_object_id": case.business_object_id,
+                "framework_run_id": case.framework_run_id,
+                "event_payload": json.dumps(
+                    legacy_event_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "committed_at": case.report_generated_at,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO formal_reports (
+                    report_version_id,
+                    decision_event_id,
+                    report_payload,
+                    generated_at
+                ) VALUES (
+                    :report_version_id,
+                    :decision_event_id,
+                    :report_payload,
+                    :generated_at
+                )
+                """
+            ),
+            {
+                "report_version_id": case.report_version_id,
+                "decision_event_id": case.decision_event_id,
+                "report_payload": json.dumps(
+                    legacy_report_payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "generated_at": case.report_generated_at,
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    ledger = DecisionLedger.from_settings(settings)
+    report = ledger.get_formal_report(case.report_version_id)
+
+    assert report is not None
+    assert [(stage.phase, stage.status) for stage in report.stage_results] == [
+        ("FRAMEWORK_RUN", "SUCCEEDED"),
+        ("HOST_VALIDATION", "SUCCEEDED"),
+        ("BUSINESS_COMMIT", "SUCCEEDED"),
+        ("PUBLICATION", "SUCCEEDED"),
+    ]
+    assert [
+        (stage.phase, stage.status)
+        for stage in ledger.get_stage_results(case.business_object_id)
+    ] == [
+        ("FRAMEWORK_RUN", "SUCCEEDED"),
+        ("HOST_VALIDATION", "SUCCEEDED"),
+        ("BUSINESS_COMMIT", "SUCCEEDED"),
+        ("PUBLICATION", "SUCCEEDED"),
+    ]
+    replayed = run_default_frozen_decision_case(settings)
+    assert replayed.report == report
+    assert replayed.framework_run_id == case.framework_run_id
+    assert replayed.decision_event_id == case.decision_event_id
+    assert replayed.report_version_id == case.report_version_id
 
     load_settings.cache_clear()
 
