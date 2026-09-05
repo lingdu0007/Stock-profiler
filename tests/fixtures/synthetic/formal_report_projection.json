@@ -3,10 +3,10 @@
   "generator_version": "frozen-decision-case-web-projection-v1",
   "seed": 4017,
   "report": {
-    "report_version_id": "report-version-4017",
-    "event_id": "decision-event-4017",
-    "business_object_id": "business-object-4017",
-    "framework_run_id": "framework-run-4017",
+    "report_version_id": "report-version-831f55649cb8bf45750d07bb9f428bfd1110c938c4aa9d7e3e7603819bc8c5ca",
+    "event_id": "decision-event-54856111f06c9d9b58bb345a09255507f26963598d38acf8dbdd83220730af5e",
+    "business_object_id": "business-object-43fd82e9b08520f3ea6427bd1314cf504b13842bad59dc3c7a9dd30b24c29a4f",
+    "framework_run_id": "framework-run-6cbf8c6c637a71cde46e9c108fec5b0dcf5651e4173687579a0320a4a57a86a0",
     "case_id": "d0-orbital-mosaic-001",
     "synthetic": true,
     "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
@@ -20,7 +20,7 @@
     },
     "version_bundle": {
       "case_contract_version": "1.0.0",
-      "host_contract_version": "1.1.0",
+      "host_contract_version": "1.0.0",
       "host_application_version": "0.1.0.dev0",
       "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "agent_definition_id": "synthetic-frozen-decision-case",
@@ -28,7 +28,7 @@
       "model_adapter_id": "m-agent-deterministic-model-adapter",
       "routing_policy_version": "d0-single-definition-route-v1",
       "output_contract_version": "1.0.0",
-      "report_projection_contract_version": "1.1.0",
+      "report_projection_contract_version": "1.0.0",
       "m_agent_version": "0.5.0",
       "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl",
       "m_agent_wheel_sha256": "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
@@ -52,10 +52,7 @@
             "status": "PASSED"
           }
         ],
-        "reasons": [
-          "All required fictional evidence records are present.",
-          "The output is D0 synthetic evidence and is not a recommendation."
-        ]
+        "reasons": []
       },
       {
         "phase": "HOST_VALIDATION",
@@ -66,7 +63,10 @@
             "status": "PASSED"
           }
         ],
-        "reasons": []
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ]
       },
       {
         "phase": "BUSINESS_COMMIT",

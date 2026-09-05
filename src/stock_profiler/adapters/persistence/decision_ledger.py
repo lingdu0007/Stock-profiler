@@ -80,6 +80,10 @@ class DecisionEventCommitError(RuntimeError):
     """A host event was not reliably committed, so no report may be published."""
 
 
+class DecisionEventCommitUncertainError(DecisionEventCommitError):
+    """A database acknowledgement was lost, so the event may or may not exist."""
+
+
 class DecisionLedger:
     """Persistence boundary for the host's business identity, event, and report."""
 
@@ -308,10 +312,15 @@ class DecisionLedger:
                     committed_at=fact.committed_at,
                 )
             )
+        except Exception as error:
+            raise DecisionEventCommitError("decision event write failed") from error
+        try:
             connection.commit()
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         except Exception as error:
-            raise DecisionEventCommitError("decision event commit failed") from error
+            raise DecisionEventCommitUncertainError(
+                "decision event commit acknowledgement is uncertain"
+            ) from error
         return fact
 
     def ensure_event_stage_results(

@@ -12,6 +12,7 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
 )
 from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionEventCommitError,
+    DecisionEventCommitUncertainError,
     DecisionLedger,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -253,7 +254,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     result=result,
                     stage_results=stage_results,
                 )
-            except DecisionEventCommitError:
+            except DecisionEventCommitUncertainError:
                 committed = ledger.get_decision_event(case.decision_event_id, connection)
                 if committed is not None:
                     fact = committed
@@ -280,11 +281,45 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                         business_result_status=business_result_status_from_stage(
                             validation_result
                         ),
-                        business_lifecycle_status="UNKNOWN",
+                        business_lifecycle_status=None,
                         business_commit_status="UNKNOWN",
                         stage_results=(
                             *stage_results[:-1],
                             uncertain_commit,
+                        ),
+                    )
+            except DecisionEventCommitError:
+                committed = ledger.get_decision_event(case.decision_event_id, connection)
+                if committed is not None:
+                    fact = committed
+                else:
+                    failed_commit = StageResult(
+                        phase="BUSINESS_COMMIT",
+                        status="FAILED",
+                        gate_results=(
+                            GateResult(
+                                gate_id="HOST_RESULT_SAVED",
+                                status="FAILED",
+                            ),
+                        ),
+                        reasons=("COMMIT_STORAGE_FAILED",),
+                    )
+                    ledger.record_stage_result(
+                        connection,
+                        case=case,
+                        stage_result=failed_commit,
+                    )
+                    return _unpublished_execution(
+                        case,
+                        framework_run_status=framework.status,
+                        business_result_status=business_result_status_from_stage(
+                            validation_result
+                        ),
+                        business_lifecycle_status=None,
+                        business_commit_status="NOT_ATTEMPTED",
+                        stage_results=(
+                            *stage_results[:-1],
+                            failed_commit,
                         ),
                     )
         assert fact is not None
