@@ -49,8 +49,16 @@
             "title": "Case Contract Version",
             "type": "string"
           },
+          "host_application_version": {
+            "title": "Host Application Version",
+            "type": "string"
+          },
           "host_contract_version": {
             "title": "Host Contract Version",
+            "type": "string"
+          },
+          "host_source_sha": {
+            "title": "Host Source Sha",
             "type": "string"
           },
           "m_agent_release_commit": {
@@ -61,6 +69,14 @@
             "title": "M Agent Version",
             "type": "string"
           },
+          "m_agent_wheel_sha256": {
+            "title": "M Agent Wheel Sha256",
+            "type": "string"
+          },
+          "m_agent_wheel_url": {
+            "title": "M Agent Wheel Url",
+            "type": "string"
+          },
           "output_contract_version": {
             "title": "Output Contract Version",
             "type": "string"
@@ -69,10 +85,14 @@
         "required": [
           "case_contract_version",
           "host_contract_version",
+          "host_application_version",
+          "host_source_sha",
           "agent_definition_id",
           "agent_definition_version",
           "output_contract_version",
           "m_agent_version",
+          "m_agent_wheel_url",
+          "m_agent_wheel_sha256",
           "m_agent_release_commit"
         ],
         "title": "DecisionCaseVersionBundle",
@@ -504,6 +524,176 @@
         "summary": "Authentication Verify"
       }
     },
+    "/api/v1/auth/passkeys/reauthentication/options": {
+      "post": {
+        "operationId": "reauthentication_options_api_v1_auth_passkeys_reauthentication_options_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reauthentication Options"
+      }
+    },
+    "/api/v1/auth/passkeys/reauthentication/verify": {
+      "post": {
+        "operationId": "reauthentication_verify_api_v1_auth_passkeys_reauthentication_verify_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Reauthentication Verify Api V1 Auth Passkeys Reauthentication Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reauthentication Verify"
+      }
+    },
     "/api/v1/auth/passkeys/registration/options": {
       "post": {
         "operationId": "registration_options_api_v1_auth_passkeys_registration_options_post",
@@ -756,6 +946,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
           },
           "422": {
             "content": {

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -16,6 +15,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import (
 )
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
+    DecisionEventFact,
     ExternalResult,
     FormalReport,
     FrozenDecisionCase,
@@ -68,20 +68,16 @@ class DecisionLedger:
         self, *, case: FrozenDecisionCase, framework_run_id: str, result: ExternalResult
     ) -> FormalReport:
         """Atomically append the event and its only formal report projection."""
-        report = FormalReport(
-            report_version_id=case.report_version_id,
-            event_id=case.decision_event_id,
+        fact = DecisionEventFact(
+            decision_event_id=case.decision_event_id,
             business_object_id=case.business_object_id,
             framework_run_id=framework_run_id,
-            case_id=case.case_id,
-            synthetic=True,
-            qualification_scope=case.qualification_scope,
-            generated_at=case.evidence_clock.validated_at,
-            knowledge_cutoff=case.knowledge_cutoff,
-            evidence_clock=case.evidence_clock,
-            version_bundle=case.version_bundle,
+            case=case,
             result=result,
+            validation_status="PASSED",
+            committed_at=datetime.now(UTC).isoformat(),
         )
+        report = _report_from_fact(case.report_version_id, fact)
         try:
             with self._engine.begin() as connection:
                 connection.execute(
@@ -89,24 +85,14 @@ class DecisionLedger:
                         decision_event_id=case.decision_event_id,
                         business_object_id=case.business_object_id,
                         framework_run_id=framework_run_id,
-                        event_payload=json.dumps(
-                            {
-                                "case_id": case.case_id,
-                                "result": result.model_dump(mode="json"),
-                                "version_bundle": case.version_bundle.model_dump(mode="json"),
-                            },
-                            ensure_ascii=True,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ),
-                        committed_at=datetime.now(UTC).isoformat(),
+                        event_payload=fact.model_dump_json(),
+                        committed_at=fact.committed_at,
                     )
                 )
                 connection.execute(
                     FORMAL_REPORTS.insert().values(
                         report_version_id=report.report_version_id,
                         decision_event_id=report.event_id,
-                        report_payload=report.model_dump_json(),
                         generated_at=report.generated_at,
                     )
                 )
@@ -117,15 +103,18 @@ class DecisionLedger:
     def get_formal_report(self, report_version_id: str) -> FormalReport | None:
         """Read a report only when the report row references a committed event."""
         with self._engine.connect() as connection:
-            payload = connection.execute(
-                select(FORMAL_REPORTS.c.report_payload)
+            row = connection.execute(
+                select(FORMAL_REPORTS.c.report_version_id, DECISION_EVENTS.c.event_payload)
                 .join(
                     DECISION_EVENTS,
                     FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
                 )
                 .where(FORMAL_REPORTS.c.report_version_id == report_version_id)
-            ).scalar_one_or_none()
-        return FormalReport.model_validate_json(payload) if payload is not None else None
+            ).one_or_none()
+        if row is None:
+            return None
+        fact = DecisionEventFact.model_validate_json(row.event_payload)
+        return _report_from_fact(str(row.report_version_id), fact)
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""
@@ -141,3 +130,22 @@ class DecisionLedger:
                     connection.execute(select(func.count()).select_from(FORMAL_REPORTS)).scalar_one()
                 ),
             }
+
+
+def _report_from_fact(report_version_id: str, fact: DecisionEventFact) -> FormalReport:
+    """Build the only report projection from the event's complete host-owned fact."""
+    case = fact.case
+    return FormalReport(
+        report_version_id=report_version_id,
+        event_id=fact.decision_event_id,
+        business_object_id=fact.business_object_id,
+        framework_run_id=fact.framework_run_id,
+        case_id=case.case_id,
+        synthetic=True,
+        qualification_scope=case.qualification_scope,
+        generated_at=case.report_generated_at,
+        knowledge_cutoff=case.knowledge_cutoff,
+        evidence_clock=case.evidence_clock,
+        version_bundle=case.version_bundle,
+        result=fact.result,
+    )

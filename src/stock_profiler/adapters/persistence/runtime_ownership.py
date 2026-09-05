@@ -37,7 +37,7 @@ DECISION_EVENTS = Table(
     "decision_events",
     METADATA,
     Column("decision_event_id", String(96), primary_key=True),
-    Column("business_object_id", String(96), nullable=False, unique=True),
+    Column("business_object_id", String(96), nullable=False),
     Column("framework_run_id", String(96), nullable=False, unique=True),
     Column("event_payload", String, nullable=False),
     Column("committed_at", String(40), nullable=False),
@@ -47,7 +47,6 @@ FORMAL_REPORTS = Table(
     METADATA,
     Column("report_version_id", String(96), primary_key=True),
     Column("decision_event_id", String(96), nullable=False, unique=True),
-    Column("report_payload", String, nullable=False),
     Column("generated_at", String(40), nullable=False),
 )
 AUTH_CREDENTIALS = Table(

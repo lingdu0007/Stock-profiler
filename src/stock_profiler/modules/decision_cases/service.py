@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import execute_frozen_decision_case
 from stock_profiler.adapters.persistence.decision_ledger import (
@@ -13,7 +12,6 @@ from stock_profiler.adapters.persistence.decision_ledger import (
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import (
-    DEFAULT_SYNTHETIC_CASE_PATH,
     DecisionCaseExecution,
     ExternalResult,
     FormalReport,
@@ -24,24 +22,22 @@ from stock_profiler.modules.decision_cases.domain import (
 
 def run_default_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     """Run the published public fixture through the same host module used by every entrypoint."""
-    return run_frozen_decision_case(settings, DEFAULT_SYNTHETIC_CASE_PATH)
+    return _run_frozen_decision_case(settings)
 
 
 def replay_default_frozen_decision_case(
     settings: Settings, business_identity: str
 ) -> DecisionCaseExecution:
     """Replay only when the caller names the fixture's immutable business identity."""
-    case = load_frozen_decision_case(DEFAULT_SYNTHETIC_CASE_PATH)
+    case = load_frozen_decision_case()
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
-    return run_frozen_decision_case(settings, DEFAULT_SYNTHETIC_CASE_PATH)
+    return _run_frozen_decision_case(settings)
 
 
-def run_frozen_decision_case(
-    settings: Settings, case_path: Path = DEFAULT_SYNTHETIC_CASE_PATH
-) -> DecisionCaseExecution:
+def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
     """Run or replay one exact frozen business identity without HTTP transport."""
-    case = load_frozen_decision_case(case_path)
+    case = load_frozen_decision_case()
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
     existing_report = ledger.get_formal_report(case.report_version_id)
