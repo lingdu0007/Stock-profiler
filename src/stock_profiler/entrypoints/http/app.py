@@ -116,7 +116,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
 
-    @app.post("/api/v1/auth/passkeys/registration/options", response_model=ChallengeDto)
+    @app.post(
+        "/api/v1/auth/passkeys/registration/options",
+        response_model=ChallengeDto,
+        responses={403: {"description": "Host console grant required"}},
+    )
     def registration_options(
         grant_id: str = Header(alias="X-Host-Console-Grant"),
         _: None = Depends(require_expected_origin),
@@ -130,7 +134,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except AuthenticationError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
 
-    @app.post("/api/v1/auth/passkeys/registration/verify", status_code=204)
+    @app.post(
+        "/api/v1/auth/passkeys/registration/verify",
+        status_code=204,
+        responses={401: {"description": "Registration verification failed"}},
+    )
     def registration_verify(
         request: CredentialRequest, _: None = Depends(require_expected_origin)
     ) -> Response:
@@ -295,7 +303,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get(
         "/api/v1/reports/{report_version_id}",
         response_model=FormalReport,
-        responses={401: {"description": "Authentication required"}},
+        responses={
+            401: {"description": "Authentication required"},
+            404: {"description": "Formal report not found"},
+        },
     )
     def formal_report(
         report_version_id: str,

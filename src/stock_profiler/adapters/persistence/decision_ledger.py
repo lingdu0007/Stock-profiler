@@ -75,7 +75,7 @@ class DecisionLedger:
             case=case,
             result=result,
             validation_status="PASSED",
-            committed_at=datetime.now(UTC).isoformat(),
+            committed_at=case.report_generated_at,
         )
         report = _report_from_fact(case.report_version_id, fact)
         try:

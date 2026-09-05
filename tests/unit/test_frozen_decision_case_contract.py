@@ -14,8 +14,10 @@ def test_frozen_synthetic_case_has_stable_independent_identities() -> None:
     assert first.knowledge_cutoff == "2042-05-17T16:00:00Z"
     assert first.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
     assert first.version_bundle.m_agent_version == "0.5.0"
-    assert first.version_bundle.host_source_sha == "fcd1645cd18b88eb81c6af46ee81c2012e2e083b"
-    assert first.report_generated_at == "2042-05-17T15:19:00Z"
+    assert first.version_bundle.host_source_sha == "d0-synthetic-host-contract-1"
+    assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"
+    assert first.version_bundle.routing_policy_version == "d0-single-definition-route-v1"
+    assert first.report_generated_at == "2042-05-17T16:01:00Z"
     assert first.business_object_id == second.business_object_id
     assert first.framework_run_id == second.framework_run_id
     assert first.decision_event_id == second.decision_event_id

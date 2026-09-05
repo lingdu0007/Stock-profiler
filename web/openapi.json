@@ -77,8 +77,16 @@
             "title": "M Agent Wheel Url",
             "type": "string"
           },
+          "model_adapter_id": {
+            "title": "Model Adapter Id",
+            "type": "string"
+          },
           "output_contract_version": {
             "title": "Output Contract Version",
+            "type": "string"
+          },
+          "routing_policy_version": {
+            "title": "Routing Policy Version",
             "type": "string"
           }
         },
@@ -89,6 +97,8 @@
           "host_source_sha",
           "agent_definition_id",
           "agent_definition_version",
+          "model_adapter_id",
+          "routing_policy_version",
           "output_contract_version",
           "m_agent_version",
           "m_agent_wheel_url",
@@ -735,6 +745,9 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "description": "Host console grant required"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -783,6 +796,9 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Registration verification failed"
           },
           "422": {
             "content": {
@@ -949,6 +965,9 @@
           },
           "401": {
             "description": "Authentication required"
+          },
+          "404": {
+            "description": "Formal report not found"
           },
           "422": {
             "content": {

@@ -35,6 +35,8 @@ class DecisionCaseVersionBundle(FrozenContract):
     host_source_sha: str
     agent_definition_id: str
     agent_definition_version: str
+    model_adapter_id: str
+    routing_policy_version: str
     output_contract_version: str
     m_agent_version: str
     m_agent_wheel_url: str

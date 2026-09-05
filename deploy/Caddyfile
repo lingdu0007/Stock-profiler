@@ -2,11 +2,16 @@
     root * /srv
     encode zstd gzip
 
-    @api path /api/v1/*
-    reverse_proxy @api api:8000
+    handle /api/v1/* {
+        reverse_proxy api:8000
+    }
 
-    respond /healthz 200
+    handle /healthz {
+        respond 200
+    }
 
-    try_files {path} /index.html
-    file_server
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
 }
