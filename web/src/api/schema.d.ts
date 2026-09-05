@@ -326,7 +326,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "PASSED" | "FAILED";
+            status: "PASSED" | "FAILED" | "UNKNOWN";
         };
         /** HTTPValidationError */
         HTTPValidationError: {

@@ -36,6 +36,8 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
     outcome = run_default_frozen_decision_case(migrated_settings)
 
     assert outcome.framework_run_status == "SUCCEEDED"
+    assert outcome.business_result_status == "SUCCEEDED"
+    assert outcome.business_lifecycle_status is None
     assert outcome.business_commit_status == "COMMITTED"
     assert outcome.publication_status == "PUBLISHED"
     assert outcome.report is not None
@@ -83,20 +85,21 @@ def test_framework_success_and_host_rejection_remain_distinct_committed_results(
 
 
 @pytest.mark.parametrize(
-    ("outcome_code", "expected_status", "published"),
+    ("outcome_code", "expected_business_status", "expected_lifecycle_status", "published"),
     (
-        ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", True),
-        ("SYNTHETIC_RESULT_EXPIRED", "EXPIRED", True),
-        ("SYNTHETIC_RESULT_EXECUTION_BLOCKED", "EXECUTION_BLOCKED", True),
-        ("SYNTHETIC_RESULT_PENDING", "PENDING", False),
-        ("SYNTHETIC_RESULT_FAILED", "FAILED", False),
+        ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", None, True),
+        ("SYNTHETIC_RESULT_EXPIRED", None, "EXPIRED", False),
+        ("SYNTHETIC_RESULT_EXECUTION_BLOCKED", None, "EXECUTION_BLOCKED", False),
+        ("SYNTHETIC_RESULT_PENDING", None, "PENDING", False),
+        ("SYNTHETIC_RESULT_FAILED", "FAILED", None, False),
     ),
 )
 def test_host_result_families_keep_their_own_saved_lifecycle(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
     outcome_code: str,
-    expected_status: str,
+    expected_business_status: str | None,
+    expected_lifecycle_status: str | None,
     published: bool,
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
@@ -119,7 +122,8 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     outcome = run_default_frozen_decision_case(migrated_settings)
 
     assert outcome.framework_run_status == "SUCCEEDED"
-    assert outcome.business_result_status == expected_status
+    assert outcome.business_result_status == expected_business_status
+    assert outcome.business_lifecycle_status == expected_lifecycle_status
     assert outcome.publication_status == ("PUBLISHED" if published else "CLOSED")
     assert outcome.business_commit_status == (
         "COMMITTED" if published else "NOT_ATTEMPTED"
@@ -127,7 +131,10 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
     assert outcome.report is not None if published else outcome.report is None
     assert [(result.phase, result.status) for result in outcome.stage_results[:2]] == [
         ("FRAMEWORK_RUN", "SUCCEEDED"),
-        ("HOST_VALIDATION", expected_status),
+        (
+            "HOST_VALIDATION",
+            expected_business_status or expected_lifecycle_status,
+        ),
     ]
     counts = DecisionLedger.from_settings(migrated_settings).counts()
     assert counts == {
@@ -155,6 +162,7 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
 
     assert outcome.framework_run_status == "WAITING"
     assert outcome.business_result_status is None
+    assert outcome.business_lifecycle_status is None
     assert outcome.business_commit_status == "NOT_ATTEMPTED"
     assert outcome.publication_status == "CLOSED"
     assert outcome.report is None
@@ -189,6 +197,7 @@ def test_framework_terminal_failures_remain_framework_results(
 
     assert outcome.framework_run_status == framework_status
     assert outcome.business_result_status is None
+    assert outcome.business_lifecycle_status is None
     assert outcome.business_commit_status == "NOT_ATTEMPTED"
     assert outcome.publication_status == "CLOSED"
     assert outcome.report is None
@@ -220,6 +229,7 @@ def test_invalid_framework_output_contract_is_saved_and_keeps_publication_closed
 
     assert outcome.framework_run_status == "SUCCEEDED"
     assert outcome.business_result_status == "FAILED"
+    assert outcome.business_lifecycle_status is None
     assert outcome.business_commit_status == "NOT_ATTEMPTED"
     assert outcome.publication_status == "CLOSED"
     assert outcome.report is None
@@ -282,11 +292,13 @@ def test_uncertain_event_commit_closes_publication_until_the_original_identity_r
 
     assert uncertain.framework_run_status == "SUCCEEDED"
     assert uncertain.business_result_status == "SUCCEEDED"
+    assert uncertain.business_lifecycle_status == "UNKNOWN"
     assert uncertain.business_commit_status == "UNKNOWN"
     assert uncertain.publication_status == "CLOSED"
     assert uncertain.report is None
     assert uncertain.stage_results[-1].phase == "BUSINESS_COMMIT"
     assert uncertain.stage_results[-1].status == "UNKNOWN"
+    assert uncertain.stage_results[-1].gate_results[0].status == "UNKNOWN"
 
     ledger = DecisionLedger.from_settings(migrated_settings)
     assert ledger.counts() == {"business_objects": 1, "decision_events": 0, "reports": 0}
@@ -374,6 +386,7 @@ def test_report_projection_failure_preserves_the_committed_event_but_never_publi
 
     assert unpublished.framework_run_status == "SUCCEEDED"
     assert unpublished.business_result_status == "SUCCEEDED"
+    assert unpublished.business_lifecycle_status is None
     assert unpublished.business_commit_status == "COMMITTED"
     assert unpublished.publication_status == "CLOSED"
     assert unpublished.report is None
@@ -404,23 +417,20 @@ def test_notification_failure_and_retry_preserve_the_original_published_report(
     assert original_execution.report is not None
     case = load_frozen_decision_case(migrated_settings)
 
-    def failing_notification(_: object) -> None:
-        raise RuntimeError("synthetic notification transport failure")
-
     failed = retry_default_frozen_decision_case_notification(
         migrated_settings,
         case.business_identity,
-        failing_notification,
+        "FAILED",
     )
     repeated_failure = retry_default_frozen_decision_case_notification(
         migrated_settings,
         case.business_identity,
-        failing_notification,
+        "FAILED",
     )
     recovered = retry_default_frozen_decision_case_notification(
         migrated_settings,
         case.business_identity,
-        lambda _: None,
+        "SUCCEEDED",
     )
 
     assert failed.status == "FAILED"
@@ -472,6 +482,7 @@ def test_correction_appends_a_new_report_that_references_the_original_event(
     assert correction.report.framework_run_id == original_report.framework_run_id
     assert correction.report.knowledge_cutoff == original_report.knowledge_cutoff
     assert correction.report.evidence_clock == original_report.evidence_clock
+    assert correction.report.generated_at != original_report.generated_at
     assert (
         get_formal_report(original_report.report_version_id, migrated_settings) == original_report
     )
@@ -510,6 +521,50 @@ def test_read_failure_does_not_remove_the_published_report(
         "decision_events": 1,
         "reports": 1,
     }
+
+
+def test_recovery_backfills_event_stage_results_before_publication(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_record = DecisionLedger.record_stage_result
+
+    def crash_after_event_commit(
+        self: DecisionLedger,
+        connection: Connection,
+        *,
+        case: FrozenDecisionCase,
+        stage_result: StageResult,
+        decision_event_id: str | None = None,
+        stage_event_id: str | None = None,
+    ) -> None:
+        if stage_result.phase == "BUSINESS_COMMIT" and decision_event_id is not None:
+            raise RuntimeError("synthetic crash after event commit")
+        original_record(
+            self,
+            connection,
+            case=case,
+            stage_result=stage_result,
+            decision_event_id=decision_event_id,
+            stage_event_id=stage_event_id,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DecisionLedger, "record_stage_result", crash_after_event_commit)
+        with pytest.raises(RuntimeError, match="synthetic crash after event commit"):
+            run_default_frozen_decision_case(migrated_settings)
+
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 0}
+
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.publication_status == "PUBLISHED"
+    assert [stage.status for stage in ledger.get_stage_results(recovered.business_object_id)] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
 
 
 def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_published(

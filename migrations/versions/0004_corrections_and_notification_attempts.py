@@ -67,6 +67,11 @@ def downgrade() -> None:
     ).scalar_one()
     if correction_count:
         raise RuntimeError("cannot downgrade while append-only correction facts exist")
+    notification_count = bind.execute(
+        sa.text("SELECT COUNT(*) FROM decision_notification_attempts")
+    ).scalar_one()
+    if notification_count:
+        raise RuntimeError("cannot downgrade while append-only notification attempts exist")
     op.drop_table("decision_notification_attempts")
     op.create_table(
         "decision_events_replacement",
