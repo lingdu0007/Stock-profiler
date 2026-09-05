@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 
 from pydantic import ValidationError
 
@@ -204,39 +203,30 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             if mapping is None:
                 raise RuntimeError("durable business mapping is missing before framework execution")
             if mapping.case is None:
-                if mapping.case_id != case.case_id:
+                if (
+                    mapping.frozen_input_fingerprint != case.frozen_input_fingerprint
+                    or mapping.framework_run_id != case.framework_run_id
+                ):
                     raise DecisionEventCommitError(
-                        "business mapping has no recoverable frozen case snapshot"
+                        "business identity maps to different frozen input"
                     )
-                execution = _execution_identity(case, mapping.framework_run_id)
+                execution_case = case
             elif not mapping.case.matches_recovery_input(case):
                 raise DecisionEventCommitError("business identity maps to different frozen input")
             else:
-                execution = _execution_identity(mapping.case)
-            if execution.framework_run_id == execution.case.framework_run_id:
-                framework = asyncio.run(execute_frozen_decision_case(execution.case, runtime))
-            else:
-                framework = asyncio.run(
-                    execute_frozen_decision_case(
-                        execution.case,
-                        runtime,
-                        framework_run_id=execution.framework_run_id,
-                    )
-                )
-            framework_result = _framework_stage_result(execution.framework_run_id, framework)
+                execution_case = mapping.case
+            framework = asyncio.run(execute_frozen_decision_case(execution_case, runtime))
+            framework_result = _framework_stage_result(execution_case, framework)
             ledger.record_stage_result(
                 connection,
-                case=execution.case,
+                case=execution_case,
                 stage_result=framework_result,
-                framework_run_id=execution.framework_run_id,
+                framework_run_id=execution_case.framework_run_id,
                 allow_repeated_occurrence=framework_result.status != "SUCCEEDED",
             )
-            if framework.run_id != execution.framework_run_id:
+            if framework.run_id != execution_case.framework_run_id:
                 return _unpublished_execution(
-                    execution.case,
-                    framework_run_id=execution.framework_run_id,
-                    decision_event_id=execution.decision_event_id,
-                    report_version_id=execution.report_version_id,
+                    execution_case,
                     framework_run_status=framework_run_status_from_stage(framework_result),
                     business_result_status=None,
                     business_lifecycle_status=None,
@@ -245,10 +235,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 )
             if framework.status != "SUCCEEDED":
                 return _unpublished_execution(
-                    execution.case,
-                    framework_run_id=execution.framework_run_id,
-                    decision_event_id=execution.decision_event_id,
-                    report_version_id=execution.report_version_id,
+                    execution_case,
                     framework_run_status=framework.status,
                     business_result_status=None,
                     business_lifecycle_status=None,
@@ -263,22 +250,19 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                 except ValidationError:
                     validation_result = _failed_host_validation("OUTPUT_CONTRACT_INVALID")
                 else:
-                    validation_result = host_validation_result(execution.case, result)
+                    validation_result = host_validation_result(execution_case, result)
             ledger.record_stage_result(
                 connection,
-                case=execution.case,
+                case=execution_case,
                 stage_result=validation_result,
-                framework_run_id=execution.framework_run_id,
+                framework_run_id=execution_case.framework_run_id,
                 allow_repeated_occurrence=validation_result.status
                 not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
             )
             stage_results_before_commit = (framework_result, validation_result)
             if not is_committable_host_validation_result(validation_result):
                 return _unpublished_execution(
-                    execution.case,
-                    framework_run_id=execution.framework_run_id,
-                    decision_event_id=execution.decision_event_id,
-                    report_version_id=execution.report_version_id,
+                    execution_case,
                     framework_run_status=framework.status,
                     business_result_status=business_result_status_from_stage(validation_result),
                     business_lifecycle_status=business_lifecycle_status_from_stage(
@@ -301,15 +285,14 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
             try:
                 fact = ledger.commit_event(
                     connection,
-                    case=execution.case,
+                    case=execution_case,
                     framework_run_id=framework.run_id,
                     result=result,
                     stage_results=stage_results,
-                    decision_event_id=execution.decision_event_id,
                 )
             except DecisionEventCommitUncertainError:
                 committed = ledger.get_decision_event(
-                    execution.decision_event_id,
+                    execution_case.decision_event_id,
                     connection,
                 )
                 if committed is not None:
@@ -328,16 +311,13 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     )
                     ledger.record_stage_result(
                         connection,
-                        case=execution.case,
+                        case=execution_case,
                         stage_result=uncertain_commit,
-                        framework_run_id=execution.framework_run_id,
+                        framework_run_id=execution_case.framework_run_id,
                         allow_repeated_occurrence=True,
                     )
                     return _unpublished_execution(
-                        execution.case,
-                        framework_run_id=execution.framework_run_id,
-                        decision_event_id=execution.decision_event_id,
-                        report_version_id=execution.report_version_id,
+                        execution_case,
                         framework_run_status=framework.status,
                         business_result_status=business_result_status_from_stage(validation_result),
                         business_lifecycle_status=None,
@@ -349,7 +329,7 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     )
             except DecisionEventCommitError:
                 committed = ledger.get_decision_event(
-                    execution.decision_event_id,
+                    execution_case.decision_event_id,
                     connection,
                 )
                 if committed is not None:
@@ -368,16 +348,13 @@ def _run_frozen_decision_case(settings: Settings) -> DecisionCaseExecution:
                     )
                     ledger.record_stage_result(
                         connection,
-                        case=execution.case,
+                        case=execution_case,
                         stage_result=failed_commit,
-                        framework_run_id=execution.framework_run_id,
+                        framework_run_id=execution_case.framework_run_id,
                         allow_repeated_occurrence=True,
                     )
                     return _unpublished_execution(
-                        execution.case,
-                        framework_run_id=execution.framework_run_id,
-                        decision_event_id=execution.decision_event_id,
-                        report_version_id=execution.report_version_id,
+                        execution_case,
                         framework_run_status=framework.status,
                         business_result_status=business_result_status_from_stage(validation_result),
                         business_lifecycle_status=None,
@@ -478,11 +455,9 @@ def _unpublished_execution(
     )
 
 
-def _framework_stage_result(
-    expected_framework_run_id: str, framework: FrameworkRunResult
-) -> StageResult:
+def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunResult) -> StageResult:
     """Save the framework state before evaluating any host-owned result."""
-    if framework.run_id != expected_framework_run_id:
+    if framework.run_id != case.framework_run_id:
         return StageResult(
             phase="FRAMEWORK_RUN",
             status="FAILED",
@@ -503,28 +478,6 @@ def _framework_stage_result(
         reasons=(
             framework.error_code or framework.waiting_reason or f"FRAMEWORK_{framework.status}",
         ),
-    )
-
-
-@dataclass(frozen=True)
-class _ExecutionIdentity:
-    case: FrozenDecisionCase
-    framework_run_id: str
-    decision_event_id: str
-    report_version_id: str
-
-
-def _execution_identity(
-    case: FrozenDecisionCase, framework_run_id: str | None = None
-) -> _ExecutionIdentity:
-    """Derive host-owned identities from the original durable framework Run."""
-    durable_framework_run_id = framework_run_id or case.framework_run_id
-    decision_event_id = case.decision_event_id_for_framework_run(durable_framework_run_id)
-    return _ExecutionIdentity(
-        case=case,
-        framework_run_id=durable_framework_run_id,
-        decision_event_id=decision_event_id,
-        report_version_id=case.report_version_id_for_event(decision_event_id),
     )
 
 

@@ -68,12 +68,9 @@ class FrameworkRunResult:
 async def execute_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
-    *,
-    framework_run_id: str | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
     _assert_runtime_version_bundle(case)
-    durable_framework_run_id = framework_run_id or case.framework_run_id
     adapter = DeterministicModelAdapter(
         responses=(_deterministic_model_response(case),),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
@@ -94,13 +91,13 @@ async def execute_frozen_decision_case(
     registry.register(definition)
     runner = Runner(registry=registry, store=runtime.run_store, owner="stock-profiler-d0")
     try:
-        run = await runner.get_run(durable_framework_run_id)
+        run = await runner.get_run(case.framework_run_id)
     except RunNotFoundError:
         created = await runner.create_run(
             definition.definition_id,
             definition.version,
             json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
-            run_id=durable_framework_run_id,
+            run_id=case.framework_run_id,
         )
         run = await runner.start_run(created.run_id)
     else:
