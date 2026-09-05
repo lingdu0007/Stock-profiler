@@ -190,11 +190,31 @@ class DecisionLedger:
             return
         raise DecisionEventCommitError("business identity maps to different frozen input")
 
-    def persist_business_mapping_before_framework(self, case: FrozenDecisionCase) -> None:
+    def resolve_business_object_id(
+        self, case: FrozenDecisionCase, connection: Connection
+    ) -> str:
+        """Choose one retained business lineage without inventing a version fork."""
+        matching_ids = tuple(
+            business_object_id
+            for business_object_id in case.recovery_business_object_ids
+            if self.get_business_object_mapping(business_object_id, connection) is not None
+        )
+        if len(matching_ids) > 1:
+            raise DecisionEventCommitError(
+                "multiple durable business mappings match the frozen business identity"
+            )
+        return matching_ids[0] if matching_ids else case.business_object_id
+
+    def persist_business_mapping_before_framework(self, case: FrozenDecisionCase) -> str:
         """Commit the original mapping before a separate M-Agent store can checkpoint work."""
         with self.serialize_case_execution() as connection:
-            if self.get_original_decision_event(case.business_object_id, connection) is None:
+            business_object_id = self.resolve_business_object_id(case, connection)
+            if (
+                business_object_id == case.business_object_id
+                and self.get_original_decision_event(business_object_id, connection) is None
+            ):
                 self.ensure_business_object(connection, case)
+            return business_object_id
 
     def get_decision_event(
         self, decision_event_id: str, connection: Connection

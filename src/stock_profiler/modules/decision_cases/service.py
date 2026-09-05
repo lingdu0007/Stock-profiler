@@ -84,8 +84,9 @@ def retry_default_frozen_decision_case_notification(
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine, clock=clock)
     with ledger.serialize_case_execution() as connection:
-        event = ledger.get_original_decision_event(case.business_object_id, connection)
-        report = ledger.get_original_formal_report(case.business_object_id, connection)
+        business_object_id = ledger.resolve_business_object_id(case, connection)
+        event = ledger.get_original_decision_event(business_object_id, connection)
+        report = ledger.get_original_formal_report(business_object_id, connection)
         if event is None or report is None:
             raise ValueError("formal report must be published before notification")
         attempt = ledger.record_notification_attempt(
@@ -123,12 +124,13 @@ def correct_default_frozen_decision_case(
     publication_error: DecisionEventCommitError | None = None
     report: FormalReport | None = None
     with ledger.serialize_case_execution() as connection:
+        business_object_id = ledger.resolve_business_object_id(case, connection)
         original_event = ledger.get_original_decision_event(
-            case.business_object_id,
+            business_object_id,
             connection,
         )
         original_report = ledger.get_original_formal_report(
-            case.business_object_id,
+            business_object_id,
             connection,
         )
         if original_event is None or original_report is None:
@@ -243,29 +245,29 @@ def _run_frozen_decision_case(
     case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine, clock=clock)
-    ledger.persist_business_mapping_before_framework(case)
+    business_object_id = ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
-            case.business_object_id,
+            business_object_id,
             connection,
         )
         if existing_report is not None:
             return _published_execution(existing_report)
-        fact = ledger.get_original_decision_event(case.business_object_id, connection)
+        fact = ledger.get_original_decision_event(business_object_id, connection)
 
     if fact is None:
-        with _serialize_local_framework_execution(case.business_object_id):
+        with _serialize_local_framework_execution(business_object_id):
             with ledger.serialize_case_execution() as connection:
                 existing_report = ledger.get_original_formal_report(
-                    case.business_object_id,
+                    business_object_id,
                     connection,
                 )
                 if existing_report is not None:
                     return _published_execution(existing_report)
-                fact = ledger.get_original_decision_event(case.business_object_id, connection)
+                fact = ledger.get_original_decision_event(business_object_id, connection)
                 if fact is None:
                     mapping = ledger.get_business_object_mapping(
-                        case.business_object_id,
+                        business_object_id,
                         connection,
                     )
                     if mapping is None:
@@ -278,8 +280,9 @@ def _run_frozen_decision_case(
                         )
                     else:
                         execution_case = mapping.case
+                        ledger.ensure_business_object(connection, execution_case)
                     if _has_durable_framework_history(
-                        ledger.get_stage_results(case.business_object_id, connection)
+                        ledger.get_stage_results(business_object_id, connection)
                     ):
                         execution_case = execution_case.model_copy(
                             update={"recovery_framework_run_id": mapping.framework_run_id}
@@ -304,13 +307,13 @@ def _run_frozen_decision_case(
                     raise DecisionEventCommitError("durable framework recovery failed") from error
                 with ledger.serialize_case_execution() as connection:
                     existing_report = ledger.get_original_formal_report(
-                        case.business_object_id,
+                        business_object_id,
                         connection,
                     )
                     if existing_report is not None:
                         return _published_execution(existing_report)
                     fact = ledger.get_original_decision_event(
-                        case.business_object_id,
+                        business_object_id,
                         connection,
                     )
                     if fact is None:
@@ -326,12 +329,12 @@ def _run_frozen_decision_case(
 
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
-            case.business_object_id,
+            business_object_id,
             connection,
         )
         if existing_report is not None:
             return _published_execution(existing_report)
-        current_fact = ledger.get_original_decision_event(case.business_object_id, connection)
+        current_fact = ledger.get_original_decision_event(business_object_id, connection)
         if current_fact is None:
             raise RuntimeError("committed decision event is missing before publication")
         return _publish_committed_fact(ledger, connection, current_fact)
