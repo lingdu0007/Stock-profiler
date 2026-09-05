@@ -90,7 +90,6 @@ class DecisionEventCommitUncertainError(DecisionEventCommitError):
 class BusinessObjectMapping:
     """The durable case snapshot and original Run bound to one business object."""
 
-    case_id: str
     frozen_input_fingerprint: str
     framework_run_id: str
     case: FrozenDecisionCase | None
@@ -127,7 +126,6 @@ class DecisionLedger:
         """Load a saved case snapshot before deriving any current-build Run identity."""
         row = connection.execute(
             select(
-                DECISION_CASE_BUSINESS_OBJECTS.c.case_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.frozen_input_fingerprint,
                 DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id,
                 DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
@@ -136,7 +134,6 @@ class DecisionLedger:
         if row is None:
             return None
         return BusinessObjectMapping(
-            case_id=row.case_id,
             frozen_input_fingerprint=row.frozen_input_fingerprint,
             framework_run_id=row.framework_run_id,
             case=(
@@ -163,13 +160,13 @@ class DecisionLedger:
             return
         if mapping.case is not None and mapping.case.matches_recovery_input(case):
             return
-        if mapping.case is None and mapping.case_id == case.case_id:
-            return
         if (
-            mapping.frozen_input_fingerprint != case.frozen_input_fingerprint
-            or mapping.framework_run_id != case.framework_run_id
+            mapping.case is None
+            and mapping.frozen_input_fingerprint == case.frozen_input_fingerprint
+            and mapping.framework_run_id == case.framework_run_id
         ):
-            raise DecisionEventCommitError("business identity maps to different frozen input")
+            return
+        raise DecisionEventCommitError("business identity maps to different frozen input")
 
     def persist_business_mapping_before_framework(self, case: FrozenDecisionCase) -> None:
         """Commit the original mapping before a separate M-Agent store can checkpoint work."""
@@ -226,7 +223,7 @@ class DecisionLedger:
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
-        stage_payload = stage_result.model_dump_json()
+        stage_payload = _canonical_json(stage_result.model_dump(mode="json"))
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,
@@ -527,9 +524,12 @@ class DecisionLedger:
     ) -> FormalReport | None:
         """Read one existing projection without deriving a new report identity."""
         row = connection.execute(
-            select(FORMAL_REPORTS.c.report_payload).where(
-                FORMAL_REPORTS.c.decision_event_id == decision_event_id
+            select(FORMAL_REPORTS.c.report_payload)
+            .join(
+                DECISION_EVENTS,
+                FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
             )
+            .where(FORMAL_REPORTS.c.decision_event_id == decision_event_id)
         ).one_or_none()
         if row is None:
             return None
@@ -589,6 +589,10 @@ def _stage_event_id(
     }
     serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return f"decision-stage-{sha256(serialized.encode()).hexdigest()}"
+
+
+def _canonical_json(payload: object) -> str:
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
 def _notification_attempt_id(report: FormalReport, attempt_number: int) -> str:

@@ -556,6 +556,7 @@ def is_committable_host_validation_result(stage_result: StageResult) -> bool:
     return (
         stage_result.phase == "HOST_VALIDATION"
         and stage_result.status in _COMMITTABLE_HOST_RESULT_STATUSES
+        and all(gate_result.status == "PASSED" for gate_result in stage_result.gate_results)
     )
 
 

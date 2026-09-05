@@ -81,7 +81,28 @@ def test_formal_report_projection_fixture_matches_the_frozen_runtime(
     assert fixture["report"] == outcome.report.model_dump(mode="json")
 
 
-def test_framework_success_and_host_rejection_remain_distinct_committed_results(
+def test_report_lookup_by_event_requires_a_committed_event(
+    migrated_settings: Settings,
+) -> None:
+    outcome = run_default_frozen_decision_case(migrated_settings)
+    engine = create_engine(migrated_settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM decision_events WHERE decision_event_id = :decision_event_id"),
+            {"decision_event_id": outcome.decision_event_id},
+        )
+
+    with engine.connect() as connection:
+        assert (
+            DecisionLedger.from_settings(migrated_settings).get_formal_report_for_event(
+                outcome.decision_event_id,
+                connection,
+            )
+            is None
+        )
+
+
+def test_framework_success_and_unmatched_host_rejection_remain_distinct_and_closed(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -97,24 +118,23 @@ def test_framework_success_and_host_rejection_remain_distinct_committed_results(
     outcome = run_default_frozen_decision_case(migrated_settings)
 
     assert outcome.framework_run_status == "SUCCEEDED"
-    assert outcome.business_commit_status == "COMMITTED"
-    assert outcome.publication_status == "PUBLISHED"
-    assert outcome.report is not None
-    assert outcome.report.result.outcome_code == "SYNTHETIC_INPUT_REJECTED"
+    assert outcome.business_result_status == "REJECTED"
+    assert outcome.business_commit_status == "NOT_ATTEMPTED"
+    assert outcome.publication_status == "CLOSED"
+    assert outcome.report is None
     assert [(result.phase, result.status) for result in outcome.stage_results] == [
         ("FRAMEWORK_RUN", "SUCCEEDED"),
         ("HOST_VALIDATION", "REJECTED"),
-        ("BUSINESS_COMMIT", "SUCCEEDED"),
-        ("PUBLICATION", "SUCCEEDED"),
     ]
     assert outcome.stage_results[1].gate_results[0].gate_id == "FROZEN_RESULT_MATCH"
+    assert outcome.stage_results[1].gate_results[0].status == "FAILED"
     assert outcome.stage_results[1].reasons == ("The host rejected the frozen input.",)
 
 
 @pytest.mark.parametrize(
     ("outcome_code", "expected_business_status", "expected_lifecycle_status", "published"),
     (
-        ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", None, True),
+        ("SYNTHETIC_RESULT_ABSTAINED", "ABSTAINED", None, False),
         ("SYNTHETIC_RESULT_EXPIRED", None, "EXPIRED", False),
         ("SYNTHETIC_RESULT_EXECUTION_BLOCKED", None, "EXECUTION_BLOCKED", False),
         ("SYNTHETIC_RESULT_UNKNOWN", None, "UNKNOWN", False),
@@ -486,24 +506,72 @@ def test_legacy_mapping_without_a_snapshot_reuses_its_original_m_agent_run(
             },
         )
 
+    recovered = run_default_frozen_decision_case(migrated_settings)
+
+    assert recovered.business_object_id == original_case.business_object_id
+    assert recovered.framework_run_id == original_case.framework_run_id
+    assert recovered.decision_event_id == original_case.decision_event_id
+    assert recovered.report_version_id == original_case.report_version_id
+    assert recovered.publication_status == "PUBLISHED"
+
+
+def test_legacy_mapping_without_a_snapshot_fails_closed_after_a_build_change(
+    migrated_settings: Settings,
+) -> None:
+    original_case = load_frozen_decision_case(migrated_settings)
+    framework = asyncio.run(
+        frozen_adapter.execute_frozen_decision_case(
+            original_case,
+            initialize_runtime_storage(migrated_settings),
+        )
+    )
+    assert framework.run_id == original_case.framework_run_id
+
+    engine = create_engine(migrated_settings.app_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO decision_case_business_objects (
+                    business_object_id,
+                    case_id,
+                    frozen_input_fingerprint,
+                    framework_run_id,
+                    case_payload,
+                    created_at
+                ) VALUES (
+                    :business_object_id,
+                    :case_id,
+                    :frozen_input_fingerprint,
+                    :framework_run_id,
+                    NULL,
+                    :created_at
+                )
+                """
+            ),
+            {
+                "business_object_id": original_case.business_object_id,
+                "case_id": original_case.case_id,
+                "frozen_input_fingerprint": original_case.frozen_input_fingerprint,
+                "framework_run_id": original_case.framework_run_id,
+                "created_at": original_case.report_generated_at,
+            },
+        )
+
     upgraded_settings = migrated_settings.model_copy(
         update={
             "configuration_version": "0.1.1.dev0",
             "source_sha": "b" * 40,
         }
     )
-    upgraded_case = load_frozen_decision_case(upgraded_settings)
-    recovered = run_default_frozen_decision_case(upgraded_settings)
+    with pytest.raises(DecisionEventCommitError, match="different frozen input"):
+        run_default_frozen_decision_case(upgraded_settings)
 
-    assert recovered.business_object_id == original_case.business_object_id
-    assert recovered.framework_run_id == original_case.framework_run_id
-    assert recovered.decision_event_id == upgraded_case.decision_event_id_for_framework_run(
-        original_case.framework_run_id
-    )
-    assert recovered.report_version_id == upgraded_case.report_version_id_for_event(
-        recovered.decision_event_id
-    )
-    assert recovered.publication_status == "PUBLISHED"
+    assert DecisionLedger.from_settings(upgraded_settings).counts() == {
+        "business_objects": 1,
+        "decision_events": 0,
+        "reports": 0,
+    }
 
 
 def test_repeated_business_commit_failures_append_distinct_stage_records(
