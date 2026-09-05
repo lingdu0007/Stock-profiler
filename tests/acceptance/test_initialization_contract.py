@@ -126,6 +126,8 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "CGNAT" in entrypoint
     assert "-checkend 0" in entrypoint
     assert "-startdate" in entrypoint
+    assert "-dateopt iso_8601" in entrypoint
+    assert 'certificate_not_before%Z' in entrypoint
     assert "certificate is not yet valid" in entrypoint
     assert "-checkhost" in entrypoint
     assert "install -m 600 -o 10001 -g 10001" in entrypoint

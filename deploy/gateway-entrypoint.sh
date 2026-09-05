@@ -26,8 +26,10 @@ esac
 openssl x509 -in "$source_certificate" -noout -checkend 0
 openssl pkey -in "$source_private_key" -noout
 
-certificate_not_before=$(openssl x509 -in "$source_certificate" -noout -startdate | cut -d= -f2)
-if ! certificate_not_before_epoch=$(date -u -d "$certificate_not_before" +%s); then
+certificate_not_before=$(
+  openssl x509 -in "$source_certificate" -noout -dateopt iso_8601 -startdate | cut -d= -f2
+)
+if ! certificate_not_before_epoch=$(date -u -d "${certificate_not_before%Z}" +%s); then
   echo "gateway certificate validity start time is invalid" >&2
   exit 1
 fi
