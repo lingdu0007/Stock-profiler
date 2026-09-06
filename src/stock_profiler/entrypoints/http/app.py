@@ -15,12 +15,12 @@ from stock_profiler.adapters.authentication.passkeys import (
     PasskeyAuthenticator,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.bootstrap.decision_cases import get_formal_report
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.logging import log_operational_event
 from stock_profiler.foundation.versioning import build_version_bundle
 from stock_profiler.modules.decision_cases.domain import FormalReport
-from stock_profiler.modules.decision_cases.service import get_formal_report
 
 
 class VersionDiagnosticDto(BaseModel):

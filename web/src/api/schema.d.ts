@@ -215,6 +215,34 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * CorrectionEvidence
+         * @description New authoritative synthetic facts, distinct from the original Run's evidence.
+         */
+        CorrectionEvidence: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "2.0.0";
+            /** Corrected Statement */
+            corrected_statement: string;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string;
+            /** Decision Formed At */
+            decision_formed_at: string;
+            evidence_clock: components["schemas"]["EvidenceClock"];
+            /** Evidence Id */
+            evidence_id: string;
+            /** Knowledge Cutoff */
+            knowledge_cutoff: string;
+            /** Original Statement */
+            original_statement: string;
+            /** Reason */
+            reason: string;
+            /** Source */
+            source: string;
+        };
         /** CredentialRequest */
         CredentialRequest: {
             /** Challenge Id */
@@ -272,17 +300,8 @@ export interface components {
             /** Validated At */
             validated_at: string;
         };
-        /**
-         * ExternalResult
-         * @description The user-visible result expected from this original synthetic fixture.
-         */
         ExternalResult: {
-            /** Key Reasons */
-            key_reasons: string[];
-            /** Outcome Code */
-            outcome_code: string;
-            /** Summary */
-            summary: string;
+            [key: string]: unknown;
         };
         /**
          * FormalReport

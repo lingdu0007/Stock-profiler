@@ -13,6 +13,22 @@ frontend type declaration match the FastAPI OpenAPI document. `make artifacts`
 creates local wheel, sdist, Web archive, checksum, version-bundle, and SPDX
 SBOM inputs. Local artifact output is ignored by Git.
 
+## Frozen Recovery
+
+`stock-profiler decision-case-replay --business-identity <identity>` reuses the
+saved business mapping and frozen snapshot. For an older unmapped Run whose
+build provenance differs, add `--recovery-case /absolute/path/original-case.json`
+with its original complete frozen case snapshot. The adapter validates the
+derived original Run ID, frozen input, definition snapshot, and supported
+version bundle before any host write. Missing or inconsistent proof fails
+closed without creating a replacement Run. Recovery snapshots are local
+runtime inputs, not files to add to Git.
+
+`stock-profiler decision-case-correct --business-identity <identity>` appends
+the packaged D0 correction evidence to a published original. Repeated calls
+return the same correction event and report. Its evidence cutoff belongs to
+the correction only; it does not extend or rewrite the original cutoff.
+
 ## Production Contract
 
 Compose uses the same backend image for API, scheduler, worker, and migration.

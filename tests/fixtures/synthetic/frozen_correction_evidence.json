@@ -1,0 +1,22 @@
+{
+  "synthetic": true,
+  "generator_version": "frozen-correction-evidence-v1",
+  "seed": 4018,
+  "correction": {
+    "contract_version": "2.0.0",
+    "evidence_id": "synthetic-correction-evidence-001",
+    "corrects_evidence_id": "synthetic-evidence-001",
+    "source": "fictional-ledger-alpha",
+    "reason": "The fictional source corrected its original checklist-completion statement.",
+    "original_statement": "The fictional issuer completed the imaginary orbital-mosaic checklist.",
+    "corrected_statement": "The fictional issuer has not completed the imaginary orbital-mosaic checklist.",
+    "evidence_clock": {
+      "fact_effective_at": "2042-05-17T15:00:00Z",
+      "source_published_at": "2042-05-17T16:01:10Z",
+      "acquired_at": "2042-05-17T16:01:20Z",
+      "validated_at": "2042-05-17T16:01:40Z"
+    },
+    "knowledge_cutoff": "2042-05-17T16:01:50Z",
+    "decision_formed_at": "2042-05-17T16:01:55Z"
+  }
+}

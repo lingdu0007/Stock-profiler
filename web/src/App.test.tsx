@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import correctionFixture from "../../tests/fixtures/synthetic/frozen_correction_evidence.json";
 import { App } from "./App";
 import { syntheticReport as report } from "./test-support/synthetic-report";
 
@@ -44,7 +45,11 @@ describe("App", () => {
   });
 
   it("shows correction lineage supplied by the committed report projection", async () => {
-    const correctedReport = { ...report, corrects_event_id: "decision-event-original-4017" };
+    const correctedReport = {
+      ...report,
+      corrects_event_id: "decision-event-original-4017",
+      result: { ...report.result, correction_evidence: correctionFixture.correction }
+    };
     window.history.pushState({}, "", `/reports/${correctedReport.report_version_id}`);
     vi.stubGlobal(
       "fetch",
@@ -60,6 +65,10 @@ describe("App", () => {
 
     expect(await screen.findByText("decision-event-original-4017")).toBeVisible();
     expect(screen.getByText("Corrects event")).toBeVisible();
+    const correction = screen.getByRole("region", { name: "Correction evidence" });
+    expect(correction).toHaveTextContent(correctionFixture.correction.corrected_statement);
+    expect(correction).toHaveTextContent("2042-05-17T16:01:50Z");
+    expect(correction).toHaveTextContent("2042-05-17T16:01:10Z");
   });
 
   it("refreshes a CSRF-protected session before reading the committed report", async () => {

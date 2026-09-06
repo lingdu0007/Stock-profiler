@@ -105,6 +105,7 @@ function VersionDiagnostics() {
 }
 
 function FormalReportView({ report }: { report: FormalReport }) {
+  const correction = report.result.correction_evidence;
   return (
     <section aria-label="Formal report" className="report-layout">
       <div className="report-heading">
@@ -121,6 +122,29 @@ function FormalReportView({ report }: { report: FormalReport }) {
           ))}
         </ol>
       </section>
+
+      {correction && (
+        <section className="report-section" aria-label="Correction evidence">
+          <h2>Correction evidence</h2>
+          <dl className="record-list">
+            <Record label="Evidence" value={correction.evidence_id} />
+            <Record label="Corrects evidence" value={correction.corrects_evidence_id} />
+            <Record label="Source" value={correction.source} />
+            <Record label="Reason" value={correction.reason} />
+            <Record label="Original statement" value={correction.original_statement} />
+            <Record label="Corrected statement" value={correction.corrected_statement} />
+            <Record label="Fact effective" value={correction.evidence_clock.fact_effective_at} />
+            <Record
+              label="Source published"
+              value={correction.evidence_clock.source_published_at}
+            />
+            <Record label="Acquired" value={correction.evidence_clock.acquired_at} />
+            <Record label="Validated" value={correction.evidence_clock.validated_at} />
+            <Record label="Correction cutoff" value={correction.knowledge_cutoff} />
+            <Record label="Correction formed" value={correction.decision_formed_at} />
+          </dl>
+        </section>
+      )}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>

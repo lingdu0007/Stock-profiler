@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import Awaitable, Callable
+from contextlib import closing
 from dataclasses import dataclass
 from importlib.metadata import version
 from typing import cast
@@ -44,6 +44,18 @@ from stock_profiler.modules.decision_cases.domain import (
     supports_report_projection_contract,
     synthetic_outcome_code_from_input,
 )
+from stock_profiler.modules.decision_cases.ports import (
+    FrameworkRunResult as FrameworkRunResult,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    FrameworkRunTransition as FrameworkRunTransition,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    FrameworkTransitionRecorder as FrameworkTransitionRecorder,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    MappedDurableRunMissingError as MappedDurableRunMissingError,
+)
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
 D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
@@ -77,34 +89,6 @@ _CONCURRENT_RUN_RECOVERY_ERRORS = (
 )
 
 
-class MappedDurableRunMissingError(ValueError):
-    """A host mapping names an original Run that is no longer durable."""
-
-
-@dataclass(frozen=True)
-class FrameworkRunResult:
-    """Framework details expressed without leaking framework types to the host module."""
-
-    run_id: str
-    status: FrameworkRunStatus
-    output: str | None
-    waiting_reason: str | None = None
-    error_code: str | None = None
-    transitions: tuple[FrameworkRunTransition, ...] = ()
-    transitions_durably_recorded: bool = False
-
-
-@dataclass(frozen=True)
-class FrameworkRunTransition:
-    """One durable framework state observed before its terminal result."""
-
-    status: FrameworkRunStatus
-    reason: str
-
-
-FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
-
-
 @dataclass
 class _RunStatusCollector:
     """Collect framework-emitted, already-durable statuses without changing a Run."""
@@ -129,6 +113,15 @@ class _RunStatusCollector:
             self.statuses.append(cast(FrameworkRunStatus, value))
 
 
+async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: RuntimeStorage) -> None:
+    """Require the supplied original snapshot to identify an already durable Run."""
+    _assert_runtime_version_bundle(case)
+    run = await runtime.run_store.get_run(case.framework_run_id)
+    if run is None:
+        raise MappedDurableRunMissingError("original durable M-Agent Run is missing")
+    _assert_existing_run_matches_case(run, case, _frozen_definition(case))
+
+
 async def find_unmapped_legacy_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
@@ -148,12 +141,26 @@ async def find_unmapped_legacy_frozen_decision_case(
         candidates[run.run_id] = legacy_case
     if len(candidates) > 1:
         raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
+    # v0.5.0 has no Run inventory API. Read metadata only to veto unsafe creation;
+    # never adopt a Run or reconstruct its frozen provenance from this inventory.
+    try:
+        uri = runtime.m_agent_run_store_path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            run_ids = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT run_id FROM runs WHERE definition_id = ?",
+                    (case.agent_definition.definition_id,),
+                )
+            }
+    except sqlite3.Error as error:
+        raise ValueError("durable framework inventory cannot be verified") from error
+    if len(run_ids) > 1 or run_ids - {case.framework_run_id, *candidates}:
+        raise ValueError("unmapped durable Run requires original frozen build provenance")
     if not candidates:
         return None
     recovery_framework_run_id, legacy_case = next(iter(candidates.items()))
-    return legacy_case.model_copy(
-        update={"recovery_framework_run_id": recovery_framework_run_id}
-    )
+    return legacy_case.model_copy(update={"recovery_framework_run_id": recovery_framework_run_id})
 
 
 def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
@@ -217,9 +224,7 @@ async def execute_frozen_decision_case(
         run = await runner.get_run(case.framework_run_id)
     except RunNotFoundError:
         if case.recovery_framework_run_id is not None:
-            raise MappedDurableRunMissingError(
-                "mapped durable M-Agent Run is missing"
-            ) from None
+            raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
         try:
             created = await runner.create_run(
                 definition.definition_id,
@@ -250,6 +255,7 @@ async def execute_frozen_decision_case(
             await record_framework_statuses()
     else:
         _assert_existing_run_matches_case(run, case, definition)
+        await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
         if run.status.is_terminal:
             await observe(
                 FrameworkRunTransition(
