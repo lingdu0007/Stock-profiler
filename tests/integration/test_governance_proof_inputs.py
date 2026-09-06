@@ -39,6 +39,72 @@ def canonical_digest(payload: dict[str, Any]) -> str:
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def diagnostic_alert(
+    settings: Settings,
+    identity: str,
+    previous: str,
+    *,
+    rule_version: str,
+    planned_nodes: list[str],
+) -> DecisionCaseExecution:
+    command = qualification_command(settings, action="ALERT", previous=previous)
+    command["evidence"].update(
+        kind="DIAGNOSTIC_ALERT",
+        evidence_id=f"synthetic-{identity}",
+        diagnostic_plan={
+            "contract_version": "1.0.0",
+            "rule_version": rule_version,
+            "planned_nodes": planned_nodes,
+        },
+    )
+    return execute(settings, identity, command)
+
+
+def alert_closure_command(
+    settings: Settings,
+    previous: str,
+    *,
+    alert_evidence_id: str,
+    rule_version: str,
+    planned_nodes: list[str],
+) -> dict[str, Any]:
+    command = qualification_command(settings, action="CLOSE_ALERT", previous=previous)
+    command["evidence"].update(
+        kind="ALERT_CLOSURE",
+        evidence_id=f"synthetic-closure-{alert_evidence_id}",
+        evaluation_end=planned_nodes[-1],
+        available_at="2042-06-01T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        resolves_evidence_id=alert_evidence_id,
+    )
+    observations = []
+    for index, scheduled_at in enumerate(planned_nodes):
+        observation = deepcopy(command["evidence"])
+        observation.update(
+            kind="DIAGNOSTIC_CLEAR",
+            evidence_id=f"synthetic-clear-{alert_evidence_id}-{index}",
+            evaluation_end=scheduled_at,
+            available_at=("2042-05-24T08:00:00Z" if index == 0 else "2042-05-31T08:00:00Z"),
+            resolves_evidence_id=alert_evidence_id,
+        )
+        observations.append(
+            {
+                "scheduled_at": scheduled_at,
+                "status": "CLEAR",
+                "rule_version": rule_version,
+                "evidence": observation,
+            }
+        )
+    command["alert_closure"] = {
+        "contract_version": "1.0.0",
+        "alert_evidence_id": alert_evidence_id,
+        "resolution": "DISAPPEARED",
+        "rule_version": rule_version,
+        "observations": observations,
+    }
+    return command
+
+
 def test_integrity_restoration_verifies_original_content_and_dependency_windows(
     migrated_settings: Settings,
 ) -> None:
@@ -412,3 +478,162 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert revoked.report.result.governance is not None
     assert revoked.report.result.governance.qualification is not None
     assert revoked.report.result.governance.qualification.status == "REVOKED"
+
+
+def test_alert_closure_is_independent_and_only_closes_the_target(
+    migrated_settings: Settings,
+) -> None:
+    grant = execute(
+        migrated_settings,
+        "independent-alert-closure-grant",
+        qualification_command(migrated_settings),
+    )
+    first_nodes = ["2042-05-24T00:00:00Z", "2042-05-31T00:00:00Z"]
+    first = diagnostic_alert(
+        migrated_settings,
+        "independent-alert-one",
+        grant.decision_event_id,
+        rule_version="synthetic-diagnostic-rule-one",
+        planned_nodes=first_nodes,
+    )
+    second = diagnostic_alert(
+        migrated_settings,
+        "independent-alert-two",
+        first.decision_event_id,
+        rule_version="synthetic-diagnostic-rule-two",
+        planned_nodes=["2042-06-14T00:00:00Z", "2042-06-21T00:00:00Z"],
+    )
+    command = alert_closure_command(
+        migrated_settings,
+        second.decision_event_id,
+        alert_evidence_id="synthetic-independent-alert-one",
+        rule_version="synthetic-diagnostic-rule-one",
+        planned_nodes=first_nodes,
+    )
+
+    for malformation in (
+        "missing-node",
+        "skipped-node",
+        "recurrence",
+        "insufficient",
+        "unavailable",
+        "late-evidence",
+    ):
+        malformed = deepcopy(command)
+        observations = malformed["alert_closure"]["observations"]
+        if malformation == "missing-node":
+            observations.pop()
+        elif malformation == "skipped-node":
+            observations[0]["scheduled_at"] = first_nodes[1]
+        elif malformation == "recurrence":
+            observations[1]["status"] = "RECURRENT"
+        elif malformation == "insufficient":
+            observations[1]["status"] = "INSUFFICIENT"
+        elif malformation == "unavailable":
+            observations[1]["status"] = "UNAVAILABLE"
+        else:
+            observations[1]["evidence"]["available_at"] = "2042-06-01T09:01:00Z"
+        malformed_execution = execute(
+            migrated_settings,
+            f"independent-alert-malformed-{malformation}",
+            malformed,
+            observed_at="2042-06-01T10:00:00Z",
+            knowledge_cutoff="2042-06-01T09:00:00Z",
+        )
+        assert malformed_execution.report is not None
+        malformed_outcome = malformed_execution.report.result.governance
+        assert malformed_outcome is not None
+        assert malformed_outcome.disposition == "DENIED"
+        assert malformed_outcome.reasons == ("ALERT_CLOSURE_PROOF_INVALID",)
+
+    closed = execute(
+        migrated_settings,
+        "independent-alert-closed",
+        command,
+        observed_at="2042-06-01T10:00:00Z",
+        knowledge_cutoff="2042-06-01T09:00:00Z",
+    )
+    assert closed.report is not None
+    outcome = closed.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == "AT_RISK"
+    assert record.cause == "DIAGNOSTIC_ALERT"
+    assert [item.evidence_id for item in record.alerts] == [
+        "synthetic-independent-alert-one",
+        "synthetic-independent-alert-two",
+    ]
+    assert [item.evidence_id for item in record.outstanding_alerts] == [
+        "synthetic-independent-alert-two"
+    ]
+    assert len(record.alert_closures) == 1
+    assert record.alert_closures[0].alert_evidence_id == ("synthetic-independent-alert-one")
+    assert record.authorization_id == grant.decision_event_id
+    assert record.authorization_evidence is not None
+    assert record.authorization_evidence.evidence_id == "synthetic-qualification-proof-4519"
+    assert record.formal_node_dispositions == ()
+
+
+def test_alert_closure_never_restores_revoked_authorization(
+    migrated_settings: Settings,
+) -> None:
+    grant = execute(
+        migrated_settings,
+        "revoked-alert-closure-grant",
+        qualification_command(migrated_settings),
+    )
+    planned_nodes = ["2042-05-24T00:00:00Z", "2042-05-31T00:00:00Z"]
+    alert = diagnostic_alert(
+        migrated_settings,
+        "revoked-alert",
+        grant.decision_event_id,
+        rule_version="synthetic-revoked-diagnostic-rule",
+        planned_nodes=planned_nodes,
+    )
+    revoke = qualification_command(
+        migrated_settings,
+        action="REVOKE",
+        previous=alert.decision_event_id,
+    )
+    revoke["evidence"].update(
+        kind="ORIGINAL_BASIS_INVALID",
+        evidence_id="synthetic-revoked-alert-basis-invalid",
+    )
+    revoked = execute(migrated_settings, "revoked-alert-state", revoke)
+    assert revoked.report is not None
+    revoked_record = revoked.report.result.governance
+    assert revoked_record is not None
+    assert revoked_record.qualification is not None
+    terminated_at = revoked_record.qualification.authorization_terminated_at
+
+    command = alert_closure_command(
+        migrated_settings,
+        revoked.decision_event_id,
+        alert_evidence_id="synthetic-revoked-alert",
+        rule_version="synthetic-revoked-diagnostic-rule",
+        planned_nodes=planned_nodes,
+    )
+    closed = execute(
+        migrated_settings,
+        "revoked-alert-closed",
+        command,
+        observed_at="2042-06-01T10:00:00Z",
+        knowledge_cutoff="2042-06-01T09:00:00Z",
+    )
+    assert closed.report is not None
+    outcome = closed.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == "REVOKED"
+    assert record.cause == "ORIGINAL_BASIS_INVALID"
+    assert record.authorization_id == grant.decision_event_id
+    assert record.authorization_terminated_at == terminated_at
+    assert [item.evidence_id for item in record.alerts] == ["synthetic-revoked-alert"]
+    assert record.outstanding_alerts == ()
+    assert [item.evidence.evidence_id for item in record.restrictions] == [
+        "synthetic-revoked-alert-basis-invalid"
+    ]

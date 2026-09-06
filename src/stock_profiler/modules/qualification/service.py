@@ -3,6 +3,8 @@
 from datetime import datetime
 
 from stock_profiler.modules.qualification.contracts import (
+    AlertClosure,
+    AlertClosureProof,
     CapabilityVersion,
     FormalCheckIdentity,
     FormalNodeDisposition,
@@ -68,6 +70,8 @@ def adjudicate(
         return _formal_check(command, previous, event_id, now)
     if command.action == "RECORD_FORMAL_NODE":
         return _record_formal_node_disposition(command, previous, event_id, now)
+    if command.action == "CLOSE_ALERT":
+        return _close_alert(command, previous, event_id, now, cutoff)
     if command.action == "REQUALIFY":
         proof = command.requalification
         if (
@@ -171,8 +175,10 @@ def adjudicate(
                 authorization_id=event_id,
                 scope=command.scope,
                 version=command.version,
-                status="AT_RISK" if previous.alerts else "VALID",
-                cause="DIAGNOSTIC_ALERT" if previous.alerts else "REQUALIFICATION_PASS",
+                status="AT_RISK" if previous.outstanding_alerts else "VALID",
+                cause=(
+                    "DIAGNOSTIC_ALERT" if previous.outstanding_alerts else "REQUALIFICATION_PASS"
+                ),
                 authorization_evidence=evidence,
                 recorded_at=now,
                 previous_decision_id=previous.decision_id,
@@ -233,8 +239,12 @@ def adjudicate(
                 update={
                     "decision_id": event_id,
                     "previous_decision_id": previous.decision_id,
-                    "status": "AT_RISK" if previous.alerts else "VALID",
-                    "cause": "DIAGNOSTIC_ALERT" if previous.alerts else "QUALIFICATION_RESTORED",
+                    "status": "AT_RISK" if previous.outstanding_alerts else "VALID",
+                    "cause": (
+                        "DIAGNOSTIC_ALERT"
+                        if previous.outstanding_alerts
+                        else "QUALIFICATION_RESTORED"
+                    ),
                     "evidence": evidence,
                     "restrictions": (),
                     "restoration_evidence": proofs,
@@ -310,6 +320,7 @@ def adjudicate(
             previous is None
             or previous.authorization_evidence is None
             or evidence.kind != "DIAGNOSTIC_ALERT"
+            or not _diagnostic_plan_is_valid(evidence)
         ):
             return GovernanceOutcome(
                 disposition="DENIED", reasons=("ORIGINAL_AUTHORIZATION_REQUIRED",)
@@ -576,6 +587,145 @@ def _next_formal_node(
             return None
         anchor = record.last_formal_node
     return next((node for node in original_check.planned_nodes if node > anchor), None)
+
+
+def _close_alert(
+    command: QualificationCommand,
+    previous: QualificationRecord | None,
+    event_id: str,
+    now: datetime,
+    cutoff: datetime,
+) -> GovernanceOutcome:
+    evidence = command.evidence
+    proof = command.alert_closure
+    policy = command.version.qualification_policy
+    if (
+        previous is None
+        or previous.authorization_evidence is None
+        or evidence.kind != "ALERT_CLOSURE"
+        or proof is None
+        or policy is None
+        or policy.diagnostic_clear_node_count is None
+    ):
+        return GovernanceOutcome(disposition="DENIED", reasons=("ALERT_CLOSURE_NOT_ALLOWED",))
+    target = next(
+        (item for item in previous.alerts if item.evidence_id == proof.alert_evidence_id),
+        None,
+    )
+    clear_count = policy.diagnostic_clear_node_count
+    plan = target.diagnostic_plan if target is not None else None
+    expected_nodes = plan.planned_nodes[:clear_count] if plan is not None else ()
+    if (
+        target is None
+        or plan is None
+        or proof.resolution != "DISAPPEARED"
+        or proof.alert_evidence_id != evidence.resolves_evidence_id
+        or any(
+            closure.alert_evidence_id == proof.alert_evidence_id
+            for closure in previous.alert_closures
+        )
+        or not target.scope.same_scope_as(command.scope)
+        or target.version != command.version
+        or len(plan.planned_nodes) < clear_count
+        or len(set(plan.planned_nodes)) != len(plan.planned_nodes)
+        or tuple(sorted(plan.planned_nodes)) != plan.planned_nodes
+        or any(node <= target.evaluation_end for node in plan.planned_nodes)
+        or proof.rule_version != plan.rule_version
+        or len(proof.observations) != clear_count
+        or tuple(item.scheduled_at for item in proof.observations) != expected_nodes
+        or not _diagnostic_observations_are_clear(
+            proof,
+            command,
+            target,
+            evidence,
+            now,
+            cutoff,
+        )
+    ):
+        return GovernanceOutcome(disposition="DENIED", reasons=("ALERT_CLOSURE_PROOF_INVALID",))
+    closure = AlertClosure(
+        alert_evidence_id=target.evidence_id,
+        resolution=proof.resolution,
+        proof=proof,
+        evidence=evidence,
+        recorded_at=now,
+    )
+    closures = (*previous.alert_closures, closure)
+    closed_ids = {item.alert_evidence_id for item in closures}
+    outstanding = tuple(item for item in previous.alerts if item.evidence_id not in closed_ids)
+    restricted = previous.status in {"SUSPENDED", "REVOKED"}
+    return GovernanceOutcome(
+        disposition="APPROVED",
+        reasons=("ALERT_CLOSED",),
+        qualification=previous.model_copy(
+            update={
+                "decision_id": event_id,
+                "previous_decision_id": previous.decision_id,
+                "status": (
+                    previous.status if restricted else ("AT_RISK" if outstanding else "VALID")
+                ),
+                "cause": (
+                    previous.cause
+                    if restricted
+                    else ("DIAGNOSTIC_ALERT" if outstanding else "ALERT_CLOSED")
+                ),
+                "evidence": evidence,
+                "alert_closures": closures,
+                "recorded_at": now,
+            }
+        ),
+    )
+
+
+def _diagnostic_plan_is_valid(evidence: QualificationEvidence) -> bool:
+    plan = evidence.diagnostic_plan
+    if plan is None:
+        return True
+    return (
+        len(set(plan.planned_nodes)) == len(plan.planned_nodes)
+        and tuple(sorted(plan.planned_nodes)) == plan.planned_nodes
+        and all(node > evidence.evaluation_end for node in plan.planned_nodes)
+    )
+
+
+def _diagnostic_observations_are_clear(
+    proof: AlertClosureProof,
+    command: QualificationCommand,
+    target: QualificationEvidence,
+    closure_evidence: QualificationEvidence,
+    now: datetime,
+    cutoff: datetime,
+) -> bool:
+    observations = proof.observations
+    evidence_ids = tuple(item.evidence.evidence_id for item in observations)
+    evaluation_ends = tuple(item.evidence.evaluation_end for item in observations)
+    available_times = tuple(item.evidence.available_at for item in observations)
+    return (
+        len(set(evidence_ids)) == len(evidence_ids)
+        and tuple(sorted(evaluation_ends)) == evaluation_ends
+        and len(set(evaluation_ends)) == len(evaluation_ends)
+        and tuple(sorted(available_times)) == available_times
+        and len(set(available_times)) == len(available_times)
+        and evaluation_ends[-1] <= closure_evidence.evaluation_end
+        and available_times[-1] <= closure_evidence.available_at
+        and all(
+            item.status == "CLEAR"
+            and item.rule_version == proof.rule_version
+            and item.evidence.kind == "DIAGNOSTIC_CLEAR"
+            and item.evidence.diagnostic_plan is None
+            and item.evidence.resolves_evidence_id == target.evidence_id
+            and item.evidence.scope.same_scope_as(command.scope)
+            and item.evidence.version == command.version
+            and evidence_basis_is_valid(item.evidence)
+            and target.evaluation_end < item.evidence.evaluation_end
+            and item.evidence.evaluation_end
+            <= item.scheduled_at
+            <= item.evidence.available_at
+            <= min(closure_evidence.available_at, cutoff)
+            and evidence_is_current(item.evidence, now)
+            for item in observations
+        )
+    )
 
 
 def _requalification_population_is_complete(

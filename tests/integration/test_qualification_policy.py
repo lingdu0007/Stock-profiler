@@ -287,6 +287,9 @@ def test_explicit_synthetic_policy_controls_both_evidence_clocks(
         ("synthetic", False),
         ("synthetic", 1),
         ("require_state_activity", "false"),
+        ("diagnostic_clear_node_count", 0),
+        ("diagnostic_clear_node_count", True),
+        ("diagnostic_clear_node_count", "2"),
     ],
 )
 def test_invalid_policy_is_rejected_at_the_frozen_journey_entry(
@@ -353,7 +356,7 @@ def test_synthetic_policy_cannot_authorize_a_personal_case(
     assert len(ResultDelivery.from_settings(migrated_settings).audit_history()) == 1
 
 
-@pytest.mark.parametrize("action", ["GRANT", "ALERT", "RESTORE", "REQUALIFY"])
+@pytest.mark.parametrize("action", ["GRANT", "ALERT", "RESTORE", "REQUALIFY", "CLOSE_ALERT"])
 def test_policy_identity_cannot_be_redefined_to_inherit_or_replace_authority(
     migrated_settings: Settings, action: str
 ) -> None:
@@ -374,6 +377,7 @@ def test_policy_identity_cannot_be_redefined_to_inherit_or_replace_authority(
         "ALERT": "DIAGNOSTIC_ALERT",
         "RESTORE": "RESTORATION_DECISION",
         "REQUALIFY": "REQUALIFICATION_PASS",
+        "CLOSE_ALERT": "ALERT_CLOSURE",
     }[action]
     command["version"]["qualification_policy"]["evaluation_max_age_months"] = 7
     command["evidence"]["version"] = deepcopy(command["version"])

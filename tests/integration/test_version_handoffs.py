@@ -771,6 +771,7 @@ def test_scope_qualification_and_task_authority_never_expand_implicitly(
         "policy.evaluation_max_age_months",
         "policy.state_activity_max_age_months",
         "policy.require_state_activity",
+        "policy.diagnostic_clear_node_count",
         "case_contract_version",
         "host_contract_version",
         "host_application_version",
@@ -805,6 +806,7 @@ def test_every_frozen_capability_version_component_is_required_for_statistical_u
             "evaluation_max_age_months": 7,
             "state_activity_max_age_months": 11,
             "require_state_activity": False,
+            "diagnostic_clear_node_count": 3,
         }[key]
     else:
         requested_version["implementation"][field] = "synthetic-different-component"

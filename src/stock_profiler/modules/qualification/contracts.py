@@ -58,6 +58,9 @@ class QualificationPolicy(GovernanceContract):
     evaluation_max_age_months: int = Field(gt=0)
     state_activity_max_age_months: int = Field(gt=0)
     require_state_activity: bool
+    diagnostic_clear_node_count: int | None = Field(
+        default=None, gt=0, exclude_if=lambda value: value is None
+    )
 
     @field_validator("synthetic", mode="before")
     @classmethod
@@ -126,6 +129,12 @@ class EvidenceBasis(GovernanceContract):
     dependency_windows: tuple[EvidenceDependencyWindow, ...] = Field(min_length=1)
 
 
+class DiagnosticPlan(GovernanceContract):
+    contract_version: Literal["1.0.0"]
+    rule_version: str = Field(min_length=1)
+    planned_nodes: tuple[AwareDatetime, ...] = Field(min_length=1)
+
+
 class QualificationEvidence(GovernanceContract):
     evidence_id: str = Field(min_length=1)
     synthetic: Literal[True]
@@ -146,6 +155,8 @@ class QualificationEvidence(GovernanceContract):
         "LOCKED_FORWARD_PASS",
         "FORMAL_CHECK",
         "FORMAL_NODE_NOT_EXECUTED",
+        "DIAGNOSTIC_CLEAR",
+        "ALERT_CLOSURE",
     ]
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_end: AwareDatetime
@@ -166,6 +177,9 @@ class QualificationEvidence(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
     basis: EvidenceBasis | None = Field(default=None, exclude_if=lambda value: value is None)
+    diagnostic_plan: DiagnosticPlan | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class RequalificationMember(GovernanceContract):
@@ -204,6 +218,21 @@ class RequalificationProof(GovernanceContract):
     )
 
 
+class DiagnosticObservation(GovernanceContract):
+    scheduled_at: AwareDatetime
+    status: Literal["CLEAR", "RECURRENT", "INSUFFICIENT", "UNAVAILABLE"]
+    rule_version: str = Field(min_length=1)
+    evidence: QualificationEvidence
+
+
+class AlertClosureProof(GovernanceContract):
+    contract_version: Literal["1.0.0"]
+    alert_evidence_id: str = Field(min_length=1)
+    resolution: Literal["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"]
+    rule_version: str = Field(min_length=1)
+    observations: tuple[DiagnosticObservation, ...] = Field(min_length=1)
+
+
 class FormalNodeDisposition(GovernanceContract):
     scheduled_at: AwareDatetime
     status: Literal["EXECUTED_PASS", "EXECUTED_FAIL", "INSUFFICIENT", "NOT_EXECUTED"]
@@ -224,6 +253,7 @@ class QualificationCommand(GovernanceContract):
         "REQUALIFY",
         "FORMAL_CHECK",
         "RECORD_FORMAL_NODE",
+        "CLOSE_ALERT",
     ]
     scope: QualificationScope
     version: CapabilityVersion
@@ -233,6 +263,9 @@ class QualificationCommand(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
     requalification: RequalificationProof | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    alert_closure: AlertClosureProof | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -245,6 +278,14 @@ class QualificationRestriction(GovernanceContract):
         "FORMAL_PERFORMANCE_FAILURE",
     ]
     evidence: QualificationEvidence
+
+
+class AlertClosure(GovernanceContract):
+    alert_evidence_id: str = Field(min_length=1)
+    resolution: Literal["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"]
+    proof: AlertClosureProof
+    evidence: QualificationEvidence
+    recorded_at: AwareDatetime
 
 
 class QualificationRecord(GovernanceContract):
@@ -262,6 +303,7 @@ class QualificationRecord(GovernanceContract):
     previous_decision_id: str | None = None
     evidence: QualificationEvidence
     alerts: tuple[QualificationEvidence, ...] = ()
+    alert_closures: tuple[AlertClosure, ...] = Field(default=(), exclude_if=lambda value: not value)
     restrictions: tuple[QualificationRestriction, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
@@ -285,6 +327,11 @@ class QualificationRecord(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
 
+    @property
+    def outstanding_alerts(self) -> tuple[QualificationEvidence, ...]:
+        closed = {item.alert_evidence_id for item in self.alert_closures}
+        return tuple(item for item in self.alerts if item.evidence_id not in closed)
+
     def evidence_available_by(self, cutoff: datetime) -> bool:
         return all(
             item is None or item.available_at <= cutoff
@@ -294,6 +341,12 @@ class QualificationRecord(GovernanceContract):
                 self.formal_evidence,
                 self.formal_passing_evidence,
                 *self.alerts,
+                *(closure.evidence for closure in self.alert_closures),
+                *(
+                    observation.evidence
+                    for closure in self.alert_closures
+                    for observation in closure.proof.observations
+                ),
                 *(restriction.evidence for restriction in self.restrictions),
                 *self.restoration_evidence,
                 *(disposition.evidence for disposition in self.formal_node_dispositions),
