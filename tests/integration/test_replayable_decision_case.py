@@ -46,6 +46,7 @@ from stock_profiler.bootstrap.decision_cases import (
     run_default_frozen_decision_case,
 )
 from stock_profiler.bootstrap.settings import Settings, load_settings
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.modules.decision_cases import domain as decision_domain
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -513,7 +514,7 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def waiting_framework_run(*_: object) -> FrameworkRunResult:
+    async def waiting_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="WAITING",
@@ -657,7 +658,7 @@ def test_repeated_framework_waiting_observations_are_preserved(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def waiting_framework_run(*_: object) -> FrameworkRunResult:
+    async def waiting_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="WAITING",
@@ -692,7 +693,7 @@ def test_framework_terminal_failures_remain_framework_results(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def failed_framework_run(*_: object) -> FrameworkRunResult:
+    async def failed_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status=framework_status,
@@ -724,7 +725,7 @@ def test_invalid_framework_output_contract_is_saved_and_keeps_publication_closed
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def invalid_framework_run(*_: object) -> FrameworkRunResult:
+    async def invalid_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="SUCCEEDED",
@@ -1097,8 +1098,10 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
         case: FrozenDecisionCase,
         runtime: RuntimeStorage,
         record_transition: frozen_adapter.FrameworkTransitionRecorder | None = None,
+        *,
+        clock: Clock | None = None,
     ) -> FrameworkRunResult:
-        await original_execute(case, runtime, record_transition)
+        await original_execute(case, runtime, record_transition, clock=clock)
         raise RuntimeError("synthetic worker interruption after framework checkpoint")
 
     with monkeypatch.context() as patch:
