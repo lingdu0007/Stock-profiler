@@ -9,27 +9,51 @@ from stock_profiler.modules.qualification.contracts import (
     CapabilityVersion,
     EvidenceBasis,
     QualificationEvidence,
+    RequalificationPopulationRegistration,
 )
 
 
-def qualification_deadline(evidence: QualificationEvidence) -> datetime | None:
+def overall_qualification_deadline(evidence: QualificationEvidence) -> datetime | None:
     policy = evidence.version.qualification_policy
     if policy is None or evidence.version.policy_error is not None:
         return None
-    if policy.require_state_activity and evidence.state_activity_end is None:
-        return None
     try:
-        deadlines = [
+        return min(
             evidence.expires_at,
             _month_end_after(evidence.evaluation_end, policy.evaluation_max_age_months),
-        ]
-        if evidence.state_activity_end is not None:
-            deadlines.append(
-                _month_end_after(evidence.state_activity_end, policy.state_activity_max_age_months)
-            )
-        return min(deadlines)
+        )
     except (ValueError, OverflowError):
         return None
+
+
+def state_activity_deadline(evidence: QualificationEvidence) -> datetime | None:
+    policy = evidence.version.qualification_policy
+    if (
+        policy is None
+        or evidence.version.policy_error is not None
+        or evidence.state_activity_end is None
+    ):
+        return None
+    try:
+        return _month_end_after(
+            evidence.state_activity_end,
+            policy.state_activity_max_age_months,
+        )
+    except (ValueError, OverflowError):
+        return None
+
+
+def qualification_deadline(
+    evidence: QualificationEvidence,
+    state_activity_evidence: QualificationEvidence | None = None,
+) -> datetime | None:
+    policy = evidence.version.qualification_policy
+    overall = overall_qualification_deadline(evidence)
+    state_source = state_activity_evidence or evidence
+    state = state_activity_deadline(state_source)
+    if policy is None or overall is None or (policy.require_state_activity and state is None):
+        return None
+    return min(overall, state) if state is not None else overall
 
 
 def evidence_is_current(evidence: QualificationEvidence, now: datetime) -> bool:
@@ -82,6 +106,17 @@ def evidence_basis_digest(basis: EvidenceBasis) -> str:
 def capability_version_digest(version: CapabilityVersion) -> str:
     payload = json.dumps(
         version.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return sha256(payload).hexdigest()
+
+
+def requalification_registration_digest(
+    registration: RequalificationPopulationRegistration,
+) -> str:
+    payload = json.dumps(
+        registration.model_dump(mode="json", exclude={"digest"}),
         sort_keys=True,
         separators=(",", ":"),
     ).encode()

@@ -602,6 +602,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
+        requalification_application_id="synthetic-requalification-application",
+        requalification_population_id="synthetic-requalification-history",
     )
     forward = deepcopy(command["evidence"])
     forward.update(
@@ -610,11 +612,50 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
+        requalification_application_id="synthetic-requalification-application",
+        requalification_population_id="synthetic-requalification-forward",
     )
+    command["evidence"]["requalification_application_id"] = "synthetic-requalification-application"
     version_digest = sha256(
         json.dumps(command["version"], sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     forward_frozen_at = "2042-05-18T00:00:00Z" if pre_lock_forward else "2042-05-20T00:00:00Z"
+    historical_registration = {
+        "application_id": "synthetic-requalification-application",
+        "population_kind": "HISTORICAL",
+        "population_id": "synthetic-requalification-history",
+        "registered_at": "2042-05-18T00:00:00Z",
+        "locked_at": "2042-05-19T00:00:00Z",
+        "frozen_version_digest": version_digest,
+        "registered_member_ids": ["synthetic-history-member"],
+        "required_gates": ["synthetic-history-gate"],
+    }
+    historical_registration["digest"] = sha256(
+        json.dumps(
+            historical_registration,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    forward_registration = {
+        "application_id": "synthetic-requalification-application",
+        "population_kind": "FORWARD",
+        "population_id": "synthetic-requalification-forward",
+        "registered_at": "2042-05-18T00:00:00Z",
+        "locked_at": "2042-05-19T00:00:00Z",
+        "frozen_version_digest": version_digest,
+        "registered_member_ids": ["synthetic-forward-member"],
+        "required_gates": ["synthetic-forward-gate"],
+    }
+    forward_registration["digest"] = sha256(
+        json.dumps(
+            forward_registration,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    historical["requalification_registration_digest"] = historical_registration["digest"]
+    forward["requalification_registration_digest"] = forward_registration["digest"]
     command["requalification"] = {
         "application_id": "synthetic-requalification-application",
         "registered_at": "2042-05-18T00:00:00Z",
@@ -623,6 +664,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         "frozen_version_digest": version_digest,
         "historical_evidence": historical,
         "forward_evidence": forward,
+        "historical_registration": historical_registration,
+        "forward_registration": forward_registration,
         "historical_population": {
             "population_id": "synthetic-requalification-history",
             "evidence_id": historical["evidence_id"],

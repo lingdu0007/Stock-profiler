@@ -15,9 +15,9 @@ from stock_profiler.modules.qualification.contracts import (
     UseTaskCommand,
     VersionActivation,
 )
-from stock_profiler.modules.qualification.evidence import evidence_is_current
 from stock_profiler.modules.qualification.service import (
     current_qualification,
+    qualification_is_current,
     restrict_expired_qualification,
 )
 
@@ -139,7 +139,6 @@ def adjudicate(
                 if item.node.kind == requested.kind
                 and item.node.scheduled_at > now
                 and item.node.node_id not in frozen_nodes
-                and (current is None or item.node.scheduled_at > current.first_node.scheduled_at)
             ),
             key=lambda item: item.scheduled_at,
         )
@@ -218,7 +217,7 @@ def _qualified(record: QualificationRecord | None, cutoff: datetime, now: dateti
     return (
         record.authorization_id is not None
         and basis is not None
-        and evidence_is_current(basis, now)
+        and qualification_is_current(record, now)
         and record.evidence_available_by(min(cutoff, now))
     )
 

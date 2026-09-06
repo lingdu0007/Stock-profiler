@@ -242,15 +242,21 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
-            /** Observations */
+            /**
+             * Observations
+             * @default []
+             */
             observations: components["schemas"]["DiagnosticObservation"][];
             /**
              * Resolution
              * @enum {string}
              */
             resolution: "DISAPPEARED" | "PROVEN_ERRONEOUS" | "TRANSFERRED" | "ARCHIVED";
+            resolution_evidence?: components["schemas"]["QualificationEvidence"] | null;
             /** Rule Version */
             rule_version: string;
+            /** Transferred Restriction Evidence Id */
+            transferred_restriction_evidence_id?: string | null;
         };
         /**
          * AuthenticationVerificationDto
@@ -260,6 +266,30 @@ export interface components {
             /** Csrf Token */
             csrf_token: string;
         };
+        /** BasisSubstitutionCheck */
+        BasisSubstitutionCheck: {
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /** Check Id */
+            check_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "EQUIVALENCE" | "MIGRATION" | "CROSS_VALIDATION" | "REPLAY";
+            /** Original Basis Digest */
+            original_basis_digest: string;
+            /**
+             * Passed
+             * @constant
+             */
+            passed: true;
+            /** Substitute Basis Digest */
+            substitute_basis_digest: string;
+        };
         /** CapabilityVersion */
         CapabilityVersion: {
             implementation: components["schemas"]["DecisionCaseVersionBundle"];
@@ -268,6 +298,20 @@ export interface components {
             qualification_policy?: components["schemas"]["QualificationPolicy"] | null;
             /** Version Id */
             version_id: string;
+        };
+        /** CertifiedBasisSubstitution */
+        CertifiedBasisSubstitution: {
+            /** Checks */
+            checks: components["schemas"]["BasisSubstitutionCheck"][];
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Original Basis Digest */
+            original_basis_digest: string;
+            /** Substitute Basis Digest */
+            substitute_basis_digest: string;
         };
         /** ChallengeDto */
         ChallengeDto: {
@@ -676,6 +720,7 @@ export interface components {
              */
             available_at: string;
             basis?: components["schemas"]["EvidenceBasis"] | null;
+            certified_substitution?: components["schemas"]["CertifiedBasisSubstitution"] | null;
             diagnostic_plan?: components["schemas"]["DiagnosticPlan"] | null;
             /** Digest */
             digest: string;
@@ -703,13 +748,21 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "ALERT_CLOSURE";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED";
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
+            /** Requalification Application Id */
+            requalification_application_id?: string | null;
+            /** Requalification Population Id */
+            requalification_population_id?: string | null;
+            /** Requalification Registration Digest */
+            requalification_registration_digest?: string | null;
             /** Resolves Evidence Id */
             resolves_evidence_id?: string | null;
             /** Restored Authorization Digest */
             restored_authorization_digest?: string | null;
+            /** Reviewed Alert Digest */
+            reviewed_alert_digest?: string | null;
             scope: components["schemas"]["QualificationScope"];
             /** Seed */
             seed: number;
@@ -809,6 +862,7 @@ export interface components {
              */
             restrictions: components["schemas"]["QualificationRestriction"][];
             scope: components["schemas"]["QualificationScope"];
+            state_activity_evidence?: components["schemas"]["QualificationEvidence"] | null;
             /**
              * Status
              * @enum {string}
@@ -822,7 +876,7 @@ export interface components {
              * Cause
              * @enum {string}
              */
-            cause: "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "EVIDENCE_EXPIRED" | "FORMAL_PERFORMANCE_FAILURE";
+            cause: "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "EVIDENCE_EXPIRED" | "STATE_ACTIVITY_EXPIRED" | "FORMAL_PERFORMANCE_FAILURE";
             evidence: components["schemas"]["QualificationEvidence"];
         };
         /** QualificationScope */
@@ -918,6 +972,36 @@ export interface components {
             /** Required Gates */
             required_gates: string[];
         };
+        /** RequalificationPopulationRegistration */
+        RequalificationPopulationRegistration: {
+            /** Application Id */
+            application_id: string;
+            /** Digest */
+            digest: string;
+            /** Frozen Version Digest */
+            frozen_version_digest: string;
+            /**
+             * Locked At
+             * Format: date-time
+             */
+            locked_at: string;
+            /** Population Id */
+            population_id: string;
+            /**
+             * Population Kind
+             * @enum {string}
+             */
+            population_kind: "HISTORICAL" | "FORWARD";
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Registered Member Ids */
+            registered_member_ids: string[];
+            /** Required Gates */
+            required_gates: string[];
+        };
         /** RequalificationProof */
         RequalificationProof: {
             /** Application Id */
@@ -929,10 +1013,12 @@ export interface components {
             first_prediction_frozen_at: string;
             forward_evidence: components["schemas"]["QualificationEvidence"];
             forward_population?: components["schemas"]["RequalificationPopulation"] | null;
+            forward_registration?: components["schemas"]["RequalificationPopulationRegistration"] | null;
             /** Frozen Version Digest */
             frozen_version_digest?: string | null;
             historical_evidence: components["schemas"]["QualificationEvidence"];
             historical_population?: components["schemas"]["RequalificationPopulation"] | null;
+            historical_registration?: components["schemas"]["RequalificationPopulationRegistration"] | null;
             /**
              * Locked At
              * Format: date-time

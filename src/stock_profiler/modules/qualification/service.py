@@ -1,6 +1,7 @@
 """Deterministic D0 governance; synthetic evidence cannot authorize real use."""
 
 from datetime import datetime
+from typing import Literal
 
 from stock_profiler.modules.qualification.contracts import (
     AlertClosure,
@@ -15,13 +16,16 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationRestriction,
     QualificationScope,
     RequalificationPopulation,
+    RequalificationPopulationRegistration,
 )
 from stock_profiler.modules.qualification.evidence import (
     capability_version_digest,
     evidence_basis_is_valid,
     evidence_is_current,
     formal_check_passed,
-    qualification_deadline,
+    overall_qualification_deadline,
+    requalification_registration_digest,
+    state_activity_deadline,
 )
 
 
@@ -59,7 +63,7 @@ def adjudicate(
         return GovernanceOutcome(
             disposition="DENIED", reasons=("QUALIFICATION_POLICY_IDENTITY_CONFLICT",)
         )
-    previous = current_qualification(history, command.scope, command.version)
+    previous = current_substantive_qualification(history, command.scope, command.version)
     if command.previous_decision_id != (previous.decision_id if previous else None):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_REVISION_CONFLICT",))
     if previous is not None and not previous.evidence_available_by(cutoff):
@@ -87,6 +91,8 @@ def adjudicate(
         check = evidence.formal_check
         historical_population = proof.historical_population
         forward_population = proof.forward_population
+        historical_registration = proof.historical_registration
+        forward_registration = proof.forward_registration
         next_node = (
             _next_formal_node(previous, original_check) if original_check is not None else None
         )
@@ -102,10 +108,29 @@ def adjudicate(
             or proof.frozen_version_digest != capability_version_digest(command.version)
             or historical_population is None
             or forward_population is None
+            or historical_registration is None
+            or forward_registration is None
             or historical_population.population_id == forward_population.population_id
             or proof.historical_evidence.evidence_id == proof.forward_evidence.evidence_id
+            or evidence.requalification_application_id != proof.application_id
             or proof.historical_evidence.kind != "HISTORICAL_OOS_PASS"
             or proof.forward_evidence.kind != "LOCKED_FORWARD_PASS"
+            or not _requalification_registration_is_valid(
+                historical_registration,
+                proof.application_id,
+                "HISTORICAL",
+                proof.registered_at,
+                proof.locked_at,
+                proof.frozen_version_digest,
+            )
+            or not _requalification_registration_is_valid(
+                forward_registration,
+                proof.application_id,
+                "FORWARD",
+                proof.registered_at,
+                proof.locked_at,
+                proof.frozen_version_digest,
+            )
             or any(
                 item.scope != command.scope
                 or item.version != command.version
@@ -119,11 +144,13 @@ def adjudicate(
                 historical_population,
                 proof.historical_evidence,
                 proof.frozen_version_digest,
+                historical_registration,
             )
             or not _requalification_population_is_complete(
                 forward_population,
                 proof.forward_evidence,
                 proof.frozen_version_digest,
+                forward_registration,
             )
             or any(
                 member.matured_at > proof.registered_at for member in historical_population.members
@@ -138,12 +165,8 @@ def adjudicate(
             or check is None
             or not original_check.planned_nodes
             or original_check.error_budget_id is None
-            or check.sequence_id != original_check.sequence_id
+            or not _same_formal_sequence(check, original_check)
             or check.index != original_check.index + 1
-            or check.registered_at != original_check.registered_at
-            or check.planned_nodes != original_check.planned_nodes
-            or check.required_gates != original_check.required_gates
-            or check.error_budget_id != original_check.error_budget_id
             or check.scheduled_at != next_node
             or formal_check_passed(evidence) is not True
             or (set(historical_population.required_gates) | set(forward_population.required_gates))
@@ -184,6 +207,7 @@ def adjudicate(
                 previous_decision_id=previous.decision_id,
                 evidence=evidence,
                 alerts=previous.alerts,
+                alert_closures=previous.alert_closures,
                 requalification=proof,
                 formal_evidence=evidence,
                 formal_passing_evidence=evidence,
@@ -199,9 +223,6 @@ def adjudicate(
             previous is None
             or previous.status != "SUSPENDED"
             or previous.authorization_evidence is None
-            or not evidence_is_current(
-                previous.formal_passing_evidence or previous.authorization_evidence, now
-            )
             or evidence.kind != "RESTORATION_DECISION"
         ):
             return GovernanceOutcome(
@@ -224,7 +245,10 @@ def adjudicate(
             )
             or any(
                 not _restores_restriction(
-                    by_restriction[restriction.evidence.evidence_id], restriction, previous
+                    by_restriction[restriction.evidence.evidence_id],
+                    restriction,
+                    previous,
+                    now,
                 )
                 for restriction in previous.restrictions
             )
@@ -232,6 +256,11 @@ def adjudicate(
             return GovernanceOutcome(
                 disposition="DENIED", reasons=("QUALIFICATION_RESTORATION_INCOMPLETE",)
             )
+        state_activity_proofs = tuple(
+            by_restriction[restriction.evidence.evidence_id]
+            for restriction in previous.restrictions
+            if restriction.cause == "STATE_ACTIVITY_EXPIRED"
+        )
         return GovernanceOutcome(
             disposition="APPROVED",
             reasons=("QUALIFICATION_RESTORED",),
@@ -248,6 +277,11 @@ def adjudicate(
                     "evidence": evidence,
                     "restrictions": (),
                     "restoration_evidence": proofs,
+                    "state_activity_evidence": (
+                        state_activity_proofs[-1]
+                        if state_activity_proofs
+                        else previous.state_activity_evidence
+                    ),
                     "recorded_at": now,
                 }
             ),
@@ -389,25 +423,48 @@ def restrict_expired_qualification(
     record: QualificationRecord, now: datetime
 ) -> QualificationRecord:
     basis = record.formal_passing_evidence or record.authorization_evidence
-    deadline = qualification_deadline(basis) if basis is not None else None
+    cause = _qualification_expiry_cause(record, now)
     if (
         record.status not in {"VALID", "AT_RISK", "SUSPENDED"}
         or basis is None
-        or deadline is None
-        or deadline >= now
-        or any(item.cause == "EVIDENCE_EXPIRED" for item in record.restrictions)
+        or cause is None
+        or any(item.cause == cause for item in record.restrictions)
     ):
         return record
     return record.model_copy(
         update={
             "status": "SUSPENDED",
-            "cause": record.cause if record.status == "SUSPENDED" else "EVIDENCE_EXPIRED",
+            "cause": record.cause if record.status == "SUSPENDED" else cause,
             "restrictions": (
                 *record.restrictions,
-                QualificationRestriction(cause="EVIDENCE_EXPIRED", evidence=basis),
+                QualificationRestriction(cause=cause, evidence=basis),
             ),
         }
     )
+
+
+def qualification_is_current(record: QualificationRecord, now: datetime) -> bool:
+    return _qualification_expiry_cause(record, now) is None
+
+
+def _qualification_expiry_cause(
+    record: QualificationRecord,
+    now: datetime,
+) -> Literal["EVIDENCE_EXPIRED", "STATE_ACTIVITY_EXPIRED"] | None:
+    basis = record.formal_passing_evidence or record.authorization_evidence
+    if basis is None:
+        return "EVIDENCE_EXPIRED"
+    overall = overall_qualification_deadline(basis)
+    if overall is None or overall < now:
+        return "EVIDENCE_EXPIRED"
+    state_source = record.state_activity_evidence or basis
+    state = state_activity_deadline(state_source)
+    policy = basis.version.qualification_policy
+    if (policy is not None and policy.require_state_activity and state is None) or (
+        state is not None and state < now
+    ):
+        return "STATE_ACTIVITY_EXPIRED"
+    return None
 
 
 def _formal_check(
@@ -433,10 +490,7 @@ def _formal_check(
         or evidence.kind != "FORMAL_CHECK"
         or (passed is None and evidence.maturity_sufficient is not False)
         or not original_check.planned_nodes
-        or check.planned_nodes != original_check.planned_nodes
-        or check.required_gates != original_check.required_gates
-        or check.sequence_id != original_check.sequence_id
-        or check.registered_at != original_check.registered_at
+        or not _same_formal_sequence(check, original_check)
         or check.index != original_check.index + (0 if passed is None else 1)
         or check.scheduled_at not in check.planned_nodes
         or check.scheduled_at != next_node
@@ -535,10 +589,7 @@ def _record_formal_node_disposition(
         or original_check is None
         or evidence.kind != "FORMAL_NODE_NOT_EXECUTED"
         or not original_check.planned_nodes
-        or check.planned_nodes != original_check.planned_nodes
-        or check.required_gates != original_check.required_gates
-        or check.sequence_id != original_check.sequence_id
-        or check.registered_at != original_check.registered_at
+        or not _same_formal_sequence(check, original_check)
         or check.index != original_check.index
         or check.scheduled_at != next_node
         or not (
@@ -589,6 +640,19 @@ def _next_formal_node(
     return next((node for node in original_check.planned_nodes if node > anchor), None)
 
 
+def _same_formal_sequence(
+    proposed: FormalCheckIdentity,
+    original: FormalCheckIdentity,
+) -> bool:
+    return (
+        proposed.sequence_id == original.sequence_id
+        and proposed.registered_at == original.registered_at
+        and proposed.planned_nodes == original.planned_nodes
+        and proposed.required_gates == original.required_gates
+        and proposed.error_budget_id == original.error_budget_id
+    )
+
+
 def _close_alert(
     command: QualificationCommand,
     previous: QualificationRecord | None,
@@ -614,11 +678,10 @@ def _close_alert(
     )
     clear_count = policy.diagnostic_clear_node_count
     plan = target.diagnostic_plan if target is not None else None
-    expected_nodes = plan.planned_nodes[:clear_count] if plan is not None else ()
+    disappearance = proof.resolution == "DISAPPEARED"
     if (
         target is None
         or plan is None
-        or proof.resolution != "DISAPPEARED"
         or proof.alert_evidence_id != evidence.resolves_evidence_id
         or any(
             closure.alert_evidence_id == proof.alert_evidence_id
@@ -631,15 +694,35 @@ def _close_alert(
         or tuple(sorted(plan.planned_nodes)) != plan.planned_nodes
         or any(node <= target.evaluation_end for node in plan.planned_nodes)
         or proof.rule_version != plan.rule_version
-        or len(proof.observations) != clear_count
-        or tuple(item.scheduled_at for item in proof.observations) != expected_nodes
-        or not _diagnostic_observations_are_clear(
-            proof,
-            command,
-            target,
-            evidence,
-            now,
-            cutoff,
+        or (
+            disappearance
+            and (
+                proof.resolution_evidence is not None
+                or proof.transferred_restriction_evidence_id is not None
+                or len(proof.observations) < clear_count
+                or not _diagnostic_observation_nodes_are_consecutive(proof, plan.planned_nodes)
+                or not _diagnostic_observations_support_disappearance(
+                    proof,
+                    command,
+                    target,
+                    evidence,
+                    clear_count,
+                    now,
+                    cutoff,
+                )
+            )
+        )
+        or (
+            not disappearance
+            and not _direct_alert_resolution_is_valid(
+                proof,
+                command,
+                previous,
+                target,
+                evidence,
+                now,
+                cutoff,
+            )
         )
     ):
         return GovernanceOutcome(disposition="DENIED", reasons=("ALERT_CLOSURE_PROOF_INVALID",))
@@ -654,6 +737,7 @@ def _close_alert(
     closed_ids = {item.alert_evidence_id for item in closures}
     outstanding = tuple(item for item in previous.alerts if item.evidence_id not in closed_ids)
     restricted = previous.status in {"SUSPENDED", "REVOKED"}
+    archived = proof.resolution == "ARCHIVED"
     return GovernanceOutcome(
         disposition="APPROVED",
         reasons=("ALERT_CLOSED",),
@@ -662,11 +746,13 @@ def _close_alert(
                 "decision_id": event_id,
                 "previous_decision_id": previous.decision_id,
                 "status": (
-                    previous.status if restricted else ("AT_RISK" if outstanding else "VALID")
+                    previous.status
+                    if restricted or archived
+                    else ("AT_RISK" if outstanding else "VALID")
                 ),
                 "cause": (
                     previous.cause
-                    if restricted
+                    if restricted or archived
                     else ("DIAGNOSTIC_ALERT" if outstanding else "ALERT_CLOSED")
                 ),
                 "evidence": evidence,
@@ -688,18 +774,42 @@ def _diagnostic_plan_is_valid(evidence: QualificationEvidence) -> bool:
     )
 
 
-def _diagnostic_observations_are_clear(
+def _diagnostic_observation_nodes_are_consecutive(
+    proof: AlertClosureProof,
+    planned_nodes: tuple[datetime, ...],
+) -> bool:
+    try:
+        indices = tuple(
+            planned_nodes.index(observation.scheduled_at) for observation in proof.observations
+        )
+    except ValueError:
+        return False
+    return bool(indices) and all(
+        current == previous + 1 for previous, current in zip(indices, indices[1:], strict=False)
+    )
+
+
+def _diagnostic_observations_support_disappearance(
     proof: AlertClosureProof,
     command: QualificationCommand,
     target: QualificationEvidence,
     closure_evidence: QualificationEvidence,
+    clear_count: int,
     now: datetime,
     cutoff: datetime,
 ) -> bool:
     observations = proof.observations
+    if any(item.status != "CLEAR" for item in observations[-clear_count:]):
+        return False
     evidence_ids = tuple(item.evidence.evidence_id for item in observations)
     evaluation_ends = tuple(item.evidence.evaluation_end for item in observations)
     available_times = tuple(item.evidence.available_at for item in observations)
+    expected_kinds = {
+        "CLEAR": "DIAGNOSTIC_CLEAR",
+        "RECURRENT": "DIAGNOSTIC_RECURRENT",
+        "INSUFFICIENT": "DIAGNOSTIC_INSUFFICIENT",
+        "UNAVAILABLE": "DIAGNOSTIC_UNAVAILABLE",
+    }
     return (
         len(set(evidence_ids)) == len(evidence_ids)
         and tuple(sorted(evaluation_ends)) == evaluation_ends
@@ -709,9 +819,8 @@ def _diagnostic_observations_are_clear(
         and evaluation_ends[-1] <= closure_evidence.evaluation_end
         and available_times[-1] <= closure_evidence.available_at
         and all(
-            item.status == "CLEAR"
-            and item.rule_version == proof.rule_version
-            and item.evidence.kind == "DIAGNOSTIC_CLEAR"
+            item.rule_version == proof.rule_version
+            and item.evidence.kind == expected_kinds[item.status]
             and item.evidence.diagnostic_plan is None
             and item.evidence.resolves_evidence_id == target.evidence_id
             and item.evidence.scope.same_scope_as(command.scope)
@@ -728,10 +837,51 @@ def _diagnostic_observations_are_clear(
     )
 
 
+def _direct_alert_resolution_is_valid(
+    proof: AlertClosureProof,
+    command: QualificationCommand,
+    previous: QualificationRecord,
+    target: QualificationEvidence,
+    closure_evidence: QualificationEvidence,
+    now: datetime,
+    cutoff: datetime,
+) -> bool:
+    resolution_evidence = proof.resolution_evidence
+    expected_kind = {
+        "PROVEN_ERRONEOUS": "ALERT_PROVEN_ERRONEOUS",
+        "TRANSFERRED": "ALERT_TRANSFERRED",
+        "ARCHIVED": "ALERT_ARCHIVED",
+    }.get(proof.resolution)
+    if (
+        expected_kind is None
+        or resolution_evidence is None
+        or proof.observations
+        or resolution_evidence.kind != expected_kind
+        or resolution_evidence.resolves_evidence_id != target.evidence_id
+        or resolution_evidence.reviewed_alert_digest != target.digest
+        or not resolution_evidence.scope.same_scope_as(command.scope)
+        or resolution_evidence.version != command.version
+        or not evidence_basis_is_valid(resolution_evidence)
+        or target.evaluation_end > resolution_evidence.evaluation_end
+        or resolution_evidence.evaluation_end > resolution_evidence.available_at
+        or resolution_evidence.available_at > min(closure_evidence.available_at, cutoff)
+        or not evidence_is_current(resolution_evidence, now)
+    ):
+        return False
+    if proof.resolution == "TRANSFERRED":
+        transferred_id = proof.transferred_restriction_evidence_id
+        return transferred_id is not None and any(
+            restriction.evidence.evidence_id == transferred_id
+            for restriction in previous.restrictions
+        )
+    return proof.transferred_restriction_evidence_id is None
+
+
 def _requalification_population_is_complete(
     population: RequalificationPopulation,
     evidence: QualificationEvidence,
     frozen_version_digest: str,
+    registration: RequalificationPopulationRegistration,
 ) -> bool:
     registered_ids = population.registered_member_ids
     member_ids = tuple(member.member_id for member in population.members)
@@ -740,6 +890,12 @@ def _requalification_population_is_complete(
     return (
         population.evidence_id == evidence.evidence_id
         and population.frozen_version_digest == frozen_version_digest
+        and population.population_id == registration.population_id
+        and registered_ids == registration.registered_member_ids
+        and required_gates == registration.required_gates
+        and evidence.requalification_application_id == registration.application_id
+        and evidence.requalification_population_id == registration.population_id
+        and evidence.requalification_registration_digest == registration.digest
         and len(set(registered_ids)) == len(registered_ids)
         and len(set(member_ids)) == len(member_ids)
         and set(member_ids) == set(registered_ids)
@@ -758,19 +914,45 @@ def _requalification_population_is_complete(
     )
 
 
+def _requalification_registration_is_valid(
+    registration: RequalificationPopulationRegistration,
+    application_id: str,
+    population_kind: str,
+    registered_at: datetime,
+    locked_at: datetime,
+    frozen_version_digest: str,
+) -> bool:
+    return (
+        registration.application_id == application_id
+        and registration.population_kind == population_kind
+        and registration.registered_at == registered_at
+        and registration.locked_at == locked_at
+        and registration.frozen_version_digest == frozen_version_digest
+        and len(set(registration.registered_member_ids)) == len(registration.registered_member_ids)
+        and len(set(registration.required_gates)) == len(registration.required_gates)
+        and registration.digest == requalification_registration_digest(registration)
+    )
+
+
 def _restores_restriction(
     proof: QualificationEvidence,
     restriction: QualificationRestriction,
     previous: QualificationRecord,
+    now: datetime,
 ) -> bool:
     if restriction.cause == "REQUIRED_PREMISE_UNVERIFIABLE":
-        return (
-            proof.kind == "ORIGINAL_BASIS_RESTORED"
-            and previous.authorization_evidence is not None
-            and previous.authorization_evidence.basis is not None
-            and evidence_basis_is_valid(previous.authorization_evidence)
-            and proof.basis == previous.authorization_evidence.basis
-            and proof.restored_authorization_digest == previous.authorization_evidence.digest
+        original = previous.authorization_evidence
+        if (
+            original is None
+            or original.basis is None
+            or not evidence_basis_is_valid(original)
+            or proof.restored_authorization_digest != original.digest
+        ):
+            return False
+        if proof.kind == "ORIGINAL_BASIS_RESTORED":
+            return proof.basis == original.basis
+        return proof.kind == "CERTIFIED_BASIS_SUBSTITUTION" and (
+            _certified_substitution_is_valid(proof, original)
         )
     if restriction.cause in {"FORMAL_PERFORMANCE_FAILURE", "EVIDENCE_EXPIRED"}:
         return (
@@ -787,7 +969,54 @@ def _restores_restriction(
             == previous.formal_evidence
             and proof.evaluation_end > restriction.evidence.evaluation_end
         )
+    if restriction.cause == "STATE_ACTIVITY_EXPIRED":
+        basis = previous.formal_passing_evidence or previous.authorization_evidence
+        original_check = basis.formal_check if basis is not None else None
+        overall_deadline = overall_qualification_deadline(basis) if basis is not None else None
+        restored_state_deadline = state_activity_deadline(proof)
+        next_node = (
+            _next_formal_node(previous, original_check) if original_check is not None else None
+        )
+        return (
+            proof.kind == "STATE_ACTIVITY_RESTORED"
+            and basis is not None
+            and overall_deadline is not None
+            and overall_deadline >= now
+            and proof.state_activity_end is not None
+            and proof.evaluation_end == proof.state_activity_end
+            and restored_state_deadline is not None
+            and restored_state_deadline >= now
+            and (
+                restriction.evidence.state_activity_end is None
+                or proof.state_activity_end > restriction.evidence.state_activity_end
+            )
+            and (next_node is None or next_node > now)
+        )
     return False
+
+
+def _certified_substitution_is_valid(
+    proof: QualificationEvidence,
+    original: QualificationEvidence,
+) -> bool:
+    certification = proof.certified_substitution
+    if certification is None or proof.basis is None:
+        return False
+    checks = certification.checks
+    required = {"EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY"}
+    return (
+        certification.original_basis_digest == original.digest
+        and certification.substitute_basis_digest == proof.digest
+        and len(checks) == len(required)
+        and {check.kind for check in checks} == required
+        and len({check.check_id for check in checks}) == len(checks)
+        and all(
+            check.original_basis_digest == original.digest
+            and check.substitute_basis_digest == proof.digest
+            and check.available_at <= proof.available_at
+            for check in checks
+        )
+    )
 
 
 def current_qualification(
@@ -806,4 +1035,23 @@ def current_qualification(
     heads = [record for record in records if record.decision_id not in superseded]
     if len(heads) > 1:
         raise ValueError("qualification history has conflicting revisions")
+    return heads[0] if heads else None
+
+
+def current_substantive_qualification(
+    history: tuple[GovernanceOutcome, ...],
+    scope: QualificationScope,
+    version: CapabilityVersion,
+) -> QualificationRecord | None:
+    records = [
+        outcome.qualification
+        for outcome in history
+        if outcome.qualification is not None
+        and outcome.qualification.scope.same_scope_as(scope)
+        and outcome.qualification.version.same_substantive_version_as(version)
+    ]
+    superseded = {record.previous_decision_id for record in records}
+    heads = [record for record in records if record.decision_id not in superseded]
+    if len(heads) > 1:
+        raise ValueError("qualification history has conflicting substantive revisions")
     return heads[0] if heads else None

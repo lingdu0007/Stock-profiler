@@ -58,7 +58,17 @@ def test_duplicate_accounts_cannot_redefine_a_bound_policy(
     )
 
 
-@pytest.mark.parametrize("location", ["evidence", "restoration", "historical", "forward"])
+@pytest.mark.parametrize(
+    "location",
+    [
+        "evidence",
+        "restoration",
+        "historical",
+        "forward",
+        "alert-observation",
+        "alert-resolution",
+    ],
+)
 def test_new_governance_rejects_duplicate_accounts_in_nested_evidence(
     migrated_settings: Settings, location: str
 ) -> None:
@@ -69,7 +79,7 @@ def test_new_governance_rejects_duplicate_accounts_in_nested_evidence(
         command["evidence"] = proof
     elif location == "restoration":
         command["restoration_evidence"] = [proof]
-    else:
+    elif location in {"historical", "forward"}:
         command["requalification"] = {
             "application_id": "synthetic-account-membership-application",
             "registered_at": "2042-05-01T00:00:00Z",
@@ -79,6 +89,29 @@ def test_new_governance_rejects_duplicate_accounts_in_nested_evidence(
             "forward_evidence": deepcopy(command["evidence"]),
         }
         command["requalification"][f"{location}_evidence"] = proof
+    elif location == "alert-observation":
+        command["alert_closure"] = {
+            "contract_version": "1.0.0",
+            "alert_evidence_id": "synthetic-nested-alert",
+            "resolution": "DISAPPEARED",
+            "rule_version": "synthetic-nested-rule",
+            "observations": [
+                {
+                    "scheduled_at": "2042-05-20T00:00:00Z",
+                    "status": "CLEAR",
+                    "rule_version": "synthetic-nested-rule",
+                    "evidence": proof,
+                }
+            ],
+        }
+    else:
+        command["alert_closure"] = {
+            "contract_version": "1.0.0",
+            "alert_evidence_id": "synthetic-nested-alert",
+            "resolution": "PROVEN_ERRONEOUS",
+            "rule_version": "synthetic-nested-rule",
+            "resolution_evidence": proof,
+        }
     payload = case_payload(
         migrated_settings, "nested-account-alias", command, contract_version="5.0.0"
     )

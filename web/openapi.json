@@ -44,10 +44,10 @@
             "type": "string"
           },
           "observations": {
+            "default": [],
             "items": {
               "$ref": "#/components/schemas/DiagnosticObservation"
             },
-            "minItems": 1,
             "title": "Observations",
             "type": "array"
           },
@@ -56,19 +56,35 @@
             "title": "Resolution",
             "type": "string"
           },
+          "resolution_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rule_version": {
             "minLength": 1,
             "title": "Rule Version",
             "type": "string"
+          },
+          "transferred_restriction_evidence_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transferred Restriction Evidence Id"
           }
         },
-        "required": [
-          "contract_version",
-          "alert_evidence_id",
-          "resolution",
-          "rule_version",
-          "observations"
-        ],
+        "required": ["contract_version", "alert_evidence_id", "resolution", "rule_version"],
         "title": "AlertClosureProof",
         "type": "object"
       },
@@ -82,6 +98,51 @@
         },
         "required": ["csrf_token"],
         "title": "AuthenticationVerificationDto",
+        "type": "object"
+      },
+      "BasisSubstitutionCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "check_id": {
+            "minLength": 1,
+            "title": "Check Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "original_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Basis Digest",
+            "type": "string"
+          },
+          "passed": {
+            "const": true,
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "substitute_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Substitute Basis Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check_id",
+          "kind",
+          "original_basis_digest",
+          "substitute_basis_digest",
+          "passed",
+          "available_at"
+        ],
+        "title": "BasisSubstitutionCheck",
         "type": "object"
       },
       "CapabilityVersion": {
@@ -113,6 +174,42 @@
         },
         "required": ["version_id", "policy_version", "implementation"],
         "title": "CapabilityVersion",
+        "type": "object"
+      },
+      "CertifiedBasisSubstitution": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/BasisSubstitutionCheck"
+            },
+            "minItems": 4,
+            "title": "Checks",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "original_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Basis Digest",
+            "type": "string"
+          },
+          "substitute_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Substitute Basis Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "original_basis_digest",
+          "substitute_basis_digest",
+          "checks"
+        ],
+        "title": "CertifiedBasisSubstitution",
         "type": "object"
       },
       "ChallengeDto": {
@@ -1017,6 +1114,16 @@
               }
             ]
           },
+          "certified_substitution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CertifiedBasisSubstitution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "diagnostic_plan": {
             "anyOf": [
               {
@@ -1085,7 +1192,15 @@
               "FORMAL_CHECK",
               "FORMAL_NODE_NOT_EXECUTED",
               "DIAGNOSTIC_CLEAR",
-              "ALERT_CLOSURE"
+              "DIAGNOSTIC_RECURRENT",
+              "DIAGNOSTIC_INSUFFICIENT",
+              "DIAGNOSTIC_UNAVAILABLE",
+              "ALERT_CLOSURE",
+              "ALERT_PROVEN_ERRONEOUS",
+              "ALERT_TRANSFERRED",
+              "ALERT_ARCHIVED",
+              "CERTIFIED_BASIS_SUBSTITUTION",
+              "STATE_ACTIVITY_RESTORED"
             ],
             "title": "Kind",
             "type": "string"
@@ -1100,6 +1215,42 @@
               }
             ],
             "title": "Maturity Sufficient"
+          },
+          "requalification_application_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Application Id"
+          },
+          "requalification_population_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Population Id"
+          },
+          "requalification_registration_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Registration Digest"
           },
           "resolves_evidence_id": {
             "anyOf": [
@@ -1123,6 +1274,18 @@
               }
             ],
             "title": "Restored Authorization Digest"
+          },
+          "reviewed_alert_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed Alert Digest"
           },
           "scope": {
             "$ref": "#/components/schemas/QualificationScope"
@@ -1403,6 +1566,16 @@
           "scope": {
             "$ref": "#/components/schemas/QualificationScope"
           },
+          "state_activity_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "enum": ["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED"],
             "title": "Status",
@@ -1434,6 +1607,7 @@
               "REQUIRED_PREMISE_UNVERIFIABLE",
               "ORIGINAL_BASIS_INVALID",
               "EVIDENCE_EXPIRED",
+              "STATE_ACTIVITY_EXPIRED",
               "FORMAL_PERFORMANCE_FAILURE"
             ],
             "title": "Cause",
@@ -1704,6 +1878,75 @@
         "title": "RequalificationPopulation",
         "type": "object"
       },
+      "RequalificationPopulationRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "population_id": {
+            "minLength": 1,
+            "title": "Population Id",
+            "type": "string"
+          },
+          "population_kind": {
+            "enum": ["HISTORICAL", "FORWARD"],
+            "title": "Population Kind",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "registered_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Registered Member Ids",
+            "type": "array"
+          },
+          "required_gates": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Required Gates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "application_id",
+          "population_kind",
+          "population_id",
+          "registered_at",
+          "locked_at",
+          "frozen_version_digest",
+          "registered_member_ids",
+          "required_gates",
+          "digest"
+        ],
+        "title": "RequalificationPopulationRegistration",
+        "type": "object"
+      },
       "RequalificationProof": {
         "additionalProperties": false,
         "properties": {
@@ -1730,6 +1973,16 @@
               }
             ]
           },
+          "forward_registration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "frozen_version_digest": {
             "anyOf": [
               {
@@ -1749,6 +2002,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/RequalificationPopulation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "historical_registration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulationRegistration"
               },
               {
                 "type": "null"

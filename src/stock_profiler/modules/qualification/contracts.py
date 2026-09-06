@@ -86,6 +86,10 @@ class CapabilityVersion(GovernanceContract):
             return "QUALIFICATION_POLICY_VERSION_MISMATCH"
         return None
 
+    def same_substantive_version_as(self, other: CapabilityVersion) -> bool:
+        """Ignore a nominal version rename while retaining every frozen rule."""
+        return self.model_dump(exclude={"version_id"}) == other.model_dump(exclude={"version_id"})
+
 
 class FormalCheckIdentity(GovernanceContract):
     sequence_id: str = Field(min_length=1)
@@ -129,6 +133,22 @@ class EvidenceBasis(GovernanceContract):
     dependency_windows: tuple[EvidenceDependencyWindow, ...] = Field(min_length=1)
 
 
+class BasisSubstitutionCheck(GovernanceContract):
+    check_id: str = Field(min_length=1)
+    kind: Literal["EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY"]
+    original_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    substitute_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    passed: Literal[True]
+    available_at: AwareDatetime
+
+
+class CertifiedBasisSubstitution(GovernanceContract):
+    contract_version: Literal["1.0.0"]
+    original_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    substitute_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checks: tuple[BasisSubstitutionCheck, ...] = Field(min_length=4)
+
+
 class DiagnosticPlan(GovernanceContract):
     contract_version: Literal["1.0.0"]
     rule_version: str = Field(min_length=1)
@@ -156,7 +176,15 @@ class QualificationEvidence(GovernanceContract):
         "FORMAL_CHECK",
         "FORMAL_NODE_NOT_EXECUTED",
         "DIAGNOSTIC_CLEAR",
+        "DIAGNOSTIC_RECURRENT",
+        "DIAGNOSTIC_INSUFFICIENT",
+        "DIAGNOSTIC_UNAVAILABLE",
         "ALERT_CLOSURE",
+        "ALERT_PROVEN_ERRONEOUS",
+        "ALERT_TRANSFERRED",
+        "ALERT_ARCHIVED",
+        "CERTIFIED_BASIS_SUBSTITUTION",
+        "STATE_ACTIVITY_RESTORED",
     ]
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_end: AwareDatetime
@@ -169,6 +197,22 @@ class QualificationEvidence(GovernanceContract):
     restored_authorization_digest: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$", exclude_if=lambda value: value is None
     )
+    requalification_application_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
+    requalification_population_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
+    requalification_registration_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+    reviewed_alert_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
     formal_check: FormalCheckIdentity | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -177,6 +221,9 @@ class QualificationEvidence(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
     basis: EvidenceBasis | None = Field(default=None, exclude_if=lambda value: value is None)
+    certified_substitution: CertifiedBasisSubstitution | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     diagnostic_plan: DiagnosticPlan | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -200,6 +247,18 @@ class RequalificationPopulation(GovernanceContract):
     gate_results: tuple[QualificationGate, ...] = Field(min_length=1)
 
 
+class RequalificationPopulationRegistration(GovernanceContract):
+    application_id: str = Field(min_length=1)
+    population_kind: Literal["HISTORICAL", "FORWARD"]
+    population_id: str = Field(min_length=1)
+    registered_at: AwareDatetime
+    locked_at: AwareDatetime
+    frozen_version_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registered_member_ids: tuple[str, ...] = Field(min_length=1)
+    required_gates: tuple[str, ...] = Field(min_length=1)
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class RequalificationProof(GovernanceContract):
     application_id: str = Field(min_length=1)
     registered_at: AwareDatetime
@@ -216,6 +275,12 @@ class RequalificationProof(GovernanceContract):
     forward_population: RequalificationPopulation | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    historical_registration: RequalificationPopulationRegistration | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    forward_registration: RequalificationPopulationRegistration | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class DiagnosticObservation(GovernanceContract):
@@ -230,7 +295,15 @@ class AlertClosureProof(GovernanceContract):
     alert_evidence_id: str = Field(min_length=1)
     resolution: Literal["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"]
     rule_version: str = Field(min_length=1)
-    observations: tuple[DiagnosticObservation, ...] = Field(min_length=1)
+    observations: tuple[DiagnosticObservation, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    resolution_evidence: QualificationEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    transferred_restriction_evidence_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
 
 
 class FormalNodeDisposition(GovernanceContract):
@@ -275,6 +348,7 @@ class QualificationRestriction(GovernanceContract):
         "REQUIRED_PREMISE_UNVERIFIABLE",
         "ORIGINAL_BASIS_INVALID",
         "EVIDENCE_EXPIRED",
+        "STATE_ACTIVITY_EXPIRED",
         "FORMAL_PERFORMANCE_FAILURE",
     ]
     evidence: QualificationEvidence
@@ -320,6 +394,9 @@ class QualificationRecord(GovernanceContract):
     formal_passing_evidence: QualificationEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    state_activity_evidence: QualificationEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     last_formal_node: AwareDatetime | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -340,6 +417,7 @@ class QualificationRecord(GovernanceContract):
                 self.evidence,
                 self.formal_evidence,
                 self.formal_passing_evidence,
+                self.state_activity_evidence,
                 *self.alerts,
                 *(closure.evidence for closure in self.alert_closures),
                 *(
@@ -347,6 +425,7 @@ class QualificationRecord(GovernanceContract):
                     for closure in self.alert_closures
                     for observation in closure.proof.observations
                 ),
+                *(closure.proof.resolution_evidence for closure in self.alert_closures),
                 *(restriction.evidence for restriction in self.restrictions),
                 *self.restoration_evidence,
                 *(disposition.evidence for disposition in self.formal_node_dispositions),

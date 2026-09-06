@@ -211,6 +211,61 @@ def test_handoff_cannot_bypass_earliest_eligible_node(
     )
 
 
+def test_handoff_cannot_bypass_the_current_unfrozen_first_node(
+    migrated_settings: Settings,
+) -> None:
+    first_version = version(migrated_settings)
+    second_version = version(migrated_settings, "synthetic-unfrozen-version-two")
+    grants = []
+    for index, bundle in enumerate((first_version, second_version)):
+        command = qualification_command(migrated_settings)
+        command["version"] = bundle
+        command["evidence"]["version"] = bundle
+        command["evidence"]["evidence_id"] = f"synthetic-unfrozen-grant-{index}"
+        grants.append(execute_handoff(migrated_settings, f"unfrozen-grant-{index}", command))
+
+    first_node = handoff_node("DAILY", "unfrozen-first", "2042-05-18T16:00:00Z")
+    later_node = handoff_node("DAILY", "unfrozen-later", "2042-05-19T16:00:00Z")
+    for identity, node in (("first", first_node), ("later", later_node)):
+        execute_handoff(
+            migrated_settings,
+            f"unfrozen-register-{identity}",
+            {"operation": "REGISTER_TASK_NODE", "scope": scope(), "node": node},
+        )
+
+    first_activation = execute_handoff(
+        migrated_settings,
+        "unfrozen-activate-first",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": first_version,
+            "previous_version": None,
+            "previous_activation_id": None,
+            "qualification_decision_id": grants[0].decision_event_id,
+            "first_node_id": first_node["node_id"],
+        },
+    )
+    bypass = execute_handoff(
+        migrated_settings,
+        "unfrozen-activate-later",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": second_version,
+            "previous_version": first_version,
+            "previous_activation_id": first_activation.decision_event_id,
+            "qualification_decision_id": grants[1].decision_event_id,
+            "first_node_id": later_node["node_id"],
+        },
+        now="2042-05-17T16:02:00Z",
+    )
+    assert bypass.report is not None
+    assert bypass.report.result.governance is not None
+    assert bypass.report.result.governance.disposition == "DENIED"
+    assert bypass.report.result.governance.reasons == ("NEXT_LEGAL_TASK_NODE_REQUIRED",)
+
+
 @pytest.mark.parametrize(
     ("kind", "old_at", "next_at"),
     [

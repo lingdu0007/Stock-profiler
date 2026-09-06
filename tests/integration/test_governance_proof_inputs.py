@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
+import pytest
 from governance_proofs import original_basis
 from test_scoped_qualification import (
     GovernanceClock,
@@ -174,6 +176,191 @@ def test_integrity_restoration_verifies_original_content_and_dependency_windows(
     assert granted.report.result.governance.qualification.status == "VALID"
 
 
+def test_integrity_restoration_accepts_only_complete_certified_substitution(
+    migrated_settings: Settings,
+) -> None:
+    grant_command = qualification_command(migrated_settings)
+    grant_command["evidence"]["basis"] = original_basis()
+    grant_command["evidence"]["digest"] = canonical_digest(original_basis())
+    granted = execute(migrated_settings, "certified-substitution-grant", grant_command)
+
+    suspend = qualification_command(
+        migrated_settings,
+        action="SUSPEND",
+        previous=granted.decision_event_id,
+    )
+    suspend["evidence"].update(
+        kind="REQUIRED_PREMISE_UNVERIFIABLE",
+        evidence_id="synthetic-certified-basis-unavailable",
+    )
+    suspended = execute(migrated_settings, "certified-substitution-suspended", suspend)
+
+    substitute = original_basis()
+    substitute["root_artifact"].update(
+        content="synthetic decision-equivalent replacement content",
+        content_sha256=sha256(b"synthetic decision-equivalent replacement content").hexdigest(),
+        version="synthetic-root-v2-certified",
+    )
+    substitute_digest = canonical_digest(substitute)
+    restore = qualification_command(
+        migrated_settings,
+        action="RESTORE",
+        previous=suspended.decision_event_id,
+    )
+    restore["evidence"].update(
+        kind="RESTORATION_DECISION",
+        evidence_id="synthetic-certified-restoration-decision",
+    )
+    proof = deepcopy(restore["evidence"])
+    proof.update(
+        kind="CERTIFIED_BASIS_SUBSTITUTION",
+        evidence_id="synthetic-certified-substitution-proof",
+        digest=substitute_digest,
+        basis=substitute,
+        resolves_evidence_id="synthetic-certified-basis-unavailable",
+        restored_authorization_digest=grant_command["evidence"]["digest"],
+        certified_substitution={
+            "contract_version": "1.0.0",
+            "original_basis_digest": grant_command["evidence"]["digest"],
+            "substitute_basis_digest": substitute_digest,
+            "checks": [
+                {
+                    "check_id": f"synthetic-certified-{kind.lower().replace('_', '-')}",
+                    "kind": kind,
+                    "original_basis_digest": grant_command["evidence"]["digest"],
+                    "substitute_basis_digest": substitute_digest,
+                    "passed": True,
+                    "available_at": "2042-05-15T00:00:00Z",
+                }
+                for kind in ("EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY")
+            ],
+        },
+    )
+    incomplete = deepcopy(proof)
+    incomplete["certified_substitution"]["checks"][-1]["kind"] = "EQUIVALENCE"
+    restore["restoration_evidence"] = [incomplete]
+    denied = execute(migrated_settings, "certified-substitution-incomplete", restore)
+    assert denied.report is not None
+    assert denied.report.result.governance is not None
+    assert denied.report.result.governance.disposition == "DENIED"
+    assert denied.report.result.governance.reasons == ("QUALIFICATION_RESTORATION_INCOMPLETE",)
+
+    restore["restoration_evidence"] = [proof]
+    restored = execute(migrated_settings, "certified-substitution-restored", restore)
+    assert restored.report is not None
+    outcome = restored.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == "VALID"
+    assert record.authorization_id == granted.decision_event_id
+    assert record.authorization_evidence is not None
+    assert record.authorization_evidence.basis is not None
+    assert record.authorization_evidence.basis.model_dump(mode="json") == original_basis()
+    assert record.restoration_evidence[0].basis is not None
+    assert record.restoration_evidence[0].basis.model_dump(mode="json") == substitute
+
+
+@pytest.mark.parametrize("formal_node_due", [False, True])
+def test_state_activity_only_expiry_restores_without_consuming_a_formal_node(
+    migrated_settings: Settings,
+    formal_node_due: bool,
+) -> None:
+    grant_command = qualification_command(migrated_settings)
+    grant_command["evidence"]["state_activity_end"] = "2041-12-01T00:00:00Z"
+    if formal_node_due:
+        grant_command["evidence"]["formal_check"] = {
+            "sequence_id": "synthetic-state-activity-formal-sequence",
+            "index": 1,
+            "registered_at": "2042-05-01T00:00:00Z",
+            "scheduled_at": "2042-05-06T00:00:00Z",
+            "planned_nodes": [
+                "2042-05-06T00:00:00Z",
+                "2042-10-01T00:00:00Z",
+            ],
+            "required_gates": ["synthetic-state-activity-formal-gate"],
+        }
+    suffix = "formal-due" if formal_node_due else "no-formal-due"
+    granted = execute(migrated_settings, f"state-activity-grant-{suffix}", grant_command)
+
+    alert = qualification_command(
+        migrated_settings,
+        action="ALERT",
+        previous=granted.decision_event_id,
+    )
+    alert["evidence"].update(
+        kind="DIAGNOSTIC_ALERT",
+        evidence_id="synthetic-state-activity-trigger",
+        state_activity_end="2042-10-10T00:00:00Z",
+        evaluation_end="2042-10-10T00:00:00Z",
+        available_at="2042-10-15T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+    )
+    restricted = execute(
+        migrated_settings,
+        f"state-activity-restricted-{suffix}",
+        alert,
+        observed_at="2042-10-15T10:00:00Z",
+        knowledge_cutoff="2042-10-15T09:00:00Z",
+    )
+    assert restricted.report is not None
+    restricted_outcome = restricted.report.result.governance
+    assert restricted_outcome is not None
+    restricted_record = restricted_outcome.qualification
+    assert restricted_record is not None
+    assert restricted_record.status == "SUSPENDED"
+    assert [(item.cause, item.evidence.evidence_id) for item in restricted_record.restrictions] == [
+        ("STATE_ACTIVITY_EXPIRED", "synthetic-qualification-proof-4519")
+    ]
+
+    restore = qualification_command(
+        migrated_settings,
+        action="RESTORE",
+        previous=restricted.decision_event_id,
+    )
+    restore["evidence"].update(
+        kind="RESTORATION_DECISION",
+        evidence_id="synthetic-state-activity-restoration-decision",
+        state_activity_end="2042-10-10T00:00:00Z",
+        evaluation_end="2042-10-10T00:00:00Z",
+        available_at="2042-10-15T08:30:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+    )
+    proof = deepcopy(restore["evidence"])
+    proof.update(
+        kind="STATE_ACTIVITY_RESTORED",
+        evidence_id="synthetic-state-activity-restored",
+        resolves_evidence_id="synthetic-qualification-proof-4519",
+    )
+    restore["restoration_evidence"] = [proof]
+    restored = execute(
+        migrated_settings,
+        f"state-activity-restored-{suffix}",
+        restore,
+        observed_at="2042-10-15T10:30:00Z",
+        knowledge_cutoff="2042-10-15T09:30:00Z",
+    )
+    assert restored.report is not None
+    outcome = restored.report.result.governance
+    assert outcome is not None
+    if formal_node_due:
+        assert outcome.disposition == "DENIED"
+        assert outcome.reasons == ("QUALIFICATION_RESTORATION_INCOMPLETE",)
+        assert outcome.qualification is None
+        return
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == "AT_RISK"
+    assert record.authorization_id == granted.decision_event_id
+    assert record.authorization_evidence is not None
+    assert record.authorization_evidence.evidence_id == "synthetic-qualification-proof-4519"
+    assert record.state_activity_evidence is not None
+    assert record.state_activity_evidence.evidence_id == "synthetic-state-activity-restored"
+    assert record.formal_node_dispositions == ()
+
+
 def test_formal_sequence_requires_a_disposition_for_every_planned_node(
     migrated_settings: Settings,
 ) -> None:
@@ -320,7 +507,41 @@ def test_requalification_requires_complete_populations_and_original_sequence(
         kind="ORIGINAL_BASIS_INVALID",
         evidence_id="synthetic-complete-requalification-revocation",
     )
-    revoked = execute(migrated_settings, "complete-requalification-revoked", revoke_command)
+    alert_nodes = ["2042-05-18T00:00:00Z", "2042-05-19T00:00:00Z"]
+    alerted = diagnostic_alert(
+        migrated_settings,
+        "complete-requalification-alert",
+        granted.decision_event_id,
+        rule_version="synthetic-complete-requalification-alert-rule",
+        planned_nodes=alert_nodes,
+    )
+    closure_command = alert_closure_command(
+        migrated_settings,
+        alerted.decision_event_id,
+        alert_evidence_id="synthetic-complete-requalification-alert",
+        rule_version="synthetic-complete-requalification-alert-rule",
+        planned_nodes=alert_nodes,
+    )
+    closure_command["evidence"]["available_at"] = "2042-05-20T08:00:00Z"
+    for index, observation in enumerate(closure_command["alert_closure"]["observations"]):
+        observation["evidence"]["available_at"] = (
+            "2042-05-18T08:00:00Z" if index == 0 else "2042-05-19T08:00:00Z"
+        )
+    closed = execute(
+        migrated_settings,
+        "complete-requalification-alert-closed",
+        closure_command,
+        observed_at="2042-05-20T10:00:00Z",
+        knowledge_cutoff="2042-05-20T09:00:00Z",
+    )
+    revoke_command["previous_decision_id"] = closed.decision_event_id
+    revoked = execute(
+        migrated_settings,
+        "complete-requalification-revoked",
+        revoke_command,
+        observed_at="2042-05-20T11:00:00Z",
+        knowledge_cutoff="2042-05-20T10:30:00Z",
+    )
 
     command = qualification_command(
         migrated_settings,
@@ -364,15 +585,15 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     forward_members = [
         {
             "member_id": "synthetic-forward-member-a",
-            "prediction_frozen_at": "2042-05-20T00:00:00Z",
-            "available_at": "2042-05-21T00:00:00Z",
+            "prediction_frozen_at": "2042-05-23T00:00:00Z",
+            "available_at": "2042-05-24T00:00:00Z",
             "matured_at": "2042-05-28T00:00:00Z",
             "outcome_digest": "3" * 64,
         },
         {
             "member_id": "synthetic-forward-member-b",
-            "prediction_frozen_at": "2042-05-22T00:00:00Z",
-            "available_at": "2042-05-23T00:00:00Z",
+            "prediction_frozen_at": "2042-05-24T00:00:00Z",
+            "available_at": "2042-05-25T00:00:00Z",
             "matured_at": "2042-05-29T00:00:00Z",
             "outcome_digest": "4" * 64,
         },
@@ -386,6 +607,8 @@ def test_requalification_requires_complete_populations_and_original_sequence(
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
+        requalification_application_id="synthetic-complete-requalification-application",
+        requalification_population_id="synthetic-complete-historical-population",
     )
     forward_evidence = deepcopy(command["evidence"])
     forward_evidence.update(
@@ -396,15 +619,46 @@ def test_requalification_requires_complete_populations_and_original_sequence(
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
+        requalification_application_id="synthetic-complete-requalification-application",
+        requalification_population_id="synthetic-complete-forward-population",
     )
+    command["evidence"]["requalification_application_id"] = (
+        "synthetic-complete-requalification-application"
+    )
+    historical_registration = {
+        "application_id": "synthetic-complete-requalification-application",
+        "population_kind": "HISTORICAL",
+        "population_id": "synthetic-complete-historical-population",
+        "registered_at": "2042-05-21T00:00:00Z",
+        "locked_at": "2042-05-22T00:00:00Z",
+        "frozen_version_digest": frozen_version_digest,
+        "registered_member_ids": [item["member_id"] for item in historical_members],
+        "required_gates": ["synthetic-history-gate"],
+    }
+    historical_registration["digest"] = canonical_digest(historical_registration)
+    forward_registration = {
+        "application_id": "synthetic-complete-requalification-application",
+        "population_kind": "FORWARD",
+        "population_id": "synthetic-complete-forward-population",
+        "registered_at": "2042-05-21T00:00:00Z",
+        "locked_at": "2042-05-22T00:00:00Z",
+        "frozen_version_digest": frozen_version_digest,
+        "registered_member_ids": [item["member_id"] for item in forward_members],
+        "required_gates": ["synthetic-forward-gate"],
+    }
+    forward_registration["digest"] = canonical_digest(forward_registration)
+    historical_evidence["requalification_registration_digest"] = historical_registration["digest"]
+    forward_evidence["requalification_registration_digest"] = forward_registration["digest"]
     command["requalification"] = {
         "application_id": "synthetic-complete-requalification-application",
-        "registered_at": "2042-05-18T00:00:00Z",
-        "locked_at": "2042-05-19T00:00:00Z",
-        "first_prediction_frozen_at": "2042-05-20T00:00:00Z",
+        "registered_at": "2042-05-21T00:00:00Z",
+        "locked_at": "2042-05-22T00:00:00Z",
+        "first_prediction_frozen_at": "2042-05-23T00:00:00Z",
         "frozen_version_digest": frozen_version_digest,
         "historical_evidence": historical_evidence,
         "forward_evidence": forward_evidence,
+        "historical_registration": historical_registration,
+        "forward_registration": forward_registration,
         "historical_population": {
             "population_id": "synthetic-complete-historical-population",
             "evidence_id": historical_evidence["evidence_id"],
@@ -438,6 +692,63 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert incomplete_outcome is not None
     assert incomplete_outcome.disposition == "DENIED"
     assert incomplete_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
+
+    silently_shrunk = deepcopy(command)
+    silently_shrunk["requalification"]["forward_population"]["registered_member_ids"].pop()
+    silently_shrunk["requalification"]["forward_population"]["members"].pop()
+    silently_shrunk_execution = execute(
+        migrated_settings,
+        "complete-requalification-silently-shrunk",
+        silently_shrunk,
+        observed_at="2042-05-31T10:00:00Z",
+        knowledge_cutoff="2042-05-31T09:00:00Z",
+    )
+    assert silently_shrunk_execution.report is not None
+    silently_shrunk_outcome = silently_shrunk_execution.report.result.governance
+    assert silently_shrunk_outcome is not None
+    assert silently_shrunk_outcome.disposition == "DENIED"
+    assert silently_shrunk_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
+
+    exchanged_gates = deepcopy(command)
+    historical_population = exchanged_gates["requalification"]["historical_population"]
+    forward_population = exchanged_gates["requalification"]["forward_population"]
+    historical_population["required_gates"], forward_population["required_gates"] = (
+        forward_population["required_gates"],
+        historical_population["required_gates"],
+    )
+    historical_population["gate_results"], forward_population["gate_results"] = (
+        forward_population["gate_results"],
+        historical_population["gate_results"],
+    )
+    exchanged_gates_execution = execute(
+        migrated_settings,
+        "complete-requalification-exchanged-gates",
+        exchanged_gates,
+        observed_at="2042-05-31T10:00:00Z",
+        knowledge_cutoff="2042-05-31T09:00:00Z",
+    )
+    assert exchanged_gates_execution.report is not None
+    exchanged_gates_outcome = exchanged_gates_execution.report.result.governance
+    assert exchanged_gates_outcome is not None
+    assert exchanged_gates_outcome.disposition == "DENIED"
+    assert exchanged_gates_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
+
+    relabeled_report = deepcopy(command)
+    relabeled_report["requalification"]["historical_evidence"]["requalification_application_id"] = (
+        "synthetic-old-application"
+    )
+    relabeled_report_execution = execute(
+        migrated_settings,
+        "complete-requalification-relabeled-report",
+        relabeled_report,
+        observed_at="2042-05-31T10:00:00Z",
+        knowledge_cutoff="2042-05-31T09:00:00Z",
+    )
+    assert relabeled_report_execution.report is not None
+    relabeled_report_outcome = relabeled_report_execution.report.result.governance
+    assert relabeled_report_outcome is not None
+    assert relabeled_report_outcome.disposition == "DENIED"
+    assert relabeled_report_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
 
     changed_sequence = deepcopy(command)
     changed_sequence["evidence"]["formal_check"]["planned_nodes"][-1] = "2042-07-31T00:00:00Z"
@@ -474,10 +785,99 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert completed_record.formal_evidence.formal_check is not None
     assert completed_record.formal_evidence.formal_check.index == 2
     assert completed_record.formal_node_dispositions[-1].status == "EXECUTED_PASS"
+    assert len(completed_record.alert_closures) == 1
+    assert completed_record.outstanding_alerts == ()
     assert revoked.report is not None
     assert revoked.report.result.governance is not None
     assert revoked.report.result.governance.qualification is not None
     assert revoked.report.result.governance.qualification.status == "REVOKED"
+
+
+def test_revoked_substantive_version_cannot_grant_again_under_a_new_name(
+    migrated_settings: Settings,
+) -> None:
+    granted = execute(
+        migrated_settings,
+        "renamed-revocation-grant",
+        qualification_command(migrated_settings),
+    )
+    revoke = qualification_command(
+        migrated_settings,
+        action="REVOKE",
+        previous=granted.decision_event_id,
+    )
+    revoke["evidence"].update(
+        kind="ORIGINAL_BASIS_INVALID",
+        evidence_id="synthetic-renamed-revocation",
+    )
+    revoked = execute(migrated_settings, "renamed-revocation-state", revoke)
+
+    renamed = qualification_command(migrated_settings)
+    renamed["version"]["version_id"] = "synthetic-renamed-version"
+    renamed["evidence"]["version"] = deepcopy(renamed["version"])
+    renamed["evidence"]["evidence_id"] = "synthetic-renamed-grant-attempt"
+    repeated = execute(migrated_settings, "renamed-revocation-attempt", renamed)
+    assert repeated.report is not None
+    outcome = repeated.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("QUALIFICATION_REVISION_CONFLICT",)
+    assert outcome.qualification is None
+    assert revoked.report is not None
+    assert revoked.report.result.governance is not None
+    assert revoked.report.result.governance.qualification is not None
+    assert revoked.report.result.governance.qualification.status == "REVOKED"
+
+
+def test_formal_check_cannot_replace_the_registered_error_budget(
+    migrated_settings: Settings,
+) -> None:
+    planned = ["2042-05-06T00:00:00Z", "2042-06-03T00:00:00Z"]
+    original_check = {
+        "sequence_id": "synthetic-budget-sequence",
+        "index": 1,
+        "registered_at": "2042-05-01T00:00:00Z",
+        "scheduled_at": planned[0],
+        "planned_nodes": planned,
+        "required_gates": ["synthetic-budget-gate"],
+        "error_budget_id": "synthetic-original-budget",
+    }
+    grant = qualification_command(migrated_settings)
+    grant["evidence"]["formal_check"] = original_check
+    granted = execute(migrated_settings, "formal-budget-grant", grant)
+
+    check = qualification_command(
+        migrated_settings,
+        action="FORMAL_CHECK",
+        previous=granted.decision_event_id,
+    )
+    check["evidence"].update(
+        kind="FORMAL_CHECK",
+        evidence_id="synthetic-replacement-budget-check",
+        evaluation_end=planned[1],
+        available_at="2042-06-04T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        formal_check={
+            **original_check,
+            "index": 2,
+            "scheduled_at": planned[1],
+            "error_budget_id": "synthetic-replacement-budget",
+        },
+        maturity_sufficient=True,
+        gate_results=[{"gate_id": "synthetic-budget-gate", "passed": True}],
+    )
+    execution = execute(
+        migrated_settings,
+        "formal-budget-replacement",
+        check,
+        observed_at="2042-06-04T10:00:00Z",
+        knowledge_cutoff="2042-06-04T09:00:00Z",
+    )
+    assert execution.report is not None
+    outcome = execution.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("FORMAL_CHECK_NOT_ALLOWED",)
 
 
 def test_alert_closure_is_independent_and_only_closes_the_target(
@@ -637,3 +1037,155 @@ def test_alert_closure_never_restores_revoked_authorization(
     assert [item.evidence.evidence_id for item in record.restrictions] == [
         "synthetic-revoked-alert-basis-invalid"
     ]
+
+
+def test_alert_disappearance_can_restart_after_an_interrupted_original_node(
+    migrated_settings: Settings,
+) -> None:
+    grant = execute(
+        migrated_settings,
+        "restarted-alert-grant",
+        qualification_command(migrated_settings),
+    )
+    planned_nodes = [
+        "2042-05-18T00:00:00Z",
+        "2042-05-25T00:00:00Z",
+        "2042-06-01T00:00:00Z",
+        "2042-06-08T00:00:00Z",
+    ]
+    alert = diagnostic_alert(
+        migrated_settings,
+        "restarted-alert",
+        grant.decision_event_id,
+        rule_version="synthetic-restarted-alert-rule",
+        planned_nodes=planned_nodes,
+    )
+    command = alert_closure_command(
+        migrated_settings,
+        alert.decision_event_id,
+        alert_evidence_id="synthetic-restarted-alert",
+        rule_version="synthetic-restarted-alert-rule",
+        planned_nodes=planned_nodes,
+    )
+    command["evidence"].update(
+        evaluation_end=planned_nodes[-1],
+        available_at="2042-06-09T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+    )
+    for index, observation in enumerate(command["alert_closure"]["observations"]):
+        scheduled = observation["scheduled_at"]
+        observation["evidence"].update(
+            evaluation_end=scheduled,
+            available_at=(datetime.fromisoformat(scheduled) + timedelta(hours=8)).isoformat(),
+        )
+        if index == 1:
+            observation["status"] = "RECURRENT"
+            observation["evidence"]["kind"] = "DIAGNOSTIC_RECURRENT"
+    closed = execute(
+        migrated_settings,
+        "restarted-alert-closed",
+        command,
+        observed_at="2042-06-09T10:00:00Z",
+        knowledge_cutoff="2042-06-09T09:00:00Z",
+    )
+    assert closed.report is not None
+    outcome = closed.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == "VALID"
+    assert [item.status for item in record.alert_closures[0].proof.observations] == [
+        "CLEAR",
+        "RECURRENT",
+        "CLEAR",
+        "CLEAR",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("resolution", "evidence_kind", "expected_status"),
+    [
+        ("PROVEN_ERRONEOUS", "ALERT_PROVEN_ERRONEOUS", "VALID"),
+        ("TRANSFERRED", "ALERT_TRANSFERRED", "SUSPENDED"),
+        ("ARCHIVED", "ALERT_ARCHIVED", "AT_RISK"),
+    ],
+)
+def test_alert_non_disappearance_resolutions_require_independent_evidence(
+    migrated_settings: Settings,
+    resolution: str,
+    evidence_kind: str,
+    expected_status: str,
+) -> None:
+    grant = execute(
+        migrated_settings,
+        f"{resolution.lower()}-alert-grant",
+        qualification_command(migrated_settings),
+    )
+    alert = diagnostic_alert(
+        migrated_settings,
+        f"{resolution.lower()}-alert",
+        grant.decision_event_id,
+        rule_version=f"synthetic-{resolution.lower()}-rule",
+        planned_nodes=["2042-05-24T00:00:00Z", "2042-05-31T00:00:00Z"],
+    )
+    previous = alert.decision_event_id
+    transferred_restriction_id = None
+    if resolution == "TRANSFERRED":
+        suspend = qualification_command(
+            migrated_settings,
+            action="SUSPEND",
+            previous=previous,
+        )
+        transferred_restriction_id = "synthetic-transferred-integrity-restriction"
+        suspend["evidence"].update(
+            kind="REQUIRED_PREMISE_UNVERIFIABLE",
+            evidence_id=transferred_restriction_id,
+        )
+        restricted = execute(migrated_settings, "transferred-alert-restricted", suspend)
+        previous = restricted.decision_event_id
+
+    command = qualification_command(
+        migrated_settings,
+        action="CLOSE_ALERT",
+        previous=previous,
+    )
+    alert_evidence_id = f"synthetic-{resolution.lower()}-alert"
+    command["evidence"].update(
+        kind="ALERT_CLOSURE",
+        evidence_id=f"synthetic-{resolution.lower()}-closure",
+        evaluation_end="2042-05-18T00:00:00Z",
+        available_at="2042-05-19T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        resolves_evidence_id=alert_evidence_id,
+    )
+    resolution_evidence = deepcopy(command["evidence"])
+    resolution_evidence.update(
+        kind=evidence_kind,
+        evidence_id=f"synthetic-{resolution.lower()}-resolution-proof",
+        reviewed_alert_digest="b" * 64,
+    )
+    command["alert_closure"] = {
+        "contract_version": "1.0.0",
+        "alert_evidence_id": alert_evidence_id,
+        "resolution": resolution,
+        "rule_version": f"synthetic-{resolution.lower()}-rule",
+        "resolution_evidence": resolution_evidence,
+    }
+    if transferred_restriction_id is not None:
+        command["alert_closure"]["transferred_restriction_evidence_id"] = transferred_restriction_id
+    closed = execute(
+        migrated_settings,
+        f"{resolution.lower()}-alert-closed",
+        command,
+        observed_at="2042-05-19T10:00:00Z",
+        knowledge_cutoff="2042-05-19T09:00:00Z",
+    )
+    assert closed.report is not None
+    outcome = closed.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    record = outcome.qualification
+    assert record is not None
+    assert record.status == expected_status
+    assert record.alert_closures[-1].resolution == resolution
