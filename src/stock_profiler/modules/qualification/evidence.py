@@ -1,9 +1,11 @@
 """Evaluate explicit frozen policy inputs without supplying authorization defaults."""
 
+import json
 from calendar import month_name, monthrange
 from datetime import UTC, datetime
+from hashlib import sha256
 
-from stock_profiler.modules.qualification.contracts import QualificationEvidence
+from stock_profiler.modules.qualification.contracts import EvidenceBasis, QualificationEvidence
 
 
 def qualification_deadline(evidence: QualificationEvidence) -> datetime | None:
@@ -29,6 +31,48 @@ def qualification_deadline(evidence: QualificationEvidence) -> datetime | None:
 def evidence_is_current(evidence: QualificationEvidence, now: datetime) -> bool:
     deadline = qualification_deadline(evidence)
     return deadline is not None and now <= deadline
+
+
+def evidence_basis_is_valid(evidence: QualificationEvidence) -> bool:
+    basis = evidence.basis
+    if basis is None:
+        return True
+    artifacts = (basis.root_artifact, *basis.dependencies)
+    artifact_ids = [item.artifact_id for item in artifacts]
+    dependency_ids = {item.artifact_id for item in basis.dependencies}
+    windows = {item.dependency_artifact_id: item for item in basis.dependency_windows}
+    return (
+        len(set(artifact_ids)) == len(artifact_ids)
+        and len(windows) == len(basis.dependency_windows)
+        and set(windows) == dependency_ids
+        and all(
+            sha256(item.content.encode()).hexdigest() == item.content_sha256
+            and item.valid_from <= item.valid_until
+            and item.available_at <= evidence.available_at
+            for item in artifacts
+        )
+        and basis.root_artifact.valid_from
+        <= evidence.evaluation_end
+        <= basis.root_artifact.valid_until
+        and all(
+            window.parent_artifact_id == basis.root_artifact.artifact_id
+            and artifact.valid_from <= window.required_from <= window.required_until
+            and window.required_until <= artifact.valid_until
+            and window.required_from <= evidence.evaluation_end <= window.required_until
+            for artifact in basis.dependencies
+            for window in (windows[artifact.artifact_id],)
+        )
+        and evidence.digest == evidence_basis_digest(basis)
+    )
+
+
+def evidence_basis_digest(basis: EvidenceBasis) -> str:
+    payload = json.dumps(
+        basis.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return sha256(payload).hexdigest()
 
 
 def _month_end_after(endpoint: datetime, months: int) -> datetime:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from governance_proofs import original_basis
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import execute_frozen_decision_case
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
@@ -349,12 +350,17 @@ def test_alerts_and_green_reports_do_not_restore_a_restricted_authorization(
 def test_restoration_requires_each_original_integrity_restriction_without_renewal(
     migrated_settings: Settings, resolved_count: int
 ) -> None:
+    grant_command = qualification_command(migrated_settings)
+    grant_command["evidence"]["basis"] = original_basis()
+    grant_command["evidence"]["digest"] = (
+        "8dfe431dfa9b6b7315567f2efa45f4033e309daefb62032cf04bb7930c8413af"
+    )
     granted = run_frozen_decision_case(
         migrated_settings,
         case_payload(
             migrated_settings,
             "restore-origin",
-            qualification_command(migrated_settings),
+            grant_command,
             contract_version="5.0.0",
         ),
         clock=GovernanceClock(),
@@ -380,7 +386,9 @@ def test_restoration_requires_each_original_integrity_restriction_without_renewa
             kind="ORIGINAL_BASIS_RESTORED",
             evidence_id=f"synthetic-recovered-basis-{number}",
             resolves_evidence_id=f"synthetic-missing-basis-{number}",
-            restored_authorization_digest="b" * 64,
+            digest=grant_command["evidence"]["digest"],
+            restored_authorization_digest=grant_command["evidence"]["digest"],
+            basis=original_basis(),
         )
         proofs.append(proof)
     restore["restoration_evidence"] = proofs

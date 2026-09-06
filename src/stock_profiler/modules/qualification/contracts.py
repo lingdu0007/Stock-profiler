@@ -98,6 +98,31 @@ class QualificationGate(GovernanceContract):
     passed: bool
 
 
+class EvidenceArtifact(GovernanceContract):
+    artifact_id: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    version: str = Field(min_length=1)
+    license_id: str = Field(min_length=1)
+    available_at: AwareDatetime
+    valid_from: AwareDatetime
+    valid_until: AwareDatetime
+
+
+class EvidenceDependencyWindow(GovernanceContract):
+    parent_artifact_id: str = Field(min_length=1)
+    dependency_artifact_id: str = Field(min_length=1)
+    required_from: AwareDatetime
+    required_until: AwareDatetime
+
+
+class EvidenceBasis(GovernanceContract):
+    contract_version: Literal["1.0.0"]
+    root_artifact: EvidenceArtifact
+    dependencies: tuple[EvidenceArtifact, ...] = Field(min_length=1)
+    dependency_windows: tuple[EvidenceDependencyWindow, ...] = Field(min_length=1)
+
+
 class QualificationEvidence(GovernanceContract):
     evidence_id: str = Field(min_length=1)
     synthetic: Literal[True]
@@ -136,6 +161,7 @@ class QualificationEvidence(GovernanceContract):
     gate_results: tuple[QualificationGate, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    basis: EvidenceBasis | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RequalificationProof(GovernanceContract):

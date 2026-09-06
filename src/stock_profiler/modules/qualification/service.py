@@ -12,6 +12,7 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationScope,
 )
 from stock_profiler.modules.qualification.evidence import (
+    evidence_basis_is_valid,
     evidence_is_current,
     formal_check_passed,
     qualification_deadline,
@@ -34,6 +35,7 @@ def adjudicate(
     if (
         evidence.scope != command.scope
         or evidence.version != command.version
+        or not evidence_basis_is_valid(evidence)
         or evidence.evaluation_end > evidence.available_at
         or evidence.available_at > now
         or evidence.expires_at < now
@@ -149,6 +151,7 @@ def adjudicate(
             or any(
                 proof.scope != command.scope
                 or proof.version != command.version
+                or not evidence_basis_is_valid(proof)
                 or proof.evaluation_end > proof.available_at
                 or proof.available_at > min(now, cutoff)
                 or proof.expires_at < now
@@ -427,6 +430,9 @@ def _restores_restriction(
         return (
             proof.kind == "ORIGINAL_BASIS_RESTORED"
             and previous.authorization_evidence is not None
+            and previous.authorization_evidence.basis is not None
+            and evidence_basis_is_valid(previous.authorization_evidence)
+            and proof.basis == previous.authorization_evidence.basis
             and proof.restored_authorization_digest == previous.authorization_evidence.digest
         )
     if restriction.cause in {"FORMAL_PERFORMANCE_FAILURE", "EVIDENCE_EXPIRED"}:
