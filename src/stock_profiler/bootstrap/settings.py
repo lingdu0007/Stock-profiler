@@ -154,6 +154,8 @@ class Settings(BaseSettings):
     auth_recovery_token: SecretStr | None = None
     auth_bootstrap_token_ttl_seconds: int = 10 * 60
     auth_recovery_token_ttl_seconds: int = 10 * 60
+    report_account_ids: tuple[str, ...] = ()
+    report_permissions: tuple[str, ...] = ("REPORT_READ",)
 
     @classmethod
     def settings_customise_sources(

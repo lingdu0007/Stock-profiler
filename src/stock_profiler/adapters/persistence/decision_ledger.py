@@ -718,6 +718,8 @@ class DecisionLedger:
         report_version_id: str | None = None,
     ) -> FormalReport:
         """Create a report only after its source business event is durably committed."""
+        if fact.case.access_scope is not None and fact.case.access_scope.visibility == "SHADOW":
+            raise DecisionEventCommitError("shadow events cannot become user reports")
         if not self._has_confirmed_business_commit(connection, fact.decision_event_id):
             raise DecisionEventCommitError("report source has no confirmed business commit")
         resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(

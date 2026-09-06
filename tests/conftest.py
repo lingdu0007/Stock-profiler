@@ -19,6 +19,7 @@ def settings(tmp_path: Path) -> Settings:
         source_sha="a" * 40,
         app_database_url=f"sqlite:///{tmp_path / 'stock-profiler.sqlite3'}",
         m_agent_run_store_path=tmp_path / "m-agent-runs.sqlite3",
+        report_account_ids=("synthetic-account-4017",),
     )
 
 

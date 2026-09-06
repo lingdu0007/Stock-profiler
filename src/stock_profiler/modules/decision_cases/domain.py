@@ -23,12 +23,13 @@ FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
-    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION}
+    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, "3.0.0"}
 )
 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
     {
         ("1.0.0", "1.0.0"),
         (FROZEN_CASE_CONTRACT_VERSION, FROZEN_HOST_CONTRACT_VERSION),
+        ("3.0.0", "3.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -39,6 +40,23 @@ class FrozenContract(BaseModel):
     """Reject unversioned fields so a frozen case cannot silently expand."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class ResultAccessScope(FrozenContract):
+    """Immutable ownership and visibility bound before a scoped case is executed."""
+
+    contract_version: Literal["1.0.0"]
+    user_id: str = Field(min_length=1)
+    account_ids: tuple[str, ...] = Field(min_length=1)
+    visibility: Literal["USER", "SHADOW"]
+
+    @model_validator(mode="after")
+    def validate_accounts(self) -> ResultAccessScope:
+        if any(not account for account in self.account_ids) or len(set(self.account_ids)) != len(
+            self.account_ids
+        ):
+            raise ValueError("result account scope must be nonempty and unique")
+        return self
 
 
 class EvidenceClock(FrozenContract):
@@ -337,6 +355,9 @@ class FormalReport(FrozenContract):
     result: ExternalResult
     stage_results: tuple[StageResult, ...]
     corrects_event_id: str | None = None
+    access_scope: ResultAccessScope | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     def with_publication_history(self, event_stages: tuple[StageResult, ...]) -> FormalReport:
         """Retain closed gates and correction recovery without replacing saved facts."""
@@ -503,6 +524,8 @@ def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> d
     if event.case.version_bundle.report_projection_contract_version == "1.0.0":
         payload.pop("stage_results")
         payload.pop("corrects_event_id")
+    if event.case.access_scope is not None:
+        payload["access_scope"] = event.case.access_scope.model_dump(mode="json")
     return payload
 
 
@@ -523,10 +546,26 @@ class FrozenDecisionCase(FrozenContract):
     input: dict[str, Any]
     expected_external_result: ExternalResult
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
+    access_scope: ResultAccessScope | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
+        scoped = self.version_bundle.case_contract_version == "3.0.0"
+        account = self.input.get("account")
+        definition_version = "2.0.0" if scoped else FROZEN_AGENT_DEFINITION_VERSION
+        if scoped != (self.access_scope is not None):
+            raise ValueError("scoped cases require the version 3 contract and frozen access scope")
+        if scoped and (
+            self.version_bundle.host_contract_version != "3.0.0"
+            or self.version_bundle.report_projection_contract_version != "3.0.0"
+            or self.access_scope is None
+            or not isinstance(account, dict)
+            or account.get("account_id") not in self.access_scope.account_ids
+        ):
+            raise ValueError("scoped case versions and account facts must agree")
         if not self.synthetic:
             raise ValueError("frozen decision cases must declare synthetic: true")
         if not self.generator_version:
@@ -544,7 +583,7 @@ class FrozenDecisionCase(FrozenContract):
                 self.version_bundle.report_projection_contract_version
             )
             or self.version_bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
-            or self.version_bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
+            or self.version_bundle.agent_definition_version != definition_version
             or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
         ):
             raise ValueError("frozen version bundle does not match the supported contract")
@@ -558,7 +597,7 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("frozen AgentDefinition must match the version bundle")
         if (
             self.agent_definition.definition_id != FROZEN_AGENT_DEFINITION_ID
-            or self.agent_definition.version != FROZEN_AGENT_DEFINITION_VERSION
+            or self.agent_definition.version != definition_version
             or self.agent_definition.output_contract.version != FROZEN_OUTPUT_CONTRACT_VERSION
         ):
             raise ValueError("frozen AgentDefinition does not match the supported contract")
@@ -583,6 +622,8 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def recovery_business_object_ids(self) -> tuple[str, ...]:
         """Locate the one durable business lineage across explicitly supported contracts."""
+        if self.access_scope is not None:
+            return (self.business_object_id,)
         supported_pairs = (
             (
                 self.version_bundle.case_contract_version,
@@ -600,12 +641,15 @@ class FrozenDecisionCase(FrozenContract):
                     },
                 )
                 for case_contract_version, _host_contract_version in supported_pairs
+                if case_contract_version != "3.0.0"
             )
         )
 
     @property
     def legacy_contract_recovery_cases(self) -> tuple[FrozenDecisionCase, ...]:
         """Reconstruct only supported historical cases when an old host mapping is absent."""
+        if self.access_scope is not None:
+            return ()
         current_pair = (
             self.version_bundle.case_contract_version,
             self.version_bundle.host_contract_version,
@@ -626,6 +670,7 @@ class FrozenDecisionCase(FrozenContract):
                 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
             )
             if (case_contract_version, host_contract_version) != current_pair
+            and case_contract_version != "3.0.0"
         )
 
     @property

@@ -641,6 +641,14 @@ def _publish_report_or_record_failure(
         fact.decision_event_id
     )
     ledger.ensure_event_stage_results(connection, fact)
+    if fact.case.access_scope is not None and fact.case.access_scope.visibility == "SHADOW":
+        _record_fact_stage_result(
+            ledger,
+            connection,
+            fact,
+            _publication_failure_stage("SHADOW_ISOLATED"),
+        )
+        return None, DecisionEventCommitError("shadow results cannot be published")
     report: FormalReport | None = None
     try:
         report = (
@@ -955,7 +963,9 @@ def _correction_case(
                     ),
                     "host_source_sha": current_case.version_bundle.host_source_sha,
                     "report_projection_contract_version": (
-                        FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
+                        "3.0.0"
+                        if original_case.access_scope is not None
+                        else FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
                     ),
                 }
             ),

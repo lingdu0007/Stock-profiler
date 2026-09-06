@@ -25,6 +25,7 @@ let apiPort = 0;
 let temporaryDirectory = "";
 let report: FormalReport;
 let correctionReport: FormalReport;
+let shadowReportId = "";
 let sessionToken = "";
 let csrfToken = "";
 let apiProcess: ChildProcess | undefined;
@@ -39,6 +40,8 @@ test.beforeAll(async () => {
     STOCK_PROFILER_AUTH_ORIGIN: browserOrigin,
     STOCK_PROFILER_AUTH_RP_ID: "localhost",
     STOCK_PROFILER_ENVIRONMENT: "test",
+    STOCK_PROFILER_REPORT_ACCOUNT_IDS: JSON.stringify(["synthetic-account-4017"]),
+    STOCK_PROFILER_REPORT_PERMISSIONS: JSON.stringify(["REPORT_READ", "USER_FACT"]),
     STOCK_PROFILER_M_AGENT_RUN_STORE_PATH: join(temporaryDirectory, "m-agent-runs.sqlite3"),
     STOCK_PROFILER_SOURCE_SHA: "a".repeat(40)
   };
@@ -69,6 +72,32 @@ test.beforeAll(async () => {
     { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
   );
   correctionReport = (JSON.parse(correction.stdout) as DecisionCaseExecution).report;
+  const shadow = await execFile(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      [
+        "from stock_profiler.bootstrap.settings import load_settings",
+        "from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case",
+        "from stock_profiler.modules.decision_cases.domain import load_frozen_decision_case",
+        "settings = load_settings()",
+        "case = load_frozen_decision_case(settings).model_dump(mode='json')",
+        "case['business_identity'] = 'synthetic:decision:browser-shadow:4519'",
+        "case['access_scope'] = {'contract_version': '1.0.0',",
+        "    'user_id': 'stock-profiler-single-user',",
+        "    'account_ids': ['synthetic-account-4017'], 'visibility': 'SHADOW'}",
+        "case['version_bundle'].update(case_contract_version='3.0.0',",
+        "    host_contract_version='3.0.0', report_projection_contract_version='3.0.0',",
+        "    agent_definition_version='2.0.0')",
+        "case['agent_definition']['version'] = '2.0.0'",
+        "print(run_frozen_decision_case(settings, case).report_version_id)"
+      ].join("\n")
+    ],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  shadowReportId = shadow.stdout.trim();
   const session = await execFile(
     "uv",
     [
@@ -190,6 +219,37 @@ test("retains original and corrected evidence across desktop and mobile views", 
     await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).toBeVisible();
     await expect(page.getByRole("region", { name: "Correction evidence" })).toHaveCount(0);
     await expect(page.getByText(report.knowledge_cutoff, { exact: true })).toBeVisible();
+  }
+});
+
+test("keeps shadow content and order actions absent on desktop and mobile", async ({
+  page
+}, testInfo) => {
+  await installAuthenticatedSession(page);
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const denied = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === `/api/v1/reports/${shadowReportId}`
+    );
+    await page.goto(`${browserOrigin}/reports/${shadowReportId}`);
+    const response = await denied;
+    expect(response.status()).toBe(404);
+    expect(response.headers()["cache-control"]).toBe("no-store");
+    await expect(page.getByText("Report unavailable", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Formal report", exact: true })).toHaveCount(0);
+    await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /generate|prefill|submit|modify|cancel order/i })
+    ).toHaveCount(0);
+    const cacheNames = await page.evaluate(() => caches.keys());
+    for (const name of cacheNames) {
+      const paths = await page.evaluate(async (cacheName) => {
+        const cache = await caches.open(cacheName);
+        return (await cache.keys()).map((request) => new URL(request.url).pathname);
+      }, name);
+      expect(paths.filter((path) => path.startsWith("/api/"))).toEqual([]);
+    }
+    await page.screenshot({ path: testInfo.outputPath(`shadow-${width}.png`), fullPage: true });
   }
 });
 

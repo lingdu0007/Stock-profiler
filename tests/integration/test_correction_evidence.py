@@ -7,6 +7,7 @@ from stock_profiler.bootstrap.decision_cases import (
 )
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import load_frozen_decision_case
+from stock_profiler.modules.delivery.access import AccessPrincipal
 
 
 def test_correction_retains_changed_evidence_without_backdating_the_original(
@@ -28,7 +29,18 @@ def test_correction_retains_changed_evidence_without_backdating_the_original(
     assert evidence["knowledge_cutoff"] == "2042-05-17T16:01:50Z"
     assert evidence["knowledge_cutoff"] > original.report.knowledge_cutoff
     assert correction.report.framework_run_id == original.framework_run_id
-    assert get_formal_report(original.report_version_id, migrated_settings) == original.report
+    assert (
+        get_formal_report(
+            original.report_version_id,
+            migrated_settings,
+            principal=AccessPrincipal(
+                user_id="stock-profiler-single-user",
+                account_ids=("synthetic-account-4017",),
+                permissions=("REPORT_READ",),
+            ),
+        )
+        == original.report
+    )
     assert (
         correct_default_frozen_decision_case(migrated_settings, case.business_identity)
         == correction

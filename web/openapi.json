@@ -248,6 +248,16 @@
         "additionalProperties": false,
         "description": "Read-only delivery projection derived from one committed host event.",
         "properties": {
+          "access_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResultAccessScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "business_object_id": {
             "title": "Business Object Id",
             "type": "string"
@@ -373,6 +383,38 @@
         "title": "ReauthenticationVerificationDto",
         "type": "object"
       },
+      "ResultAccessScope": {
+        "additionalProperties": false,
+        "description": "Immutable ownership and visibility bound before a scoped case is executed.",
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          },
+          "visibility": {
+            "enum": ["USER", "SHADOW"],
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": ["contract_version", "user_id", "account_ids", "visibility"],
+        "title": "ResultAccessScope",
+        "type": "object"
+      },
       "SafetyCapabilitiesDiagnosticDto": {
         "description": "Machine-readable official-project safety invariants.",
         "properties": {
@@ -461,6 +503,134 @@
         },
         "required": ["phase", "status", "gate_results", "reasons"],
         "title": "StageResult",
+        "type": "object"
+      },
+      "UserFact": {
+        "additionalProperties": false,
+        "properties": {
+          "authoritative_execution": {
+            "const": false,
+            "default": false,
+            "title": "Authoritative Execution",
+            "type": "boolean"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "enum": ["ACCEPT", "DECLINE", "DEFER"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "declaration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaration"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["VIEWED", "ACKNOWLEDGED", "CONFIRMED", "EXECUTION_DECLARED"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reconciliation_status": {
+            "enum": ["NOT_APPLICABLE", "PENDING"],
+            "title": "Reconciliation Status",
+            "type": "string"
+          },
+          "recorded_at": {
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": true,
+            "default": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fact_id",
+          "report_version_id",
+          "event_id",
+          "kind",
+          "choice",
+          "declaration",
+          "reconciliation_status",
+          "recorded_at"
+        ],
+        "title": "UserFact",
+        "type": "object"
+      },
+      "UserFactRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "enum": ["ACCEPT", "DECLINE", "DEFER"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "declaration": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PREPARING",
+                  "REPORTED_SUBMITTED",
+                  "REPORTED_PARTIAL",
+                  "REPORTED_FILLED",
+                  "REPORTED_CANCELLED",
+                  "UNABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaration"
+          },
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["VIEWED", "ACKNOWLEDGED", "CONFIRMED", "EXECUTION_DECLARED"],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": ["kind", "idempotency_key"],
+        "title": "UserFactRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -1187,6 +1357,160 @@
           }
         },
         "summary": "Formal Report"
+      }
+    },
+    "/api/v1/reports/{report_version_id}/facts": {
+      "get": {
+        "operationId": "report_user_facts_api_v1_reports__report_version_id__facts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_version_id",
+            "required": true,
+            "schema": {
+              "title": "Report Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserFact"
+                  },
+                  "title": "Response Report User Facts Api V1 Reports  Report Version Id  Facts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report User Facts"
+      },
+      "post": {
+        "operationId": "record_report_user_fact_api_v1_reports__report_version_id__facts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_version_id",
+            "required": true,
+            "schema": {
+              "title": "Report Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserFactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserFact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Report User Fact"
       }
     }
   }

@@ -17,6 +17,7 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionLedger,
     FormalReportCommitUncertainError,
 )
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import run_default_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
@@ -184,10 +185,76 @@ def test_passkey_ceremonies_require_the_configured_origin_and_the_session_cookie
     assert cookie is None
 
 
+@pytest.mark.parametrize(
+    "grants",
+    [
+        {"report_account_ids": ()},
+        {"report_account_ids": ("other-account",)},
+        {"report_permissions": ()},
+    ],
+)
+def test_browser_cannot_expand_host_grants_with_identity_headers(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch, grants: dict[str, object]
+) -> None:
+    execution = run_default_frozen_decision_case(migrated_settings)
+    client, _ = _authenticated_client_with_csrf(
+        migrated_settings.model_copy(update=grants), monkeypatch
+    )
+    response = client.get(
+        f"/api/v1/reports/{execution.report_version_id}",
+        headers={
+            "X-User-ID": "stock-profiler-single-user",
+            "X-Account-ID": "synthetic-account-4017",
+            "X-Permissions": "REPORT_READ",
+        },
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "formal report not found"}
+    assert response.headers["cache-control"] == "no-store"
+
+
 def _authenticated_client(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> TestClient:
     return _authenticated_client_with_csrf(migrated_settings, monkeypatch)[0]
+
+
+def test_user_fact_transport_requires_csrf_and_only_records_independent_facts(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = migrated_settings.model_copy(
+        update={"report_permissions": ("REPORT_READ", "USER_FACT")}
+    )
+    execution = run_default_frozen_decision_case(settings)
+    client, csrf = _authenticated_client_with_csrf(settings, monkeypatch)
+    path = f"/api/v1/reports/{execution.report_version_id}/facts"
+    payload = {"kind": "CONFIRMED", "choice": "ACCEPT", "idempotency_key": "synthetic-ack"}
+    assert client.post(path, headers={"Origin": ORIGIN}, json=payload).status_code == 403
+    saved = client.post(path, headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}, json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["kind"] == "CONFIRMED"
+    assert saved.json()["authoritative_execution"] is False
+    assert client.get(path).json() == [saved.json()]
+    assert client.get(f"/api/v1/reports/{execution.report_version_id}").json() == (
+        execution.report.model_dump(mode="json") if execution.report is not None else None
+    )
+
+
+@pytest.mark.parametrize("operation", ["generate", "prefill", "submit", "modify", "cancel"])
+def test_unregistered_http_order_capabilities_are_opaque_and_audited(
+    migrated_settings: Settings, operation: str
+) -> None:
+    client = TestClient(create_app(_auth_settings(migrated_settings)), base_url=ORIGIN)
+    response = client.post(
+        f"/api/v1/orders/{operation}", json={"symbol": "XQZ-4017", "quantity": 17}
+    )
+    assert response.status_code == 404
+    assert "XQZ-4017" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    facts = ResultDelivery.from_settings(migrated_settings).audit_history()
+    assert len(facts) == 1
+    assert facts[0].reason == "UNDECLARED_CAPABILITY"
+    assert facts[0].surface == "HTTP"
 
 
 def _authenticated_client_with_csrf(
