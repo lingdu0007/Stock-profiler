@@ -128,7 +128,11 @@ class DecisionLedger:
             fact = self.get_decision_event(event_id, connection)
             if fact is None:
                 raise DecisionEventCommitError("governance history is unavailable")
-            if fact.case.access_scope == access_scope and fact.result.governance is not None:
+            if (
+                fact.case.access_scope is not None
+                and fact.case.access_scope.same_scope_as(access_scope)
+                and fact.result.governance is not None
+            ):
                 history.append(fact.result.governance)
         return tuple(history)
 

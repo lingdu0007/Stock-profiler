@@ -74,6 +74,12 @@ class ResultAccessScope(FrozenContract):
             raise ValueError("result account scope must be nonempty and unique")
         return self
 
+    def same_scope_as(self, other: ResultAccessScope) -> bool:
+        """Match historical ownership without normalizing its saved account order."""
+        return set(self.account_ids) == set(other.account_ids) and self.model_dump(
+            exclude={"account_ids"}
+        ) == other.model_dump(exclude={"account_ids"})
+
 
 class EvidenceClock(FrozenContract):
     """The immutable fact, publication, acquisition, and validation clocks."""

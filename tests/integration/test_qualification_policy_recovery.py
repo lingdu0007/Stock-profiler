@@ -44,18 +44,28 @@ from stock_profiler.modules.qualification.contracts import (
 
 @pytest.mark.parametrize("mode", ["completed", "checkpoint"])
 @pytest.mark.parametrize("explicit_policy", [False, True])
+@pytest.mark.parametrize("account_shape", ["original", "reversed", "duplicate"])
 def test_original_governed_run_recovers_without_backfilling_or_replacing_policy(
     migrated_settings: Settings,
     historical_python: Path,
     tmp_path: Path,
     mode: str,
     explicit_policy: bool,
+    account_shape: str,
 ) -> None:
     command = qualification_command(migrated_settings)
+    accounts = command["scope"]["account_ids"].copy()
+    if account_shape == "reversed":
+        accounts.append("synthetic-account-orbit")
+        command["scope"]["account_ids"] = list(reversed(accounts))
+    elif account_shape == "duplicate":
+        command["scope"]["account_ids"] = accounts * 2
+    command["evidence"]["scope"] = deepcopy(command["scope"])
     if not explicit_policy:
         command["version"].pop("qualification_policy")
         command["evidence"]["version"].pop("qualification_policy")
     payload = case_payload(migrated_settings, "historical-policy", command)
+    payload["access_scope"]["account_ids"] = accounts
     payload["version_bundle"].update(OLD_RELEASE)
     case = FrozenDecisionCase.model_validate(payload)
     assert case.model_dump(mode="json")["governance"] == payload["governance"]
@@ -177,6 +187,38 @@ def test_original_governed_run_recovers_without_backfilling_or_replacing_policy(
     )
     assert asyncio.run(runtime.run_store.get_run(case.framework_run_id)) == recovered
     assert json.loads(envelope.read_text())["case"] == payload
+    if explicit_policy:
+        canonical_command = deepcopy(command)
+        canonical_command["scope"]["account_ids"] = accounts
+        canonical_command["evidence"]["scope"] = deepcopy(canonical_command["scope"])
+        canonical_command["version"]["qualification_policy"]["seed"] = 82003
+        canonical_command["evidence"]["version"] = deepcopy(canonical_command["version"])
+        attempted = case_payload(upgraded, "historical-account-policy-alias", canonical_command)
+        attempted["access_scope"]["account_ids"] = accounts
+        denied = run_frozen_decision_case(upgraded, attempted, clock=GovernanceClock())
+        assert denied.report is not None and denied.report.result.governance is not None
+        assert denied.report.result.governance.reasons == (
+            "QUALIFICATION_POLICY_IDENTITY_CONFLICT",
+        )
+        canonical_command["version"] = deepcopy(command["version"])
+        canonical_command["evidence"]["version"] = deepcopy(command["version"])
+        attempted = case_payload(upgraded, "historical-account-revision-alias", canonical_command)
+        attempted["access_scope"]["account_ids"] = accounts
+        denied = run_frozen_decision_case(upgraded, attempted, clock=GovernanceClock())
+        assert denied.report is not None and denied.report.result.governance is not None
+        assert denied.report.result.governance.reasons == ("QUALIFICATION_REVISION_CONFLICT",)
+        assert (
+            get_formal_report(
+                execution.report_version_id,
+                upgraded,
+                principal=AccessPrincipal(
+                    user_id=case.access_scope.user_id,
+                    account_ids=case.access_scope.account_ids,
+                    permissions=("REPORT_READ",),
+                ),
+            )
+            == execution.report
+        )
     runtime.run_store.close()
 
 

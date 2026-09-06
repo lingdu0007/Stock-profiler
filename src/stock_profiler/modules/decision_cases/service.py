@@ -46,7 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
-from stock_profiler.modules.qualification.governance import adjudicate
+from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -269,6 +269,8 @@ def _run_frozen_decision_case(
             raise DecisionEventCommitError("durable legacy framework recovery failed") from error
         if legacy_case is not None:
             case = legacy_case
+        elif case.governance is not None:
+            validate_new_request(case.governance)
     business_object_id = ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(

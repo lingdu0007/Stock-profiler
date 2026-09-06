@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -36,6 +37,76 @@ def task_node(day: int) -> dict[str, Any]:
             }
         ],
     }
+
+
+def test_account_order_preserves_existing_task_and_activation_identity(
+    migrated_settings: Settings,
+) -> None:
+    accounts = [*scope()["account_ids"], "synthetic-account-orbit"]
+
+    def execute(
+        identity: str, command: dict[str, Any], *, reverse: bool = False, day: int = 17
+    ) -> DecisionCaseExecution:
+        command["scope"]["account_ids"] = list(reversed(accounts)) if reverse else accounts
+        if command["operation"] == "QUALIFICATION":
+            command["evidence"]["scope"] = deepcopy(command["scope"])
+        payload = case_payload(migrated_settings, identity, command, contract_version="5.0.0")
+        payload["access_scope"]["account_ids"] = accounts
+        payload["knowledge_cutoff"] = f"2042-05-{day:02d}T16:00:00Z"
+        return run_frozen_decision_case(
+            migrated_settings, payload, clock=GovernanceClock(f"2042-05-{day:02d}T16:01:00Z")
+        )
+
+    grant = execute("ordered-task-grant", qualification_command(migrated_settings))
+    execute(
+        "ordered-task-node",
+        {"operation": "REGISTER_TASK_NODE", "scope": scope(), "node": task_node(18)},
+    )
+    activation_command = {
+        "operation": "ACTIVATE_VERSION",
+        "scope": scope(),
+        "version": version(migrated_settings),
+        "previous_version": None,
+        "previous_activation_id": None,
+        "qualification_decision_id": grant.decision_event_id,
+        "first_node_id": task_node(18)["node_id"],
+    }
+    active = execute("ordered-task-activation", activation_command, reverse=True)
+    assert active.report is not None and active.report.result.governance is not None
+    assert active.report.result.governance.disposition == "APPROVED"
+    repeated = execute("ordered-task-activation-reset", deepcopy(activation_command))
+    assert repeated.report is not None and repeated.report.result.governance is not None
+    assert repeated.report.result.governance.disposition == "DENIED"
+    freeze_command = {
+        "operation": "FREEZE_TASK",
+        "scope": scope(),
+        "version": version(migrated_settings),
+        "node_id": task_node(18)["node_id"],
+        "activation_id": active.decision_event_id,
+    }
+    frozen = execute("ordered-task-freeze", freeze_command, day=18)
+    assert frozen.report is not None and frozen.report.result.governance is not None
+    task = frozen.report.result.governance.task
+    assert task is not None and task.freeze_status == "APPROVED"
+    repeated = execute("ordered-task-refreeze", deepcopy(freeze_command), reverse=True, day=18)
+    assert repeated.report is not None and repeated.report.result.governance is not None
+    assert repeated.report.result.governance.reasons == ("TASK_FREEZE_NOT_ALLOWED",)
+    used = execute(
+        "ordered-task-use",
+        {
+            "operation": "USE_TASK",
+            "scope": scope(),
+            "version": version(migrated_settings),
+            "task_identity": task_node(18)["task_identity"],
+        },
+        reverse=True,
+        day=18,
+    )
+    assert used.report is not None and used.report.result.governance is not None
+    usage = used.report.result.governance.usage
+    assert usage is not None and usage.allowed
+    assert usage.task_snapshot == task
+    assert task.scope.account_ids == tuple(accounts)
 
 
 def test_qualification_does_not_activate_or_reopen_a_frozen_task(

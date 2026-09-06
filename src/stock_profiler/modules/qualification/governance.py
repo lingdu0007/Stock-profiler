@@ -10,6 +10,26 @@ from stock_profiler.modules.qualification.contracts import (
 )
 
 
+class InvalidGovernanceRequest(ValueError):
+    """A new command is invalid without invalidating historical snapshots."""
+
+
+def validate_new_request(command: GovernanceCommand) -> None:
+    scopes = [command.scope]
+    if isinstance(command, QualificationCommand):
+        scopes.extend(item.scope for item in (command.evidence, *command.restoration_evidence))
+        if command.requalification is not None:
+            scopes.extend(
+                item.scope
+                for item in (
+                    command.requalification.historical_evidence,
+                    command.requalification.forward_evidence,
+                )
+            )
+    if any(len(set(scope.account_ids)) != len(scope.account_ids) for scope in scopes):
+        raise InvalidGovernanceRequest("duplicate governance accounts")
+
+
 def adjudicate(
     command: GovernanceCommand,
     *,

@@ -34,10 +34,12 @@ def adjudicate(
     nodes = [
         item.task_node
         for item in history
-        if item.task_node is not None and item.task_node.scope == command.scope
+        if item.task_node is not None and item.task_node.scope.same_scope_as(command.scope)
     ]
     tasks = [
-        item.task for item in history if item.task is not None and item.task.scope == command.scope
+        item.task
+        for item in history
+        if item.task is not None and item.task.scope.same_scope_as(command.scope)
     ]
     if isinstance(command, RegisterTaskNodeCommand):
         proposed = command.node
@@ -107,7 +109,7 @@ def adjudicate(
     activations = [
         item.activation
         for item in history
-        if item.activation is not None and item.activation.scope == command.scope
+        if item.activation is not None and item.activation.scope.same_scope_as(command.scope)
     ]
     if isinstance(command, ActivateVersionCommand):
         current = _current_activation(activations)

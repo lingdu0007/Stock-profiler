@@ -305,7 +305,7 @@ def policy_identity_conflicts(
 ) -> bool:
     return any(
         binding is not None
-        and binding.scope == scope
+        and binding.scope.same_scope_as(scope)
         and binding.version.policy_version == version.policy_version
         and binding.version.qualification_policy != version.qualification_policy
         for binding in (item.bound_policy for item in history)
@@ -448,7 +448,7 @@ def current_qualification(
         outcome.qualification
         for outcome in history
         if outcome.qualification is not None
-        and outcome.qualification.scope == scope
+        and outcome.qualification.scope.same_scope_as(scope)
         and outcome.qualification.version == version
     ]
     superseded = {record.previous_decision_id for record in records}

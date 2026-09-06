@@ -33,6 +33,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkTransitionRecorder,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
+from stock_profiler.modules.qualification.governance import InvalidGovernanceRequest
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,8 @@ def run_frozen_decision_case(
     runtime = initialize_runtime_storage(settings)
     try:
         case = FrozenDecisionCase.model_validate(payload)
+        if case.recovery_framework_run_id is not None:
+            raise ValueError("use explicit original-Run recovery")
         if case.version_bundle.host_source_sha != settings.source_sha:
             raise ValueError("frozen host provenance does not match the executing build")
     except ValueError:
@@ -70,9 +73,15 @@ def run_frozen_decision_case(
             "frozen-case-input", "HOST"
         )
         raise
-    return service.run_default_frozen_decision_case(
-        case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime, clock)
-    )
+    try:
+        return service.run_default_frozen_decision_case(
+            case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime, clock)
+        )
+    except InvalidGovernanceRequest:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(
+            "frozen-case-input", "HOST"
+        )
+        raise
 
 
 def run_default_frozen_decision_case(

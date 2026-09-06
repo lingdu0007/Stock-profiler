@@ -38,6 +38,12 @@ class QualificationScope(GovernanceContract):
         default=None, min_length=1, exclude_if=lambda value: value is None
     )
 
+    def same_scope_as(self, other: QualificationScope) -> bool:
+        """Compare account membership without changing either frozen representation."""
+        return set(self.account_ids) == set(other.account_ids) and self.model_dump(
+            exclude={"account_ids"}
+        ) == other.model_dump(exclude={"account_ids"})
+
 
 class QualificationPolicy(GovernanceContract):
     """Explicit D0 policy input, never a default for personal authorization."""

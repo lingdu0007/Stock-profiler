@@ -46,6 +46,15 @@ Missing, invalid or mismatched policy cannot grant authority or permit new
 statistical use. This host accepts synthetic D0 policy only; it exposes no
 personal policy authorization path.
 
+New governance commands reject duplicate accounts, including their nested
+evidence, before creating a business mapping or Run. Historical scope matching
+uses account membership while retaining exact owner, visibility and every other
+scope dimension. Stored account order and historical duplicate representations
+are not normalized: their snapshots, fingerprints and original authorization
+remain unchanged. Only a saved mapping or validated original-Run recovery can
+reuse historical inputs; caller-supplied recovery markers are not new-request
+authorization.
+
 Policy-free historical snapshots remain deserializable without inserting a
 policy field or changing their fingerprint. Saved reports remain historical
 facts. If an original Run still needs host adjudication, absence of its original
