@@ -721,18 +721,15 @@ def _decision_events_have_correction_lineage() -> bool:
 def _decision_events_are_canonical() -> bool:
     """Require the exact event table that permits append-only corrections."""
     inspector = sa.inspect(op.get_bind())
-    columns = {
-        str(column["name"]): column for column in inspector.get_columns("decision_events")
-    }
+    columns = {str(column["name"]): column for column in inspector.get_columns("decision_events")}
     if columns.keys() != _REQUIRED_DECISION_EVENT_COLUMNS:
         return False
     if inspector.get_pk_constraint("decision_events").get("constrained_columns") != [
         "decision_event_id"
     ]:
         return False
-    if (
-        inspector.get_foreign_keys("decision_events")
-        or inspector.get_check_constraints("decision_events")
+    if inspector.get_foreign_keys("decision_events") or inspector.get_check_constraints(
+        "decision_events"
     ):
         return False
     if not all(
@@ -876,10 +873,9 @@ def _ensure_notification_attempts_table() -> None:
             inspector,
         )
         has_no_extra_columns = columns.keys() == _REQUIRED_NOTIFICATION_ATTEMPT_COLUMNS
-        has_no_extra_constraints = (
-            not inspector.get_foreign_keys("decision_notification_attempts")
-            and not inspector.get_check_constraints("decision_notification_attempts")
-        )
+        has_no_extra_constraints = not inspector.get_foreign_keys(
+            "decision_notification_attempts"
+        ) and not inspector.get_check_constraints("decision_notification_attempts")
         if (
             missing_columns
             or incompatible_columns

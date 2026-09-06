@@ -38,6 +38,13 @@ from stock_profiler.adapters.persistence.runtime_ownership import (
     RuntimeStorage,
     initialize_runtime_storage,
 )
+from stock_profiler.bootstrap import decision_cases as case_bootstrap
+from stock_profiler.bootstrap.decision_cases import (
+    correct_default_frozen_decision_case,
+    get_formal_report,
+    retry_default_frozen_decision_case_notification,
+    run_default_frozen_decision_case,
+)
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.modules.decision_cases import domain as decision_domain
 from stock_profiler.modules.decision_cases import service
@@ -49,12 +56,6 @@ from stock_profiler.modules.decision_cases.domain import (
     GateResult,
     StageResult,
     load_frozen_decision_case,
-)
-from stock_profiler.modules.decision_cases.service import (
-    correct_default_frozen_decision_case,
-    get_formal_report,
-    retry_default_frozen_decision_case_notification,
-    run_default_frozen_decision_case,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -426,7 +427,7 @@ def test_host_result_families_keep_their_own_saved_lifecycle(
 ) -> None:
     variant_case = _load_result_family_fixture(fixture_name)
     expected_result = variant_case.expected_external_result
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: variant_case)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: variant_case)
 
     outcome = run_default_frozen_decision_case(migrated_settings)
     replayed = run_default_frozen_decision_case(migrated_settings)
@@ -485,7 +486,7 @@ def test_default_model_response_does_not_read_the_expected_result_oracle(
         update={"summary": "This changed expected result must not alter model output."}
     )
     variant_case = case.model_copy(update={"expected_external_result": changed_expected_result})
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: variant_case)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: variant_case)
 
     outcome = run_default_frozen_decision_case(migrated_settings)
 
@@ -510,7 +511,7 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
             output=None,
         )
 
-    monkeypatch.setattr(service, "execute_frozen_decision_case", waiting_framework_run)
+    monkeypatch.setattr(case_bootstrap, "execute_frozen_decision_case", waiting_framework_run)
 
     outcome = run_default_frozen_decision_case(migrated_settings)
 
@@ -655,7 +656,7 @@ def test_repeated_framework_waiting_observations_are_preserved(
             waiting_reason="FRAMEWORK_AWAITING_RESOLUTION",
         )
 
-    monkeypatch.setattr(service, "execute_frozen_decision_case", waiting_framework_run)
+    monkeypatch.setattr(case_bootstrap, "execute_frozen_decision_case", waiting_framework_run)
 
     first = run_default_frozen_decision_case(migrated_settings)
     second = run_default_frozen_decision_case(migrated_settings)
@@ -689,7 +690,7 @@ def test_framework_terminal_failures_remain_framework_results(
             output=None,
         )
 
-    monkeypatch.setattr(service, "execute_frozen_decision_case", failed_framework_run)
+    monkeypatch.setattr(case_bootstrap, "execute_frozen_decision_case", failed_framework_run)
 
     outcome = run_default_frozen_decision_case(migrated_settings)
 
@@ -721,7 +722,7 @@ def test_invalid_framework_output_contract_is_saved_and_keeps_publication_closed
             output='{"outcome_code":"SYNTHETIC_REVIEW_COMPLETE"}',
         )
 
-    monkeypatch.setattr(service, "execute_frozen_decision_case", invalid_framework_run)
+    monkeypatch.setattr(case_bootstrap, "execute_frozen_decision_case", invalid_framework_run)
 
     outcome = run_default_frozen_decision_case(migrated_settings)
 
@@ -1092,7 +1093,9 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
         raise RuntimeError("synthetic worker interruption after framework checkpoint")
 
     with monkeypatch.context() as patch:
-        patch.setattr(service, "execute_frozen_decision_case", interrupt_after_framework_checkpoint)
+        patch.setattr(
+            case_bootstrap, "execute_frozen_decision_case", interrupt_after_framework_checkpoint
+        )
         with pytest.raises(RuntimeError, match="worker interruption"):
             run_default_frozen_decision_case(migrated_settings)
 
@@ -1350,7 +1353,7 @@ def test_legacy_mapping_without_a_snapshot_rejects_a_mutated_frozen_input(
     mutated_case = original_case.model_copy(
         update={"input": {**original_case.input, "evidence": changed_evidence}}
     )
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: mutated_case)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: mutated_case)
 
     with pytest.raises(DecisionEventCommitError, match="business identity maps"):
         run_default_frozen_decision_case(migrated_settings)
@@ -2279,7 +2282,7 @@ def test_correction_recovery_keeps_the_first_identity_across_semantic_bundle_cha
             ),
         }
     )
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: changed_case)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: changed_case)
 
     recovered = correct_default_frozen_decision_case(
         migrated_settings,
@@ -2380,7 +2383,7 @@ def test_lifecycle_owner_survives_closed_commit_and_publication_boundaries(
     failure_boundary: Literal["BUSINESS_COMMIT", "PUBLICATION"],
 ) -> None:
     case = _load_result_family_fixture(fixture_name)
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: case)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: case)
 
     if failure_boundary == "BUSINESS_COMMIT":
 
@@ -3840,10 +3843,7 @@ def test_upgrade_of_a_populated_0002_ledger_preserves_replayable_facts_and_repor
     assert correction.original_event_id == legacy_event_id
     assert correction.report.version_bundle.report_projection_contract_version == "2.0.0"
     assert correction.report.event_id == case.correction_event_id(legacy_event_id)
-    assert (
-        correction.report.report_version_id
-        == case.correction_report_version_id(legacy_event_id)
-    )
+    assert correction.report.report_version_id == case.correction_report_version_id(legacy_event_id)
 
     load_settings.cache_clear()
 
@@ -3939,7 +3939,7 @@ def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_publ
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
     incomplete_snapshot = case.model_copy(update={"input": {**case.input, "evidence": []}})
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: incomplete_snapshot)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: incomplete_snapshot)
 
     incomplete = run_default_frozen_decision_case(migrated_settings)
 
@@ -3962,7 +3962,7 @@ def test_snapshot_and_definition_mutations_fail_before_an_official_event_is_publ
     altered_snapshot = case.model_copy(
         update={"input": {**case.input, "evidence": altered_evidence}}
     )
-    monkeypatch.setattr(service, "load_frozen_decision_case", lambda _: altered_snapshot)
+    monkeypatch.setattr(case_bootstrap, "load_frozen_decision_case", lambda _: altered_snapshot)
 
     with pytest.raises(DecisionEventCommitError, match="business identity maps"):
         run_default_frozen_decision_case(migrated_settings)

@@ -18,9 +18,9 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     FormalReportCommitUncertainError,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.bootstrap.decision_cases import run_default_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
-from stock_profiler.modules.decision_cases.service import run_default_frozen_decision_case
 
 ORIGIN = "https://localhost"
 BOOTSTRAP_TOKEN = "bootstrap-token-for-synthetic-test"

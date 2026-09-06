@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from stock_profiler.adapters.authentication.passkeys import (
     AuthenticationError,
@@ -11,17 +12,18 @@ from stock_profiler.adapters.authentication.passkeys import (
     PasskeyAuthenticator,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.bootstrap.decision_cases import (
+    correct_default_frozen_decision_case,
+    replay_default_frozen_decision_case,
+    run_default_frozen_decision_case,
+)
 from stock_profiler.bootstrap.settings import load_settings
 from stock_profiler.entrypoints.cli.service import (
     diagnostic_snapshot,
     process_health_snapshot,
     version_snapshot,
 )
-from stock_profiler.modules.decision_cases.service import (
-    correct_default_frozen_decision_case,
-    replay_default_frozen_decision_case,
-    run_default_frozen_decision_case,
-)
+from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 
 
 def main() -> None:
@@ -42,7 +44,10 @@ def main() -> None:
     parser.add_argument("process", nargs="?", choices=("api", "scheduler", "worker"))
     parser.add_argument("--business-identity")
     parser.add_argument("--purpose", choices=("bootstrap", "recovery"))
+    parser.add_argument("--recovery-case", type=Path)
     args = parser.parse_args()
+    if args.recovery_case is not None and args.command != "decision-case-replay":
+        parser.error("--recovery-case is only valid for decision-case-replay")
     settings = load_settings()
     if args.command == "version":
         print(json.dumps(version_snapshot(settings), sort_keys=True))
@@ -54,8 +59,15 @@ def main() -> None:
         if args.business_identity is None:
             parser.error("decision-case-replay requires --business-identity")
         try:
-            execution = replay_default_frozen_decision_case(settings, args.business_identity)
-        except ValueError as error:
+            recovery_case = (
+                FrozenDecisionCase.model_validate_json(args.recovery_case.read_text())
+                if args.recovery_case is not None
+                else None
+            )
+            execution = replay_default_frozen_decision_case(
+                settings, args.business_identity, recovery_case=recovery_case
+            )
+        except (OSError, ValueError) as error:
             parser.error(str(error))
         print(execution.model_dump_json())
         return

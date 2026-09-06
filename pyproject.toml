@@ -45,7 +45,10 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.data-files]
-"stock-profiler/fixtures" = ["tests/fixtures/synthetic/replayable_frozen_decision_case.json"]
+"stock-profiler/fixtures" = [
+  "tests/fixtures/synthetic/replayable_frozen_decision_case.json",
+  "tests/fixtures/synthetic/frozen_correction_evidence.json",
+]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --cov=stock_profiler --cov-branch --cov-report=term-missing --cov-fail-under=80"

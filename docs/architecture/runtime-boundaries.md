@@ -3,6 +3,10 @@
 Stock Profiler is a modular monolith. HTTP, CLI, scheduler, worker, and
 migration entrypoints load the same Python package and emit one version bundle.
 The D0 synthetic seam exposes one replayable decision-case interface only.
+Bootstrap composes adapters behind module-owned framework and ledger ports.
+The decision-case module owns orchestration and domain outcomes; it does not
+import adapters or SQLAlchemy. Only the persistence adapter interprets the
+opaque transaction handle passed through the ledger port.
 
 Application-owned runtime state uses one SQLite file through SQLAlchemy and
 Alembic. M-Agent receives a distinct SQLite path through `SQLiteRunStore`.
@@ -19,6 +23,18 @@ failure leaves the durable event without a readable report. An existing
 nonterminal M-Agent Run is resumed under its original identity, while framework
 states, host validation outcomes, business commits, publication, notifications,
 and corrections retain their own append-only phase records.
+
+Original frozen snapshots preserve build provenance across recovery. An
+unmapped historical Run from another build closes the publication gate until
+the original snapshot can be validated against that exact durable Run. The
+pinned M-Agent 0.5.0 adapter uses a read-only metadata inventory solely to veto
+unsafe replacement creation; it neither adopts unknown Runs from SQL nor
+reconstructs missing provenance. Normal recovery uses the public Run store.
+
+Corrections append changed evidence, its source and reason, and independent
+evidence clocks and cutoff. They reference the original event and evidence
+without rewriting the original Run, report, outcome, or cutoff. Each report
+version remains independently readable.
 
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic

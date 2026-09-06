@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
@@ -25,6 +24,18 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttempt,
     NotificationAttemptStatus,
     StageResult,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    BusinessObjectMapping as BusinessObjectMapping,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    DecisionEventCommitError as DecisionEventCommitError,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    DecisionEventCommitUncertainError as DecisionEventCommitUncertainError,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
 
 METADATA = MetaData()
@@ -80,28 +91,6 @@ DECISION_NOTIFICATION_ATTEMPTS = Table(
 )
 
 
-class DecisionEventCommitError(RuntimeError):
-    """A host event was not reliably committed, so no report may be published."""
-
-
-class DecisionEventCommitUncertainError(DecisionEventCommitError):
-    """A database acknowledgement was lost, so the event may or may not exist."""
-
-
-class FormalReportCommitUncertainError(DecisionEventCommitError):
-    """A report write may have committed, but its acknowledgement was lost."""
-
-
-@dataclass(frozen=True)
-class BusinessObjectMapping:
-    """The durable case snapshot and original Run bound to one business object."""
-
-    case_id: str
-    frozen_input_fingerprint: str
-    framework_run_id: str
-    case: FrozenDecisionCase | None
-
-
 class DecisionLedger:
     """Persistence boundary for the host's business identity, event, and report."""
 
@@ -155,10 +144,7 @@ class DecisionLedger:
         except ValidationError as error:
             raise DecisionEventCommitError("stored frozen case snapshot is invalid") from error
         case = stored_case
-        if (
-            stored_case is not None
-            and stored_case.framework_run_id != row.framework_run_id
-        ):
+        if stored_case is not None and stored_case.framework_run_id != row.framework_run_id:
             case = stored_case.model_copy(
                 update={"recovery_framework_run_id": row.framework_run_id}
             )
@@ -203,9 +189,7 @@ class DecisionLedger:
             return
         raise DecisionEventCommitError("business identity maps to different frozen input")
 
-    def resolve_business_object_id(
-        self, case: FrozenDecisionCase, connection: Connection
-    ) -> str:
+    def resolve_business_object_id(self, case: FrozenDecisionCase, connection: Connection) -> str:
         """Choose one retained business lineage without inventing a version fork."""
         matching_ids = tuple(
             business_object_id
@@ -240,9 +224,7 @@ class DecisionLedger:
                 DECISION_EVENTS.c.framework_run_id,
                 DECISION_EVENTS.c.corrects_event_id,
                 DECISION_EVENTS.c.event_payload,
-            ).where(
-                DECISION_EVENTS.c.decision_event_id == decision_event_id
-            )
+            ).where(DECISION_EVENTS.c.decision_event_id == decision_event_id)
         ).one_or_none()
         return self._stored_decision_event(connection, row) if row is not None else None
 
@@ -277,9 +259,7 @@ class DecisionLedger:
                 DECISION_EVENTS.c.framework_run_id,
                 DECISION_EVENTS.c.corrects_event_id,
                 DECISION_EVENTS.c.event_payload,
-            ).where(
-                DECISION_EVENTS.c.corrects_event_id == original_event_id
-            )
+            ).where(DECISION_EVENTS.c.corrects_event_id == original_event_id)
         ).one_or_none()
         return self._stored_decision_event(connection, row) if row is not None else None
 
@@ -309,10 +289,7 @@ class DecisionLedger:
             mapping is not None
             and mapping.framework_run_id == framework_run_id
             and (
-                (
-                    mapping.case is not None
-                    and mapping.case.matches_recovery_input(fact.case)
-                )
+                (mapping.case is not None and mapping.case.matches_recovery_input(fact.case))
                 or has_snapshotless_legacy_mapping_for_fact
             )
         )
@@ -835,9 +812,7 @@ class DecisionLedger:
                 FORMAL_REPORTS.c.decision_event_id,
                 FORMAL_REPORTS.c.report_payload,
                 FORMAL_REPORTS.c.generated_at,
-            ).where(
-                FORMAL_REPORTS.c.report_version_id == report_version_id
-            )
+            ).where(FORMAL_REPORTS.c.report_version_id == report_version_id)
         ).one_or_none()
         return self._stored_formal_report_from_row(connection, row) if row is not None else None
 
@@ -896,9 +871,7 @@ class DecisionLedger:
             or serialized_payload
             != _canonical_json(_formal_report_payload_for_event(event, report_version_id))
         ):
-            raise DecisionEventCommitError(
-                "stored formal report does not match its durable event"
-            )
+            raise DecisionEventCommitError("stored formal report does not match its durable event")
         return report
 
     def _has_confirmed_business_commit(

@@ -26,6 +26,7 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
 )
 from stock_profiler.adapters.persistence.decision_ledger import DecisionEventCommitError
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.bootstrap.decision_cases import run_default_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -39,7 +40,6 @@ from stock_profiler.modules.decision_cases.domain import (
     host_validation_result,
     load_frozen_decision_case,
 )
-from stock_profiler.modules.decision_cases.service import run_default_frozen_decision_case
 
 
 def test_frozen_synthetic_case_has_stable_independent_identities(settings: Settings) -> None:
@@ -323,7 +323,7 @@ def test_host_recovers_the_original_m_agent_model_checkpoint_into_the_original_i
     assert recovered.report.result == case.expected_external_result
     assert [
         stage.status for stage in recovered.stage_results if stage.phase == "FRAMEWORK_RUN"
-    ] == ["RUNNING", "SUCCEEDED"]
+    ] == ["CREATED", "RUNNING", "SUCCEEDED"]
 
 
 def test_terminal_m_agent_run_rejects_a_definition_snapshot_that_differs_from_the_case(

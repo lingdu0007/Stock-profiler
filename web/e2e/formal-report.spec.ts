@@ -24,6 +24,7 @@ const apiReadyTimeoutMilliseconds = 15_000;
 let apiPort = 0;
 let temporaryDirectory = "";
 let report: FormalReport;
+let correctionReport: FormalReport;
 let sessionToken = "";
 let csrfToken = "";
 let apiProcess: ChildProcess | undefined;
@@ -50,6 +51,24 @@ test.beforeAll(async () => {
     env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" }
   });
   report = (JSON.parse(execution.stdout) as DecisionCaseExecution).report;
+  const frozenCase = JSON.parse(
+    await readFile(
+      join(repositoryRoot, "tests/fixtures/synthetic/replayable_frozen_decision_case.json"),
+      "utf8"
+    )
+  ) as { business_identity: string };
+  const correction = await execFile(
+    "uv",
+    [
+      "run",
+      "stock-profiler",
+      "decision-case-correct",
+      "--business-identity",
+      frozenCase.business_identity
+    ],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  correctionReport = (JSON.parse(correction.stdout) as DecisionCaseExecution).report;
   const session = await execFile(
     "uv",
     [
@@ -144,6 +163,34 @@ test("does not reveal a report when the API returns an unauthenticated response"
   expect((await deniedResponse).status()).toBe(401);
   await expect(page.getByRole("button", { name: "Continue with Passkey" })).toBeVisible();
   await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).not.toBeVisible();
+});
+
+test("retains original and corrected evidence across desktop and mobile views", async ({
+  page
+}, testInfo) => {
+  await installAuthenticatedSession(page);
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${browserOrigin}/reports/${correctionReport.report_version_id}`);
+    const correction = page.getByRole("region", { name: "Correction evidence" });
+    await expect(correction).toBeVisible();
+    await expect(
+      correction.getByText(
+        "The fictional issuer has not completed the imaginary orbital-mosaic checklist.",
+        { exact: true }
+      )
+    ).toBeVisible();
+    await expect(correction.getByText("2042-05-17T16:01:50Z")).toBeVisible();
+    await expect(page.getByText(report.framework_run_id, { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+    ).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`correction-${width}.png`), fullPage: true });
+    await page.goto(reportUrl());
+    await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Correction evidence" })).toHaveCount(0);
+    await expect(page.getByText(report.knowledge_cutoff, { exact: true })).toBeVisible();
+  }
 });
 
 async function installAuthenticatedSession(page: Page) {

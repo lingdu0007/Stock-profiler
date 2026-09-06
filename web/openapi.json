@@ -29,6 +29,66 @@
         "title": "ChallengeDto",
         "type": "object"
       },
+      "CorrectionEvidence": {
+        "additionalProperties": false,
+        "description": "New authoritative synthetic facts, distinct from the original Run's evidence.",
+        "properties": {
+          "contract_version": {
+            "const": "2.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "corrected_statement": {
+            "title": "Corrected Statement",
+            "type": "string"
+          },
+          "corrects_evidence_id": {
+            "title": "Corrects Evidence Id",
+            "type": "string"
+          },
+          "decision_formed_at": {
+            "title": "Decision Formed At",
+            "type": "string"
+          },
+          "evidence_clock": {
+            "$ref": "#/components/schemas/EvidenceClock"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "original_statement": {
+            "title": "Original Statement",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "evidence_id",
+          "corrects_evidence_id",
+          "source",
+          "reason",
+          "original_statement",
+          "corrected_statement",
+          "evidence_clock",
+          "knowledge_cutoff",
+          "decision_formed_at"
+        ],
+        "title": "CorrectionEvidence",
+        "type": "object"
+      },
       "CredentialRequest": {
         "properties": {
           "challenge_id": {
@@ -151,27 +211,7 @@
         "type": "object"
       },
       "ExternalResult": {
-        "additionalProperties": false,
-        "description": "The user-visible result expected from this original synthetic fixture.",
-        "properties": {
-          "key_reasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Key Reasons",
-            "type": "array"
-          },
-          "outcome_code": {
-            "title": "Outcome Code",
-            "type": "string"
-          },
-          "summary": {
-            "title": "Summary",
-            "type": "string"
-          }
-        },
-        "required": ["outcome_code", "summary", "key_reasons"],
-        "title": "ExternalResult",
+        "additionalProperties": true,
         "type": "object"
       },
       "FormalReport": {

@@ -59,10 +59,9 @@ def _validate_existing_stage_event_table() -> None:
     )
     has_unique_stage_event_id = _has_unique_stage_event_id(inspector)
     has_no_extra_columns = columns.keys() == _REQUIRED_STAGE_EVENT_COLUMNS
-    has_no_extra_constraints = (
-        not inspector.get_foreign_keys("decision_stage_events")
-        and not inspector.get_check_constraints("decision_stage_events")
-    )
+    has_no_extra_constraints = not inspector.get_foreign_keys(
+        "decision_stage_events"
+    ) and not inspector.get_check_constraints("decision_stage_events")
     if (
         missing_columns
         or incompatible_columns

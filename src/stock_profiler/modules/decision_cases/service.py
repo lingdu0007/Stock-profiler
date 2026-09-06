@@ -8,30 +8,13 @@ from contextlib import contextmanager
 from threading import Lock
 
 from pydantic import ValidationError
-from sqlalchemy.engine import Connection
 
-from stock_profiler.adapters.m_agent.frozen_decision_case import (
-    FrameworkRunResult,
-    FrameworkRunTransition,
-    MappedDurableRunMissingError,
-    execute_frozen_decision_case,
-    find_unmapped_legacy_frozen_decision_case,
-)
-from stock_profiler.adapters.persistence.decision_ledger import (
-    BusinessObjectMapping,
-    DecisionEventCommitError,
-    DecisionEventCommitUncertainError,
-    DecisionLedger,
-    FormalReportCommitUncertainError,
-)
-from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
-from stock_profiler.bootstrap.settings import Settings
-from stock_profiler.foundation.clock import Clock
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     BusinessCommitStatus,
     BusinessLifecycle,
     BusinessResultStatus,
+    CorrectionEvidence,
     DecisionCaseCorrection,
     DecisionCaseExecution,
     DecisionEventFact,
@@ -49,7 +32,19 @@ from stock_profiler.modules.decision_cases.domain import (
     framework_run_status_from_stage,
     host_validation_result,
     is_committable_host_outcome,
-    load_frozen_decision_case,
+)
+from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
+from stock_profiler.modules.decision_cases.ports import (
+    BusinessObjectMapping,
+    DecisionEventCommitError,
+    DecisionEventCommitUncertainError,
+    DecisionLedger,
+    FormalReportCommitUncertainError,
+    FrameworkRunResult,
+    FrameworkRunTransition,
+    FrozenFramework,
+    MappedDurableRunMissingError,
+    Transaction,
 )
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -57,35 +52,46 @@ _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
 
 
 def run_default_frozen_decision_case(
-    settings: Settings, *, clock: Clock | None = None
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    framework: FrozenFramework,
 ) -> DecisionCaseExecution:
     """Run the published public fixture through the same host module used by every entrypoint."""
-    return _run_frozen_decision_case(settings, clock=clock)
+    return _run_frozen_decision_case(case, ledger, framework)
 
 
 def replay_default_frozen_decision_case(
-    settings: Settings, business_identity: str, *, clock: Clock | None = None
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    framework: FrozenFramework,
+    business_identity: str,
+    *,
+    recovery_case: FrozenDecisionCase | None = None,
 ) -> DecisionCaseExecution:
     """Replay only when the caller names the fixture's immutable business identity."""
-    case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
-    return _run_frozen_decision_case(settings, clock=clock)
+    if recovery_case is not None:
+        original = recovery_case.model_copy(update={"recovery_framework_run_id": None})
+        if not any(
+            original.matches_legacy_recovery_input(candidate)
+            for candidate in (case, *case.legacy_contract_recovery_cases)
+        ):
+            raise ValueError("original snapshot does not match the frozen recovery input")
+        asyncio.run(framework.validate_recovery(original))
+        case = original.model_copy(update={"recovery_framework_run_id": original.framework_run_id})
+    return _run_frozen_decision_case(case, ledger, framework)
 
 
 def retry_default_frozen_decision_case_notification(
-    settings: Settings,
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
     business_identity: str,
     status: NotificationAttemptStatus,
-    *,
-    clock: Clock | None = None,
 ) -> NotificationAttempt:
     """Record one recoverable synthetic notification outcome for an existing report."""
-    case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
-    runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine, clock=clock)
     with ledger.serialize_case_execution() as connection:
         business_object_id = ledger.resolve_business_object_id(case, connection)
         event = ledger.get_original_decision_event(business_object_id, connection)
@@ -115,14 +121,13 @@ def retry_default_frozen_decision_case_notification(
 
 
 def correct_default_frozen_decision_case(
-    settings: Settings, business_identity: str, *, clock: Clock | None = None
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    business_identity: str,
 ) -> DecisionCaseCorrection:
     """Append the D0 correction fact without replacing the original report."""
-    case = load_frozen_decision_case(settings)
     if business_identity != case.business_identity:
         raise ValueError("unknown frozen decision-case business identity")
-    runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine, clock=clock)
     correction_error: DecisionEventCommitError | None = None
     publication_error: DecisionEventCommitError | None = None
     report: FormalReport | None = None
@@ -153,7 +158,13 @@ def correct_default_frozen_decision_case(
                     "Synthetic D0 correction recorded without replacing "
                     "the original decision event."
                 ),
-                key_reasons=("The original evidence cutoff and formal report remain available.",),
+                key_reasons=(
+                    "The original completion statement is corrected to an incomplete checklist.",
+                    "The original evidence cutoff and formal report remain available.",
+                ),
+                correction_evidence=CorrectionEvidence.model_validate(
+                    load_frozen_correction_payload()
+                ),
             )
             correction_stages = (
                 StageResult(
@@ -240,21 +251,19 @@ def correct_default_frozen_decision_case(
 
 
 def _run_frozen_decision_case(
-    settings: Settings, *, clock: Clock | None = None
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    framework_adapter: FrozenFramework,
 ) -> DecisionCaseExecution:
     """Run or replay one exact frozen business identity without HTTP transport."""
-    case = load_frozen_decision_case(settings)
-    runtime = initialize_runtime_storage(settings)
-    ledger = DecisionLedger(runtime.engine, clock=clock)
     with ledger.serialize_case_execution() as connection:
         existing_business_object_id = ledger.resolve_business_object_id(case, connection)
         has_existing_mapping = (
-            ledger.get_business_object_mapping(existing_business_object_id, connection)
-            is not None
+            ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
     if not has_existing_mapping:
         try:
-            legacy_case = asyncio.run(find_unmapped_legacy_frozen_decision_case(case, runtime))
+            legacy_case = asyncio.run(framework_adapter.recover_unmapped(case))
         except ValueError as error:
             raise DecisionEventCommitError("durable legacy framework recovery failed") from error
         if legacy_case is not None:
@@ -306,9 +315,8 @@ def _run_frozen_decision_case(
                 assert execution_case is not None
                 try:
                     framework = asyncio.run(
-                        execute_frozen_decision_case(
+                        framework_adapter.execute(
                             execution_case,
-                            runtime,
                             lambda transition: _record_framework_transition(
                                 ledger,
                                 execution_case,
@@ -322,9 +330,7 @@ def _run_frozen_decision_case(
                         "durable framework recovery failed"
                     ) from error
                 except ValueError as error:
-                    raise DecisionEventCommitError(
-                        "durable framework recovery failed"
-                    ) from error
+                    raise DecisionEventCommitError("durable framework recovery failed") from error
                 with ledger.serialize_case_execution() as connection:
                     existing_report = ledger.get_original_formal_report(
                         business_object_id,
@@ -361,7 +367,7 @@ def _run_frozen_decision_case(
 
 
 async def _record_framework_transition(
-    ledger: DecisionLedger,
+    ledger: DecisionLedger[Transaction],
     case: FrozenDecisionCase,
     transition: FrameworkRunTransition,
 ) -> None:
@@ -417,8 +423,8 @@ def _snapshotless_recovery_case(
 
 
 def _commit_framework_result(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     execution_case: FrozenDecisionCase,
     framework: FrameworkRunResult,
 ) -> DecisionEventFact | DecisionCaseExecution:
@@ -608,8 +614,8 @@ def _commit_framework_result(
 
 
 def _publish_committed_fact(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     fact: DecisionEventFact,
 ) -> DecisionCaseExecution:
     """Publish a committed host fact or append a closed publication result."""
@@ -635,8 +641,8 @@ def _publish_committed_fact(
 
 
 def _publish_report_or_record_failure(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     fact: DecisionEventFact,
     report_version_id: str | None = None,
 ) -> tuple[FormalReport | None, DecisionEventCommitError | None]:
@@ -681,8 +687,8 @@ def _publish_report_or_record_failure(
 
 
 def _record_publication_failure(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     fact: DecisionEventFact,
     reason: str,
 ) -> None:
@@ -722,8 +728,8 @@ def _publication_failure_stage(reason: str) -> StageResult:
 
 
 def _record_fact_stage_result(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     fact: DecisionEventFact,
     stage_result: StageResult,
     *,
@@ -738,11 +744,6 @@ def _record_fact_stage_result(
         framework_run_id=fact.framework_run_id,
         allow_repeated_occurrence=allow_repeated_occurrence,
     )
-
-
-def get_formal_report(report_version_id: str, settings: Settings) -> FormalReport | None:
-    """Read only an already committed formal report."""
-    return DecisionLedger.from_settings(settings).get_formal_report(report_version_id)
 
 
 def _published_execution(report: FormalReport) -> DecisionCaseExecution:
@@ -870,8 +871,8 @@ def _framework_run_status_from_stage_history(
 
 
 def _restore_precommit_stage_results(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     case: FrozenDecisionCase,
     stage_results: tuple[StageResult, ...],
 ) -> None:
@@ -921,8 +922,8 @@ def _business_lifecycle_from_stages(
 
 
 def _record_correction_commit_failure(
-    ledger: DecisionLedger,
-    connection: Connection,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
     case: FrozenDecisionCase,
     correction_event_id: str,
     framework_run_id: str,
@@ -965,7 +966,7 @@ def _correction_case(
                     "host_source_sha": current_case.version_bundle.host_source_sha,
                     "report_projection_contract_version": (
                         FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
-                    )
+                    ),
                 }
             ),
             "recovery_framework_run_id": original_case.framework_run_id,

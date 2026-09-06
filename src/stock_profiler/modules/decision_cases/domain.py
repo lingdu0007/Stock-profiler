@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
-from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
@@ -83,12 +89,36 @@ class FrozenAgentDefinition(FrozenContract):
     output_contract: FrozenOutputContract
 
 
+class CorrectionEvidence(FrozenContract):
+    """New authoritative synthetic facts, distinct from the original Run's evidence."""
+
+    contract_version: Literal["2.0.0"]
+    evidence_id: str
+    corrects_evidence_id: str
+    source: str
+    reason: str
+    original_statement: str
+    corrected_statement: str
+    evidence_clock: EvidenceClock
+    knowledge_cutoff: str
+    decision_formed_at: str
+
+
 class ExternalResult(FrozenContract):
     """The user-visible result expected from this original synthetic fixture."""
 
     outcome_code: str
     summary: str
     key_reasons: tuple[str, ...]
+    correction_evidence: CorrectionEvidence | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_original_payload(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Keep pre-correction result bytes readable under their original contract."""
+        payload: dict[str, Any] = handler(self)
+        if self.correction_evidence is None:
+            payload.pop("correction_evidence", None)
+        return payload
 
 
 class GateResult(FrozenContract):
@@ -605,9 +635,7 @@ class FrozenDecisionCase(FrozenContract):
         version_bundle = self.version_bundle.model_dump(mode="json")
         version_bundle.pop("host_application_version")
         version_bundle.pop("host_source_sha")
-        return self._decision_event_id_for_version_bundle(
-            framework_run_id, version_bundle
-        )
+        return self._decision_event_id_for_version_bundle(framework_run_id, version_bundle)
 
     def legacy_decision_event_id_for_framework_run(self, framework_run_id: str) -> str:
         """Read a pre-migration event ID that bound full host provenance."""
@@ -667,7 +695,15 @@ class FrozenDecisionCase(FrozenContract):
         )
 
 
-def load_frozen_decision_case(settings: Settings) -> FrozenDecisionCase:
+class FrozenBuildIdentity(Protocol):
+    @property
+    def configuration_version(self) -> str: ...
+
+    @property
+    def source_sha(self) -> str: ...
+
+
+def load_frozen_decision_case(settings: FrozenBuildIdentity) -> FrozenDecisionCase:
     """Bind the declared synthetic case to the exact configured host build."""
     payload = load_frozen_case_payload()
     version_bundle = payload.get("version_bundle")
