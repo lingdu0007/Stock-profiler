@@ -32,6 +32,7 @@ from m_agent.runtime import (
 
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.versioning import (
     M_AGENT_DISTRIBUTION,
     M_AGENT_RELEASE_COMMIT,
@@ -40,10 +41,10 @@ from stock_profiler.foundation.versioning import (
 )
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_AGENT_DEFINITION_ID,
-    FROZEN_AGENT_DEFINITION_VERSION,
     FROZEN_OUTPUT_CONTRACT_VERSION,
     FrameworkRunStatus,
     FrozenDecisionCase,
+    definition_version_for_case_contract,
     supports_case_host_contract,
     supports_report_projection_contract,
     synthetic_outcome_code_from_input,
@@ -212,6 +213,8 @@ async def execute_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
+    *,
+    clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
     try:
@@ -219,7 +222,7 @@ async def execute_frozen_decision_case(
         definition = _frozen_definition(case)
         _assert_registered_capabilities(case, definition)
     except ValueError:
-        ResultDelivery(runtime.engine).record_capability_denial(case.framework_run_id)
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
         raise
     registry = DefinitionRegistry()
     registry.register(definition)
@@ -315,7 +318,7 @@ async def execute_frozen_decision_case(
                 )
             await record_framework_statuses()
     if run.error_code == ModelContractViolationError.code:
-        ResultDelivery(runtime.engine).record_capability_denial(case.framework_run_id)
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
     return FrameworkRunResult(
         run_id=run.run_id,
         status=cast(FrameworkRunStatus, run.status.value),
@@ -407,9 +410,7 @@ def _is_concurrent_creation_error(error: sqlite3.Error) -> bool:
 def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     """Reject frozen metadata that does not describe the installed deterministic route."""
     bundle = case.version_bundle
-    definition_version = (
-        "2.0.0" if bundle.case_contract_version == "3.0.0" else FROZEN_AGENT_DEFINITION_VERSION
-    )
+    definition_version = definition_version_for_case_contract(bundle.case_contract_version)
     if (
         not supports_case_host_contract(
             bundle.case_contract_version,

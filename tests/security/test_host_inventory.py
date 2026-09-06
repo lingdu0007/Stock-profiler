@@ -67,6 +67,28 @@ def test_inventory_is_the_exact_registered_http_and_cli_surface(
         "decision-case-correct",
         "host-console-grant",
     )
+    expected_methods = {
+        "/openapi.json": {"GET", "HEAD"},
+        "/livez": {"GET"},
+        "/readyz": {"GET"},
+        "/api/v1/diagnostics/version": {"GET"},
+        "/api/v1/diagnostics/safety-capabilities": {"GET"},
+        "/api/v1/auth/passkeys/registration/options": {"POST"},
+        "/api/v1/auth/passkeys/registration/verify": {"POST"},
+        "/api/v1/auth/passkeys/authentication/options": {"POST"},
+        "/api/v1/auth/passkeys/authentication/verify": {"POST"},
+        "/api/v1/auth/passkeys/reauthentication/options": {"POST"},
+        "/api/v1/auth/passkeys/reauthentication/verify": {"POST"},
+        "/api/v1/auth/session/refresh": {"POST"},
+        "/api/v1/auth/session": {"DELETE"},
+        "/api/v1/reports/{report_version_id}": {"GET"},
+        "/api/v1/reports/{report_version_id}/facts": {"GET", "POST"},
+    }
+    assert {
+        (cast(Route, route).path, method)
+        for route in app.routes
+        for method in (cast(Route, route).methods or set())
+    } == {(path, method) for path, methods in expected_methods.items() for method in methods}
     assert security_cases["order_operations"] == [
         "generate",
         "prefill",

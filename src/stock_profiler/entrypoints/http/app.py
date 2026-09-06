@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -39,6 +39,12 @@ class VersionDiagnosticDto(BaseModel):
     m_agent_wheel_url: str
     m_agent_wheel_sha256: str
     m_agent_release_commit: str
+
+
+class OpaqueRequestErrorDto(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    detail: Literal["request is not permitted"] = "request is not permitted"
 
 
 class HealthDto(BaseModel):
@@ -116,6 +122,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         openapi_version="3.1.0",
         docs_url=None,
         redoc_url=None,
+        responses={422: {"model": OpaqueRequestErrorDto}},
     )
 
     @app.middleware("http")
@@ -141,7 +148,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         ResultDelivery.from_settings(app_settings, clock=clock).record_capability_denial(
             request.method + " " + request.url.path, "HTTP"
         )
-        return JSONResponse(status_code=422, content={"detail": "request is not permitted"})
+        return JSONResponse(status_code=422, content=OpaqueRequestErrorDto().model_dump())
 
     def report_principal() -> AccessPrincipal:
         return AccessPrincipal(
@@ -400,12 +407,13 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         try:
             authenticator().require_session(session_token)
         except AuthenticationError as error:
-            get_formal_report(report_version_id, app_settings)
+            get_formal_report(report_version_id, app_settings, clock=clock)
             raise HTTPException(status_code=401, detail=str(error)) from error
         report = get_formal_report(
             report_version_id,
             app_settings,
             principal=report_principal(),
+            clock=clock,
         )
         if report is None:
             raise HTTPException(status_code=404, detail="formal report not found")

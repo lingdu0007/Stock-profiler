@@ -38,6 +38,7 @@ from stock_profiler.modules.delivery.access import AccessPrincipal
 @dataclass(frozen=True)
 class _FrozenFramework:
     runtime: RuntimeStorage
+    clock: Clock | None = None
 
     async def validate_recovery(self, case: FrozenDecisionCase) -> None:
         await validate_frozen_recovery_case(case, self.runtime)
@@ -50,7 +51,9 @@ class _FrozenFramework:
     async def execute(
         self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
     ) -> FrameworkRunResult:
-        return await execute_frozen_decision_case(case, self.runtime, record_transition)
+        return await execute_frozen_decision_case(
+            case, self.runtime, record_transition, clock=self.clock
+        )
 
 
 def run_frozen_decision_case(
@@ -68,7 +71,7 @@ def run_frozen_decision_case(
         )
         raise
     return service.run_default_frozen_decision_case(
-        case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime)
+        case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime, clock)
     )
 
 
@@ -78,7 +81,7 @@ def run_default_frozen_decision_case(
     case = load_frozen_decision_case(settings)
     runtime = initialize_runtime_storage(settings)
     return service.run_default_frozen_decision_case(
-        case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime)
+        case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime, clock)
     )
 
 
@@ -94,7 +97,7 @@ def replay_default_frozen_decision_case(
     return service.replay_default_frozen_decision_case(
         case,
         DecisionLedger(runtime.engine, clock=clock),
-        _FrozenFramework(runtime),
+        _FrozenFramework(runtime, clock),
         business_identity,
         recovery_case=recovery_case,
     )
@@ -126,6 +129,12 @@ def retry_default_frozen_decision_case_notification(
 
 
 def get_formal_report(
-    report_version_id: str, settings: Settings, *, principal: AccessPrincipal | None = None
+    report_version_id: str,
+    settings: Settings,
+    *,
+    principal: AccessPrincipal | None = None,
+    clock: Clock | None = None,
 ) -> FormalReport | None:
-    return ResultDelivery.from_settings(settings).read_report(report_version_id, principal)
+    return ResultDelivery.from_settings(settings, clock=clock).read_report(
+        report_version_id, principal
+    )

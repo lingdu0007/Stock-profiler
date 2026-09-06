@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from sqlalchemy import Column, Integer, MetaData, String, Table, select
 from sqlalchemy.engine import Connection, Engine
 
+from stock_profiler.adapters.persistence.access_audit import ACCESS_AUDIT as ACCESS_AUDIT
+from stock_profiler.adapters.persistence.access_audit import append_denial
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
@@ -18,20 +20,9 @@ from stock_profiler.modules.delivery.access import (
     AccessAuditFact,
     AccessPrincipal,
     read_denial,
-    request_digest,
 )
 from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
 
-ACCESS_AUDIT = Table(
-    "result_access_audit",
-    MetaData(),
-    Column("sequence", Integer, primary_key=True, autoincrement=True),
-    Column("request_digest", String(64), nullable=False),
-    Column("surface", String(32), nullable=False),
-    Column("outcome", String(16), nullable=False),
-    Column("reason", String(64), nullable=False),
-    Column("recorded_at", String(40), nullable=False),
-)
 USER_FACTS = Table(
     "report_user_facts",
     MetaData(),
@@ -97,15 +88,7 @@ class ResultDelivery:
         reason: str,
         surface: str,
     ) -> None:
-        connection.execute(
-            ACCESS_AUDIT.insert().values(
-                request_digest=request_digest(target, principal),
-                surface=surface,
-                outcome="DENIED",
-                reason=reason,
-                recorded_at=self._ledger.observed_at(),
-            )
-        )
+        append_denial(connection, target, principal, reason, surface, self._ledger.observed_at())
 
     def record_user_fact(
         self,

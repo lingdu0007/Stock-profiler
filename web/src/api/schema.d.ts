@@ -376,10 +376,14 @@ export interface components {
              */
             status: "PASSED" | "FAILED" | "UNKNOWN";
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
+        /** OpaqueRequestErrorDto */
+        OpaqueRequestErrorDto: {
+            /**
+             * Detail
+             * @default request is not permitted
+             * @constant
+             */
+            detail: "request is not permitted";
         };
         /**
          * ReauthenticationVerificationDto
@@ -500,19 +504,6 @@ export interface components {
              */
             kind: "VIEWED" | "ACKNOWLEDGED" | "CONFIRMED" | "EXECUTION_DECLARED";
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
         /**
          * VersionDiagnosticDto
          * @description Pydantic-only transport contract for the public diagnostic interface.
@@ -567,13 +558,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -609,13 +600,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -650,13 +641,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -695,13 +686,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -734,13 +725,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -774,13 +765,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -813,13 +804,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -854,13 +845,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -883,6 +874,15 @@ export interface operations {
                     "application/json": components["schemas"]["SafetyCapabilitiesDiagnosticDto"];
                 };
             };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
         };
     };
     version_diagnostic_api_v1_diagnostics_version_get: {
@@ -901,6 +901,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionDiagnosticDto"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -941,13 +950,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -974,13 +983,13 @@ export interface operations {
                     "application/json": components["schemas"]["UserFact"][];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -1014,13 +1023,13 @@ export interface operations {
                     "application/json": components["schemas"]["UserFact"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };

@@ -338,6 +338,11 @@ def supports_case_host_contract(case_version: str, host_version: str) -> bool:
     return (case_version, host_version) in _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
 
 
+def definition_version_for_case_contract(case_version: str) -> str:
+    """Keep host and framework boundary validation on the same compatibility rule."""
+    return "2.0.0" if case_version == "3.0.0" else FROZEN_AGENT_DEFINITION_VERSION
+
+
 class FormalReport(FrozenContract):
     """Read-only delivery projection derived from one committed host event."""
 
@@ -555,7 +560,9 @@ class FrozenDecisionCase(FrozenContract):
         """Make public fixtures fail closed unless they declare original D0 provenance."""
         scoped = self.version_bundle.case_contract_version == "3.0.0"
         account = self.input.get("account")
-        definition_version = "2.0.0" if scoped else FROZEN_AGENT_DEFINITION_VERSION
+        definition_version = definition_version_for_case_contract(
+            self.version_bundle.case_contract_version
+        )
         if scoped != (self.access_scope is not None):
             raise ValueError("scoped cases require the version 3 contract and frozen access scope")
         if scoped and (
