@@ -3,7 +3,7 @@
 This engineering baseline depends on the following direct runtime and Web
 components:
 
-- M-Agent 0.5.0, Apache-2.0
+- M-Agent 0.5.1, Apache-2.0
 - FastAPI, MIT
 - SQLAlchemy, MIT
 - Alembic, MIT

@@ -52,7 +52,7 @@ def test_frozen_synthetic_case_has_stable_independent_identities(settings: Setti
     assert first.qualification_scope == "D0_SYNTHETIC_CONTRACT_ONLY"
     assert first.knowledge_cutoff == "2042-05-17T16:00:00Z"
     assert first.evidence_clock.validated_at == "2042-05-17T15:18:00Z"
-    assert first.version_bundle.m_agent_version == "0.5.0"
+    assert first.version_bundle.m_agent_version == "0.5.1"
     assert first.version_bundle.host_application_version == settings.configuration_version
     assert first.version_bundle.host_source_sha == settings.source_sha
     assert first.version_bundle.model_adapter_id == "m-agent-deterministic-model-adapter"

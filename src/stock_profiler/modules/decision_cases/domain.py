@@ -16,6 +16,10 @@ from pydantic import (
 )
 
 from stock_profiler.foundation.decision_versions import (
+    CURRENT_M_AGENT_RELEASE,
+    HISTORICAL_M_AGENT_RELEASE,
+)
+from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
@@ -708,6 +712,22 @@ class FrozenDecisionCase(FrozenContract):
         """Allow source identity updates while rejecting a changed frozen input."""
         return _recovery_input_payload(self) == _recovery_input_payload(other)
 
+    def matches_runtime_upgrade_recovery_input(self, other: FrozenDecisionCase) -> bool:
+        """Compare a supplied original snapshot without rebinding any durable identity."""
+        if (
+            self.version_bundle.runtime_release != HISTORICAL_M_AGENT_RELEASE
+            or other.version_bundle.runtime_release != CURRENT_M_AGENT_RELEASE
+        ):
+            return False
+        comparison = other.model_copy(
+            update={
+                "version_bundle": other.version_bundle.model_copy(
+                    update=HISTORICAL_M_AGENT_RELEASE.model_dump()
+                )
+            }
+        )
+        return self.matches_legacy_recovery_input(comparison)
+
     def matches_legacy_recovery_input(self, other: FrozenDecisionCase | None = None) -> bool:
         """Compare legacy projections without relaxing the immutable D0 input."""
         comparison_case = other or FrozenDecisionCase.model_validate(load_frozen_case_payload())
@@ -721,6 +741,7 @@ class FrozenDecisionCase(FrozenContract):
                         update={
                             "case_contract_version": self.version_bundle.case_contract_version,
                             "host_contract_version": self.version_bundle.host_contract_version,
+                            **self.version_bundle.runtime_release.model_dump(),
                         }
                     )
                 }
@@ -819,13 +840,14 @@ class FrozenBuildIdentity(Protocol):
 
 
 def load_frozen_decision_case(settings: FrozenBuildIdentity) -> FrozenDecisionCase:
-    """Bind the declared synthetic case to the exact configured host build."""
+    """Create a new synthetic input for this build; saved historical cases are never rebound."""
     payload = load_frozen_case_payload()
     version_bundle = payload.get("version_bundle")
     if not isinstance(version_bundle, dict):
         raise RuntimeError("frozen decision-case fixture has no version bundle")
     version_bundle["host_application_version"] = settings.configuration_version
     version_bundle["host_source_sha"] = settings.source_sha
+    version_bundle.update(CURRENT_M_AGENT_RELEASE.model_dump(mode="json"))
     return FrozenDecisionCase.model_validate(payload)
 
 

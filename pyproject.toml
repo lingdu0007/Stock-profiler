@@ -13,7 +13,7 @@ authors = [{ name = "Stock Profiler Maintainers" }]
 dependencies = [
   "alembic>=1.16.0,<2.0.0",
   "fastapi>=0.115.0,<1.0.0",
-  "m-agent @ https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl#sha256=8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6",
+  "m-agent @ https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl#sha256=7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
   "pydantic-settings>=2.10.0,<3.0.0",
   "sqlalchemy>=2.0.0,<3.0.0",
   "structlog>=25.0.0,<26.0.0",

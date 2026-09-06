@@ -84,6 +84,7 @@ def replay_default_frozen_decision_case(
         original = recovery_case.model_copy(update={"recovery_framework_run_id": None})
         if not any(
             original.matches_legacy_recovery_input(candidate)
+            or original.matches_runtime_upgrade_recovery_input(candidate)
             for candidate in (case, *case.legacy_contract_recovery_cases)
         ):
             raise ValueError("original snapshot does not match the frozen recovery input")

@@ -37,9 +37,27 @@ historical replay, not a new grant or activation.
 Original frozen snapshots preserve build provenance across recovery. An
 unmapped historical Run from another build closes the publication gate until
 the original snapshot can be validated against that exact durable Run. The
-pinned M-Agent 0.5.0 adapter uses a read-only metadata inventory solely to veto
+pinned M-Agent adapter uses a read-only metadata inventory solely to veto
 unsafe replacement creation; it neither adopts unknown Runs from SQL nor
 reconstructs missing provenance. Normal recovery uses the public Run store.
+
+The host pins the official M-Agent 0.5.1 wheel and its digest in the dependency
+lock. New synthetic cases bind that identity. Healthy Runs created by the exact
+previously pinned 0.5.0 wheel can be read or resumed with their original frozen
+snapshot, Definition, input, checkpoint and Run identity. The explicit recovery
+input is compared against the current template without rewriting the original;
+unknown release identities and missing original Runs fail closed. Saved events,
+qualification evidence and report fixtures keep their original runtime identity.
+
+The upstream store performs its own atomic schema migration. Before opening a
+real old store, stop every writer, take a consistent backup and upgrade every
+process together. Mixed writers, downgrade of a migrated file, and reconstructing
+damaged history are unsupported. Historical ownership collisions or unsupported
+schemas raise `RunStoreIntegrityError`; they require an explicit recovery
+decision using retained evidence, not a replacement Run. Rollback requires the
+pre-upgrade backup and must not silently discard later Runs. The synthetic
+compatibility tests install the exact official historical wheel in an isolated
+environment to generate history; no neighboring runtime source is used.
 
 Corrections append changed evidence, its source and reason, and independent
 evidence clocks and cutoff. They reference the original event and evidence

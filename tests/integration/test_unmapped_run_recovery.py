@@ -21,6 +21,7 @@ from stock_profiler.bootstrap.decision_cases import (
 )
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints import cli
+from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     load_frozen_decision_case,
@@ -68,6 +69,7 @@ def test_mapped_result_families_can_share_the_same_framework_store(
                 update={
                     "host_source_sha": migrated_settings.source_sha,
                     "host_application_version": migrated_settings.configuration_version,
+                    **CURRENT_M_AGENT_RELEASE.model_dump(),
                 }
             )
         }
