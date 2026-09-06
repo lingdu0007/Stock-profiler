@@ -39,8 +39,10 @@ class _FrozenFramework:
     async def validate_recovery(self, case: FrozenDecisionCase) -> None:
         await validate_frozen_recovery_case(case, self.runtime)
 
-    async def recover_unmapped(self, case: FrozenDecisionCase) -> FrozenDecisionCase | None:
-        return await find_unmapped_legacy_frozen_decision_case(case, self.runtime)
+    async def recover_unmapped(
+        self, case: FrozenDecisionCase, known_run_ids: frozenset[str]
+    ) -> FrozenDecisionCase | None:
+        return await find_unmapped_legacy_frozen_decision_case(case, self.runtime, known_run_ids)
 
     async def execute(
         self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
@@ -102,4 +104,4 @@ def retry_default_frozen_decision_case_notification(
 
 
 def get_formal_report(report_version_id: str, settings: Settings) -> FormalReport | None:
-    return DecisionLedger.from_settings(settings).get_formal_report(report_version_id)
+    return service.get_formal_report(report_version_id, DecisionLedger.from_settings(settings))

@@ -68,7 +68,9 @@ FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]
 class FrozenFramework(Protocol):
     async def validate_recovery(self, case: FrozenDecisionCase) -> None: ...
 
-    async def recover_unmapped(self, case: FrozenDecisionCase) -> FrozenDecisionCase | None: ...
+    async def recover_unmapped(
+        self, case: FrozenDecisionCase, known_run_ids: frozenset[str]
+    ) -> FrozenDecisionCase | None: ...
 
     async def execute(
         self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
@@ -79,6 +81,10 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
+
+    def get_formal_report(self, report_version_id: str) -> FormalReport | None: ...
 
     def serialize_case_execution(self) -> AbstractContextManager[Transaction]: ...
 
@@ -141,18 +147,8 @@ class DecisionLedger(Protocol[Transaction]):
         generated_at: str | None = None,
     ) -> DecisionEventFact: ...
 
-    def commit_event(
-        self,
-        connection: Transaction,
-        *,
-        case: FrozenDecisionCase,
-        framework_run_id: str,
-        result: ExternalResult,
-        stage_results: tuple[StageResult, ...],
-        decision_event_id: str | None = None,
-        corrects_event_id: str | None = None,
-        committed_at: str | None = None,
-        generated_at: str | None = None,
+    def commit_event_fact(
+        self, connection: Transaction, fact: DecisionEventFact
     ) -> DecisionEventFact: ...
 
     def reconcile_event_commit(

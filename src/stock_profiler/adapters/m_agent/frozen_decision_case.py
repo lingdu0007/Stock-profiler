@@ -125,6 +125,7 @@ async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: Runti
 async def find_unmapped_legacy_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
+    known_run_ids: frozenset[str] = frozenset(),
 ) -> FrozenDecisionCase | None:
     """Find a deterministic historical Run through the public M-Agent store."""
     candidates: dict[str, FrozenDecisionCase] = {}
@@ -155,7 +156,8 @@ async def find_unmapped_legacy_frozen_decision_case(
             }
     except sqlite3.Error as error:
         raise ValueError("durable framework inventory cannot be verified") from error
-    if len(run_ids) > 1 or run_ids - {case.framework_run_id, *candidates}:
+    unmapped_run_ids = run_ids - known_run_ids
+    if len(unmapped_run_ids) > 1 or unmapped_run_ids - {case.framework_run_id, *candidates}:
         raise ValueError("unmapped durable Run requires original frozen build provenance")
     if not candidates:
         return None
