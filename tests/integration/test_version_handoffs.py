@@ -39,6 +39,280 @@ def task_node(day: int) -> dict[str, Any]:
     }
 
 
+def handoff_node(
+    kind: str,
+    identity: str,
+    scheduled_at: str,
+    *,
+    retain_relations: bool = False,
+) -> dict[str, Any]:
+    scheduled = datetime.fromisoformat(scheduled_at)
+    node = {
+        "node_id": f"synthetic-{kind.lower()}-node-{identity}",
+        "task_identity": f"synthetic-{kind.lower()}-task-{identity}",
+        "kind": kind,
+        "scheduled_at": scheduled_at,
+        "knowledge_cutoff": scheduled_at,
+        "valid_until": (scheduled + timedelta(days=1)).isoformat(),
+        "deterministic_obligations": [
+            {
+                "obligation_id": f"synthetic-{kind.lower()}-unfinished-{identity}",
+                "basis_reference": f"synthetic-{kind.lower()}-basis-{identity}",
+                "direction": "REDUCE",
+                "quantity_status": "UNKNOWN",
+            }
+        ],
+    }
+    if retain_relations:
+        node["retained_objects"] = [
+            {
+                "kind": object_kind,
+                "object_id": f"synthetic-{kind.lower()}-{object_kind.lower()}-{identity}",
+            }
+            for object_kind in ("CONCLUSION", "CONTRACT", "EVIDENCE", "EVALUATION")
+        ]
+    return node
+
+
+def execute_handoff(
+    settings: Settings,
+    identity: str,
+    command: dict[str, Any],
+    *,
+    now: str = "2042-05-17T16:01:00Z",
+) -> DecisionCaseExecution:
+    payload = case_payload(settings, identity, command, contract_version="5.0.0")
+    payload["knowledge_cutoff"] = (datetime.fromisoformat(now) - timedelta(minutes=1)).isoformat()
+    return run_frozen_decision_case(settings, payload, clock=GovernanceClock(now))
+
+
+@pytest.mark.parametrize(
+    ("kind", "old_at", "earliest_at", "later_at"),
+    [
+        (
+            "DAILY",
+            "2042-05-18T16:00:00Z",
+            "2042-05-19T16:00:00Z",
+            "2042-05-20T16:00:00Z",
+        ),
+        (
+            "MONTHLY",
+            "2042-06-30T16:00:00Z",
+            "2042-07-31T16:00:00Z",
+            "2042-08-31T16:00:00Z",
+        ),
+        (
+            "RENEWAL",
+            "2042-06-15T16:00:00Z",
+            "2042-07-15T16:00:00Z",
+            "2042-08-15T16:00:00Z",
+        ),
+    ],
+)
+def test_handoff_cannot_bypass_earliest_eligible_node(
+    migrated_settings: Settings,
+    kind: str,
+    old_at: str,
+    earliest_at: str,
+    later_at: str,
+) -> None:
+    first_version = version(migrated_settings)
+    second_version = version(migrated_settings, f"synthetic-{kind.lower()}-version-two")
+    grants = []
+    for index, bundle in enumerate((first_version, second_version)):
+        command = qualification_command(migrated_settings)
+        command["version"] = bundle
+        command["evidence"]["version"] = bundle
+        command["evidence"]["evidence_id"] = f"synthetic-{kind.lower()}-grant-{index}"
+        grants.append(execute_handoff(migrated_settings, f"{kind}-grant-{index}", command))
+
+    old_node = handoff_node(kind, "old", old_at)
+    earliest_node = handoff_node(kind, "earliest", earliest_at)
+    later_node = handoff_node(kind, "later", later_at)
+    for identity, node in (
+        ("old", old_node),
+        ("earliest", earliest_node),
+        ("later", later_node),
+    ):
+        registration = execute_handoff(
+            migrated_settings,
+            f"{kind}-register-{identity}",
+            {"operation": "REGISTER_TASK_NODE", "scope": scope(), "node": node},
+        )
+        assert registration.report is not None
+        assert registration.report.result.governance is not None
+        assert registration.report.result.governance.disposition == "APPROVED"
+
+    first_activation = execute_handoff(
+        migrated_settings,
+        f"{kind}-activate-first",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": first_version,
+            "previous_version": None,
+            "previous_activation_id": None,
+            "qualification_decision_id": grants[0].decision_event_id,
+            "first_node_id": old_node["node_id"],
+        },
+    )
+    execute_handoff(
+        migrated_settings,
+        f"{kind}-freeze-old",
+        {
+            "operation": "FREEZE_TASK",
+            "scope": scope(),
+            "version": first_version,
+            "node_id": old_node["node_id"],
+            "activation_id": first_activation.decision_event_id,
+        },
+        now=(datetime.fromisoformat(old_at) + timedelta(minutes=1)).isoformat(),
+    )
+    handoff_now = (datetime.fromisoformat(old_at) + timedelta(minutes=2)).isoformat()
+    later = execute_handoff(
+        migrated_settings,
+        f"{kind}-activate-later",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": second_version,
+            "previous_version": first_version,
+            "previous_activation_id": first_activation.decision_event_id,
+            "qualification_decision_id": grants[1].decision_event_id,
+            "first_node_id": later_node["node_id"],
+        },
+        now=handoff_now,
+    )
+    assert later.report is not None
+    assert later.report.result.governance is not None
+    assert later.report.result.governance.disposition == "DENIED"
+    assert later.report.result.governance.reasons == ("NEXT_LEGAL_TASK_NODE_REQUIRED",)
+
+    earliest = execute_handoff(
+        migrated_settings,
+        f"{kind}-activate-earliest",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": second_version,
+            "previous_version": first_version,
+            "previous_activation_id": first_activation.decision_event_id,
+            "qualification_decision_id": grants[1].decision_event_id,
+            "first_node_id": earliest_node["node_id"],
+        },
+        now=handoff_now,
+    )
+    assert earliest.report is not None
+    assert earliest.report.result.governance is not None
+    assert earliest.report.result.governance.disposition == "APPROVED"
+    assert earliest.report.result.governance.activation is not None
+    assert (
+        earliest.report.result.governance.activation.first_node.node_id == earliest_node["node_id"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "old_at", "next_at"),
+    [
+        ("DAILY", "2042-05-18T16:00:00Z", "2042-05-19T16:00:00Z"),
+        ("MONTHLY", "2042-06-30T16:00:00Z", "2042-07-31T16:00:00Z"),
+        ("RENEWAL", "2042-06-15T16:00:00Z", "2042-07-15T16:00:00Z"),
+    ],
+)
+def test_handoff_retains_reconstructable_frozen_task_relations(
+    migrated_settings: Settings,
+    kind: str,
+    old_at: str,
+    next_at: str,
+) -> None:
+    first_version = version(migrated_settings)
+    second_version = version(migrated_settings, f"synthetic-{kind.lower()}-retained-version")
+    grants = []
+    for index, bundle in enumerate((first_version, second_version)):
+        command = qualification_command(migrated_settings)
+        command["version"] = bundle
+        command["evidence"]["version"] = bundle
+        command["evidence"]["evidence_id"] = f"synthetic-{kind.lower()}-retained-grant-{index}"
+        grants.append(execute_handoff(migrated_settings, f"{kind}-retained-grant-{index}", command))
+
+    old_node = handoff_node(kind, "retained-old", old_at, retain_relations=True)
+    next_node = handoff_node(kind, "retained-next", next_at)
+    for identity, node in (("old", old_node), ("next", next_node)):
+        execute_handoff(
+            migrated_settings,
+            f"{kind}-retained-register-{identity}",
+            {"operation": "REGISTER_TASK_NODE", "scope": scope(), "node": node},
+        )
+
+    first_activation = execute_handoff(
+        migrated_settings,
+        f"{kind}-retained-activate-first",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": first_version,
+            "previous_version": None,
+            "previous_activation_id": None,
+            "qualification_decision_id": grants[0].decision_event_id,
+            "first_node_id": old_node["node_id"],
+        },
+    )
+    old_task = execute_handoff(
+        migrated_settings,
+        f"{kind}-retained-freeze-old",
+        {
+            "operation": "FREEZE_TASK",
+            "scope": scope(),
+            "version": first_version,
+            "node_id": old_node["node_id"],
+            "activation_id": first_activation.decision_event_id,
+        },
+        now=(datetime.fromisoformat(old_at) + timedelta(minutes=1)).isoformat(),
+    )
+    assert old_task.report is not None
+    original_report = old_task.report.model_dump_json()
+
+    second_activation = execute_handoff(
+        migrated_settings,
+        f"{kind}-retained-activate-second",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": second_version,
+            "previous_version": first_version,
+            "previous_activation_id": first_activation.decision_event_id,
+            "qualification_decision_id": grants[1].decision_event_id,
+            "first_node_id": next_node["node_id"],
+        },
+        now=(datetime.fromisoformat(old_at) + timedelta(minutes=2)).isoformat(),
+    )
+    assert second_activation.report is not None
+    assert second_activation.report.result.governance is not None
+    activation = second_activation.report.result.governance.activation
+    assert activation is not None
+    assert activation.retained_task_ids == (old_node["task_identity"],)
+    assert len(activation.retained_tasks) == 1
+    retained = activation.retained_tasks[0]
+    assert retained.task_identity == old_node["task_identity"]
+    assert retained.task_decision_id == old_task.decision_event_id
+    assert retained.original_version.model_dump(mode="json") == first_version
+    assert retained.node_id == old_node["node_id"]
+    assert retained.activation_id == first_activation.decision_event_id
+    assert retained.qualification_decision_id == grants[0].decision_event_id
+    assert retained.knowledge_cutoff.isoformat() == old_node["knowledge_cutoff"].replace(
+        "Z", "+00:00"
+    )
+    assert retained.scheduled_at.isoformat() == old_node["scheduled_at"].replace("Z", "+00:00")
+    assert retained.valid_until.isoformat() == old_node["valid_until"]
+    assert [item.model_dump(mode="json") for item in retained.retained_objects] == old_node[
+        "retained_objects"
+    ]
+    assert [
+        item.model_dump(mode="json") for item in retained.deterministic_obligations
+    ] == old_node["deterministic_obligations"]
+    assert old_task.report.model_dump_json() == original_report
+
+
 def test_account_order_preserves_existing_task_and_activation_identity(
     migrated_settings: Settings,
 ) -> None:
@@ -170,7 +444,7 @@ def test_qualification_does_not_activate_or_reopen_a_frozen_task(
             "previous_version": None,
             "previous_activation_id": None,
             "qualification_decision_id": grant.decision_event_id,
-            "first_node_id": task_node(18)["node_id"],
+            "first_node_id": task_node(19)["node_id"],
         },
         contract_version="5.0.0",
     )
@@ -273,7 +547,7 @@ def test_handoff_preserves_old_task_binding_and_revocation_blocks_only_new_affec
             "previous_version": first_version,
             "previous_activation_id": activated_first.decision_event_id,
             "qualification_decision_id": grants[1].decision_event_id,
-            "first_node_id": task_node(18)["node_id"],
+            "first_node_id": task_node(19)["node_id"],
         },
         "2042-05-18T16:02:00Z",
     )

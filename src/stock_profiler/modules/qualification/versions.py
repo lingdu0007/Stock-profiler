@@ -10,6 +10,7 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationRecord,
     RegisteredTaskNode,
     RegisterTaskNodeCommand,
+    RetainedTaskRelation,
     TaskUsage,
     UseTaskCommand,
     VersionActivation,
@@ -136,22 +137,24 @@ def adjudicate(
                 item.node
                 for item in nodes
                 if item.node.kind == requested.kind
-                and item.node.scheduled_at >= requested.scheduled_at
                 and item.node.scheduled_at > now
                 and item.node.node_id not in frozen_nodes
+                and (current is None or item.node.scheduled_at > current.first_node.scheduled_at)
             ),
             key=lambda item: item.scheduled_at,
         )
-        if not candidates or (
-            current is not None
-            and (
-                candidates[0].scheduled_at <= current.first_node.scheduled_at
-                or command.version == current.version
-            )
+        if (
+            not candidates
+            or candidates[0].node_id != requested.node_id
+            or (current is not None and command.version == current.version)
         ):
             return GovernanceOutcome(
                 disposition="DENIED", reasons=("NEXT_LEGAL_TASK_NODE_REQUIRED",)
             )
+        retained_tasks = tuple(
+            _retained_task_relation(item)
+            for item in sorted(tasks, key=lambda item: item.node.task_identity)
+        )
         return GovernanceOutcome(
             disposition="APPROVED",
             reasons=("VERSION_HANDOFF_RECORDED",),
@@ -163,7 +166,8 @@ def adjudicate(
                 previous_activation_id=command.previous_activation_id,
                 qualification_snapshot=qualification,
                 first_node=candidates[0],
-                retained_task_ids=tuple(sorted(item.node.task_identity for item in tasks)),
+                retained_task_ids=tuple(item.task_identity for item in retained_tasks),
+                retained_tasks=retained_tasks,
                 recorded_at=now,
             ),
         )
@@ -225,3 +229,20 @@ def _current_activation(activations: list[VersionActivation]) -> VersionActivati
     if len(heads) > 1:
         raise ValueError("version handoff history has conflicting revisions")
     return heads[0] if heads else None
+
+
+def _retained_task_relation(task: FrozenTask) -> RetainedTaskRelation:
+    qualification = task.qualification_snapshot
+    return RetainedTaskRelation(
+        task_identity=task.node.task_identity,
+        task_decision_id=task.decision_id,
+        original_version=task.version,
+        node_id=task.node.node_id,
+        activation_id=task.activation_id,
+        qualification_decision_id=qualification.decision_id if qualification is not None else None,
+        knowledge_cutoff=task.node.knowledge_cutoff,
+        scheduled_at=task.node.scheduled_at,
+        valid_until=task.node.valid_until,
+        retained_objects=task.node.retained_objects,
+        deterministic_obligations=task.node.deterministic_obligations,
+    )

@@ -308,6 +308,11 @@ class EstablishedObligation(GovernanceContract):
     quantity_status: Literal["UNKNOWN"]
 
 
+class RetainedObjectReference(GovernanceContract):
+    kind: Literal["CONCLUSION", "CONTRACT", "EVIDENCE", "EVALUATION"]
+    object_id: str = Field(min_length=1)
+
+
 class LegalTaskNode(GovernanceContract):
     node_id: str = Field(min_length=1)
     task_identity: str = Field(min_length=1)
@@ -316,6 +321,9 @@ class LegalTaskNode(GovernanceContract):
     knowledge_cutoff: AwareDatetime
     valid_until: AwareDatetime
     deterministic_obligations: tuple[EstablishedObligation, ...] = ()
+    retained_objects: tuple[RetainedObjectReference, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
 
 class RegisterTaskNodeCommand(GovernanceContract):
@@ -366,6 +374,20 @@ class RegisteredTaskNode(GovernanceContract):
     registered_at: AwareDatetime
 
 
+class RetainedTaskRelation(GovernanceContract):
+    task_identity: str = Field(min_length=1)
+    task_decision_id: str = Field(min_length=1)
+    original_version: CapabilityVersion
+    node_id: str = Field(min_length=1)
+    activation_id: str | None
+    qualification_decision_id: str | None
+    knowledge_cutoff: AwareDatetime
+    scheduled_at: AwareDatetime
+    valid_until: AwareDatetime
+    retained_objects: tuple[RetainedObjectReference, ...] = ()
+    deterministic_obligations: tuple[EstablishedObligation, ...] = ()
+
+
 class VersionActivation(GovernanceContract):
     decision_id: str
     scope: QualificationScope
@@ -375,6 +397,9 @@ class VersionActivation(GovernanceContract):
     qualification_snapshot: QualificationRecord
     first_node: LegalTaskNode
     retained_task_ids: tuple[str, ...]
+    retained_tasks: tuple[RetainedTaskRelation, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     recorded_at: AwareDatetime
 
 
