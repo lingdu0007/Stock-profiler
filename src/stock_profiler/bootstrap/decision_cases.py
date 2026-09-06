@@ -92,7 +92,11 @@ def replay_default_frozen_decision_case(
     clock: Clock | None = None,
     recovery_case: FrozenDecisionCase | None = None,
 ) -> DecisionCaseExecution:
-    case = load_frozen_decision_case(settings)
+    case = (
+        recovery_case
+        if recovery_case is not None and recovery_case.access_scope is not None
+        else load_frozen_decision_case(settings)
+    )
     runtime = initialize_runtime_storage(settings)
     return service.replay_default_frozen_decision_case(
         case,

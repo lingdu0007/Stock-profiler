@@ -34,6 +34,28 @@ retained alert. Invalid or timezone-less governed cutoffs are rejected and
 audited before creating a Run. Reading a saved qualification outcome is
 historical replay, not a new grant or activation.
 
+Governed D0 commands supply an explicit `QualificationPolicy` inside their
+capability version. Its contract version, policy version, original synthetic
+provenance and clock parameters have no engine defaults. The complete policy
+is frozen with the case and compared with the evidence version. A policy
+version cannot be redefined within an existing scoped qualification history.
+Accepted policy inputs retain a separate binding even when evidence or business
+prerequisites deny qualification. That binding is provenance, not authorization;
+a conflicting attempted redefinition does not replace or poison the original.
+Missing, invalid or mismatched policy cannot grant authority or permit new
+statistical use. This host accepts synthetic D0 policy only; it exposes no
+personal policy authorization path.
+
+Policy-free historical snapshots remain deserializable without inserting a
+policy field or changing their fingerprint. Saved reports remain historical
+facts. If an original Run still needs host adjudication, absence of its original
+policy closes the qualification gate with `QUALIFICATION_POLICY_REQUIRED`;
+the host does not reconstruct a policy or substitute the demonstration fixture.
+Explicit recovery must match the original durable Run, including the frozen
+policy identity. Replaying a published business identity returns its original
+report, even if the caller supplies another policy. Corrections likewise retain
+the original policy and authorization snapshot, never re-adjudicating either.
+
 Original frozen snapshots preserve build provenance across recovery. An
 unmapped historical Run from another build closes the publication gate until
 the original snapshot can be validated against that exact durable Run. The

@@ -1,0 +1,10 @@
+{
+  "contract_version": "1.0.0",
+  "policy_version": "synthetic-version-one",
+  "synthetic": true,
+  "generator_version": "independent-policy-demonstration/1",
+  "seed": 47311,
+  "evaluation_max_age_months": 5,
+  "state_activity_max_age_months": 9,
+  "require_state_activity": true
+}

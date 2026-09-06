@@ -229,6 +229,7 @@ export interface components {
             implementation: components["schemas"]["DecisionCaseVersionBundle"];
             /** Policy Version */
             policy_version: string;
+            qualification_policy?: components["schemas"]["QualificationPolicy"] | null;
             /** Version Id */
             version_id: string;
         };
@@ -312,6 +313,23 @@ export interface components {
             /** Routing Policy Version */
             routing_policy_version: string;
         };
+        /** EstablishedObligation */
+        EstablishedObligation: {
+            /** Basis Reference */
+            basis_reference: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "REDUCE" | "EXIT";
+            /** Obligation Id */
+            obligation_id: string;
+            /**
+             * Quantity Status
+             * @constant
+             */
+            quantity_status: "UNKNOWN";
+        };
         /**
          * EvidenceClock
          * @description The immutable fact, publication, acquisition, and validation clocks.
@@ -339,6 +357,33 @@ export interface components {
             outcome_code: string;
             /** Summary */
             summary: string;
+        };
+        /** FormalCheckIdentity */
+        FormalCheckIdentity: {
+            /** Index */
+            index: number;
+            /**
+             * Planned Nodes
+             * @default []
+             */
+            planned_nodes: string[];
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /**
+             * Required Gates
+             * @default []
+             */
+            required_gates: string[];
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /** Sequence Id */
+            sequence_id: string;
         };
         /**
          * FormalReport
@@ -372,6 +417,29 @@ export interface components {
             synthetic: boolean;
             version_bundle: components["schemas"]["DecisionCaseVersionBundle"];
         };
+        /** FrozenTask */
+        FrozenTask: {
+            /** Activation Id */
+            activation_id: string | null;
+            /** Decision Id */
+            decision_id: string;
+            /**
+             * Freeze Status
+             * @enum {string}
+             */
+            freeze_status: "APPROVED" | "DENIED";
+            /**
+             * Frozen At
+             * Format: date-time
+             */
+            frozen_at: string;
+            node: components["schemas"]["LegalTaskNode"];
+            qualification_snapshot: components["schemas"]["QualificationRecord"] | null;
+            /** Reasons */
+            reasons: string[];
+            scope: components["schemas"]["QualificationScope"];
+            version: components["schemas"]["CapabilityVersion"];
+        };
         /**
          * GateResult
          * @description One deterministic gate evaluated during a saved decision stage.
@@ -387,14 +455,51 @@ export interface components {
         };
         /** GovernanceOutcome */
         GovernanceOutcome: {
+            activation?: components["schemas"]["VersionActivation"] | null;
             /**
              * Disposition
              * @enum {string}
              */
             disposition: "APPROVED" | "DENIED";
+            policy_binding?: components["schemas"]["PolicyBinding"] | null;
             qualification?: components["schemas"]["QualificationRecord"] | null;
             /** Reasons */
             reasons: string[];
+            task?: components["schemas"]["FrozenTask"] | null;
+            task_node?: components["schemas"]["RegisteredTaskNode"] | null;
+            usage?: components["schemas"]["TaskUsage"] | null;
+        };
+        /** LegalTaskNode */
+        LegalTaskNode: {
+            /**
+             * Deterministic Obligations
+             * @default []
+             */
+            deterministic_obligations: components["schemas"]["EstablishedObligation"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "MONTHLY" | "DAILY" | "RENEWAL";
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Node Id */
+            node_id: string;
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /** Task Identity */
+            task_identity: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
         };
         /** OpaqueRequestErrorDto */
         OpaqueRequestErrorDto: {
@@ -404,6 +509,14 @@ export interface components {
              * @constant
              */
             detail: "request is not permitted";
+        };
+        /**
+         * PolicyBinding
+         * @description Frozen scoped policy input, independent of whether authority was obtained.
+         */
+        PolicyBinding: {
+            scope: components["schemas"]["QualificationScope"];
+            version: components["schemas"]["CapabilityVersion"];
         };
         /** QualificationEvidence */
         QualificationEvidence: {
@@ -426,22 +539,71 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            formal_check?: components["schemas"]["FormalCheckIdentity"] | null;
+            /**
+             * Gate Results
+             * @default []
+             */
+            gate_results: components["schemas"]["QualificationGate"][];
             /** Generator Version */
             generator_version: string;
             /**
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK";
+            /** Maturity Sufficient */
+            maturity_sufficient?: boolean | null;
+            /** Resolves Evidence Id */
+            resolves_evidence_id?: string | null;
+            /** Restored Authorization Digest */
+            restored_authorization_digest?: string | null;
             scope: components["schemas"]["QualificationScope"];
             /** Seed */
             seed: number;
+            /** State Activity End */
+            state_activity_end?: string | null;
             /**
              * Synthetic
              * @constant
              */
             synthetic: true;
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /** QualificationGate */
+        QualificationGate: {
+            /** Gate Id */
+            gate_id: string;
+            /** Passed */
+            passed: boolean;
+        };
+        /**
+         * QualificationPolicy
+         * @description Explicit D0 policy input, never a default for personal authorization.
+         */
+        QualificationPolicy: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Evaluation Max Age Months */
+            evaluation_max_age_months: number;
+            /** Generator Version */
+            generator_version: string;
+            /** Policy Version */
+            policy_version: string;
+            /** Require State Activity */
+            require_state_activity: boolean;
+            /** Seed */
+            seed: number;
+            /** State Activity Max Age Months */
+            state_activity_max_age_months: number;
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: true;
         };
         /** QualificationRecord */
         QualificationRecord: {
@@ -450,14 +612,20 @@ export interface components {
              * @default []
              */
             alerts: components["schemas"]["QualificationEvidence"][];
-            authorization_evidence: components["schemas"]["QualificationEvidence"];
+            authorization_evidence: components["schemas"]["QualificationEvidence"] | null;
             /** Authorization Id */
-            authorization_id: string;
+            authorization_id: string | null;
+            /** Authorization Terminated At */
+            authorization_terminated_at?: string | null;
             /** Cause */
             cause: string;
             /** Decision Id */
             decision_id: string;
             evidence: components["schemas"]["QualificationEvidence"];
+            formal_evidence?: components["schemas"]["QualificationEvidence"] | null;
+            formal_passing_evidence?: components["schemas"]["QualificationEvidence"] | null;
+            /** Last Formal Node */
+            last_formal_node?: string | null;
             /** Previous Decision Id */
             previous_decision_id?: string | null;
             /**
@@ -465,13 +633,33 @@ export interface components {
              * Format: date-time
              */
             recorded_at: string;
+            requalification?: components["schemas"]["RequalificationProof"] | null;
+            /**
+             * Restoration Evidence
+             * @default []
+             */
+            restoration_evidence: components["schemas"]["QualificationEvidence"][];
+            /**
+             * Restrictions
+             * @default []
+             */
+            restrictions: components["schemas"]["QualificationRestriction"][];
             scope: components["schemas"]["QualificationScope"];
             /**
              * Status
              * @enum {string}
              */
-            status: "VALID" | "AT_RISK";
+            status: "NOT_OBTAINED" | "VALID" | "AT_RISK" | "SUSPENDED" | "REVOKED";
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /** QualificationRestriction */
+        QualificationRestriction: {
+            /**
+             * Cause
+             * @enum {string}
+             */
+            cause: "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "EVIDENCE_EXPIRED" | "FORMAL_PERFORMANCE_FAILURE";
+            evidence: components["schemas"]["QualificationEvidence"];
         };
         /** QualificationScope */
         QualificationScope: {
@@ -488,10 +676,18 @@ export interface components {
              * @constant
              */
             evidence_level: "D0";
+            /** Holding Age Domain */
+            holding_age_domain?: string | null;
             /** Market State */
             market_state: string;
+            /** Portfolio Scope */
+            portfolio_scope?: string | null;
+            /** Probability Grid */
+            probability_grid?: string | null;
             /** Purpose */
             purpose: string;
+            /** Renewal Ordinal */
+            renewal_ordinal?: string | null;
             /** Source */
             source: string;
             /** Target */
@@ -506,6 +702,40 @@ export interface components {
         ReauthenticationVerificationDto: {
             /** Credential Id */
             credential_id: string;
+        };
+        /** RegisteredTaskNode */
+        RegisteredTaskNode: {
+            /** Decision Id */
+            decision_id: string;
+            node: components["schemas"]["LegalTaskNode"];
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            scope: components["schemas"]["QualificationScope"];
+        };
+        /** RequalificationProof */
+        RequalificationProof: {
+            /** Application Id */
+            application_id: string;
+            /**
+             * First Prediction Frozen At
+             * Format: date-time
+             */
+            first_prediction_frozen_at: string;
+            forward_evidence: components["schemas"]["QualificationEvidence"];
+            historical_evidence: components["schemas"]["QualificationEvidence"];
+            /**
+             * Locked At
+             * Format: date-time
+             */
+            locked_at: string;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
         };
         /**
          * ResultAccessScope
@@ -567,6 +797,20 @@ export interface components {
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
         };
+        /** TaskUsage */
+        TaskUsage: {
+            /** Allowed */
+            allowed: boolean;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            qualification_snapshot: components["schemas"]["QualificationRecord"] | null;
+            /** Reasons */
+            reasons: string[];
+            task_snapshot: components["schemas"]["FrozenTask"];
+        };
         /** UserFact */
         UserFact: {
             /**
@@ -617,6 +861,25 @@ export interface components {
              * @enum {string}
              */
             kind: "VIEWED" | "ACKNOWLEDGED" | "CONFIRMED" | "EXECUTION_DECLARED";
+        };
+        /** VersionActivation */
+        VersionActivation: {
+            /** Decision Id */
+            decision_id: string;
+            first_node: components["schemas"]["LegalTaskNode"];
+            /** Previous Activation Id */
+            previous_activation_id: string | null;
+            previous_version: components["schemas"]["CapabilityVersion"] | null;
+            qualification_snapshot: components["schemas"]["QualificationRecord"];
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Retained Task Ids */
+            retained_task_ids: string[];
+            scope: components["schemas"]["QualificationScope"];
+            version: components["schemas"]["CapabilityVersion"];
         };
         /**
          * VersionDiagnosticDto

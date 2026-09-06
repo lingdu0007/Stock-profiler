@@ -119,7 +119,10 @@ def test_official_historical_run_keeps_its_identity_through_upgrade(
         assert sha256(database.read_bytes()).hexdigest() == before
         return
 
-    execution = run_frozen_decision_case(migrated_settings, payload)
+    upgraded_settings = migrated_settings.model_copy(update={"source_sha": "b" * 40})
+    execution = replay_default_frozen_decision_case(
+        upgraded_settings, case.business_identity, recovery_case=case
+    )
 
     assert execution.framework_run_id == original["run"]["run_id"] == case.framework_run_id
     assert execution.report is not None
@@ -136,12 +139,11 @@ def test_official_historical_run_keeps_its_identity_through_upgrade(
         for checkpoint in asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
     ] == original["checkpoints"]
     assert run_frozen_decision_case(migrated_settings, payload).report == execution.report
-    if not scoped:
-        assert (
-            replay_default_frozen_decision_case(
-                migrated_settings, case.business_identity, recovery_case=case
-            ).report
-            == execution.report
-        )
+    assert (
+        replay_default_frozen_decision_case(
+            upgraded_settings, case.business_identity, recovery_case=case
+        ).report
+        == execution.report
+    )
     assert json.loads(envelope.read_text())["case"] == payload
     runtime.run_store.close()

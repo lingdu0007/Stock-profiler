@@ -23,7 +23,11 @@ from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
-from stock_profiler.modules.qualification.contracts import GovernanceOutcome, QualificationCommand
+from stock_profiler.modules.qualification.contracts import (
+    GovernanceCommand,
+    GovernanceOutcome,
+    QualificationCommand,
+)
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
 FROZEN_HOST_CONTRACT_VERSION = "2.0.0"
@@ -31,8 +35,9 @@ FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
+_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0"})
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
-    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, "3.0.0", "4.0.0"}
+    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, *_SCOPED_CASE_CONTRACT_VERSIONS}
 )
 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
     {
@@ -40,6 +45,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         (FROZEN_CASE_CONTRACT_VERSION, FROZEN_HOST_CONTRACT_VERSION),
         ("3.0.0", "3.0.0"),
         ("4.0.0", "4.0.0"),
+        ("5.0.0", "5.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -336,7 +342,11 @@ def supports_case_host_contract(case_version: str, host_version: str) -> bool:
 
 def definition_version_for_case_contract(case_version: str) -> str:
     """Keep host and framework boundary validation on the same compatibility rule."""
-    return "2.0.0" if case_version in {"3.0.0", "4.0.0"} else FROZEN_AGENT_DEFINITION_VERSION
+    return (
+        "2.0.0"
+        if case_version in _SCOPED_CASE_CONTRACT_VERSIONS
+        else FROZEN_AGENT_DEFINITION_VERSION
+    )
 
 
 class FormalReport(FrozenContract):
@@ -550,17 +560,27 @@ class FrozenDecisionCase(FrozenContract):
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    governance: QualificationCommand | None = Field(
+    governance: GovernanceCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
-        scoped = self.version_bundle.case_contract_version in {"3.0.0", "4.0.0"}
-        governed = self.version_bundle.case_contract_version == "4.0.0"
+        scoped = self.version_bundle.case_contract_version in _SCOPED_CASE_CONTRACT_VERSIONS
+        governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
         if governed != (self.governance is not None):
-            raise ValueError("governance requires the version 4 frozen contract")
+            raise ValueError("governance requires a governed frozen contract")
+        if (
+            self.version_bundle.case_contract_version == "4.0.0"
+            and self.governance is not None
+            and (
+                not isinstance(self.governance, QualificationCommand)
+                or self.governance.action not in {"GRANT", "ALERT"}
+                or self.governance.evidence.kind not in {"QUALIFICATION_PASS", "DIAGNOSTIC_ALERT"}
+            )
+        ):
+            raise ValueError("extended governance requires the version 5 frozen contract")
         if governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
             raise ValueError("governed cases require a timezone-aware knowledge cutoff")
         if self.expected_external_result.governance is not None:
@@ -661,7 +681,7 @@ class FrozenDecisionCase(FrozenContract):
                     },
                 )
                 for case_contract_version, _host_contract_version in supported_pairs
-                if case_contract_version not in {"3.0.0", "4.0.0"}
+                if case_contract_version not in _SCOPED_CASE_CONTRACT_VERSIONS
             )
         )
 
@@ -690,7 +710,7 @@ class FrozenDecisionCase(FrozenContract):
                 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
             )
             if (case_contract_version, host_contract_version) != current_pair
-            and case_contract_version not in {"3.0.0", "4.0.0"}
+            and case_contract_version not in _SCOPED_CASE_CONTRACT_VERSIONS
         )
 
     @property

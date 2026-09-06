@@ -46,8 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
-from stock_profiler.modules.qualification.contracts import GovernanceOutcome
-from stock_profiler.modules.qualification.service import adjudicate
+from stock_profiler.modules.qualification.governance import adjudicate
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -263,7 +262,7 @@ def _run_frozen_decision_case(
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
         known_run_ids = ledger.mapped_framework_run_ids(connection)
-    if not has_existing_mapping:
+    if not has_existing_mapping and case.recovery_framework_run_id is None:
         try:
             legacy_case = asyncio.run(framework_adapter.recover_unmapped(case, known_run_ids))
         except ValueError as error:
@@ -478,19 +477,15 @@ def _commit_framework_result(
                 business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
             )
             if business_result is not None and execution_case.governance is not None:
-                if business_result.status == "SUCCEEDED":
-                    assert execution_case.access_scope is not None
-                    governance = adjudicate(
-                        execution_case.governance,
-                        event_id=execution_case.decision_event_id,
-                        observed_at=ledger.observed_at(),
-                        knowledge_cutoff=execution_case.knowledge_cutoff,
-                        history=ledger.governance_history(connection, execution_case.access_scope),
-                    )
-                else:
-                    governance = GovernanceOutcome(
-                        disposition="DENIED", reasons=("BUSINESS_PREREQUISITE_NOT_MET",)
-                    )
+                assert execution_case.access_scope is not None
+                governance = adjudicate(
+                    execution_case.governance,
+                    event_id=execution_case.decision_event_id,
+                    observed_at=ledger.observed_at(),
+                    knowledge_cutoff=execution_case.knowledge_cutoff,
+                    history=ledger.governance_history(connection, execution_case.access_scope),
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
                 result = result.model_copy(update={"governance": governance})
                 qualification_result = StageResult(
                     phase="QUALIFICATION",
