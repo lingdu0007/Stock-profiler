@@ -97,6 +97,8 @@ class CapabilityVersion(GovernanceContract):
         policy = identity.get("qualification_policy")
         if isinstance(policy, dict):
             policy.pop("policy_version")
+            policy.pop("generator_version")
+            policy.pop("seed")
         implementation = identity["implementation"]
         if isinstance(implementation, dict):
             implementation.pop("host_source_sha")

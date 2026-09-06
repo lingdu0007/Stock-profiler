@@ -931,7 +931,13 @@ def test_requalification_requires_complete_populations_and_original_sequence(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["version-id", "policy-identity", "host-source"],
+    [
+        "version-id",
+        "policy-identity",
+        "host-source",
+        "policy-seed-provenance",
+        "policy-generator-provenance",
+    ],
 )
 def test_revoked_version_lineage_cannot_grant_again_under_a_new_identity(
     migrated_settings: Settings,
@@ -962,8 +968,19 @@ def test_revoked_version_lineage_cannot_grant_again_under_a_new_identity(
             policy_version="synthetic-renamed-policy",
         )
         renamed["version"]["qualification_policy"]["policy_version"] = "synthetic-renamed-policy"
-    else:
+    elif mutation == "host-source":
         renamed["version"]["implementation"]["host_source_sha"] = "c" * 40
+    else:
+        renamed["version"].update(
+            version_id=f"synthetic-{mutation}-version",
+            policy_version=f"synthetic-{mutation}-policy",
+        )
+        policy = renamed["version"]["qualification_policy"]
+        policy["policy_version"] = f"synthetic-{mutation}-policy"
+        if mutation == "policy-seed-provenance":
+            policy["seed"] = 82003
+        else:
+            policy["generator_version"] = "synthetic-policy-generator/2"
     renamed["evidence"]["version"] = deepcopy(renamed["version"])
     renamed["evidence"]["evidence_id"] = f"synthetic-{mutation}-grant-attempt"
     repeated = execute(
