@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from typing import Any, Literal, Protocol, cast, get_args
 
@@ -556,6 +557,8 @@ class FrozenDecisionCase(FrozenContract):
         governed = self.version_bundle.case_contract_version == "4.0.0"
         if governed != (self.governance is not None):
             raise ValueError("governance requires the version 4 frozen contract")
+        if governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
+            raise ValueError("governed cases require a timezone-aware knowledge cutoff")
         if self.expected_external_result.governance is not None:
             raise ValueError("governance is a host decision, never framework output")
         if self.governance is not None and (

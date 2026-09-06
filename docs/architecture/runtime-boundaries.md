@@ -29,8 +29,10 @@ Neither approval nor denial replaces the original business or lifecycle
 outcome. Non-success business prerequisites cannot create authorization;
 their saved negative outcomes remain readable. Evidence must have been
 available by the original frozen knowledge cutoff, even when execution is
-delayed. Reading a saved qualification outcome is historical replay, not a
-new grant or activation.
+delayed. This also applies to inherited authorization evidence and every
+retained alert. Invalid or timezone-less governed cutoffs are rejected and
+audited before creating a Run. Reading a saved qualification outcome is
+historical replay, not a new grant or activation.
 
 Original frozen snapshots preserve build provenance across recovery. An
 unmapped historical Run from another build closes the publication gate until

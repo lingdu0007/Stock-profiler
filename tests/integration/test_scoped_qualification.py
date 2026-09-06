@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import (
     get_formal_report,
@@ -21,6 +22,8 @@ from stock_profiler.modules.decision_cases.domain import (
     load_frozen_decision_case,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
+from stock_profiler.modules.qualification.contracts import QualificationCommand
+from stock_profiler.modules.qualification.service import adjudicate
 
 
 class GovernanceClock:
@@ -438,3 +441,102 @@ def test_governed_correction_preserves_original_contract_authority_and_run(
         )
         assert ledger.governance_history(connection, case.access_scope) == history_before
     assert asyncio.run(runtime.run_store.get_run(original.framework_run_id)) == run_before
+
+
+@pytest.mark.parametrize("cutoff", ["2042-05-17T16:00:00", "not-a-timestamp"])
+def test_invalid_governed_cutoff_is_audited_before_any_run(
+    migrated_settings: Settings, cutoff: str
+) -> None:
+    payload = case_payload(
+        migrated_settings, "invalid-cutoff", qualification_command(migrated_settings)
+    )
+    payload["knowledge_cutoff"] = cutoff
+    for _attempt in range(2):
+        with pytest.raises(ValueError):
+            run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert all(
+        value == 0 for value in DecisionLedger.from_settings(migrated_settings).counts().values()
+    )
+    audits = ResultDelivery.from_settings(migrated_settings).audit_history()
+    assert len(audits) == 2
+    assert all(item.reason == "UNDECLARED_CAPABILITY" for item in audits)
+
+
+@pytest.mark.parametrize("late_dependency", ["authorization", "latest-alert", "earlier-alert"])
+def test_inherited_evidence_obeys_the_cutoff_in_auxiliary_adjudication(
+    migrated_settings: Settings, late_dependency: str
+) -> None:
+    """One real grant plus in-memory alert diagnostics, not a multi-Run integration proof."""
+    command = qualification_command(migrated_settings)
+    if late_dependency == "authorization":
+        command["evidence"]["available_at"] = "2042-05-18T15:00:00Z"
+    payload = case_payload(migrated_settings, "late-history", command)
+    payload["knowledge_cutoff"] = "2042-05-19T16:00:00Z"
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    )
+    assert original.report is not None
+    assert original.report.result.governance is not None
+    history = [original.report.result.governance]
+    available_times = (
+        []
+        if late_dependency == "authorization"
+        else ["2042-05-18T15:00:00Z"]
+        + (["2042-05-17T15:00:00Z"] if late_dependency == "earlier-alert" else [])
+    )
+    for index, available_at in enumerate(available_times):
+        previous = history[-1].qualification
+        assert previous is not None
+        alert = qualification_command(
+            migrated_settings, action="ALERT", previous=previous.decision_id
+        )
+        alert["evidence"].update(kind="DIAGNOSTIC_ALERT", available_at=available_at)
+        outcome = adjudicate(
+            QualificationCommand.model_validate(alert),
+            event_id=f"synthetic-auxiliary-alert-4519-{index}",
+            observed_at="2042-05-19T16:01:00Z",
+            knowledge_cutoff="2042-05-19T16:00:00Z",
+            history=tuple(history),
+        )
+        assert outcome.disposition == "APPROVED"
+        history.append(outcome)
+    previous = history[-1].qualification
+    assert previous is not None
+    target = qualification_command(migrated_settings, action="ALERT", previous=previous.decision_id)
+    target["evidence"]["kind"] = "DIAGNOSTIC_ALERT"
+    outcome = adjudicate(
+        QualificationCommand.model_validate(target),
+        event_id="synthetic-auxiliary-earlier-cutoff-4519",
+        observed_at="2042-05-20T16:01:00Z",
+        knowledge_cutoff="2042-05-17T16:00:00Z",
+        history=tuple(history),
+    )
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("QUALIFICATION_HISTORY_AFTER_CUTOFF",)
+    assert outcome.qualification is None
+
+
+def test_inherited_late_authorization_is_denied_in_the_complete_journey(
+    migrated_settings: Settings,
+) -> None:
+    """Real integration gate still blocked by the unchanged multi-Run Context collision."""
+    command = qualification_command(migrated_settings)
+    command["evidence"]["available_at"] = "2042-05-18T15:00:00Z"
+    payload = case_payload(migrated_settings, "later-grant", command)
+    payload["knowledge_cutoff"] = "2042-05-19T16:00:00Z"
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    )
+    alert = qualification_command(
+        migrated_settings, action="ALERT", previous=original.decision_event_id
+    )
+    alert["evidence"]["kind"] = "DIAGNOSTIC_ALERT"
+    earlier = run_frozen_decision_case(
+        migrated_settings,
+        case_payload(migrated_settings, "earlier-cutoff-alert", alert),
+        clock=GovernanceClock("2042-05-20T16:01:00Z"),
+    )
+    assert earlier.report is not None
+    assert earlier.report.result.governance is not None
+    assert earlier.report.result.governance.disposition == "DENIED"
+    assert earlier.report.result.governance.qualification is None

@@ -20,6 +20,7 @@ def adjudicate(
     history: tuple[GovernanceOutcome, ...],
 ) -> GovernanceOutcome:
     now = datetime.fromisoformat(observed_at)
+    cutoff = datetime.fromisoformat(knowledge_cutoff)
     evidence = command.evidence
     if (
         evidence.scope != command.scope
@@ -29,7 +30,7 @@ def adjudicate(
         or evidence.expires_at < now
     ):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_INVALID",))
-    if evidence.available_at > datetime.fromisoformat(knowledge_cutoff):
+    if evidence.available_at > cutoff:
         return GovernanceOutcome(
             disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_AFTER_CUTOFF",)
         )
@@ -40,6 +41,17 @@ def adjudicate(
         if previous is None or evidence.kind != "DIAGNOSTIC_ALERT":
             return GovernanceOutcome(
                 disposition="DENIED", reasons=("ORIGINAL_AUTHORIZATION_REQUIRED",)
+            )
+        if any(
+            inherited.available_at > cutoff
+            for inherited in (
+                previous.authorization_evidence,
+                previous.evidence,
+                *previous.alerts,
+            )
+        ):
+            return GovernanceOutcome(
+                disposition="DENIED", reasons=("QUALIFICATION_HISTORY_AFTER_CUTOFF",)
             )
         return GovernanceOutcome(
             disposition="APPROVED",
