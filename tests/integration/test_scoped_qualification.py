@@ -701,6 +701,42 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
             "gate_results": [{"gate_id": "synthetic-forward-gate", "passed": True}],
         },
     }
+    registration = qualification_command(
+        migrated_settings,
+        action="REGISTER_REQUALIFICATION",
+        previous=revoked.decision_event_id,
+    )
+    registration["evidence"].update(
+        evidence_id="synthetic-requalification-registration",
+        kind="REQUALIFICATION_APPLICATION_REGISTERED",
+        requalification_application_id="synthetic-requalification-application",
+        evaluation_end="2042-05-19T00:00:00Z",
+        available_at="2042-05-19T08:00:00Z",
+        expires_at="2042-09-14T00:00:00Z",
+    )
+    registration["requalification_application"] = {
+        "application_id": "synthetic-requalification-application",
+        "registered_at": "2042-05-18T00:00:00Z",
+        "locked_at": "2042-05-19T00:00:00Z",
+        "frozen_version_digest": version_digest,
+        "historical_registration": historical_registration,
+        "forward_registration": forward_registration,
+    }
+    registration_payload = case_payload(
+        migrated_settings,
+        "recertify-registered",
+        registration,
+        contract_version="5.0.0",
+    )
+    registration_payload["knowledge_cutoff"] = "2042-05-19T09:00:00Z"
+    registered = run_frozen_decision_case(
+        migrated_settings,
+        registration_payload,
+        clock=GovernanceClock("2042-05-19T10:00:00Z"),
+    )
+    assert registered.report is not None
+    assert registered.report.result.governance is not None
+    assert registered.report.result.governance.disposition == "APPROVED"
     payload = case_payload(migrated_settings, "recertify-new", command, contract_version="5.0.0")
     payload["knowledge_cutoff"] = "2042-05-24T09:00:00Z"
     execution = run_frozen_decision_case(

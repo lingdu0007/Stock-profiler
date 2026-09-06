@@ -223,6 +223,18 @@ def test_integrity_restoration_accepts_only_complete_certified_substitution(
             "contract_version": "1.0.0",
             "original_basis_digest": grant_command["evidence"]["digest"],
             "substitute_basis_digest": substitute_digest,
+            "dependency_windows": [
+                {
+                    "original_dependency_artifact_id": (
+                        "synthetic-basis-dependency-4519"
+                    ),
+                    "substitute_dependency_artifact_id": (
+                        "synthetic-basis-dependency-4519"
+                    ),
+                    "required_from": "2042-05-01T00:00:00Z",
+                    "required_until": "2042-05-10T00:00:00Z",
+                }
+            ],
             "checks": [
                 {
                     "check_id": f"synthetic-certified-{kind.lower().replace('_', '-')}",
@@ -240,6 +252,23 @@ def test_integrity_restoration_accepts_only_complete_certified_substitution(
     incomplete["certified_substitution"]["checks"][-1]["kind"] = "EQUIVALENCE"
     restore["restoration_evidence"] = [incomplete]
     denied = execute(migrated_settings, "certified-substitution-incomplete", restore)
+    assert denied.report is not None
+    assert denied.report.result.governance is not None
+    assert denied.report.result.governance.disposition == "DENIED"
+    assert denied.report.result.governance.reasons == ("QUALIFICATION_RESTORATION_INCOMPLETE",)
+
+    shortened_window = deepcopy(proof)
+    shortened_window["basis"]["dependency_windows"][0].update(
+        required_from="2042-05-06T00:00:00Z",
+        required_until="2042-05-06T00:00:00Z",
+    )
+    shortened_digest = canonical_digest(shortened_window["basis"])
+    shortened_window["digest"] = shortened_digest
+    shortened_window["certified_substitution"]["substitute_basis_digest"] = shortened_digest
+    for check in shortened_window["certified_substitution"]["checks"]:
+        check["substitute_basis_digest"] = shortened_digest
+    restore["restoration_evidence"] = [shortened_window]
+    denied = execute(migrated_settings, "certified-substitution-shortened-window", restore)
     assert denied.report is not None
     assert denied.report.result.governance is not None
     assert denied.report.result.governance.disposition == "DENIED"
@@ -603,7 +632,7 @@ def test_requalification_requires_complete_populations_and_original_sequence(
         kind="HISTORICAL_OOS_PASS",
         evidence_id="synthetic-complete-history",
         evaluation_end="2042-05-18T00:00:00Z",
-        available_at="2042-05-19T00:00:00Z",
+        available_at="2042-05-21T08:00:00Z",
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
@@ -678,6 +707,46 @@ def test_requalification_requires_complete_populations_and_original_sequence(
             "gate_results": [{"gate_id": "synthetic-forward-gate", "passed": True}],
         },
     }
+    registration = qualification_command(
+        migrated_settings,
+        action="REGISTER_REQUALIFICATION",
+        previous=revoked.decision_event_id,
+    )
+    registration["evidence"].update(
+        kind="REQUALIFICATION_APPLICATION_REGISTERED",
+        evidence_id="synthetic-complete-requalification-registration",
+        requalification_application_id=(
+            "synthetic-complete-requalification-application"
+        ),
+        evaluation_end="2042-05-22T00:00:00Z",
+        available_at="2042-05-22T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+    )
+    registration["requalification_application"] = {
+        "application_id": "synthetic-complete-requalification-application",
+        "registered_at": "2042-05-21T00:00:00Z",
+        "locked_at": "2042-05-22T00:00:00Z",
+        "frozen_version_digest": frozen_version_digest,
+        "historical_registration": historical_registration,
+        "forward_registration": forward_registration,
+    }
+    registered = execute(
+        migrated_settings,
+        "complete-requalification-registered",
+        registration,
+        observed_at="2042-05-22T10:00:00Z",
+        knowledge_cutoff="2042-05-22T09:00:00Z",
+    )
+    assert registered.report is not None
+    registered_outcome = registered.report.result.governance
+    assert registered_outcome is not None
+    assert registered_outcome.disposition == "APPROVED"
+    assert registered_outcome.registered_requalification is not None
+    assert (
+        registered_outcome.registered_requalification.application.application_id
+        == "synthetic-complete-requalification-application"
+    )
+
     incomplete = deepcopy(command)
     incomplete["requalification"]["forward_population"]["members"].pop()
     incomplete_execution = execute(
@@ -696,6 +765,16 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     silently_shrunk = deepcopy(command)
     silently_shrunk["requalification"]["forward_population"]["registered_member_ids"].pop()
     silently_shrunk["requalification"]["forward_population"]["members"].pop()
+    silently_shrunk["requalification"]["forward_registration"][
+        "registered_member_ids"
+    ].pop()
+    shrunk_registration = silently_shrunk["requalification"]["forward_registration"]
+    shrunk_registration["digest"] = canonical_digest(
+        {key: value for key, value in shrunk_registration.items() if key != "digest"}
+    )
+    silently_shrunk["requalification"]["forward_evidence"][
+        "requalification_registration_digest"
+    ] = shrunk_registration["digest"]
     silently_shrunk_execution = execute(
         migrated_settings,
         "complete-requalification-silently-shrunk",
@@ -720,6 +799,26 @@ def test_requalification_requires_complete_populations_and_original_sequence(
         forward_population["gate_results"],
         historical_population["gate_results"],
     )
+    historical_registration = exchanged_gates["requalification"]["historical_registration"]
+    forward_registration = exchanged_gates["requalification"]["forward_registration"]
+    historical_registration["required_gates"], forward_registration["required_gates"] = (
+        forward_registration["required_gates"],
+        historical_registration["required_gates"],
+    )
+    for population_name in ("historical", "forward"):
+        proof_registration = exchanged_gates["requalification"][
+            f"{population_name}_registration"
+        ]
+        proof_registration["digest"] = canonical_digest(
+            {
+                key: value
+                for key, value in proof_registration.items()
+                if key != "digest"
+            }
+        )
+        exchanged_gates["requalification"][f"{population_name}_evidence"][
+            "requalification_registration_digest"
+        ] = proof_registration["digest"]
     exchanged_gates_execution = execute(
         migrated_settings,
         "complete-requalification-exchanged-gates",
@@ -749,6 +848,23 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert relabeled_report_outcome is not None
     assert relabeled_report_outcome.disposition == "DENIED"
     assert relabeled_report_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
+
+    predating_report = deepcopy(command)
+    predating_report["requalification"]["historical_evidence"][
+        "available_at"
+    ] = "2042-05-20T08:00:00Z"
+    predating_report_execution = execute(
+        migrated_settings,
+        "complete-requalification-predating-report",
+        predating_report,
+        observed_at="2042-05-31T10:00:00Z",
+        knowledge_cutoff="2042-05-31T09:00:00Z",
+    )
+    assert predating_report_execution.report is not None
+    predating_report_outcome = predating_report_execution.report.result.governance
+    assert predating_report_outcome is not None
+    assert predating_report_outcome.disposition == "DENIED"
+    assert predating_report_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
 
     changed_sequence = deepcopy(command)
     changed_sequence["evidence"]["formal_check"]["planned_nodes"][-1] = "2042-07-31T00:00:00Z"
@@ -793,8 +909,13 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert revoked.report.result.governance.qualification.status == "REVOKED"
 
 
-def test_revoked_substantive_version_cannot_grant_again_under_a_new_name(
+@pytest.mark.parametrize(
+    "mutation",
+    ["version-id", "policy-identity", "host-source"],
+)
+def test_revoked_version_lineage_cannot_grant_again_under_a_new_identity(
     migrated_settings: Settings,
+    mutation: str,
 ) -> None:
     granted = execute(
         migrated_settings,
@@ -813,10 +934,25 @@ def test_revoked_substantive_version_cannot_grant_again_under_a_new_name(
     revoked = execute(migrated_settings, "renamed-revocation-state", revoke)
 
     renamed = qualification_command(migrated_settings)
-    renamed["version"]["version_id"] = "synthetic-renamed-version"
+    if mutation == "version-id":
+        renamed["version"]["version_id"] = "synthetic-renamed-version"
+    elif mutation == "policy-identity":
+        renamed["version"].update(
+            version_id="synthetic-renamed-version",
+            policy_version="synthetic-renamed-policy",
+        )
+        renamed["version"]["qualification_policy"]["policy_version"] = (
+            "synthetic-renamed-policy"
+        )
+    else:
+        renamed["version"]["implementation"]["host_source_sha"] = "c" * 40
     renamed["evidence"]["version"] = deepcopy(renamed["version"])
-    renamed["evidence"]["evidence_id"] = "synthetic-renamed-grant-attempt"
-    repeated = execute(migrated_settings, "renamed-revocation-attempt", renamed)
+    renamed["evidence"]["evidence_id"] = f"synthetic-{mutation}-grant-attempt"
+    repeated = execute(
+        migrated_settings,
+        f"{mutation}-revocation-attempt",
+        renamed,
+    )
     assert repeated.report is not None
     outcome = repeated.report.result.governance
     assert outcome is not None
@@ -827,6 +963,60 @@ def test_revoked_substantive_version_cannot_grant_again_under_a_new_name(
     assert revoked.report.result.governance is not None
     assert revoked.report.result.governance.qualification is not None
     assert revoked.report.result.governance.qualification.status == "REVOKED"
+
+
+def test_revoked_scope_lineage_cannot_promote_a_pre_registered_alias(
+    migrated_settings: Settings,
+) -> None:
+    alias = qualification_command(
+        migrated_settings,
+        action="RECORD_NOT_OBTAINED",
+    )
+    alias["version"]["implementation"]["host_source_sha"] = "c" * 40
+    alias["evidence"].update(
+        kind="INSUFFICIENT_EVIDENCE",
+        evidence_id="synthetic-pre-registered-alias",
+        version=deepcopy(alias["version"]),
+    )
+    registered_alias = execute(
+        migrated_settings,
+        "pre-registered-alias",
+        alias,
+    )
+
+    granted = execute(
+        migrated_settings,
+        "pre-registered-alias-original-grant",
+        qualification_command(migrated_settings),
+    )
+    revoke = qualification_command(
+        migrated_settings,
+        action="REVOKE",
+        previous=granted.decision_event_id,
+    )
+    revoke["evidence"].update(
+        kind="ORIGINAL_BASIS_INVALID",
+        evidence_id="synthetic-pre-registered-alias-revocation",
+    )
+    execute(migrated_settings, "pre-registered-alias-revoked", revoke)
+
+    alias["action"] = "GRANT"
+    alias["previous_decision_id"] = registered_alias.decision_event_id
+    alias["evidence"].update(
+        kind="QUALIFICATION_PASS",
+        evidence_id="synthetic-pre-registered-alias-grant",
+    )
+    repeated = execute(
+        migrated_settings,
+        "pre-registered-alias-grant-attempt",
+        alias,
+    )
+    assert repeated.report is not None
+    outcome = repeated.report.result.governance
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("QUALIFICATION_REVISION_CONFLICT",)
+    assert outcome.qualification is None
 
 
 def test_formal_check_cannot_replace_the_registered_error_budget(
@@ -1172,6 +1362,32 @@ def test_alert_non_disappearance_resolutions_require_independent_evidence(
         "rule_version": f"synthetic-{resolution.lower()}-rule",
         "resolution_evidence": resolution_evidence,
     }
+    if resolution == "PROVEN_ERRONEOUS":
+        command["alert_closure"]["erroneous_replay"] = {
+            "contract_version": "1.0.0",
+            "replay_id": "synthetic-proven-erroneous-replay",
+            "alert_evidence_id": alert_evidence_id,
+            "rule_version": f"synthetic-{resolution.lower()}-rule",
+            "original_information_digest": "b" * 64,
+            "replay_result_digest": "d" * 64,
+            "alert_reproduced": False,
+            "available_at": "2042-05-19T07:30:00Z",
+        }
+        missing_replay = deepcopy(command)
+        missing_replay["alert_closure"].pop("erroneous_replay")
+        denied = execute(
+            migrated_settings,
+            "proven-erroneous-without-replay",
+            missing_replay,
+            observed_at="2042-05-19T10:00:00Z",
+            knowledge_cutoff="2042-05-19T09:00:00Z",
+        )
+        assert denied.report is not None
+        assert denied.report.result.governance is not None
+        assert denied.report.result.governance.disposition == "DENIED"
+        assert denied.report.result.governance.reasons == (
+            "ALERT_CLOSURE_PROOF_INVALID",
+        )
     if transferred_restriction_id is not None:
         command["alert_closure"]["transferred_restriction_evidence_id"] = transferred_restriction_id
     closed = execute(
@@ -1189,3 +1405,9 @@ def test_alert_non_disappearance_resolutions_require_independent_evidence(
     assert record is not None
     assert record.status == expected_status
     assert record.alert_closures[-1].resolution == resolution
+    if resolution in {"TRANSFERRED", "ARCHIVED"}:
+        assert [item.evidence_id for item in record.outstanding_alerts] == [
+            alert_evidence_id
+        ]
+    else:
+        assert record.outstanding_alerts == ()

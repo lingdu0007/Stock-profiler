@@ -242,6 +242,7 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
+            erroneous_replay?: components["schemas"]["ErroneousAlertReplay"] | null;
             /**
              * Observations
              * @default []
@@ -308,10 +309,29 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
+            /** Dependency Windows */
+            dependency_windows: components["schemas"]["CertifiedDependencyWindow"][];
             /** Original Basis Digest */
             original_basis_digest: string;
             /** Substitute Basis Digest */
             substitute_basis_digest: string;
+        };
+        /** CertifiedDependencyWindow */
+        CertifiedDependencyWindow: {
+            /** Original Dependency Artifact Id */
+            original_dependency_artifact_id: string;
+            /**
+             * Required From
+             * Format: date-time
+             */
+            required_from: string;
+            /**
+             * Required Until
+             * Format: date-time
+             */
+            required_until: string;
+            /** Substitute Dependency Artifact Id */
+            substitute_dependency_artifact_id: string;
         };
         /** ChallengeDto */
         ChallengeDto: {
@@ -418,6 +438,34 @@ export interface components {
             contract_version: "1.0.0";
             /** Planned Nodes */
             planned_nodes: string[];
+            /** Rule Version */
+            rule_version: string;
+        };
+        /** ErroneousAlertReplay */
+        ErroneousAlertReplay: {
+            /** Alert Evidence Id */
+            alert_evidence_id: string;
+            /**
+             * Alert Reproduced
+             * @constant
+             */
+            alert_reproduced: false;
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Original Information Digest */
+            original_information_digest: string;
+            /** Replay Id */
+            replay_id: string;
+            /** Replay Result Digest */
+            replay_result_digest: string;
             /** Rule Version */
             rule_version: string;
         };
@@ -654,6 +702,7 @@ export interface components {
             qualification?: components["schemas"]["QualificationRecord"] | null;
             /** Reasons */
             reasons: string[];
+            registered_requalification?: components["schemas"]["RegisteredRequalificationApplication"] | null;
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
@@ -748,7 +797,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED" | "REQUALIFICATION_APPLICATION_REGISTERED";
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
             /** Requalification Application Id */
@@ -921,6 +970,22 @@ export interface components {
             /** Credential Id */
             credential_id: string;
         };
+        /** RegisteredRequalificationApplication */
+        RegisteredRequalificationApplication: {
+            application: components["schemas"]["RequalificationApplication"];
+            /** Decision Id */
+            decision_id: string;
+            evidence: components["schemas"]["QualificationEvidence"];
+            /** Previous Qualification Decision Id */
+            previous_qualification_decision_id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            scope: components["schemas"]["QualificationScope"];
+            version: components["schemas"]["CapabilityVersion"];
+        };
         /** RegisteredTaskNode */
         RegisteredTaskNode: {
             /** Decision Id */
@@ -932,6 +997,25 @@ export interface components {
              */
             registered_at: string;
             scope: components["schemas"]["QualificationScope"];
+        };
+        /** RequalificationApplication */
+        RequalificationApplication: {
+            /** Application Id */
+            application_id: string;
+            forward_registration: components["schemas"]["RequalificationPopulationRegistration"];
+            /** Frozen Version Digest */
+            frozen_version_digest: string;
+            historical_registration: components["schemas"]["RequalificationPopulationRegistration"];
+            /**
+             * Locked At
+             * Format: date-time
+             */
+            locked_at: string;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
         };
         /** RequalificationMember */
         RequalificationMember: {

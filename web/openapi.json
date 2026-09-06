@@ -43,6 +43,16 @@
             "title": "Contract Version",
             "type": "string"
           },
+          "erroneous_replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErroneousAlertReplay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "observations": {
             "default": [],
             "items": {
@@ -192,6 +202,14 @@
             "title": "Contract Version",
             "type": "string"
           },
+          "dependency_windows": {
+            "items": {
+              "$ref": "#/components/schemas/CertifiedDependencyWindow"
+            },
+            "minItems": 1,
+            "title": "Dependency Windows",
+            "type": "array"
+          },
           "original_basis_digest": {
             "pattern": "^[0-9a-f]{64}$",
             "title": "Original Basis Digest",
@@ -207,9 +225,43 @@
           "contract_version",
           "original_basis_digest",
           "substitute_basis_digest",
+          "dependency_windows",
           "checks"
         ],
         "title": "CertifiedBasisSubstitution",
+        "type": "object"
+      },
+      "CertifiedDependencyWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "original_dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Original Dependency Artifact Id",
+            "type": "string"
+          },
+          "required_from": {
+            "format": "date-time",
+            "title": "Required From",
+            "type": "string"
+          },
+          "required_until": {
+            "format": "date-time",
+            "title": "Required Until",
+            "type": "string"
+          },
+          "substitute_dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Substitute Dependency Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "original_dependency_artifact_id",
+          "substitute_dependency_artifact_id",
+          "required_from",
+          "required_until"
+        ],
+        "title": "CertifiedDependencyWindow",
         "type": "object"
       },
       "ChallengeDto": {
@@ -435,6 +487,63 @@
         },
         "required": ["contract_version", "rule_version", "planned_nodes"],
         "title": "DiagnosticPlan",
+        "type": "object"
+      },
+      "ErroneousAlertReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "alert_reproduced": {
+            "const": false,
+            "title": "Alert Reproduced",
+            "type": "boolean"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "original_information_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Information Digest",
+            "type": "string"
+          },
+          "replay_id": {
+            "minLength": 1,
+            "title": "Replay Id",
+            "type": "string"
+          },
+          "replay_result_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Replay Result Digest",
+            "type": "string"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "replay_id",
+          "alert_evidence_id",
+          "rule_version",
+          "original_information_digest",
+          "replay_result_digest",
+          "alert_reproduced",
+          "available_at"
+        ],
+        "title": "ErroneousAlertReplay",
         "type": "object"
       },
       "EstablishedObligation": {
@@ -972,6 +1081,16 @@
             "title": "Reasons",
             "type": "array"
           },
+          "registered_requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegisteredRequalificationApplication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "task": {
             "anyOf": [
               {
@@ -1200,7 +1319,8 @@
               "ALERT_TRANSFERRED",
               "ALERT_ARCHIVED",
               "CERTIFIED_BASIS_SUBSTITUTION",
-              "STATE_ACTIVITY_RESTORED"
+              "STATE_ACTIVITY_RESTORED",
+              "REQUALIFICATION_APPLICATION_REGISTERED"
             ],
             "title": "Kind",
             "type": "string"
@@ -1753,6 +1873,47 @@
         "title": "ReauthenticationVerificationDto",
         "type": "object"
       },
+      "RegisteredRequalificationApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "application": {
+            "$ref": "#/components/schemas/RequalificationApplication"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "previous_qualification_decision_id": {
+            "title": "Previous Qualification Decision Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "previous_qualification_decision_id",
+          "application",
+          "evidence",
+          "recorded_at"
+        ],
+        "title": "RegisteredRequalificationApplication",
+        "type": "object"
+      },
       "RegisteredTaskNode": {
         "additionalProperties": false,
         "properties": {
@@ -1774,6 +1935,47 @@
         },
         "required": ["decision_id", "scope", "node", "registered_at"],
         "title": "RegisteredTaskNode",
+        "type": "object"
+      },
+      "RequalificationApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "forward_registration": {
+            "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "historical_registration": {
+            "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "registered_at",
+          "locked_at",
+          "frozen_version_digest",
+          "historical_registration",
+          "forward_registration"
+        ],
+        "title": "RequalificationApplication",
         "type": "object"
       },
       "RequalificationMember": {

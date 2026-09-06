@@ -142,10 +142,18 @@ class BasisSubstitutionCheck(GovernanceContract):
     available_at: AwareDatetime
 
 
+class CertifiedDependencyWindow(GovernanceContract):
+    original_dependency_artifact_id: str = Field(min_length=1)
+    substitute_dependency_artifact_id: str = Field(min_length=1)
+    required_from: AwareDatetime
+    required_until: AwareDatetime
+
+
 class CertifiedBasisSubstitution(GovernanceContract):
     contract_version: Literal["1.0.0"]
     original_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     substitute_basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    dependency_windows: tuple[CertifiedDependencyWindow, ...] = Field(min_length=1)
     checks: tuple[BasisSubstitutionCheck, ...] = Field(min_length=4)
 
 
@@ -185,6 +193,7 @@ class QualificationEvidence(GovernanceContract):
         "ALERT_ARCHIVED",
         "CERTIFIED_BASIS_SUBSTITUTION",
         "STATE_ACTIVITY_RESTORED",
+        "REQUALIFICATION_APPLICATION_REGISTERED",
     ]
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_end: AwareDatetime
@@ -259,6 +268,15 @@ class RequalificationPopulationRegistration(GovernanceContract):
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class RequalificationApplication(GovernanceContract):
+    application_id: str = Field(min_length=1)
+    registered_at: AwareDatetime
+    locked_at: AwareDatetime
+    frozen_version_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    historical_registration: RequalificationPopulationRegistration
+    forward_registration: RequalificationPopulationRegistration
+
+
 class RequalificationProof(GovernanceContract):
     application_id: str = Field(min_length=1)
     registered_at: AwareDatetime
@@ -290,6 +308,17 @@ class DiagnosticObservation(GovernanceContract):
     evidence: QualificationEvidence
 
 
+class ErroneousAlertReplay(GovernanceContract):
+    contract_version: Literal["1.0.0"]
+    replay_id: str = Field(min_length=1)
+    alert_evidence_id: str = Field(min_length=1)
+    rule_version: str = Field(min_length=1)
+    original_information_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    replay_result_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    alert_reproduced: Literal[False]
+    available_at: AwareDatetime
+
+
 class AlertClosureProof(GovernanceContract):
     contract_version: Literal["1.0.0"]
     alert_evidence_id: str = Field(min_length=1)
@@ -299,6 +328,9 @@ class AlertClosureProof(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
     resolution_evidence: QualificationEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    erroneous_replay: ErroneousAlertReplay | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     transferred_restriction_evidence_id: str | None = Field(
@@ -324,6 +356,7 @@ class QualificationCommand(GovernanceContract):
         "REVOKE",
         "RESTORE",
         "REQUALIFY",
+        "REGISTER_REQUALIFICATION",
         "FORMAL_CHECK",
         "RECORD_FORMAL_NODE",
         "CLOSE_ALERT",
@@ -336,6 +369,9 @@ class QualificationCommand(GovernanceContract):
         default=(), exclude_if=lambda value: not value
     )
     requalification: RequalificationProof | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    requalification_application: RequalificationApplication | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     alert_closure: AlertClosureProof | None = Field(
@@ -406,7 +442,11 @@ class QualificationRecord(GovernanceContract):
 
     @property
     def outstanding_alerts(self) -> tuple[QualificationEvidence, ...]:
-        closed = {item.alert_evidence_id for item in self.alert_closures}
+        closed = {
+            item.alert_evidence_id
+            for item in self.alert_closures
+            if item.resolution in {"DISAPPEARED", "PROVEN_ERRONEOUS"}
+        }
         return tuple(item for item in self.alerts if item.evidence_id not in closed)
 
     def evidence_available_by(self, cutoff: datetime) -> bool:
@@ -506,6 +546,16 @@ class RegisteredTaskNode(GovernanceContract):
     registered_at: AwareDatetime
 
 
+class RegisteredRequalificationApplication(GovernanceContract):
+    decision_id: str
+    scope: QualificationScope
+    version: CapabilityVersion
+    previous_qualification_decision_id: str
+    application: RequalificationApplication
+    evidence: QualificationEvidence
+    recorded_at: AwareDatetime
+
+
 class RetainedTaskRelation(GovernanceContract):
     task_identity: str = Field(min_length=1)
     task_decision_id: str = Field(min_length=1)
@@ -566,6 +616,9 @@ class GovernanceOutcome(GovernanceContract):
     disposition: Literal["APPROVED", "DENIED"]
     reasons: tuple[str, ...]
     qualification: QualificationRecord | None = None
+    registered_requalification: RegisteredRequalificationApplication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     task_node: RegisteredTaskNode | None = Field(
         default=None, exclude_if=lambda value: value is None
     )

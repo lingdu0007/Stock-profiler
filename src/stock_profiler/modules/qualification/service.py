@@ -1,5 +1,6 @@
 """Deterministic D0 governance; synthetic evidence cannot authorize real use."""
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
 
@@ -15,6 +16,8 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationRecord,
     QualificationRestriction,
     QualificationScope,
+    RegisteredRequalificationApplication,
+    RequalificationApplication,
     RequalificationPopulation,
     RequalificationPopulationRegistration,
 )
@@ -76,8 +79,26 @@ def adjudicate(
         return _record_formal_node_disposition(command, previous, event_id, now)
     if command.action == "CLOSE_ALERT":
         return _close_alert(command, previous, event_id, now, cutoff)
+    if command.action == "REGISTER_REQUALIFICATION":
+        return _register_requalification_application(
+            command,
+            previous,
+            event_id,
+            now,
+            history,
+        )
     if command.action == "REQUALIFY":
         proof = command.requalification
+        registered = (
+            _registered_requalification_application(
+                history,
+                command.scope,
+                command.version,
+                proof.application_id,
+            )
+            if proof is not None
+            else None
+        )
         if (
             previous is None
             or previous.status != "REVOKED"
@@ -110,11 +131,24 @@ def adjudicate(
             or forward_population is None
             or historical_registration is None
             or forward_registration is None
+            or registered is None
+            or registered.previous_qualification_decision_id != previous.decision_id
+            or registered.evidence.available_at > cutoff
+            or registered.application
+            != RequalificationApplication(
+                application_id=proof.application_id,
+                registered_at=proof.registered_at,
+                locked_at=proof.locked_at,
+                frozen_version_digest=proof.frozen_version_digest,
+                historical_registration=historical_registration,
+                forward_registration=forward_registration,
+            )
             or historical_population.population_id == forward_population.population_id
             or proof.historical_evidence.evidence_id == proof.forward_evidence.evidence_id
             or evidence.requalification_application_id != proof.application_id
             or proof.historical_evidence.kind != "HISTORICAL_OOS_PASS"
             or proof.forward_evidence.kind != "LOCKED_FORWARD_PASS"
+            or proof.historical_evidence.available_at < registered.application.registered_at
             or not _requalification_registration_is_valid(
                 historical_registration,
                 proof.application_id,
@@ -387,6 +421,8 @@ def adjudicate(
         previous is not None and previous.status != "NOT_OBTAINED"
     ) or evidence.kind != "QUALIFICATION_PASS":
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_GRANT_NOT_ALLOWED",))
+    if _scope_has_revoked_head(history, command.scope):
+        return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_REVISION_CONFLICT",))
     if not evidence_is_current(evidence, now):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_EXPIRED",))
     return GovernanceOutcome(
@@ -679,12 +715,17 @@ def _close_alert(
     clear_count = policy.diagnostic_clear_node_count
     plan = target.diagnostic_plan if target is not None else None
     disappearance = proof.resolution == "DISAPPEARED"
+    terminal_resolutions = {"DISAPPEARED", "PROVEN_ERRONEOUS"}
     if (
         target is None
         or plan is None
         or proof.alert_evidence_id != evidence.resolves_evidence_id
         or any(
             closure.alert_evidence_id == proof.alert_evidence_id
+            and (
+                closure.resolution in terminal_resolutions
+                or closure.resolution == proof.resolution
+            )
             for closure in previous.alert_closures
         )
         or not target.scope.same_scope_as(command.scope)
@@ -698,6 +739,7 @@ def _close_alert(
             disappearance
             and (
                 proof.resolution_evidence is not None
+                or proof.erroneous_replay is not None
                 or proof.transferred_restriction_evidence_id is not None
                 or len(proof.observations) < clear_count
                 or not _diagnostic_observation_nodes_are_consecutive(proof, plan.planned_nodes)
@@ -734,7 +776,11 @@ def _close_alert(
         recorded_at=now,
     )
     closures = (*previous.alert_closures, closure)
-    closed_ids = {item.alert_evidence_id for item in closures}
+    closed_ids = {
+        item.alert_evidence_id
+        for item in closures
+        if item.resolution in terminal_resolutions
+    }
     outstanding = tuple(item for item in previous.alerts if item.evidence_id not in closed_ids)
     restricted = previous.status in {"SUSPENDED", "REVOKED"}
     archived = proof.resolution == "ARCHIVED"
@@ -868,6 +914,18 @@ def _direct_alert_resolution_is_valid(
         or not evidence_is_current(resolution_evidence, now)
     ):
         return False
+    replay = proof.erroneous_replay
+    if proof.resolution == "PROVEN_ERRONEOUS":
+        return (
+            replay is not None
+            and proof.transferred_restriction_evidence_id is None
+            and replay.alert_evidence_id == target.evidence_id
+            and replay.rule_version == proof.rule_version
+            and replay.original_information_digest == target.digest
+            and target.available_at <= replay.available_at <= resolution_evidence.available_at
+        )
+    if replay is not None:
+        return False
     if proof.resolution == "TRANSFERRED":
         transferred_id = proof.transferred_restriction_evidence_id
         return transferred_id is not None and any(
@@ -875,6 +933,101 @@ def _direct_alert_resolution_is_valid(
             for restriction in previous.restrictions
         )
     return proof.transferred_restriction_evidence_id is None
+
+
+def _register_requalification_application(
+    command: QualificationCommand,
+    previous: QualificationRecord | None,
+    event_id: str,
+    now: datetime,
+    history: tuple[GovernanceOutcome, ...],
+) -> GovernanceOutcome:
+    evidence = command.evidence
+    application = command.requalification_application
+    if (
+        previous is None
+        or previous.status != "REVOKED"
+        or previous.authorization_evidence is None
+        or previous.authorization_terminated_at is None
+        or application is None
+        or evidence.kind != "REQUALIFICATION_APPLICATION_REGISTERED"
+    ):
+        return GovernanceOutcome(
+            disposition="DENIED",
+            reasons=("REQUALIFICATION_REGISTRATION_NOT_ALLOWED",),
+        )
+    historical = application.historical_registration
+    forward = application.forward_registration
+    if (
+        not (
+            previous.authorization_terminated_at
+            < application.registered_at
+            <= application.locked_at
+            <= evidence.evaluation_end
+        )
+        or evidence.requalification_application_id != application.application_id
+        or application.frozen_version_digest != capability_version_digest(command.version)
+        or historical.population_id == forward.population_id
+        or not _requalification_registration_is_valid(
+            historical,
+            application.application_id,
+            "HISTORICAL",
+            application.registered_at,
+            application.locked_at,
+            application.frozen_version_digest,
+        )
+        or not _requalification_registration_is_valid(
+            forward,
+            application.application_id,
+            "FORWARD",
+            application.registered_at,
+            application.locked_at,
+            application.frozen_version_digest,
+        )
+        or any(
+            item.registered_requalification is not None
+            and item.registered_requalification.scope.same_scope_as(command.scope)
+            and item.registered_requalification.application.application_id
+            == application.application_id
+            for item in history
+        )
+    ):
+        return GovernanceOutcome(
+            disposition="DENIED",
+            reasons=("REQUALIFICATION_APPLICATION_INVALID",),
+        )
+    return GovernanceOutcome(
+        disposition="APPROVED",
+        reasons=("REQUALIFICATION_APPLICATION_REGISTERED",),
+        registered_requalification=RegisteredRequalificationApplication(
+            decision_id=event_id,
+            scope=command.scope,
+            version=command.version,
+            previous_qualification_decision_id=previous.decision_id,
+            application=application,
+            evidence=evidence,
+            recorded_at=now,
+        ),
+    )
+
+
+def _registered_requalification_application(
+    history: tuple[GovernanceOutcome, ...],
+    scope: QualificationScope,
+    version: CapabilityVersion,
+    application_id: str,
+) -> RegisteredRequalificationApplication | None:
+    registrations = [
+        outcome.registered_requalification
+        for outcome in history
+        if outcome.registered_requalification is not None
+        and outcome.registered_requalification.scope.same_scope_as(scope)
+        and outcome.registered_requalification.version == version
+        and outcome.registered_requalification.application.application_id == application_id
+    ]
+    if len(registrations) > 1:
+        raise ValueError("requalification history has duplicate applications")
+    return registrations[0] if registrations else None
 
 
 def _requalification_population_is_complete(
@@ -1000,13 +1153,42 @@ def _certified_substitution_is_valid(
     original: QualificationEvidence,
 ) -> bool:
     certification = proof.certified_substitution
-    if certification is None or proof.basis is None:
+    if certification is None or proof.basis is None or original.basis is None:
         return False
     checks = certification.checks
     required = {"EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY"}
+    mappings = certification.dependency_windows
+    original_windows = {
+        window.dependency_artifact_id: window for window in original.basis.dependency_windows
+    }
+    substitute_windows = {
+        window.dependency_artifact_id: window for window in proof.basis.dependency_windows
+    }
+    original_dependencies = {item.artifact_id for item in original.basis.dependencies}
+    substitute_dependencies = {item.artifact_id for item in proof.basis.dependencies}
     return (
         certification.original_basis_digest == original.digest
         and certification.substitute_basis_digest == proof.digest
+        and len(mappings) == len(original_windows) == len(substitute_windows)
+        and len({item.original_dependency_artifact_id for item in mappings}) == len(mappings)
+        and len({item.substitute_dependency_artifact_id for item in mappings}) == len(mappings)
+        and {item.original_dependency_artifact_id for item in mappings}
+        == set(original_windows)
+        == original_dependencies
+        and {item.substitute_dependency_artifact_id for item in mappings}
+        == set(substitute_windows)
+        == substitute_dependencies
+        and all(
+            item.required_from
+            == original_windows[item.original_dependency_artifact_id].required_from
+            and item.required_until
+            == original_windows[item.original_dependency_artifact_id].required_until
+            and substitute_windows[item.substitute_dependency_artifact_id].required_from
+            <= item.required_from
+            <= item.required_until
+            <= substitute_windows[item.substitute_dependency_artifact_id].required_until
+            for item in mappings
+        )
         and len(checks) == len(required)
         and {check.kind for check in checks} == required
         and len({check.check_id for check in checks}) == len(checks)
@@ -1024,18 +1206,12 @@ def current_qualification(
     scope: QualificationScope,
     version: CapabilityVersion,
 ) -> QualificationRecord | None:
-    records = [
-        outcome.qualification
-        for outcome in history
-        if outcome.qualification is not None
-        and outcome.qualification.scope.same_scope_as(scope)
-        and outcome.qualification.version == version
-    ]
-    superseded = {record.previous_decision_id for record in records}
-    heads = [record for record in records if record.decision_id not in superseded]
-    if len(heads) > 1:
-        raise ValueError("qualification history has conflicting revisions")
-    return heads[0] if heads else None
+    return _current_qualification_matching(
+        history,
+        scope,
+        lambda candidate: candidate == version,
+        "qualification history has conflicting revisions",
+    )
 
 
 def current_substantive_qualification(
@@ -1043,15 +1219,47 @@ def current_substantive_qualification(
     scope: QualificationScope,
     version: CapabilityVersion,
 ) -> QualificationRecord | None:
+    return _current_qualification_matching(
+        history,
+        scope,
+        lambda candidate: candidate.same_substantive_version_as(version),
+        "qualification history has conflicting substantive revisions",
+    )
+
+
+def _current_qualification_matching(
+    history: tuple[GovernanceOutcome, ...],
+    scope: QualificationScope,
+    matches_version: Callable[[CapabilityVersion], bool],
+    conflict_message: str,
+) -> QualificationRecord | None:
     records = [
         outcome.qualification
         for outcome in history
         if outcome.qualification is not None
         and outcome.qualification.scope.same_scope_as(scope)
-        and outcome.qualification.version.same_substantive_version_as(version)
+        and matches_version(outcome.qualification.version)
     ]
     superseded = {record.previous_decision_id for record in records}
     heads = [record for record in records if record.decision_id not in superseded]
     if len(heads) > 1:
-        raise ValueError("qualification history has conflicting substantive revisions")
+        raise ValueError(conflict_message)
     return heads[0] if heads else None
+
+
+def _scope_has_revoked_head(
+    history: tuple[GovernanceOutcome, ...],
+    scope: QualificationScope,
+) -> bool:
+    records = [
+        outcome.qualification
+        for outcome in history
+        if outcome.qualification is not None
+        and outcome.qualification.scope.same_scope_as(scope)
+    ]
+    superseded = {record.previous_decision_id for record in records}
+    return any(
+        record.status == "REVOKED"
+        for record in records
+        if record.decision_id not in superseded
+    )
