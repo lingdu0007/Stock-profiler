@@ -46,6 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
+from stock_profiler.modules.qualification.service import adjudicate
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -472,6 +473,25 @@ def _commit_framework_result(
             business_result = (
                 business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
             )
+            if business_result is not None and execution_case.governance is not None:
+                governance = adjudicate(
+                    execution_case.governance,
+                    event_id=execution_case.decision_event_id,
+                    observed_at=ledger.observed_at(),
+                    history=ledger.governance_history(connection),
+                )
+                result = result.model_copy(update={"governance": governance})
+                business_result = StageResult(
+                    phase="BUSINESS_DECISION",
+                    status="SUCCEEDED" if governance.disposition == "APPROVED" else "REJECTED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="SCOPED_QUALIFICATION",
+                            status="PASSED" if governance.disposition == "APPROVED" else "FAILED",
+                        ),
+                    ),
+                    reasons=governance.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -515,7 +535,6 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
-    result = ExternalResult.model_validate_json(framework.output)
     stage_results = (
         *stage_results_before_commit,
         StageResult(

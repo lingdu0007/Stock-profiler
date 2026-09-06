@@ -224,6 +224,14 @@ export interface components {
             /** Csrf Token */
             csrf_token: string;
         };
+        /** CapabilityVersion */
+        CapabilityVersion: {
+            implementation: components["schemas"]["DecisionCaseVersionBundle"];
+            /** Policy Version */
+            policy_version: string;
+            /** Version Id */
+            version_id: string;
+        };
         /** ChallengeDto */
         ChallengeDto: {
             /** Challenge Id */
@@ -272,7 +280,7 @@ export interface components {
         };
         /**
          * DecisionCaseVersionBundle
-         * @description The complete version set that participates in replay identity.
+         * @description The complete implementation version set that participates in replay.
          */
         DecisionCaseVersionBundle: {
             /** Agent Definition Id */
@@ -324,6 +332,7 @@ export interface components {
          */
         ExternalResult: {
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
+            governance?: components["schemas"]["GovernanceOutcome"] | null;
             /** Key Reasons */
             key_reasons: string[];
             /** Outcome Code */
@@ -376,6 +385,17 @@ export interface components {
              */
             status: "PASSED" | "FAILED" | "UNKNOWN";
         };
+        /** GovernanceOutcome */
+        GovernanceOutcome: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "APPROVED" | "DENIED";
+            qualification?: components["schemas"]["QualificationRecord"] | null;
+            /** Reasons */
+            reasons: string[];
+        };
         /** OpaqueRequestErrorDto */
         OpaqueRequestErrorDto: {
             /**
@@ -384,6 +404,100 @@ export interface components {
              * @constant
              */
             detail: "request is not permitted";
+        };
+        /** QualificationEvidence */
+        QualificationEvidence: {
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Evaluation End
+             * Format: date-time
+             */
+            evaluation_end: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generator Version */
+            generator_version: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT";
+            scope: components["schemas"]["QualificationScope"];
+            /** Seed */
+            seed: number;
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: true;
+            version: components["schemas"]["CapabilityVersion"];
+        };
+        /** QualificationRecord */
+        QualificationRecord: {
+            /**
+             * Alerts
+             * @default []
+             */
+            alerts: components["schemas"]["QualificationEvidence"][];
+            authorization_evidence: components["schemas"]["QualificationEvidence"];
+            /** Authorization Id */
+            authorization_id: string;
+            /** Cause */
+            cause: string;
+            /** Decision Id */
+            decision_id: string;
+            evidence: components["schemas"]["QualificationEvidence"];
+            /** Previous Decision Id */
+            previous_decision_id?: string | null;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            scope: components["schemas"]["QualificationScope"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "VALID" | "AT_RISK";
+            version: components["schemas"]["CapabilityVersion"];
+        };
+        /** QualificationScope */
+        QualificationScope: {
+            /** Account Ids */
+            account_ids: string[];
+            /** Account Type */
+            account_type: string;
+            /** Board */
+            board: string;
+            /** Capability */
+            capability: string;
+            /**
+             * Evidence Level
+             * @constant
+             */
+            evidence_level: "D0";
+            /** Market State */
+            market_state: string;
+            /** Purpose */
+            purpose: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** User Id */
+            user_id: string;
         };
         /**
          * ReauthenticationVerificationDto

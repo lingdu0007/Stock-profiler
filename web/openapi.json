@@ -13,6 +13,27 @@
         "title": "AuthenticationVerificationDto",
         "type": "object"
       },
+      "CapabilityVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/components/schemas/DecisionCaseVersionBundle"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": ["version_id", "policy_version", "implementation"],
+        "title": "CapabilityVersion",
+        "type": "object"
+      },
       "ChallengeDto": {
         "properties": {
           "challenge_id": {
@@ -107,7 +128,7 @@
       },
       "DecisionCaseVersionBundle": {
         "additionalProperties": false,
-        "description": "The complete version set that participates in replay identity.",
+        "description": "The complete implementation version set that participates in replay.",
         "properties": {
           "agent_definition_id": {
             "title": "Agent Definition Id",
@@ -218,6 +239,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CorrectionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "governance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GovernanceOutcome"
               },
               {
                 "type": "null"
@@ -358,6 +389,36 @@
         "title": "GateResult",
         "type": "object"
       },
+      "GovernanceOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": ["APPROVED", "DENIED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "qualification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "GovernanceOutcome",
+        "type": "object"
+      },
       "OpaqueRequestErrorDto": {
         "additionalProperties": false,
         "properties": {
@@ -369,6 +430,219 @@
           }
         },
         "title": "OpaqueRequestErrorDto",
+        "type": "object"
+      },
+      "QualificationEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "evaluation_end": {
+            "format": "date-time",
+            "title": "Evaluation End",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["QUALIFICATION_PASS", "DIAGNOSTIC_ALERT"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "synthetic",
+          "generator_version",
+          "seed",
+          "version",
+          "scope",
+          "kind",
+          "digest",
+          "evaluation_end",
+          "available_at",
+          "expires_at"
+        ],
+        "title": "QualificationEvidence",
+        "type": "object"
+      },
+      "QualificationRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "alerts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationEvidence"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "authorization_evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "cause": {
+            "title": "Cause",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "previous_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Decision Id"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "status": {
+            "enum": ["VALID", "AT_RISK"],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "authorization_id",
+          "scope",
+          "version",
+          "status",
+          "cause",
+          "authorization_evidence",
+          "recorded_at",
+          "evidence"
+        ],
+        "title": "QualificationRecord",
+        "type": "object"
+      },
+      "QualificationScope": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "account_type": {
+            "minLength": 1,
+            "title": "Account Type",
+            "type": "string"
+          },
+          "board": {
+            "minLength": 1,
+            "title": "Board",
+            "type": "string"
+          },
+          "capability": {
+            "minLength": 1,
+            "title": "Capability",
+            "type": "string"
+          },
+          "evidence_level": {
+            "const": "D0",
+            "title": "Evidence Level",
+            "type": "string"
+          },
+          "market_state": {
+            "minLength": 1,
+            "title": "Market State",
+            "type": "string"
+          },
+          "purpose": {
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "purpose",
+          "evidence_level",
+          "user_id",
+          "account_ids",
+          "account_type",
+          "source",
+          "market_state",
+          "board",
+          "target"
+        ],
+        "title": "QualificationScope",
         "type": "object"
       },
       "ReauthenticationVerificationDto": {
