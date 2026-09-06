@@ -178,12 +178,7 @@ def adjudicate(
         or not (node.scheduled_at <= now <= node.valid_until)
     ):
         return GovernanceOutcome(disposition="DENIED", reasons=("TASK_FREEZE_NOT_ALLOWED",))
-    applicable = [
-        item
-        for item in activations
-        if item.first_node.kind == node.kind and item.first_node.scheduled_at <= node.scheduled_at
-    ]
-    active = max(applicable, key=lambda item: item.first_node.scheduled_at) if applicable else None
+    active = _applicable_activation(activations, node.kind, node.scheduled_at)
     reasons = ()
     if (
         active is None
@@ -228,6 +223,20 @@ def _current_activation(activations: list[VersionActivation]) -> VersionActivati
     if len(heads) > 1:
         raise ValueError("version handoff history has conflicting revisions")
     return heads[0] if heads else None
+
+
+def _applicable_activation(
+    activations: list[VersionActivation],
+    node_kind: str,
+    scheduled_at: datetime,
+) -> VersionActivation | None:
+    return _current_activation(
+        [
+            item
+            for item in activations
+            if item.first_node.kind == node_kind and item.first_node.scheduled_at <= scheduled_at
+        ]
+    )
 
 
 def _retained_task_relation(task: FrozenTask) -> RetainedTaskRelation:

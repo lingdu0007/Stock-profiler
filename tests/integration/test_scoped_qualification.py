@@ -59,13 +59,15 @@ def version(settings: Settings, name: str = "synthetic-version-one") -> dict[str
         (Path(__file__).parents[1] / "fixtures/synthetic/qualification_policy.json").read_text()
     )
     policy["policy_version"] = name
+    implementation = load_frozen_decision_case(settings).version_bundle.model_dump(mode="json")
+    if name != "synthetic-version-one":
+        implementation["model_adapter_id"] = f"synthetic-model-adapter:{name}"
+        implementation["routing_policy_version"] = f"synthetic-routing:{name}"
     return {
         "version_id": name,
         "policy_version": name,
         "qualification_policy": policy,
-        "implementation": load_frozen_decision_case(settings).version_bundle.model_dump(
-            mode="json"
-        ),
+        "implementation": implementation,
     }
 
 
@@ -598,7 +600,7 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         kind="HISTORICAL_OOS_PASS",
         evidence_id="synthetic-new-history",
         evaluation_end="2042-05-18T00:00:00Z",
-        available_at="2042-05-19T00:00:00Z",
+        available_at="2042-05-19T10:30:00Z",
         formal_check=None,
         maturity_sufficient=None,
         gate_results=[],
@@ -624,8 +626,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         "application_id": "synthetic-requalification-application",
         "population_kind": "HISTORICAL",
         "population_id": "synthetic-requalification-history",
-        "registered_at": "2042-05-18T00:00:00Z",
-        "locked_at": "2042-05-19T00:00:00Z",
+        "registered_at": "2042-05-19T10:00:00Z",
+        "locked_at": "2042-05-19T10:00:00Z",
         "frozen_version_digest": version_digest,
         "registered_member_ids": ["synthetic-history-member"],
         "required_gates": ["synthetic-history-gate"],
@@ -641,8 +643,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         "application_id": "synthetic-requalification-application",
         "population_kind": "FORWARD",
         "population_id": "synthetic-requalification-forward",
-        "registered_at": "2042-05-18T00:00:00Z",
-        "locked_at": "2042-05-19T00:00:00Z",
+        "registered_at": "2042-05-19T10:00:00Z",
+        "locked_at": "2042-05-19T10:00:00Z",
         "frozen_version_digest": version_digest,
         "registered_member_ids": ["synthetic-forward-member"],
         "required_gates": ["synthetic-forward-gate"],
@@ -658,8 +660,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
     forward["requalification_registration_digest"] = forward_registration["digest"]
     command["requalification"] = {
         "application_id": "synthetic-requalification-application",
-        "registered_at": "2042-05-18T00:00:00Z",
-        "locked_at": "2042-05-19T00:00:00Z",
+        "registered_at": "2042-05-19T10:00:00Z",
+        "locked_at": "2042-05-19T10:00:00Z",
         "first_prediction_frozen_at": forward_frozen_at,
         "frozen_version_digest": version_digest,
         "historical_evidence": historical,
@@ -716,8 +718,8 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
     )
     registration["requalification_application"] = {
         "application_id": "synthetic-requalification-application",
-        "registered_at": "2042-05-18T00:00:00Z",
-        "locked_at": "2042-05-19T00:00:00Z",
+        "registered_at": "2042-05-19T10:00:00Z",
+        "locked_at": "2042-05-19T10:00:00Z",
         "frozen_version_digest": version_digest,
         "historical_registration": historical_registration,
         "forward_registration": forward_registration,

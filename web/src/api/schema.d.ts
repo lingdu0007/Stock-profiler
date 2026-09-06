@@ -227,6 +227,7 @@ export interface components {
              * Format: date-time
              */
             recorded_at: string;
+            recorded_replay?: components["schemas"]["RecordedAlertReplay"] | null;
             /**
              * Resolution
              * @enum {string}
@@ -242,7 +243,8 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
-            erroneous_replay?: components["schemas"]["ErroneousAlertReplay"] | null;
+            /** Erroneous Replay Id */
+            erroneous_replay_id?: string | null;
             /**
              * Observations
              * @default []
@@ -460,6 +462,7 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
+            original_information: components["schemas"]["QualificationEvidence"];
             /** Original Information Digest */
             original_information_digest: string;
             /** Replay Id */
@@ -702,6 +705,7 @@ export interface components {
             qualification?: components["schemas"]["QualificationRecord"] | null;
             /** Reasons */
             reasons: string[];
+            recorded_alert_replay?: components["schemas"]["RecordedAlertReplay"] | null;
             registered_requalification?: components["schemas"]["RegisteredRequalificationApplication"] | null;
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
@@ -797,7 +801,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED" | "REQUALIFICATION_APPLICATION_REGISTERED";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED" | "REQUALIFICATION_APPLICATION_REGISTERED" | "ALERT_REPLAY_RECORDED";
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
             /** Requalification Application Id */
@@ -969,6 +973,22 @@ export interface components {
         ReauthenticationVerificationDto: {
             /** Credential Id */
             credential_id: string;
+        };
+        /** RecordedAlertReplay */
+        RecordedAlertReplay: {
+            /** Decision Id */
+            decision_id: string;
+            evidence: components["schemas"]["QualificationEvidence"];
+            /** Previous Qualification Decision Id */
+            previous_qualification_decision_id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            replay: components["schemas"]["ErroneousAlertReplay"];
+            scope: components["schemas"]["QualificationScope"];
+            version: components["schemas"]["CapabilityVersion"];
         };
         /** RegisteredRequalificationApplication */
         RegisteredRequalificationApplication: {

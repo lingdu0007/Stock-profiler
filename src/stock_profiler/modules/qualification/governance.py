@@ -32,6 +32,8 @@ def validate_new_request(command: GovernanceCommand) -> None:
             )
             if command.alert_closure.resolution_evidence is not None:
                 scopes.append(command.alert_closure.resolution_evidence.scope)
+        if command.alert_replay is not None:
+            scopes.append(command.alert_replay.original_information.scope)
     if any(len(set(scope.account_ids)) != len(scope.account_ids) for scope in scopes):
         raise InvalidGovernanceRequest("duplicate governance accounts")
 

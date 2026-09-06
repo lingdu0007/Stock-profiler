@@ -20,6 +20,16 @@
             "title": "Recorded At",
             "type": "string"
           },
+          "recorded_replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordedAlertReplay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resolution": {
             "enum": ["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"],
             "title": "Resolution",
@@ -43,15 +53,17 @@
             "title": "Contract Version",
             "type": "string"
           },
-          "erroneous_replay": {
+          "erroneous_replay_id": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ErroneousAlertReplay"
+                "minLength": 1,
+                "type": "string"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Erroneous Replay Id"
           },
           "observations": {
             "default": [],
@@ -512,6 +524,9 @@
             "title": "Contract Version",
             "type": "string"
           },
+          "original_information": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
           "original_information_digest": {
             "pattern": "^[0-9a-f]{64}$",
             "title": "Original Information Digest",
@@ -538,6 +553,7 @@
           "replay_id",
           "alert_evidence_id",
           "rule_version",
+          "original_information",
           "original_information_digest",
           "replay_result_digest",
           "alert_reproduced",
@@ -1081,6 +1097,16 @@
             "title": "Reasons",
             "type": "array"
           },
+          "recorded_alert_replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordedAlertReplay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "registered_requalification": {
             "anyOf": [
               {
@@ -1320,7 +1346,8 @@
               "ALERT_ARCHIVED",
               "CERTIFIED_BASIS_SUBSTITUTION",
               "STATE_ACTIVITY_RESTORED",
-              "REQUALIFICATION_APPLICATION_REGISTERED"
+              "REQUALIFICATION_APPLICATION_REGISTERED",
+              "ALERT_REPLAY_RECORDED"
             ],
             "title": "Kind",
             "type": "string"
@@ -1871,6 +1898,47 @@
         },
         "required": ["credential_id"],
         "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
+      "RecordedAlertReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "previous_qualification_decision_id": {
+            "title": "Previous Qualification Decision Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "replay": {
+            "$ref": "#/components/schemas/ErroneousAlertReplay"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "previous_qualification_decision_id",
+          "replay",
+          "evidence",
+          "recorded_at"
+        ],
+        "title": "RecordedAlertReplay",
         "type": "object"
       },
       "RegisteredRequalificationApplication": {

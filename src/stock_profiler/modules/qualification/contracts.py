@@ -87,8 +87,20 @@ class CapabilityVersion(GovernanceContract):
         return None
 
     def same_substantive_version_as(self, other: CapabilityVersion) -> bool:
-        """Ignore a nominal version rename while retaining every frozen rule."""
-        return self.model_dump(exclude={"version_id"}) == other.model_dump(exclude={"version_id"})
+        """Compare the rules that govern qualification, not release aliases."""
+        return self._substantive_identity() == other._substantive_identity()
+
+    def _substantive_identity(self) -> dict[str, object]:
+        identity = self.model_dump()
+        identity.pop("version_id")
+        identity.pop("policy_version")
+        policy = identity.get("qualification_policy")
+        if isinstance(policy, dict):
+            policy.pop("policy_version")
+        implementation = identity["implementation"]
+        if isinstance(implementation, dict):
+            implementation.pop("host_source_sha")
+        return identity
 
 
 class FormalCheckIdentity(GovernanceContract):
@@ -194,6 +206,7 @@ class QualificationEvidence(GovernanceContract):
         "CERTIFIED_BASIS_SUBSTITUTION",
         "STATE_ACTIVITY_RESTORED",
         "REQUALIFICATION_APPLICATION_REGISTERED",
+        "ALERT_REPLAY_RECORDED",
     ]
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_end: AwareDatetime
@@ -313,6 +326,7 @@ class ErroneousAlertReplay(GovernanceContract):
     replay_id: str = Field(min_length=1)
     alert_evidence_id: str = Field(min_length=1)
     rule_version: str = Field(min_length=1)
+    original_information: QualificationEvidence
     original_information_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     replay_result_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     alert_reproduced: Literal[False]
@@ -330,8 +344,8 @@ class AlertClosureProof(GovernanceContract):
     resolution_evidence: QualificationEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    erroneous_replay: ErroneousAlertReplay | None = Field(
-        default=None, exclude_if=lambda value: value is None
+    erroneous_replay_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
     )
     transferred_restriction_evidence_id: str | None = Field(
         default=None, min_length=1, exclude_if=lambda value: value is None
@@ -357,6 +371,7 @@ class QualificationCommand(GovernanceContract):
         "RESTORE",
         "REQUALIFY",
         "REGISTER_REQUALIFICATION",
+        "RECORD_ALERT_REPLAY",
         "FORMAL_CHECK",
         "RECORD_FORMAL_NODE",
         "CLOSE_ALERT",
@@ -372,6 +387,9 @@ class QualificationCommand(GovernanceContract):
         default=None, exclude_if=lambda value: value is None
     )
     requalification_application: RequalificationApplication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    alert_replay: ErroneousAlertReplay | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     alert_closure: AlertClosureProof | None = Field(
@@ -390,12 +408,29 @@ class QualificationRestriction(GovernanceContract):
     evidence: QualificationEvidence
 
 
+class RecordedAlertReplay(GovernanceContract):
+    decision_id: str
+    scope: QualificationScope
+    version: CapabilityVersion
+    previous_qualification_decision_id: str
+    replay: ErroneousAlertReplay
+    evidence: QualificationEvidence
+    recorded_at: AwareDatetime
+
+
 class AlertClosure(GovernanceContract):
     alert_evidence_id: str = Field(min_length=1)
     resolution: Literal["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"]
     proof: AlertClosureProof
     evidence: QualificationEvidence
+    recorded_replay: RecordedAlertReplay | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     recorded_at: AwareDatetime
+
+    @property
+    def terminates_alert(self) -> bool:
+        return self.resolution in {"DISAPPEARED", "PROVEN_ERRONEOUS"}
 
 
 class QualificationRecord(GovernanceContract):
@@ -442,11 +477,7 @@ class QualificationRecord(GovernanceContract):
 
     @property
     def outstanding_alerts(self) -> tuple[QualificationEvidence, ...]:
-        closed = {
-            item.alert_evidence_id
-            for item in self.alert_closures
-            if item.resolution in {"DISAPPEARED", "PROVEN_ERRONEOUS"}
-        }
+        closed = {item.alert_evidence_id for item in self.alert_closures if item.terminates_alert}
         return tuple(item for item in self.alerts if item.evidence_id not in closed)
 
     def evidence_available_by(self, cutoff: datetime) -> bool:
@@ -466,6 +497,16 @@ class QualificationRecord(GovernanceContract):
                     for observation in closure.proof.observations
                 ),
                 *(closure.proof.resolution_evidence for closure in self.alert_closures),
+                *(
+                    closure.recorded_replay.evidence
+                    for closure in self.alert_closures
+                    if closure.recorded_replay is not None
+                ),
+                *(
+                    closure.recorded_replay.replay.original_information
+                    for closure in self.alert_closures
+                    if closure.recorded_replay is not None
+                ),
                 *(restriction.evidence for restriction in self.restrictions),
                 *self.restoration_evidence,
                 *(disposition.evidence for disposition in self.formal_node_dispositions),
@@ -617,6 +658,9 @@ class GovernanceOutcome(GovernanceContract):
     reasons: tuple[str, ...]
     qualification: QualificationRecord | None = None
     registered_requalification: RegisteredRequalificationApplication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    recorded_alert_replay: RecordedAlertReplay | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     task_node: RegisteredTaskNode | None = Field(

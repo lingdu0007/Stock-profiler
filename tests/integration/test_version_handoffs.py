@@ -266,6 +266,75 @@ def test_handoff_cannot_bypass_the_current_unfrozen_first_node(
     assert bypass.report.result.governance.reasons == ("NEXT_LEGAL_TASK_NODE_REQUIRED",)
 
 
+def test_replacement_activation_wins_when_it_targets_the_same_first_node(
+    migrated_settings: Settings,
+) -> None:
+    first_version = version(migrated_settings)
+    second_version = version(migrated_settings, "synthetic-same-node-version-two")
+    grants = []
+    for index, bundle in enumerate((first_version, second_version)):
+        command = qualification_command(migrated_settings)
+        command["version"] = bundle
+        command["evidence"]["version"] = bundle
+        command["evidence"]["evidence_id"] = f"synthetic-same-node-grant-{index}"
+        grants.append(execute_handoff(migrated_settings, f"same-node-grant-{index}", command))
+
+    node = handoff_node("DAILY", "replacement", "2042-05-18T16:00:00Z")
+    execute_handoff(
+        migrated_settings,
+        "same-node-registration",
+        {"operation": "REGISTER_TASK_NODE", "scope": scope(), "node": node},
+    )
+    first_activation = execute_handoff(
+        migrated_settings,
+        "same-node-first-activation",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": first_version,
+            "previous_version": None,
+            "previous_activation_id": None,
+            "qualification_decision_id": grants[0].decision_event_id,
+            "first_node_id": node["node_id"],
+        },
+    )
+    replacement = execute_handoff(
+        migrated_settings,
+        "same-node-replacement-activation",
+        {
+            "operation": "ACTIVATE_VERSION",
+            "scope": scope(),
+            "version": second_version,
+            "previous_version": first_version,
+            "previous_activation_id": first_activation.decision_event_id,
+            "qualification_decision_id": grants[1].decision_event_id,
+            "first_node_id": node["node_id"],
+        },
+        now="2042-05-17T16:02:00Z",
+    )
+    assert replacement.report is not None
+    assert replacement.report.result.governance is not None
+    assert replacement.report.result.governance.disposition == "APPROVED"
+
+    frozen = execute_handoff(
+        migrated_settings,
+        "same-node-replacement-freeze",
+        {
+            "operation": "FREEZE_TASK",
+            "scope": scope(),
+            "version": second_version,
+            "node_id": node["node_id"],
+            "activation_id": replacement.decision_event_id,
+        },
+        now="2042-05-18T16:01:00Z",
+    )
+    assert frozen.report is not None
+    assert frozen.report.result.governance is not None
+    assert frozen.report.result.governance.disposition == "APPROVED"
+    assert frozen.report.result.governance.task is not None
+    assert frozen.report.result.governance.task.activation_id == replacement.decision_event_id
+
+
 @pytest.mark.parametrize(
     ("kind", "old_at", "next_at"),
     [

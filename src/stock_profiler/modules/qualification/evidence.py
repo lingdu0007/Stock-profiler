@@ -7,6 +7,7 @@ from hashlib import sha256
 
 from stock_profiler.modules.qualification.contracts import (
     CapabilityVersion,
+    ErroneousAlertReplay,
     EvidenceBasis,
     QualificationEvidence,
     RequalificationPopulationRegistration,
@@ -106,6 +107,27 @@ def evidence_basis_digest(basis: EvidenceBasis) -> str:
 def capability_version_digest(version: CapabilityVersion) -> str:
     payload = json.dumps(
         version.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return sha256(payload).hexdigest()
+
+
+def qualification_evidence_digest(evidence: QualificationEvidence) -> str:
+    payload = json.dumps(
+        evidence.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return sha256(payload).hexdigest()
+
+
+def alert_replay_result_digest(replay: ErroneousAlertReplay) -> str:
+    payload = json.dumps(
+        replay.model_dump(
+            mode="json",
+            exclude={"original_information", "replay_result_digest"},
+        ),
         sort_keys=True,
         separators=(",", ":"),
     ).encode()

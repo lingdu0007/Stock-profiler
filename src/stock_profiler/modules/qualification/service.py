@@ -16,17 +16,20 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationRecord,
     QualificationRestriction,
     QualificationScope,
+    RecordedAlertReplay,
     RegisteredRequalificationApplication,
     RequalificationApplication,
     RequalificationPopulation,
     RequalificationPopulationRegistration,
 )
 from stock_profiler.modules.qualification.evidence import (
+    alert_replay_result_digest,
     capability_version_digest,
     evidence_basis_is_valid,
     evidence_is_current,
     formal_check_passed,
     overall_qualification_deadline,
+    qualification_evidence_digest,
     requalification_registration_digest,
     state_activity_deadline,
 )
@@ -77,8 +80,10 @@ def adjudicate(
         return _formal_check(command, previous, event_id, now)
     if command.action == "RECORD_FORMAL_NODE":
         return _record_formal_node_disposition(command, previous, event_id, now)
+    if command.action == "RECORD_ALERT_REPLAY":
+        return _record_alert_replay(command, previous, event_id, now, cutoff, history)
     if command.action == "CLOSE_ALERT":
-        return _close_alert(command, previous, event_id, now, cutoff)
+        return _close_alert(command, previous, event_id, now, cutoff, history)
     if command.action == "REGISTER_REQUALIFICATION":
         return _register_requalification_application(
             command,
@@ -148,7 +153,7 @@ def adjudicate(
             or evidence.requalification_application_id != proof.application_id
             or proof.historical_evidence.kind != "HISTORICAL_OOS_PASS"
             or proof.forward_evidence.kind != "LOCKED_FORWARD_PASS"
-            or proof.historical_evidence.available_at < registered.application.registered_at
+            or proof.historical_evidence.available_at < registered.recorded_at
             or not _requalification_registration_is_valid(
                 historical_registration,
                 proof.application_id,
@@ -421,8 +426,6 @@ def adjudicate(
         previous is not None and previous.status != "NOT_OBTAINED"
     ) or evidence.kind != "QUALIFICATION_PASS":
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_GRANT_NOT_ALLOWED",))
-    if _scope_has_revoked_head(history, command.scope):
-        return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_REVISION_CONFLICT",))
     if not evidence_is_current(evidence, now):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_EXPIRED",))
     return GovernanceOutcome(
@@ -689,12 +692,79 @@ def _same_formal_sequence(
     )
 
 
+def _record_alert_replay(
+    command: QualificationCommand,
+    previous: QualificationRecord | None,
+    event_id: str,
+    now: datetime,
+    cutoff: datetime,
+    history: tuple[GovernanceOutcome, ...],
+) -> GovernanceOutcome:
+    evidence = command.evidence
+    replay = command.alert_replay
+    if (
+        previous is None
+        or previous.authorization_evidence is None
+        or replay is None
+        or evidence.kind != "ALERT_REPLAY_RECORDED"
+    ):
+        return GovernanceOutcome(disposition="DENIED", reasons=("ALERT_REPLAY_NOT_ALLOWED",))
+    target = next(
+        (
+            item
+            for item in previous.outstanding_alerts
+            if item.evidence_id == replay.alert_evidence_id
+        ),
+        None,
+    )
+    plan = target.diagnostic_plan if target is not None else None
+    if (
+        target is None
+        or plan is None
+        or evidence.resolves_evidence_id != target.evidence_id
+        or replay.rule_version != plan.rule_version
+        or replay.original_information != target
+        or replay.original_information_digest != qualification_evidence_digest(target)
+        or replay.replay_result_digest != alert_replay_result_digest(replay)
+        or evidence.digest != replay.replay_result_digest
+        or replay.available_at != evidence.available_at
+        or replay.available_at != now
+        or target.available_at > replay.available_at
+        or evidence.evaluation_end > replay.available_at
+        or evidence.available_at > cutoff
+        or any(
+            item.recorded_alert_replay is not None
+            and item.recorded_alert_replay.scope.same_scope_as(command.scope)
+            and item.recorded_alert_replay.replay.replay_id == replay.replay_id
+            for item in history
+        )
+    ):
+        return GovernanceOutcome(
+            disposition="DENIED",
+            reasons=("ALERT_REPLAY_PROOF_INVALID",),
+        )
+    return GovernanceOutcome(
+        disposition="APPROVED",
+        reasons=("ALERT_REPLAY_RECORDED",),
+        recorded_alert_replay=RecordedAlertReplay(
+            decision_id=event_id,
+            scope=command.scope,
+            version=command.version,
+            previous_qualification_decision_id=previous.decision_id,
+            replay=replay,
+            evidence=evidence,
+            recorded_at=now,
+        ),
+    )
+
+
 def _close_alert(
     command: QualificationCommand,
     previous: QualificationRecord | None,
     event_id: str,
     now: datetime,
     cutoff: datetime,
+    history: tuple[GovernanceOutcome, ...],
 ) -> GovernanceOutcome:
     evidence = command.evidence
     proof = command.alert_closure
@@ -715,17 +785,23 @@ def _close_alert(
     clear_count = policy.diagnostic_clear_node_count
     plan = target.diagnostic_plan if target is not None else None
     disappearance = proof.resolution == "DISAPPEARED"
-    terminal_resolutions = {"DISAPPEARED", "PROVEN_ERRONEOUS"}
+    recorded_replay = (
+        _recorded_alert_replay(
+            history,
+            command.scope,
+            command.version,
+            proof.erroneous_replay_id,
+        )
+        if proof.erroneous_replay_id is not None
+        else None
+    )
     if (
         target is None
         or plan is None
         or proof.alert_evidence_id != evidence.resolves_evidence_id
         or any(
             closure.alert_evidence_id == proof.alert_evidence_id
-            and (
-                closure.resolution in terminal_resolutions
-                or closure.resolution == proof.resolution
-            )
+            and (closure.terminates_alert or closure.resolution == proof.resolution)
             for closure in previous.alert_closures
         )
         or not target.scope.same_scope_as(command.scope)
@@ -739,7 +815,7 @@ def _close_alert(
             disappearance
             and (
                 proof.resolution_evidence is not None
-                or proof.erroneous_replay is not None
+                or proof.erroneous_replay_id is not None
                 or proof.transferred_restriction_evidence_id is not None
                 or len(proof.observations) < clear_count
                 or not _diagnostic_observation_nodes_are_consecutive(proof, plan.planned_nodes)
@@ -764,6 +840,7 @@ def _close_alert(
                 evidence,
                 now,
                 cutoff,
+                recorded_replay,
             )
         )
     ):
@@ -773,21 +850,18 @@ def _close_alert(
         resolution=proof.resolution,
         proof=proof,
         evidence=evidence,
+        recorded_replay=recorded_replay,
         recorded_at=now,
     )
     closures = (*previous.alert_closures, closure)
-    closed_ids = {
-        item.alert_evidence_id
-        for item in closures
-        if item.resolution in terminal_resolutions
-    }
-    outstanding = tuple(item for item in previous.alerts if item.evidence_id not in closed_ids)
+    candidate = previous.model_copy(update={"alert_closures": closures})
+    outstanding = candidate.outstanding_alerts
     restricted = previous.status in {"SUSPENDED", "REVOKED"}
     archived = proof.resolution == "ARCHIVED"
     return GovernanceOutcome(
         disposition="APPROVED",
         reasons=("ALERT_CLOSED",),
-        qualification=previous.model_copy(
+        qualification=candidate.model_copy(
             update={
                 "decision_id": event_id,
                 "previous_decision_id": previous.decision_id,
@@ -891,6 +965,7 @@ def _direct_alert_resolution_is_valid(
     closure_evidence: QualificationEvidence,
     now: datetime,
     cutoff: datetime,
+    recorded_replay: RecordedAlertReplay | None,
 ) -> bool:
     resolution_evidence = proof.resolution_evidence
     expected_kind = {
@@ -914,17 +989,25 @@ def _direct_alert_resolution_is_valid(
         or not evidence_is_current(resolution_evidence, now)
     ):
         return False
-    replay = proof.erroneous_replay
     if proof.resolution == "PROVEN_ERRONEOUS":
+        replay = recorded_replay.replay if recorded_replay is not None else None
         return (
             replay is not None
             and proof.transferred_restriction_evidence_id is None
+            and recorded_replay is not None
+            and recorded_replay.scope.same_scope_as(command.scope)
+            and recorded_replay.version == command.version
+            and recorded_replay.evidence.available_at <= cutoff
+            and recorded_replay.recorded_at <= now
+            and recorded_replay.evidence.digest == replay.replay_result_digest
             and replay.alert_evidence_id == target.evidence_id
             and replay.rule_version == proof.rule_version
-            and replay.original_information_digest == target.digest
+            and replay.original_information == target
+            and replay.original_information_digest == qualification_evidence_digest(target)
+            and replay.replay_result_digest == alert_replay_result_digest(replay)
             and target.available_at <= replay.available_at <= resolution_evidence.available_at
         )
-    if replay is not None:
+    if proof.erroneous_replay_id is not None or recorded_replay is not None:
         return False
     if proof.resolution == "TRANSFERRED":
         transferred_id = proof.transferred_restriction_evidence_id
@@ -962,8 +1045,8 @@ def _register_requalification_application(
         not (
             previous.authorization_terminated_at
             < application.registered_at
-            <= application.locked_at
-            <= evidence.evaluation_end
+            == application.locked_at
+            == now
         )
         or evidence.requalification_application_id != application.application_id
         or application.frozen_version_digest != capability_version_digest(command.version)
@@ -1028,6 +1111,25 @@ def _registered_requalification_application(
     if len(registrations) > 1:
         raise ValueError("requalification history has duplicate applications")
     return registrations[0] if registrations else None
+
+
+def _recorded_alert_replay(
+    history: tuple[GovernanceOutcome, ...],
+    scope: QualificationScope,
+    version: CapabilityVersion,
+    replay_id: str,
+) -> RecordedAlertReplay | None:
+    replays = [
+        outcome.recorded_alert_replay
+        for outcome in history
+        if outcome.recorded_alert_replay is not None
+        and outcome.recorded_alert_replay.scope.same_scope_as(scope)
+        and outcome.recorded_alert_replay.version == version
+        and outcome.recorded_alert_replay.replay.replay_id == replay_id
+    ]
+    if len(replays) > 1:
+        raise ValueError("alert replay history has duplicate identifiers")
+    return replays[0] if replays else None
 
 
 def _requalification_population_is_complete(
@@ -1245,21 +1347,3 @@ def _current_qualification_matching(
     if len(heads) > 1:
         raise ValueError(conflict_message)
     return heads[0] if heads else None
-
-
-def _scope_has_revoked_head(
-    history: tuple[GovernanceOutcome, ...],
-    scope: QualificationScope,
-) -> bool:
-    records = [
-        outcome.qualification
-        for outcome in history
-        if outcome.qualification is not None
-        and outcome.qualification.scope.same_scope_as(scope)
-    ]
-    superseded = {record.previous_decision_id for record in records}
-    return any(
-        record.status == "REVOKED"
-        for record in records
-        if record.decision_id not in superseded
-    )
