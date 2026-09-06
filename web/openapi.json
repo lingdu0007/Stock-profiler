@@ -1,6 +1,77 @@
 {
   "components": {
     "schemas": {
+      "AlertClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/AlertClosureProof"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "resolution": {
+            "enum": ["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"],
+            "title": "Resolution",
+            "type": "string"
+          }
+        },
+        "required": ["alert_evidence_id", "resolution", "proof", "evidence", "recorded_at"],
+        "title": "AlertClosure",
+        "type": "object"
+      },
+      "AlertClosureProof": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticObservation"
+            },
+            "minItems": 1,
+            "title": "Observations",
+            "type": "array"
+          },
+          "resolution": {
+            "enum": ["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"],
+            "title": "Resolution",
+            "type": "string"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "alert_evidence_id",
+          "resolution",
+          "rule_version",
+          "observations"
+        ],
+        "title": "AlertClosureProof",
+        "type": "object"
+      },
       "AuthenticationVerificationDto": {
         "description": "Pydantic transport contract for a completed passkey authentication.",
         "properties": {
@@ -216,6 +287,59 @@
         "title": "DecisionCaseVersionBundle",
         "type": "object"
       },
+      "DiagnosticObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["CLEAR", "RECURRENT", "INSUFFICIENT", "UNAVAILABLE"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["scheduled_at", "status", "rule_version", "evidence"],
+        "title": "DiagnosticObservation",
+        "type": "object"
+      },
+      "DiagnosticPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "planned_nodes": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Planned Nodes",
+            "type": "array"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          }
+        },
+        "required": ["contract_version", "rule_version", "planned_nodes"],
+        "title": "DiagnosticPlan",
+        "type": "object"
+      },
       "EstablishedObligation": {
         "additionalProperties": false,
         "properties": {
@@ -244,6 +368,95 @@
         "title": "EstablishedObligation",
         "type": "object"
       },
+      "EvidenceArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "minLength": 1,
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "license_id": {
+            "minLength": 1,
+            "title": "License Id",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "content",
+          "content_sha256",
+          "version",
+          "license_id",
+          "available_at",
+          "valid_from",
+          "valid_until"
+        ],
+        "title": "EvidenceArtifact",
+        "type": "object"
+      },
+      "EvidenceBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceArtifact"
+            },
+            "minItems": 1,
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "dependency_windows": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceDependencyWindow"
+            },
+            "minItems": 1,
+            "title": "Dependency Windows",
+            "type": "array"
+          },
+          "root_artifact": {
+            "$ref": "#/components/schemas/EvidenceArtifact"
+          }
+        },
+        "required": ["contract_version", "root_artifact", "dependencies", "dependency_windows"],
+        "title": "EvidenceBasis",
+        "type": "object"
+      },
       "EvidenceClock": {
         "additionalProperties": false,
         "description": "The immutable fact, publication, acquisition, and validation clocks.",
@@ -267,6 +480,39 @@
         },
         "required": ["fact_effective_at", "source_published_at", "acquired_at", "validated_at"],
         "title": "EvidenceClock",
+        "type": "object"
+      },
+      "EvidenceDependencyWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Dependency Artifact Id",
+            "type": "string"
+          },
+          "parent_artifact_id": {
+            "minLength": 1,
+            "title": "Parent Artifact Id",
+            "type": "string"
+          },
+          "required_from": {
+            "format": "date-time",
+            "title": "Required From",
+            "type": "string"
+          },
+          "required_until": {
+            "format": "date-time",
+            "title": "Required Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_artifact_id",
+          "dependency_artifact_id",
+          "required_from",
+          "required_until"
+        ],
+        "title": "EvidenceDependencyWindow",
         "type": "object"
       },
       "ExternalResult": {
@@ -316,6 +562,18 @@
       "FormalCheckIdentity": {
         "additionalProperties": false,
         "properties": {
+          "error_budget_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Budget Id"
+          },
           "index": {
             "minimum": 1.0,
             "title": "Index",
@@ -356,6 +614,37 @@
         },
         "required": ["sequence_id", "index", "registered_at", "scheduled_at"],
         "title": "FormalCheckIdentity",
+        "type": "object"
+      },
+      "FormalNodeDisposition": {
+        "additionalProperties": false,
+        "properties": {
+          "check_index": {
+            "minimum": 1.0,
+            "title": "Check Index",
+            "type": "integer"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["EXECUTED_PASS", "EXECUTED_FAIL", "INSUFFICIENT", "NOT_EXECUTED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["scheduled_at", "status", "check_index", "evidence", "recorded_at"],
+        "title": "FormalNodeDisposition",
         "type": "object"
       },
       "FormalReport": {
@@ -647,6 +936,14 @@
             "title": "Node Id",
             "type": "string"
           },
+          "retained_objects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedObjectReference"
+            },
+            "title": "Retained Objects",
+            "type": "array"
+          },
           "scheduled_at": {
             "format": "date-time",
             "title": "Scheduled At",
@@ -710,6 +1007,26 @@
             "title": "Available At",
             "type": "string"
           },
+          "basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostic_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "digest": {
             "pattern": "^[0-9a-f]{64}$",
             "title": "Digest",
@@ -765,7 +1082,10 @@
               "REQUALIFICATION_PASS",
               "HISTORICAL_OOS_PASS",
               "LOCKED_FORWARD_PASS",
-              "FORMAL_CHECK"
+              "FORMAL_CHECK",
+              "FORMAL_NODE_NOT_EXECUTED",
+              "DIAGNOSTIC_CLEAR",
+              "ALERT_CLOSURE"
             ],
             "title": "Kind",
             "type": "string"
@@ -874,6 +1194,18 @@
             "title": "Contract Version",
             "type": "string"
           },
+          "diagnostic_clear_node_count": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostic Clear Node Count"
+          },
           "evaluation_max_age_months": {
             "exclusiveMinimum": 0.0,
             "title": "Evaluation Max Age Months",
@@ -926,6 +1258,14 @@
       "QualificationRecord": {
         "additionalProperties": false,
         "properties": {
+          "alert_closures": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AlertClosure"
+            },
+            "title": "Alert Closures",
+            "type": "array"
+          },
           "alerts": {
             "default": [],
             "items": {
@@ -987,6 +1327,14 @@
                 "type": "null"
               }
             ]
+          },
+          "formal_node_dispositions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FormalNodeDisposition"
+            },
+            "title": "Formal Node Dispositions",
+            "type": "array"
           },
           "formal_passing_evidence": {
             "anyOf": [
@@ -1254,6 +1602,108 @@
         "title": "RegisteredTaskNode",
         "type": "object"
       },
+      "RequalificationMember": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "matured_at": {
+            "format": "date-time",
+            "title": "Matured At",
+            "type": "string"
+          },
+          "member_id": {
+            "minLength": 1,
+            "title": "Member Id",
+            "type": "string"
+          },
+          "outcome_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Outcome Digest",
+            "type": "string"
+          },
+          "prediction_frozen_at": {
+            "format": "date-time",
+            "title": "Prediction Frozen At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "prediction_frozen_at",
+          "available_at",
+          "matured_at",
+          "outcome_digest"
+        ],
+        "title": "RequalificationMember",
+        "type": "object"
+      },
+      "RequalificationPopulation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "gate_results": {
+            "items": {
+              "$ref": "#/components/schemas/QualificationGate"
+            },
+            "minItems": 1,
+            "title": "Gate Results",
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/RequalificationMember"
+            },
+            "minItems": 1,
+            "title": "Members",
+            "type": "array"
+          },
+          "population_id": {
+            "minLength": 1,
+            "title": "Population Id",
+            "type": "string"
+          },
+          "registered_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Registered Member Ids",
+            "type": "array"
+          },
+          "required_gates": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Required Gates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "population_id",
+          "evidence_id",
+          "frozen_version_digest",
+          "registered_member_ids",
+          "members",
+          "required_gates",
+          "gate_results"
+        ],
+        "title": "RequalificationPopulation",
+        "type": "object"
+      },
       "RequalificationProof": {
         "additionalProperties": false,
         "properties": {
@@ -1270,8 +1720,40 @@
           "forward_evidence": {
             "$ref": "#/components/schemas/QualificationEvidence"
           },
+          "forward_population": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frozen_version_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Version Digest"
+          },
           "historical_evidence": {
             "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "historical_population": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "locked_at": {
             "format": "date-time",
@@ -1325,6 +1807,113 @@
         },
         "required": ["contract_version", "user_id", "account_ids", "visibility"],
         "title": "ResultAccessScope",
+        "type": "object"
+      },
+      "RetainedObjectReference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": ["CONCLUSION", "CONTRACT", "EVIDENCE", "EVALUATION"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "minLength": 1,
+            "title": "Object Id",
+            "type": "string"
+          }
+        },
+        "required": ["kind", "object_id"],
+        "title": "RetainedObjectReference",
+        "type": "object"
+      },
+      "RetainedTaskRelation": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activation Id"
+          },
+          "deterministic_obligations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EstablishedObligation"
+            },
+            "title": "Deterministic Obligations",
+            "type": "array"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "node_id": {
+            "minLength": 1,
+            "title": "Node Id",
+            "type": "string"
+          },
+          "original_version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          },
+          "qualification_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualification Decision Id"
+          },
+          "retained_objects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedObjectReference"
+            },
+            "title": "Retained Objects",
+            "type": "array"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "task_decision_id": {
+            "minLength": 1,
+            "title": "Task Decision Id",
+            "type": "string"
+          },
+          "task_identity": {
+            "minLength": 1,
+            "title": "Task Identity",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_identity",
+          "task_decision_id",
+          "original_version",
+          "node_id",
+          "activation_id",
+          "qualification_decision_id",
+          "knowledge_cutoff",
+          "scheduled_at",
+          "valid_until"
+        ],
+        "title": "RetainedTaskRelation",
         "type": "object"
       },
       "SafetyCapabilitiesDiagnosticDto": {
@@ -1627,6 +2216,14 @@
               "type": "string"
             },
             "title": "Retained Task Ids",
+            "type": "array"
+          },
+          "retained_tasks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedTaskRelation"
+            },
+            "title": "Retained Tasks",
             "type": "array"
           },
           "scope": {

@@ -216,6 +216,42 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlertClosure */
+        AlertClosure: {
+            /** Alert Evidence Id */
+            alert_evidence_id: string;
+            evidence: components["schemas"]["QualificationEvidence"];
+            proof: components["schemas"]["AlertClosureProof"];
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /**
+             * Resolution
+             * @enum {string}
+             */
+            resolution: "DISAPPEARED" | "PROVEN_ERRONEOUS" | "TRANSFERRED" | "ARCHIVED";
+        };
+        /** AlertClosureProof */
+        AlertClosureProof: {
+            /** Alert Evidence Id */
+            alert_evidence_id: string;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Observations */
+            observations: components["schemas"]["DiagnosticObservation"][];
+            /**
+             * Resolution
+             * @enum {string}
+             */
+            resolution: "DISAPPEARED" | "PROVEN_ERRONEOUS" | "TRANSFERRED" | "ARCHIVED";
+            /** Rule Version */
+            rule_version: string;
+        };
         /**
          * AuthenticationVerificationDto
          * @description Pydantic transport contract for a completed passkey authentication.
@@ -313,6 +349,34 @@ export interface components {
             /** Routing Policy Version */
             routing_policy_version: string;
         };
+        /** DiagnosticObservation */
+        DiagnosticObservation: {
+            evidence: components["schemas"]["QualificationEvidence"];
+            /** Rule Version */
+            rule_version: string;
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "CLEAR" | "RECURRENT" | "INSUFFICIENT" | "UNAVAILABLE";
+        };
+        /** DiagnosticPlan */
+        DiagnosticPlan: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Planned Nodes */
+            planned_nodes: string[];
+            /** Rule Version */
+            rule_version: string;
+        };
         /** EstablishedObligation */
         EstablishedObligation: {
             /** Basis Reference */
@@ -330,6 +394,47 @@ export interface components {
              */
             quantity_status: "UNKNOWN";
         };
+        /** EvidenceArtifact */
+        EvidenceArtifact: {
+            /** Artifact Id */
+            artifact_id: string;
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /** Content */
+            content: string;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** License Id */
+            license_id: string;
+            /**
+             * Valid From
+             * Format: date-time
+             */
+            valid_from: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            /** Version */
+            version: string;
+        };
+        /** EvidenceBasis */
+        EvidenceBasis: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Dependencies */
+            dependencies: components["schemas"]["EvidenceArtifact"][];
+            /** Dependency Windows */
+            dependency_windows: components["schemas"]["EvidenceDependencyWindow"][];
+            root_artifact: components["schemas"]["EvidenceArtifact"];
+        };
         /**
          * EvidenceClock
          * @description The immutable fact, publication, acquisition, and validation clocks.
@@ -343,6 +448,23 @@ export interface components {
             source_published_at: string;
             /** Validated At */
             validated_at: string;
+        };
+        /** EvidenceDependencyWindow */
+        EvidenceDependencyWindow: {
+            /** Dependency Artifact Id */
+            dependency_artifact_id: string;
+            /** Parent Artifact Id */
+            parent_artifact_id: string;
+            /**
+             * Required From
+             * Format: date-time
+             */
+            required_from: string;
+            /**
+             * Required Until
+             * Format: date-time
+             */
+            required_until: string;
         };
         /**
          * ExternalResult
@@ -360,6 +482,8 @@ export interface components {
         };
         /** FormalCheckIdentity */
         FormalCheckIdentity: {
+            /** Error Budget Id */
+            error_budget_id?: string | null;
             /** Index */
             index: number;
             /**
@@ -384,6 +508,27 @@ export interface components {
             scheduled_at: string;
             /** Sequence Id */
             sequence_id: string;
+        };
+        /** FormalNodeDisposition */
+        FormalNodeDisposition: {
+            /** Check Index */
+            check_index: number;
+            evidence: components["schemas"]["QualificationEvidence"];
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "EXECUTED_PASS" | "EXECUTED_FAIL" | "INSUFFICIENT" | "NOT_EXECUTED";
         };
         /**
          * FormalReport
@@ -489,6 +634,11 @@ export interface components {
             /** Node Id */
             node_id: string;
             /**
+             * Retained Objects
+             * @default []
+             */
+            retained_objects: components["schemas"]["RetainedObjectReference"][];
+            /**
              * Scheduled At
              * Format: date-time
              */
@@ -525,6 +675,8 @@ export interface components {
              * Format: date-time
              */
             available_at: string;
+            basis?: components["schemas"]["EvidenceBasis"] | null;
+            diagnostic_plan?: components["schemas"]["DiagnosticPlan"] | null;
             /** Digest */
             digest: string;
             /**
@@ -551,7 +703,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "ALERT_CLOSURE";
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
             /** Resolves Evidence Id */
@@ -587,6 +739,8 @@ export interface components {
              * @constant
              */
             contract_version: "1.0.0";
+            /** Diagnostic Clear Node Count */
+            diagnostic_clear_node_count?: number | null;
             /** Evaluation Max Age Months */
             evaluation_max_age_months: number;
             /** Generator Version */
@@ -608,6 +762,11 @@ export interface components {
         /** QualificationRecord */
         QualificationRecord: {
             /**
+             * Alert Closures
+             * @default []
+             */
+            alert_closures: components["schemas"]["AlertClosure"][];
+            /**
              * Alerts
              * @default []
              */
@@ -623,6 +782,11 @@ export interface components {
             decision_id: string;
             evidence: components["schemas"]["QualificationEvidence"];
             formal_evidence?: components["schemas"]["QualificationEvidence"] | null;
+            /**
+             * Formal Node Dispositions
+             * @default []
+             */
+            formal_node_dispositions: components["schemas"]["FormalNodeDisposition"][];
             formal_passing_evidence?: components["schemas"]["QualificationEvidence"] | null;
             /** Last Formal Node */
             last_formal_node?: string | null;
@@ -715,6 +879,45 @@ export interface components {
             registered_at: string;
             scope: components["schemas"]["QualificationScope"];
         };
+        /** RequalificationMember */
+        RequalificationMember: {
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /**
+             * Matured At
+             * Format: date-time
+             */
+            matured_at: string;
+            /** Member Id */
+            member_id: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+            /**
+             * Prediction Frozen At
+             * Format: date-time
+             */
+            prediction_frozen_at: string;
+        };
+        /** RequalificationPopulation */
+        RequalificationPopulation: {
+            /** Evidence Id */
+            evidence_id: string;
+            /** Frozen Version Digest */
+            frozen_version_digest: string;
+            /** Gate Results */
+            gate_results: components["schemas"]["QualificationGate"][];
+            /** Members */
+            members: components["schemas"]["RequalificationMember"][];
+            /** Population Id */
+            population_id: string;
+            /** Registered Member Ids */
+            registered_member_ids: string[];
+            /** Required Gates */
+            required_gates: string[];
+        };
         /** RequalificationProof */
         RequalificationProof: {
             /** Application Id */
@@ -725,7 +928,11 @@ export interface components {
              */
             first_prediction_frozen_at: string;
             forward_evidence: components["schemas"]["QualificationEvidence"];
+            forward_population?: components["schemas"]["RequalificationPopulation"] | null;
+            /** Frozen Version Digest */
+            frozen_version_digest?: string | null;
             historical_evidence: components["schemas"]["QualificationEvidence"];
+            historical_population?: components["schemas"]["RequalificationPopulation"] | null;
             /**
              * Locked At
              * Format: date-time
@@ -756,6 +963,55 @@ export interface components {
              * @enum {string}
              */
             visibility: "USER" | "SHADOW";
+        };
+        /** RetainedObjectReference */
+        RetainedObjectReference: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "CONCLUSION" | "CONTRACT" | "EVIDENCE" | "EVALUATION";
+            /** Object Id */
+            object_id: string;
+        };
+        /** RetainedTaskRelation */
+        RetainedTaskRelation: {
+            /** Activation Id */
+            activation_id: string | null;
+            /**
+             * Deterministic Obligations
+             * @default []
+             */
+            deterministic_obligations: components["schemas"]["EstablishedObligation"][];
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Node Id */
+            node_id: string;
+            original_version: components["schemas"]["CapabilityVersion"];
+            /** Qualification Decision Id */
+            qualification_decision_id: string | null;
+            /**
+             * Retained Objects
+             * @default []
+             */
+            retained_objects: components["schemas"]["RetainedObjectReference"][];
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /** Task Decision Id */
+            task_decision_id: string;
+            /** Task Identity */
+            task_identity: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
         };
         /**
          * SafetyCapabilitiesDiagnosticDto
@@ -878,6 +1134,11 @@ export interface components {
             recorded_at: string;
             /** Retained Task Ids */
             retained_task_ids: string[];
+            /**
+             * Retained Tasks
+             * @default []
+             */
+            retained_tasks: components["schemas"]["RetainedTaskRelation"][];
             scope: components["schemas"]["QualificationScope"];
             version: components["schemas"]["CapabilityVersion"];
         };
