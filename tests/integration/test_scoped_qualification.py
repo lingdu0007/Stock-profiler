@@ -810,6 +810,12 @@ def test_insufficient_formal_node_preserves_budget_and_cannot_be_reopened(
     assert record.authorization_evidence.formal_check.index == 1
     assert record.last_formal_node is not None
     assert record.last_formal_node.isoformat() == "2042-06-01T00:00:00+00:00"
+    assert len(record.formal_node_dispositions) == 1
+    assert record.formal_node_dispositions[0].status == "INSUFFICIENT"
+    assert record.formal_node_dispositions[0].check_index == 1
+    assert record.formal_node_dispositions[0].evidence.evidence_id == (
+        "synthetic-insufficient-node"
+    )
 
     command["previous_decision_id"] = skipped.decision_event_id
     command["evidence"]["maturity_sufficient"] = True
@@ -843,6 +849,10 @@ def test_insufficient_formal_node_preserves_budget_and_cannot_be_reopened(
     assert record is not None and record.formal_evidence is not None
     assert record.formal_evidence.formal_check is not None
     assert record.formal_evidence.formal_check.index == 2
+    assert [item.status for item in record.formal_node_dispositions] == [
+        "INSUFFICIENT",
+        "EXECUTED_PASS",
+    ]
 
 
 def test_green_formal_check_does_not_automatically_restore_expired_evidence(

@@ -96,3 +96,119 @@ def test_integrity_restoration_verifies_original_content_and_dependency_windows(
     assert granted.report.result.governance is not None
     assert granted.report.result.governance.qualification is not None
     assert granted.report.result.governance.qualification.status == "VALID"
+
+
+def test_formal_sequence_requires_a_disposition_for_every_planned_node(
+    migrated_settings: Settings,
+) -> None:
+    planned = [
+        "2042-05-06T00:00:00Z",
+        "2042-06-03T00:00:00Z",
+        "2042-07-08T00:00:00Z",
+    ]
+    original_check = {
+        "sequence_id": "synthetic-disposition-sequence",
+        "index": 1,
+        "registered_at": "2042-05-01T00:00:00Z",
+        "scheduled_at": planned[0],
+        "planned_nodes": planned,
+        "required_gates": ["synthetic-complete-gate"],
+    }
+    grant_command = qualification_command(migrated_settings)
+    grant_command["evidence"]["formal_check"] = original_check
+    granted = execute(migrated_settings, "disposition-grant", grant_command)
+
+    check_command = qualification_command(
+        migrated_settings,
+        action="FORMAL_CHECK",
+        previous=granted.decision_event_id,
+    )
+    check_command["evidence"].update(
+        kind="FORMAL_CHECK",
+        evidence_id="synthetic-disposition-check",
+        evaluation_end=planned[2],
+        available_at="2042-07-09T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        formal_check={**original_check, "index": 2, "scheduled_at": planned[2]},
+        maturity_sufficient=True,
+        gate_results=[{"gate_id": "synthetic-complete-gate", "passed": True}],
+    )
+    skipped_payload = case_payload(
+        migrated_settings,
+        "disposition-skipped-node",
+        check_command,
+        contract_version="5.0.0",
+    )
+    skipped_payload["knowledge_cutoff"] = "2042-07-09T09:00:00Z"
+    skipped = run_frozen_decision_case(
+        migrated_settings,
+        skipped_payload,
+        clock=GovernanceClock("2042-07-09T10:00:00Z"),
+    )
+    assert skipped.report is not None
+    skipped_outcome = skipped.report.result.governance
+    assert skipped_outcome is not None
+    assert skipped_outcome.disposition == "DENIED"
+    assert skipped_outcome.reasons == ("FORMAL_CHECK_NOT_ALLOWED",)
+
+    disposition_command = qualification_command(
+        migrated_settings,
+        action="RECORD_FORMAL_NODE",
+        previous=granted.decision_event_id,
+    )
+    disposition_command["evidence"].update(
+        kind="FORMAL_NODE_NOT_EXECUTED",
+        evidence_id="synthetic-disposition-missed-node",
+        evaluation_end=planned[1],
+        available_at="2042-06-04T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        formal_check={**original_check, "scheduled_at": planned[1]},
+    )
+    disposition_payload = case_payload(
+        migrated_settings,
+        "disposition-recorded-node",
+        disposition_command,
+        contract_version="5.0.0",
+    )
+    disposition_payload["knowledge_cutoff"] = "2042-06-04T09:00:00Z"
+    disposition = run_frozen_decision_case(
+        migrated_settings,
+        disposition_payload,
+        clock=GovernanceClock("2042-06-04T10:00:00Z"),
+    )
+    assert disposition.report is not None
+    disposition_outcome = disposition.report.result.governance
+    assert disposition_outcome is not None
+    assert disposition_outcome.disposition == "APPROVED"
+    assert disposition_outcome.reasons == ("FORMAL_NODE_NOT_EXECUTED",)
+    disposition_record = disposition_outcome.qualification
+    assert disposition_record is not None
+    assert disposition_record.formal_evidence is None
+    assert disposition_record.formal_node_dispositions[0].status == "NOT_EXECUTED"
+
+    check_command["previous_decision_id"] = disposition.decision_event_id
+    completed_payload = case_payload(
+        migrated_settings,
+        "disposition-completed-check",
+        check_command,
+        contract_version="5.0.0",
+    )
+    completed_payload["knowledge_cutoff"] = skipped_payload["knowledge_cutoff"]
+    completed = run_frozen_decision_case(
+        migrated_settings,
+        completed_payload,
+        clock=GovernanceClock("2042-07-09T10:00:00Z"),
+    )
+    assert completed.report is not None
+    completed_outcome = completed.report.result.governance
+    assert completed_outcome is not None
+    assert completed_outcome.disposition == "APPROVED"
+    completed_record = completed_outcome.qualification
+    assert completed_record is not None
+    assert completed_record.formal_evidence is not None
+    assert completed_record.formal_evidence.formal_check is not None
+    assert completed_record.formal_evidence.formal_check.index == 2
+    assert [item.status for item in completed_record.formal_node_dispositions] == [
+        "NOT_EXECUTED",
+        "EXECUTED_PASS",
+    ]

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from stock_profiler.modules.qualification.contracts import (
     CapabilityVersion,
+    FormalCheckIdentity,
+    FormalNodeDisposition,
     GovernanceOutcome,
     QualificationCommand,
     QualificationEvidence,
@@ -62,6 +64,8 @@ def adjudicate(
         )
     if command.action == "FORMAL_CHECK":
         return _formal_check(command, previous, event_id, now)
+    if command.action == "RECORD_FORMAL_NODE":
+        return _record_formal_node_disposition(command, previous, event_id, now)
     if command.action == "REQUALIFY":
         proof = command.requalification
         if (
@@ -351,6 +355,11 @@ def _formal_check(
     original = (previous.formal_evidence or previous.authorization_evidence) if previous else None
     original_check = original.formal_check if original else None
     passed = formal_check_passed(evidence)
+    next_node = (
+        _next_formal_node(previous, original_check)
+        if previous is not None and original_check is not None
+        else None
+    )
     if (
         previous is None
         or check is None
@@ -364,11 +373,7 @@ def _formal_check(
         or check.registered_at != original_check.registered_at
         or check.index != original_check.index + (0 if passed is None else 1)
         or check.scheduled_at not in check.planned_nodes
-        or check.scheduled_at <= original_check.scheduled_at
-        or (
-            previous.last_formal_node is not None
-            and check.scheduled_at <= previous.last_formal_node
-        )
+        or check.scheduled_at != next_node
         or not (
             check.registered_at
             <= evidence.evaluation_end
@@ -379,6 +384,13 @@ def _formal_check(
         return GovernanceOutcome(disposition="DENIED", reasons=("FORMAL_CHECK_NOT_ALLOWED",))
     previous = restrict_expired_qualification(previous, now)
     if passed is None:
+        disposition = FormalNodeDisposition(
+            scheduled_at=check.scheduled_at,
+            status="INSUFFICIENT",
+            check_index=check.index,
+            evidence=evidence,
+            recorded_at=now,
+        )
         return GovernanceOutcome(
             disposition="APPROVED",
             reasons=("FORMAL_CHECK_WATERMARK_INSUFFICIENT",),
@@ -388,6 +400,10 @@ def _formal_check(
                     "previous_decision_id": previous.decision_id,
                     "evidence": evidence,
                     "last_formal_node": check.scheduled_at,
+                    "formal_node_dispositions": (
+                        *previous.formal_node_dispositions,
+                        disposition,
+                    ),
                     "recorded_at": now,
                 }
             ),
@@ -399,6 +415,13 @@ def _formal_check(
             *restrictions,
             QualificationRestriction(cause="FORMAL_PERFORMANCE_FAILURE", evidence=evidence),
         )
+    disposition = FormalNodeDisposition(
+        scheduled_at=check.scheduled_at,
+        status="EXECUTED_PASS" if passed else "EXECUTED_FAIL",
+        check_index=check.index,
+        evidence=evidence,
+        recorded_at=now,
+    )
     return GovernanceOutcome(
         disposition="APPROVED",
         reasons=("FORMAL_CHECK_PASSED" if passed else "FORMAL_CHECK_FAILED",),
@@ -414,11 +437,90 @@ def _formal_check(
                 "formal_passing_evidence": (
                     evidence if passed else previous.formal_passing_evidence
                 ),
+                "formal_node_dispositions": (
+                    *previous.formal_node_dispositions,
+                    disposition,
+                ),
                 "restrictions": restrictions,
                 "recorded_at": now,
             }
         ),
     )
+
+
+def _record_formal_node_disposition(
+    command: QualificationCommand,
+    previous: QualificationRecord | None,
+    event_id: str,
+    now: datetime,
+) -> GovernanceOutcome:
+    evidence = command.evidence
+    check = evidence.formal_check
+    original = (previous.formal_evidence or previous.authorization_evidence) if previous else None
+    original_check = original.formal_check if original else None
+    next_node = (
+        _next_formal_node(previous, original_check)
+        if previous is not None and original_check is not None
+        else None
+    )
+    if (
+        previous is None
+        or check is None
+        or original_check is None
+        or evidence.kind != "FORMAL_NODE_NOT_EXECUTED"
+        or not original_check.planned_nodes
+        or check.planned_nodes != original_check.planned_nodes
+        or check.required_gates != original_check.required_gates
+        or check.sequence_id != original_check.sequence_id
+        or check.registered_at != original_check.registered_at
+        or check.index != original_check.index
+        or check.scheduled_at != next_node
+        or not (
+            check.registered_at
+            <= evidence.evaluation_end
+            <= check.scheduled_at
+            <= evidence.available_at
+        )
+    ):
+        return GovernanceOutcome(disposition="DENIED", reasons=("FORMAL_NODE_NOT_ALLOWED",))
+    disposition = FormalNodeDisposition(
+        scheduled_at=check.scheduled_at,
+        status="NOT_EXECUTED",
+        check_index=check.index,
+        evidence=evidence,
+        recorded_at=now,
+    )
+    return GovernanceOutcome(
+        disposition="APPROVED",
+        reasons=("FORMAL_NODE_NOT_EXECUTED",),
+        qualification=previous.model_copy(
+            update={
+                "decision_id": event_id,
+                "previous_decision_id": previous.decision_id,
+                "evidence": evidence,
+                "last_formal_node": check.scheduled_at,
+                "formal_node_dispositions": (
+                    *previous.formal_node_dispositions,
+                    disposition,
+                ),
+                "recorded_at": now,
+            }
+        ),
+    )
+
+
+def _next_formal_node(
+    record: QualificationRecord,
+    original_check: FormalCheckIdentity,
+) -> datetime | None:
+    anchor = original_check.scheduled_at
+    if record.formal_node_dispositions:
+        anchor = record.formal_node_dispositions[-1].scheduled_at
+    elif record.last_formal_node is not None:
+        if record.last_formal_node != original_check.scheduled_at:
+            return None
+        anchor = record.last_formal_node
+    return next((node for node in original_check.planned_nodes if node > anchor), None)
 
 
 def _restores_restriction(

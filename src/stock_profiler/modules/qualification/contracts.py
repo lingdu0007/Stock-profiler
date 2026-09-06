@@ -142,6 +142,7 @@ class QualificationEvidence(GovernanceContract):
         "HISTORICAL_OOS_PASS",
         "LOCKED_FORWARD_PASS",
         "FORMAL_CHECK",
+        "FORMAL_NODE_NOT_EXECUTED",
     ]
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_end: AwareDatetime
@@ -173,6 +174,14 @@ class RequalificationProof(GovernanceContract):
     forward_evidence: QualificationEvidence
 
 
+class FormalNodeDisposition(GovernanceContract):
+    scheduled_at: AwareDatetime
+    status: Literal["EXECUTED_PASS", "EXECUTED_FAIL", "INSUFFICIENT", "NOT_EXECUTED"]
+    check_index: int = Field(ge=1)
+    evidence: QualificationEvidence
+    recorded_at: AwareDatetime
+
+
 class QualificationCommand(GovernanceContract):
     operation: Literal["QUALIFICATION"]
     action: Literal[
@@ -184,6 +193,7 @@ class QualificationCommand(GovernanceContract):
         "RESTORE",
         "REQUALIFY",
         "FORMAL_CHECK",
+        "RECORD_FORMAL_NODE",
     ]
     scope: QualificationScope
     version: CapabilityVersion
@@ -241,6 +251,9 @@ class QualificationRecord(GovernanceContract):
     last_formal_node: AwareDatetime | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    formal_node_dispositions: tuple[FormalNodeDisposition, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     def evidence_available_by(self, cutoff: datetime) -> bool:
         return all(
@@ -253,6 +266,7 @@ class QualificationRecord(GovernanceContract):
                 *self.alerts,
                 *(restriction.evidence for restriction in self.restrictions),
                 *self.restoration_evidence,
+                *(disposition.evidence for disposition in self.formal_node_dispositions),
             )
         )
 
