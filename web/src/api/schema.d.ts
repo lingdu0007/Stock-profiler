@@ -558,7 +558,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**

@@ -16,6 +16,7 @@ def adjudicate(
     *,
     event_id: str,
     observed_at: str,
+    knowledge_cutoff: str,
     history: tuple[GovernanceOutcome, ...],
 ) -> GovernanceOutcome:
     now = datetime.fromisoformat(observed_at)
@@ -28,6 +29,10 @@ def adjudicate(
         or evidence.expires_at < now
     ):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_INVALID",))
+    if evidence.available_at > datetime.fromisoformat(knowledge_cutoff):
+        return GovernanceOutcome(
+            disposition="DENIED", reasons=("QUALIFICATION_EVIDENCE_AFTER_CUTOFF",)
+        )
     previous = current_qualification(history, command.scope, command.version)
     if command.previous_decision_id != (previous.decision_id if previous else None):
         return GovernanceOutcome(disposition="DENIED", reasons=("QUALIFICATION_REVISION_CONFLICT",))

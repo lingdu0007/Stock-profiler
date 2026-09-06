@@ -15,6 +15,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
@@ -83,7 +84,9 @@ class DecisionLedger(Protocol[Transaction]):
 
     def observed_at(self) -> str: ...
 
-    def governance_history(self, connection: Transaction) -> tuple[GovernanceOutcome, ...]: ...
+    def governance_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[GovernanceOutcome, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 

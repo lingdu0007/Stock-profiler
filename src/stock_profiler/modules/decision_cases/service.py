@@ -46,6 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.qualification.service import adjudicate
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -173,6 +174,7 @@ def correct_default_frozen_decision_case(
                 correction_evidence=CorrectionEvidence.model_validate(
                     load_frozen_correction_payload()
                 ),
+                governance=original_event.result.governance,
             )
             correction_stages = (
                 StageResult(
@@ -459,6 +461,7 @@ def _commit_framework_result(
             business_commit_status="NOT_ATTEMPTED",
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
+    qualification_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -474,15 +477,22 @@ def _commit_framework_result(
                 business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
             )
             if business_result is not None and execution_case.governance is not None:
-                governance = adjudicate(
-                    execution_case.governance,
-                    event_id=execution_case.decision_event_id,
-                    observed_at=ledger.observed_at(),
-                    history=ledger.governance_history(connection),
-                )
+                if business_result.status == "SUCCEEDED":
+                    assert execution_case.access_scope is not None
+                    governance = adjudicate(
+                        execution_case.governance,
+                        event_id=execution_case.decision_event_id,
+                        observed_at=ledger.observed_at(),
+                        knowledge_cutoff=execution_case.knowledge_cutoff,
+                        history=ledger.governance_history(connection, execution_case.access_scope),
+                    )
+                else:
+                    governance = GovernanceOutcome(
+                        disposition="DENIED", reasons=("BUSINESS_PREREQUISITE_NOT_MET",)
+                    )
                 result = result.model_copy(update={"governance": governance})
-                business_result = StageResult(
-                    phase="BUSINESS_DECISION",
+                qualification_result = StageResult(
+                    phase="QUALIFICATION",
                     status="SUCCEEDED" if governance.disposition == "APPROVED" else "REJECTED",
                     gate_results=(
                         GateResult(
@@ -507,11 +517,19 @@ def _commit_framework_result(
             stage_result=business_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if qualification_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=qualification_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
         validation_result,
         *((business_result,) if business_result is not None else ()),
+        *((qualification_result,) if qualification_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,
@@ -982,7 +1000,7 @@ def _correction_case(
                     ),
                     "host_source_sha": current_case.version_bundle.host_source_sha,
                     "report_projection_contract_version": (
-                        "3.0.0"
+                        original_case.version_bundle.report_projection_contract_version
                         if original_case.access_scope is not None
                         else FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
                     ),

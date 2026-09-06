@@ -24,6 +24,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
     stored_report_payload,
 )
@@ -109,8 +110,10 @@ class DecisionLedger:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
 
-    def governance_history(self, connection: Connection) -> tuple[GovernanceOutcome, ...]:
-        """Read governance from validated original events, not a second mutable authority."""
+    def governance_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[GovernanceOutcome, ...]:
+        """Select original authority by its saved owner, accounts and visibility before use."""
         event_ids = (
             connection.execute(
                 select(DECISION_EVENTS.c.decision_event_id).where(
@@ -125,7 +128,7 @@ class DecisionLedger:
             fact = self.get_decision_event(event_id, connection)
             if fact is None:
                 raise DecisionEventCommitError("governance history is unavailable")
-            if fact.result.governance is not None:
+            if fact.case.access_scope == access_scope and fact.result.governance is not None:
                 history.append(fact.result.governance)
         return tuple(history)
 

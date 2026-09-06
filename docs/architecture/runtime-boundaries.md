@@ -24,6 +24,14 @@ nonterminal M-Agent Run is resumed under its original identity, while framework
 states, host validation outcomes, business commits, publication, notifications,
 and corrections retain their own append-only phase records.
 
+Governed D0 cases record qualification in a separate `QUALIFICATION` stage.
+Neither approval nor denial replaces the original business or lifecycle
+outcome. Non-success business prerequisites cannot create authorization;
+their saved negative outcomes remain readable. Evidence must have been
+available by the original frozen knowledge cutoff, even when execution is
+delayed. Reading a saved qualification outcome is historical replay, not a
+new grant or activation.
+
 Original frozen snapshots preserve build provenance across recovery. An
 unmapped historical Run from another build closes the publication gate until
 the original snapshot can be validated against that exact durable Run. The
@@ -35,6 +43,8 @@ Corrections append changed evidence, its source and reason, and independent
 evidence clocks and cutoff. They reference the original event and evidence
 without rewriting the original Run, report, outcome, or cutoff. Each report
 version remains independently readable.
+Scoped corrections retain the original projection contract and qualification
+snapshot. They do not re-adjudicate authorization or add qualification history.
 
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic
