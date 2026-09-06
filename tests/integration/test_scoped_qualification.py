@@ -9,11 +9,13 @@ from typing import Any
 
 import pytest
 
+from stock_profiler.adapters.m_agent.frozen_decision_case import execute_frozen_decision_case
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import (
     get_formal_report,
+    replay_default_frozen_decision_case,
     run_frozen_decision_case,
 )
 from stock_profiler.bootstrap.settings import Settings
@@ -605,8 +607,12 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
         assert revoked.report.result.governance.qualification.status == "REVOKED"
 
 
+@pytest.mark.parametrize("account_shape", ["original", "reordered", "historical-duplicate"])
+@pytest.mark.parametrize("proof_change", ["none", "digest", "available_at"])
 def test_formal_failure_suspends_and_later_green_check_requires_explicit_restoration(
     migrated_settings: Settings,
+    account_shape: str,
+    proof_change: str,
 ) -> None:
     planned = ["2042-05-06T00:00:00Z", "2042-06-01T00:00:00Z", "2042-07-01T00:00:00Z"]
     check = {
@@ -618,15 +624,28 @@ def test_formal_failure_suspends_and_later_green_check_requires_explicit_restora
         "required_gates": ["synthetic-direction", "synthetic-complete-policy"],
     }
     command = qualification_command(migrated_settings)
+    accounts = command["scope"]["account_ids"].copy()
+    if account_shape == "reordered":
+        accounts.append("synthetic-account-orbit")
+    command["scope"]["account_ids"] = accounts
+    command["evidence"]["scope"] = deepcopy(command["scope"])
     command["evidence"]["formal_check"] = check
+    original_payload = case_payload(
+        migrated_settings, "formal-origin", command, contract_version="5.0.0"
+    )
+    original_payload["access_scope"]["account_ids"] = accounts
     granted = run_frozen_decision_case(
         migrated_settings,
-        case_payload(migrated_settings, "formal-origin", command, contract_version="5.0.0"),
+        original_payload,
         clock=GovernanceClock(),
     )
     previous = granted.decision_event_id
     for index, month, passed in [(2, "06", False), (3, "07", True)]:
         command = qualification_command(migrated_settings, action="FORMAL_CHECK", previous=previous)
+        command["scope"]["account_ids"] = (
+            accounts * 2 if passed and account_shape == "historical-duplicate" else accounts
+        )
+        command["evidence"]["scope"] = deepcopy(command["scope"])
         command["evidence"].update(
             kind="FORMAL_CHECK",
             evidence_id=f"synthetic-formal-{index}",
@@ -643,10 +662,30 @@ def test_formal_failure_suspends_and_later_green_check_requires_explicit_restora
         payload = case_payload(
             migrated_settings, f"formal-{index}", command, contract_version="5.0.0"
         )
+        payload["access_scope"]["account_ids"] = accounts
         payload["knowledge_cutoff"] = f"2042-{month}-02T09:00:00Z"
-        execution = run_frozen_decision_case(
-            migrated_settings, payload, clock=GovernanceClock(f"2042-{month}-02T10:00:00Z")
-        )
+        clock = GovernanceClock(f"2042-{month}-02T10:00:00Z")
+        if passed and account_shape == "historical-duplicate":
+            # Native legacy Run fixture: recovery must validate its actual frozen input.
+            case = FrozenDecisionCase.model_validate(payload)
+            runtime = initialize_runtime_storage(migrated_settings)
+            original_run = asyncio.run(execute_frozen_decision_case(case, runtime, clock=clock))
+            assert original_run.status == "SUCCEEDED"
+            before_run = asyncio.run(runtime.run_store.get_run(case.framework_run_id))
+            before_checkpoints = asyncio.run(
+                runtime.run_store.get_checkpoints(case.framework_run_id)
+            )
+            execution = replay_default_frozen_decision_case(
+                migrated_settings, case.business_identity, recovery_case=case, clock=clock
+            )
+            assert execution.framework_run_id == case.framework_run_id
+            assert asyncio.run(runtime.run_store.get_run(case.framework_run_id)) == before_run
+            assert (
+                asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
+                == before_checkpoints
+            )
+        else:
+            execution = run_frozen_decision_case(migrated_settings, payload, clock=clock)
         assert execution.report is not None and execution.report.result.governance is not None
         outcome = execution.report.result.governance
         assert outcome.disposition == "APPROVED"
@@ -661,7 +700,15 @@ def test_formal_failure_suspends_and_later_green_check_requires_explicit_restora
             ("FORMAL_PERFORMANCE_FAILURE", "synthetic-formal-2")
         ]
         previous = execution.decision_event_id
+    assert record is not None
+    retained_formal_evidence = record.formal_evidence
+    formal_report = execution.report
+    formal_payload = deepcopy(payload)
     restored = qualification_command(migrated_settings, action="RESTORE", previous=previous)
+    restored["scope"]["account_ids"] = (
+        list(reversed(accounts)) if account_shape == "reordered" else accounts
+    )
+    restored["evidence"]["scope"] = deepcopy(restored["scope"])
     restored["evidence"].update(
         kind="RESTORATION_DECISION",
         evidence_id="synthetic-formal-restoration",
@@ -669,19 +716,40 @@ def test_formal_failure_suspends_and_later_green_check_requires_explicit_restora
         available_at="2042-07-02T08:00:00Z",
     )
     proof = deepcopy(command["evidence"])
+    proof["scope"] = deepcopy(restored["scope"])
     proof["resolves_evidence_id"] = "synthetic-formal-2"
+    if proof_change == "digest":
+        proof["digest"] = "c" * 64
+    elif proof_change == "available_at":
+        proof["available_at"] = "2042-07-02T08:01:00Z"
     restored["restoration_evidence"] = [proof]
     payload = case_payload(migrated_settings, "formal-restored", restored, contract_version="5.0.0")
+    payload["access_scope"]["account_ids"] = accounts
     payload["knowledge_cutoff"] = "2042-07-02T09:00:00Z"
     execution = run_frozen_decision_case(
         migrated_settings, payload, clock=GovernanceClock("2042-07-02T10:00:00Z")
     )
     assert execution.report is not None and execution.report.result.governance is not None
-    record = execution.report.result.governance.qualification
-    assert record is not None and record.status == "VALID"
-    assert record.authorization_id == granted.decision_event_id
-    assert record.formal_evidence is not None and record.formal_evidence.formal_check is not None
-    assert record.formal_evidence.formal_check.index == 3
+    outcome = execution.report.result.governance
+    record = outcome.qualification
+    if proof_change == "none":
+        assert record is not None and record.status == "VALID"
+        assert record.authorization_id == granted.decision_event_id
+        assert (
+            record.formal_evidence is not None and record.formal_evidence.formal_check is not None
+        )
+        assert record.formal_evidence.formal_check.index == 3
+        assert record.formal_evidence == retained_formal_evidence
+    else:
+        assert outcome.disposition == "DENIED"
+        assert outcome.reasons == ("QUALIFICATION_RESTORATION_INCOMPLETE",)
+        assert record is None
+    assert (
+        run_frozen_decision_case(
+            migrated_settings, formal_payload, clock=GovernanceClock("2042-07-02T10:01:00Z")
+        ).report
+        == formal_report
+    )
 
 
 def test_insufficient_formal_node_preserves_budget_and_cannot_be_reopened(

@@ -433,7 +433,15 @@ def _restores_restriction(
         return (
             proof.kind == "FORMAL_CHECK"
             and formal_check_passed(proof) is True
-            and proof.model_copy(update={"resolves_evidence_id": None}) == previous.formal_evidence
+            and previous.formal_evidence is not None
+            and proof.scope.same_scope_as(previous.formal_evidence.scope)
+            and proof.model_copy(
+                update={
+                    "resolves_evidence_id": None,
+                    "scope": previous.formal_evidence.scope,
+                }
+            )
+            == previous.formal_evidence
             and proof.evaluation_end > restriction.evidence.evaluation_end
         )
     return False
