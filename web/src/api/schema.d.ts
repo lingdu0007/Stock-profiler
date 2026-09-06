@@ -300,8 +300,18 @@ export interface components {
             /** Validated At */
             validated_at: string;
         };
+        /**
+         * ExternalResult
+         * @description The user-visible result expected from this original synthetic fixture.
+         */
         ExternalResult: {
-            [key: string]: unknown;
+            correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
+            /** Key Reasons */
+            key_reasons: string[];
+            /** Outcome Code */
+            outcome_code: string;
+            /** Summary */
+            summary: string;
         };
         /**
          * FormalReport

@@ -51,6 +51,13 @@ _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
 
 
+def get_formal_report(
+    report_version_id: str, ledger: DecisionLedger[Transaction]
+) -> FormalReport | None:
+    """Read only the verified saved projection through the host-owned port."""
+    return ledger.get_formal_report(report_version_id)
+
+
 def run_default_frozen_decision_case(
     case: FrozenDecisionCase,
     ledger: DecisionLedger[Transaction],
@@ -192,17 +199,7 @@ def correct_default_frozen_decision_case(
                 generated_at=correction_written_at,
             )
             try:
-                correction_event = ledger.commit_event(
-                    connection,
-                    case=correction_case,
-                    framework_run_id=original_event.framework_run_id,
-                    result=correction_result,
-                    stage_results=correction_stages,
-                    decision_event_id=correction_event_id,
-                    corrects_event_id=original_event.decision_event_id,
-                    committed_at=correction_written_at,
-                    generated_at=correction_written_at,
-                )
+                correction_event = ledger.commit_event_fact(connection, attempted_fact)
             except DecisionEventCommitUncertainError as error:
                 correction_event = ledger.reconcile_event_commit(connection, attempted_fact)
                 if correction_event is None:
@@ -261,9 +258,10 @@ def _run_frozen_decision_case(
         has_existing_mapping = (
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
+        known_run_ids = ledger.mapped_framework_run_ids(connection)
     if not has_existing_mapping:
         try:
-            legacy_case = asyncio.run(framework_adapter.recover_unmapped(case))
+            legacy_case = asyncio.run(framework_adapter.recover_unmapped(case, known_run_ids))
         except ValueError as error:
             raise DecisionEventCommitError("durable legacy framework recovery failed") from error
         if legacy_case is not None:
@@ -537,15 +535,7 @@ def _commit_framework_result(
         generated_at=execution_case.report_generated_at,
     )
     try:
-        return ledger.commit_event(
-            connection,
-            case=execution_case,
-            framework_run_id=framework.run_id,
-            result=result,
-            stage_results=stage_results,
-            committed_at=committed_at,
-            generated_at=execution_case.report_generated_at,
-        )
+        return ledger.commit_event_fact(connection, attempted_fact)
     except DecisionEventCommitUncertainError:
         committed = ledger.reconcile_event_commit(connection, attempted_fact)
         if committed is not None:

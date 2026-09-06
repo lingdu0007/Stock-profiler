@@ -11,8 +11,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    SerializerFunctionWrapHandler,
-    model_serializer,
     model_validator,
 )
 
@@ -110,15 +108,9 @@ class ExternalResult(FrozenContract):
     outcome_code: str
     summary: str
     key_reasons: tuple[str, ...]
-    correction_evidence: CorrectionEvidence | None = None
-
-    @model_serializer(mode="wrap")
-    def preserve_original_payload(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        """Keep pre-correction result bytes readable under their original contract."""
-        payload: dict[str, Any] = handler(self)
-        if self.correction_evidence is None:
-            payload.pop("correction_evidence", None)
-        return payload
+    correction_evidence: CorrectionEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class GateResult(FrozenContract):
@@ -346,6 +338,49 @@ class FormalReport(FrozenContract):
     stage_results: tuple[StageResult, ...]
     corrects_event_id: str | None = None
 
+    def with_publication_history(self, event_stages: tuple[StageResult, ...]) -> FormalReport:
+        """Retain closed gates and correction recovery without replacing saved facts."""
+        final_stage = self.stage_results[-1]
+        if final_stage.phase != "PUBLICATION" or final_stage.status != "SUCCEEDED":
+            return self
+        if self.corrects_event_id is None:
+            publication_history = tuple(
+                stage
+                for stage in event_stages
+                if stage.phase == "PUBLICATION" and stage.status != "SUCCEEDED"
+            )
+            if not publication_history:
+                return self
+            return self.model_copy(
+                update={
+                    "stage_results": (
+                        *self.stage_results[:-1],
+                        *publication_history,
+                        final_stage,
+                    )
+                }
+            )
+        correction_phases = frozenset(
+            {"CORRECTION", "BUSINESS_COMMIT", "COMMIT_RECONCILIATION", "PUBLICATION"}
+        )
+        correction_history = tuple(
+            stage for stage in event_stages if stage.phase in correction_phases
+        )
+        if not correction_history:
+            return self
+        return self.model_copy(
+            update={
+                "stage_results": (
+                    *(
+                        stage
+                        for stage in self.stage_results
+                        if stage.phase not in correction_phases
+                    ),
+                    *correction_history,
+                )
+            }
+        )
+
     @model_validator(mode="before")
     @classmethod
     def project_legacy_stage_results(cls, value: Any) -> Any:
@@ -432,38 +467,43 @@ class DecisionEventFact(FrozenContract):
 
     def formal_report(self, report_version_id: str) -> FormalReport:
         """Project this complete append-only fact into its one read-only report."""
-        return FormalReport(
-            report_version_id=report_version_id,
-            event_id=self.decision_event_id,
-            business_object_id=self.business_object_id,
-            framework_run_id=self.framework_run_id,
-            case_id=self.case.case_id,
-            synthetic=True,
-            qualification_scope=self.case.qualification_scope,
-            generated_at=self.generated_at or self.case.report_generated_at,
-            knowledge_cutoff=self.case.knowledge_cutoff,
-            evidence_clock=self.case.evidence_clock,
-            version_bundle=self.case.version_bundle,
-            result=self.result,
-            stage_results=(
-                *self.stage_results,
-                StageResult(
-                    phase="PUBLICATION",
-                    status="SUCCEEDED",
-                    gate_results=(GateResult(gate_id="EVENT_COMMITTED", status="PASSED"),),
-                    reasons=(),
-                ),
-            ),
-            corrects_event_id=self.corrects_event_id,
-        )
+        return FormalReport.model_validate(stored_report_payload(self, report_version_id))
 
     def formal_report_payload(self, report_version_id: str) -> dict[str, object]:
         """Serialize a report using the source event's immutable projection contract."""
-        payload = self.formal_report(report_version_id).model_dump(mode="json")
-        if self.case.version_bundle.report_projection_contract_version == "1.0.0":
-            payload.pop("stage_results")
-            payload.pop("corrects_event_id")
-        return payload
+        return stored_report_payload(self, report_version_id)
+
+
+def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> dict[str, object]:
+    """Frozen v1/v2 storage contract, shared by publication and integrity validation."""
+    payload: dict[str, object] = {
+        "report_version_id": report_version_id,
+        "event_id": event.decision_event_id,
+        "business_object_id": event.business_object_id,
+        "framework_run_id": event.framework_run_id,
+        "case_id": event.case.case_id,
+        "synthetic": True,
+        "qualification_scope": event.case.qualification_scope,
+        "generated_at": event.generated_at or event.case.report_generated_at,
+        "knowledge_cutoff": event.case.knowledge_cutoff,
+        "evidence_clock": event.case.evidence_clock.model_dump(mode="json"),
+        "version_bundle": event.case.version_bundle.model_dump(mode="json"),
+        "result": event.result.model_dump(mode="json"),
+        "stage_results": [
+            *(stage.model_dump(mode="json") for stage in event.stage_results),
+            {
+                "phase": "PUBLICATION",
+                "status": "SUCCEEDED",
+                "gate_results": [{"gate_id": "EVENT_COMMITTED", "status": "PASSED"}],
+                "reasons": [],
+            },
+        ],
+        "corrects_event_id": event.corrects_event_id,
+    }
+    if event.case.version_bundle.report_projection_contract_version == "1.0.0":
+        payload.pop("stage_results")
+        payload.pop("corrects_event_id")
+    return payload
 
 
 class FrozenDecisionCase(FrozenContract):
@@ -610,6 +650,20 @@ class FrozenDecisionCase(FrozenContract):
     def matches_legacy_recovery_input(self, other: FrozenDecisionCase | None = None) -> bool:
         """Compare legacy projections without relaxing the immutable D0 input."""
         comparison_case = other or FrozenDecisionCase.model_validate(load_frozen_case_payload())
+        if other is None and supports_case_host_contract(
+            self.version_bundle.case_contract_version,
+            self.version_bundle.host_contract_version,
+        ):
+            comparison_case = comparison_case.model_copy(
+                update={
+                    "version_bundle": comparison_case.version_bundle.model_copy(
+                        update={
+                            "case_contract_version": self.version_bundle.case_contract_version,
+                            "host_contract_version": self.version_bundle.host_contract_version,
+                        }
+                    )
+                }
+            )
         return _legacy_recovery_input_payload(self) == _legacy_recovery_input_payload(
             comparison_case
         )

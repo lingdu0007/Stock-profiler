@@ -24,6 +24,7 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttempt,
     NotificationAttemptStatus,
     StageResult,
+    stored_report_payload,
 )
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping as BusinessObjectMapping,
@@ -153,6 +154,11 @@ class DecisionLedger:
             frozen_input_fingerprint=row.frozen_input_fingerprint,
             framework_run_id=row.framework_run_id,
             case=case,
+        )
+
+    def mapped_framework_run_ids(self, connection: Connection) -> frozenset[str]:
+        return frozenset(
+            connection.execute(select(DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id)).scalars()
         )
 
     def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
@@ -550,6 +556,22 @@ class DecisionLedger:
             for row in rows
         )
 
+    def commit_event_fact(
+        self, connection: Connection, fact: DecisionEventFact
+    ) -> DecisionEventFact:
+        """Submit the same immutable fact that the host will reconcile on uncertainty."""
+        return self.commit_event(
+            connection,
+            case=fact.case,
+            framework_run_id=fact.framework_run_id,
+            result=fact.result,
+            stage_results=fact.stage_results,
+            decision_event_id=fact.decision_event_id,
+            corrects_event_id=fact.corrects_event_id,
+            committed_at=fact.committed_at,
+            generated_at=fact.generated_at,
+        )
+
     def commit_event(
         self,
         connection: Connection,
@@ -869,7 +891,7 @@ class DecisionLedger:
             or report.generated_at != generated_at
             or report_version_id != _report_version_id_for_event(event)
             or serialized_payload
-            != _canonical_json(_formal_report_payload_for_event(event, report_version_id))
+            != _canonical_json(stored_report_payload(event, report_version_id))
         ):
             raise DecisionEventCommitError("stored formal report does not match its durable event")
         return report
@@ -895,10 +917,7 @@ class DecisionLedger:
         connection: Connection,
         report: FormalReport,
     ) -> FormalReport:
-        """Project correction history or prior closed publication gates into one report."""
-        final_stage = report.stage_results[-1]
-        if final_stage.phase != "PUBLICATION" or final_stage.status != "SUCCEEDED":
-            return report
+        """Acquire saved stage facts; the report contract owns their visible selection."""
         event_stages = tuple(
             stage_result
             for stage_result in (
@@ -910,45 +929,7 @@ class DecisionLedger:
                 ).scalars()
             )
         )
-        if report.corrects_event_id is None:
-            publication_history = tuple(
-                stage_result
-                for stage_result in event_stages
-                if stage_result.phase == "PUBLICATION" and stage_result.status != "SUCCEEDED"
-            )
-            if not publication_history:
-                return report
-            return report.model_copy(
-                update={
-                    "stage_results": (
-                        *report.stage_results[:-1],
-                        *publication_history,
-                        final_stage,
-                    )
-                }
-            )
-        correction_history_phases = frozenset(
-            {"CORRECTION", "BUSINESS_COMMIT", "COMMIT_RECONCILIATION", "PUBLICATION"}
-        )
-        correction_history = tuple(
-            stage_result
-            for stage_result in event_stages
-            if stage_result.phase in correction_history_phases
-        )
-        if not correction_history:
-            return report
-        return report.model_copy(
-            update={
-                "stage_results": (
-                    *(
-                        stage_result
-                        for stage_result in report.stage_results
-                        if stage_result.phase not in correction_history_phases
-                    ),
-                    *correction_history,
-                )
-            }
-        )
+        return report.with_publication_history(event_stages)
 
     def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
         """Expose a report only after an append-only publication success was saved."""
@@ -1007,41 +988,6 @@ def _stage_event_id(
 
 def _canonical_json(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-
-
-def _formal_report_payload_for_event(
-    event: DecisionEventFact,
-    report_version_id: str,
-) -> dict[str, object]:
-    """Rebuild the immutable storage projection without invoking the public read builder."""
-    payload: dict[str, object] = {
-        "report_version_id": report_version_id,
-        "event_id": event.decision_event_id,
-        "business_object_id": event.business_object_id,
-        "framework_run_id": event.framework_run_id,
-        "case_id": event.case.case_id,
-        "synthetic": True,
-        "qualification_scope": event.case.qualification_scope,
-        "generated_at": event.generated_at or event.case.report_generated_at,
-        "knowledge_cutoff": event.case.knowledge_cutoff,
-        "evidence_clock": event.case.evidence_clock.model_dump(mode="json"),
-        "version_bundle": event.case.version_bundle.model_dump(mode="json"),
-        "result": event.result.model_dump(mode="json"),
-        "stage_results": [
-            *(stage_result.model_dump(mode="json") for stage_result in event.stage_results),
-            {
-                "phase": "PUBLICATION",
-                "status": "SUCCEEDED",
-                "gate_results": [{"gate_id": "EVENT_COMMITTED", "status": "PASSED"}],
-                "reasons": [],
-            },
-        ],
-        "corrects_event_id": event.corrects_event_id,
-    }
-    if event.case.version_bundle.report_projection_contract_version == "1.0.0":
-        payload.pop("stage_results")
-        payload.pop("corrects_event_id")
-    return payload
 
 
 def _report_version_id_for_event(event: DecisionEventFact) -> str:
