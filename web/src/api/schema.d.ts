@@ -340,6 +340,23 @@ export interface components {
             /** Summary */
             summary: string;
         };
+        /** FormalCheckIdentity */
+        FormalCheckIdentity: {
+            /** Index */
+            index: number;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /** Sequence Id */
+            sequence_id: string;
+        };
         /**
          * FormalReport
          * @description Read-only delivery projection derived from one committed host event.
@@ -426,16 +443,23 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            formal_check?: components["schemas"]["FormalCheckIdentity"] | null;
             /** Generator Version */
             generator_version: string;
             /**
              * Kind
              * @enum {string}
              */
-            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT";
+            kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS";
+            /** Resolves Evidence Id */
+            resolves_evidence_id?: string | null;
+            /** Restored Authorization Digest */
+            restored_authorization_digest?: string | null;
             scope: components["schemas"]["QualificationScope"];
             /** Seed */
             seed: number;
+            /** State Activity End */
+            state_activity_end?: string | null;
             /**
              * Synthetic
              * @constant
@@ -450,9 +474,11 @@ export interface components {
              * @default []
              */
             alerts: components["schemas"]["QualificationEvidence"][];
-            authorization_evidence: components["schemas"]["QualificationEvidence"];
+            authorization_evidence: components["schemas"]["QualificationEvidence"] | null;
             /** Authorization Id */
-            authorization_id: string;
+            authorization_id: string | null;
+            /** Authorization Terminated At */
+            authorization_terminated_at?: string | null;
             /** Cause */
             cause: string;
             /** Decision Id */
@@ -465,13 +491,33 @@ export interface components {
              * Format: date-time
              */
             recorded_at: string;
+            requalification?: components["schemas"]["RequalificationProof"] | null;
+            /**
+             * Restoration Evidence
+             * @default []
+             */
+            restoration_evidence: components["schemas"]["QualificationEvidence"][];
+            /**
+             * Restrictions
+             * @default []
+             */
+            restrictions: components["schemas"]["QualificationRestriction"][];
             scope: components["schemas"]["QualificationScope"];
             /**
              * Status
              * @enum {string}
              */
-            status: "VALID" | "AT_RISK";
+            status: "NOT_OBTAINED" | "VALID" | "AT_RISK" | "SUSPENDED" | "REVOKED";
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /** QualificationRestriction */
+        QualificationRestriction: {
+            /**
+             * Cause
+             * @enum {string}
+             */
+            cause: "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "EVIDENCE_EXPIRED";
+            evidence: components["schemas"]["QualificationEvidence"];
         };
         /** QualificationScope */
         QualificationScope: {
@@ -506,6 +552,28 @@ export interface components {
         ReauthenticationVerificationDto: {
             /** Credential Id */
             credential_id: string;
+        };
+        /** RequalificationProof */
+        RequalificationProof: {
+            /** Application Id */
+            application_id: string;
+            /**
+             * First Prediction Frozen At
+             * Format: date-time
+             */
+            first_prediction_frozen_at: string;
+            forward_evidence: components["schemas"]["QualificationEvidence"];
+            historical_evidence: components["schemas"]["QualificationEvidence"];
+            /**
+             * Locked At
+             * Format: date-time
+             */
+            locked_at: string;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
         };
         /**
          * ResultAccessScope

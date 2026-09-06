@@ -275,6 +275,34 @@
         "title": "ExternalResult",
         "type": "object"
       },
+      "FormalCheckIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "minimum": 1.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "sequence_id": {
+            "minLength": 1,
+            "title": "Sequence Id",
+            "type": "string"
+          }
+        },
+        "required": ["sequence_id", "index", "registered_at", "scheduled_at"],
+        "title": "FormalCheckIdentity",
+        "type": "object"
+      },
       "FormalReport": {
         "additionalProperties": false,
         "description": "Read-only delivery projection derived from one committed host event.",
@@ -460,15 +488,59 @@
             "title": "Expires At",
             "type": "string"
           },
+          "formal_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormalCheckIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "generator_version": {
             "minLength": 1,
             "title": "Generator Version",
             "type": "string"
           },
           "kind": {
-            "enum": ["QUALIFICATION_PASS", "DIAGNOSTIC_ALERT"],
+            "enum": [
+              "QUALIFICATION_PASS",
+              "DIAGNOSTIC_ALERT",
+              "INSUFFICIENT_EVIDENCE",
+              "REQUIRED_PREMISE_UNVERIFIABLE",
+              "ORIGINAL_BASIS_INVALID",
+              "RESTORATION_DECISION",
+              "ORIGINAL_BASIS_RESTORED",
+              "REQUALIFICATION_PASS",
+              "HISTORICAL_OOS_PASS",
+              "LOCKED_FORWARD_PASS"
+            ],
             "title": "Kind",
             "type": "string"
+          },
+          "resolves_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolves Evidence Id"
+          },
+          "restored_authorization_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored Authorization Digest"
           },
           "scope": {
             "$ref": "#/components/schemas/QualificationScope"
@@ -476,6 +548,18 @@
           "seed": {
             "title": "Seed",
             "type": "integer"
+          },
+          "state_activity_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Activity End"
           },
           "synthetic": {
             "const": true,
@@ -514,11 +598,37 @@
             "type": "array"
           },
           "authorization_evidence": {
-            "$ref": "#/components/schemas/QualificationEvidence"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "authorization_id": {
-            "title": "Authorization Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Id"
+          },
+          "authorization_terminated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Terminated At"
           },
           "cause": {
             "title": "Cause",
@@ -547,11 +657,37 @@
             "title": "Recorded At",
             "type": "string"
           },
+          "requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restoration_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationEvidence"
+            },
+            "title": "Restoration Evidence",
+            "type": "array"
+          },
+          "restrictions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationRestriction"
+            },
+            "title": "Restrictions",
+            "type": "array"
+          },
           "scope": {
             "$ref": "#/components/schemas/QualificationScope"
           },
           "status": {
-            "enum": ["VALID", "AT_RISK"],
+            "enum": ["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED"],
             "title": "Status",
             "type": "string"
           },
@@ -571,6 +707,22 @@
           "evidence"
         ],
         "title": "QualificationRecord",
+        "type": "object"
+      },
+      "QualificationRestriction": {
+        "additionalProperties": false,
+        "properties": {
+          "cause": {
+            "enum": ["REQUIRED_PREMISE_UNVERIFIABLE", "ORIGINAL_BASIS_INVALID", "EVIDENCE_EXPIRED"],
+            "title": "Cause",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          }
+        },
+        "required": ["cause", "evidence"],
+        "title": "QualificationRestriction",
         "type": "object"
       },
       "QualificationScope": {
@@ -655,6 +807,47 @@
         },
         "required": ["credential_id"],
         "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
+      "RequalificationProof": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "first_prediction_frozen_at": {
+            "format": "date-time",
+            "title": "First Prediction Frozen At",
+            "type": "string"
+          },
+          "forward_evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "historical_evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "registered_at",
+          "locked_at",
+          "first_prediction_frozen_at",
+          "historical_evidence",
+          "forward_evidence"
+        ],
+        "title": "RequalificationProof",
         "type": "object"
       },
       "ResultAccessScope": {
