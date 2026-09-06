@@ -5,7 +5,11 @@ from calendar import month_name, monthrange
 from datetime import UTC, datetime
 from hashlib import sha256
 
-from stock_profiler.modules.qualification.contracts import EvidenceBasis, QualificationEvidence
+from stock_profiler.modules.qualification.contracts import (
+    CapabilityVersion,
+    EvidenceBasis,
+    QualificationEvidence,
+)
 
 
 def qualification_deadline(evidence: QualificationEvidence) -> datetime | None:
@@ -69,6 +73,15 @@ def evidence_basis_is_valid(evidence: QualificationEvidence) -> bool:
 def evidence_basis_digest(basis: EvidenceBasis) -> str:
     payload = json.dumps(
         basis.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return sha256(payload).hexdigest()
+
+
+def capability_version_digest(version: CapabilityVersion) -> str:
+    payload = json.dumps(
+        version.model_dump(mode="json"),
         sort_keys=True,
         separators=(",", ":"),
     ).encode()

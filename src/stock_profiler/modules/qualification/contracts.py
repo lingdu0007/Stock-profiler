@@ -91,6 +91,9 @@ class FormalCheckIdentity(GovernanceContract):
     scheduled_at: AwareDatetime
     planned_nodes: tuple[AwareDatetime, ...] = Field(default=(), exclude_if=lambda value: not value)
     required_gates: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    error_budget_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
 
 
 class QualificationGate(GovernanceContract):
@@ -165,13 +168,40 @@ class QualificationEvidence(GovernanceContract):
     basis: EvidenceBasis | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+class RequalificationMember(GovernanceContract):
+    member_id: str = Field(min_length=1)
+    prediction_frozen_at: AwareDatetime
+    available_at: AwareDatetime
+    matured_at: AwareDatetime
+    outcome_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RequalificationPopulation(GovernanceContract):
+    population_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    frozen_version_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registered_member_ids: tuple[str, ...] = Field(min_length=1)
+    members: tuple[RequalificationMember, ...] = Field(min_length=1)
+    required_gates: tuple[str, ...] = Field(min_length=1)
+    gate_results: tuple[QualificationGate, ...] = Field(min_length=1)
+
+
 class RequalificationProof(GovernanceContract):
     application_id: str = Field(min_length=1)
     registered_at: AwareDatetime
     locked_at: AwareDatetime
     first_prediction_frozen_at: AwareDatetime
+    frozen_version_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$", exclude_if=lambda value: value is None
+    )
     historical_evidence: QualificationEvidence
     forward_evidence: QualificationEvidence
+    historical_population: RequalificationPopulation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    forward_population: RequalificationPopulation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class FormalNodeDisposition(GovernanceContract):

@@ -4,6 +4,7 @@ import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -536,12 +537,21 @@ def test_a_fresh_alert_cannot_extend_expired_authorization(
 def test_revocation_requires_new_application_and_locked_forward_evidence(
     migrated_settings: Settings, pre_lock_forward: bool
 ) -> None:
+    planned = [
+        "2042-05-06T00:00:00Z",
+        "2042-05-23T00:00:00Z",
+        "2042-06-23T00:00:00Z",
+    ]
+    gates = ["synthetic-history-gate", "synthetic-forward-gate"]
     grant_command = qualification_command(migrated_settings)
     grant_command["evidence"]["formal_check"] = {
         "sequence_id": "synthetic-original-series",
         "index": 1,
         "registered_at": "2042-05-01T00:00:00Z",
-        "scheduled_at": "2042-05-06T00:00:00Z",
+        "scheduled_at": planned[0],
+        "planned_nodes": planned,
+        "required_gates": gates,
+        "error_budget_id": "synthetic-original-error-budget",
     }
     grant = run_frozen_decision_case(
         migrated_settings,
@@ -572,22 +582,81 @@ def test_revocation_requires_new_application_and_locked_forward_evidence(
             "sequence_id": "synthetic-original-series",
             "index": 2,
             "registered_at": "2042-05-01T00:00:00Z",
-            "scheduled_at": "2042-05-23T00:00:00Z",
+            "scheduled_at": planned[1],
+            "planned_nodes": planned,
+            "required_gates": gates,
+            "error_budget_id": "synthetic-original-error-budget",
         },
+        maturity_sufficient=True,
+        gate_results=[
+            {"gate_id": "synthetic-history-gate", "passed": True},
+            {"gate_id": "synthetic-forward-gate", "passed": True},
+        ],
     )
     historical = deepcopy(command["evidence"])
-    historical.update(kind="HISTORICAL_OOS_PASS", evidence_id="synthetic-new-history")
+    historical.update(
+        kind="HISTORICAL_OOS_PASS",
+        evidence_id="synthetic-new-history",
+        evaluation_end="2042-05-18T00:00:00Z",
+        available_at="2042-05-19T00:00:00Z",
+        formal_check=None,
+        maturity_sufficient=None,
+        gate_results=[],
+    )
     forward = deepcopy(command["evidence"])
-    forward.update(kind="LOCKED_FORWARD_PASS", evidence_id="synthetic-new-forward")
+    forward.update(
+        kind="LOCKED_FORWARD_PASS",
+        evidence_id="synthetic-new-forward",
+        formal_check=None,
+        maturity_sufficient=None,
+        gate_results=[],
+    )
+    version_digest = sha256(
+        json.dumps(command["version"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    forward_frozen_at = "2042-05-18T00:00:00Z" if pre_lock_forward else "2042-05-20T00:00:00Z"
     command["requalification"] = {
         "application_id": "synthetic-requalification-application",
         "registered_at": "2042-05-18T00:00:00Z",
         "locked_at": "2042-05-19T00:00:00Z",
-        "first_prediction_frozen_at": (
-            "2042-05-18T00:00:00Z" if pre_lock_forward else "2042-05-20T00:00:00Z"
-        ),
+        "first_prediction_frozen_at": forward_frozen_at,
+        "frozen_version_digest": version_digest,
         "historical_evidence": historical,
         "forward_evidence": forward,
+        "historical_population": {
+            "population_id": "synthetic-requalification-history",
+            "evidence_id": historical["evidence_id"],
+            "frozen_version_digest": version_digest,
+            "registered_member_ids": ["synthetic-history-member"],
+            "members": [
+                {
+                    "member_id": "synthetic-history-member",
+                    "prediction_frozen_at": "2042-03-01T00:00:00Z",
+                    "available_at": "2042-03-02T00:00:00Z",
+                    "matured_at": "2042-05-18T00:00:00Z",
+                    "outcome_digest": "1" * 64,
+                }
+            ],
+            "required_gates": ["synthetic-history-gate"],
+            "gate_results": [{"gate_id": "synthetic-history-gate", "passed": True}],
+        },
+        "forward_population": {
+            "population_id": "synthetic-requalification-forward",
+            "evidence_id": forward["evidence_id"],
+            "frozen_version_digest": version_digest,
+            "registered_member_ids": ["synthetic-forward-member"],
+            "members": [
+                {
+                    "member_id": "synthetic-forward-member",
+                    "prediction_frozen_at": forward_frozen_at,
+                    "available_at": "2042-05-21T00:00:00Z",
+                    "matured_at": "2042-05-23T00:00:00Z",
+                    "outcome_digest": "2" * 64,
+                }
+            ],
+            "required_gates": ["synthetic-forward-gate"],
+            "gate_results": [{"gate_id": "synthetic-forward-gate", "passed": True}],
+        },
     }
     payload = case_payload(migrated_settings, "recertify-new", command, contract_version="5.0.0")
     payload["knowledge_cutoff"] = "2042-05-24T09:00:00Z"

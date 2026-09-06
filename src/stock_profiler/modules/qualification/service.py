@@ -12,8 +12,10 @@ from stock_profiler.modules.qualification.contracts import (
     QualificationRecord,
     QualificationRestriction,
     QualificationScope,
+    RequalificationPopulation,
 )
 from stock_profiler.modules.qualification.evidence import (
+    capability_version_digest,
     evidence_basis_is_valid,
     evidence_is_current,
     formal_check_passed,
@@ -79,6 +81,11 @@ def adjudicate(
             return GovernanceOutcome(disposition="DENIED", reasons=("REQUALIFICATION_NOT_ALLOWED",))
         original_check = (previous.formal_evidence or previous.authorization_evidence).formal_check
         check = evidence.formal_check
+        historical_population = proof.historical_population
+        forward_population = proof.forward_population
+        next_node = (
+            _next_formal_node(previous, original_check) if original_check is not None else None
+        )
         if (
             not (
                 previous.authorization_terminated_at
@@ -87,22 +94,56 @@ def adjudicate(
                 <= proof.first_prediction_frozen_at
                 <= proof.forward_evidence.evaluation_end
             )
+            or proof.frozen_version_digest is None
+            or proof.frozen_version_digest != capability_version_digest(command.version)
+            or historical_population is None
+            or forward_population is None
+            or historical_population.population_id == forward_population.population_id
+            or proof.historical_evidence.evidence_id == proof.forward_evidence.evidence_id
             or proof.historical_evidence.kind != "HISTORICAL_OOS_PASS"
             or proof.forward_evidence.kind != "LOCKED_FORWARD_PASS"
             or any(
                 item.scope != command.scope
                 or item.version != command.version
+                or not evidence_basis_is_valid(item)
                 or item.evaluation_end > item.available_at
                 or item.available_at > evidence.available_at
                 or not evidence_is_current(item, now)
                 for item in (proof.historical_evidence, proof.forward_evidence)
             )
+            or not _requalification_population_is_complete(
+                historical_population,
+                proof.historical_evidence,
+                proof.frozen_version_digest,
+            )
+            or not _requalification_population_is_complete(
+                forward_population,
+                proof.forward_evidence,
+                proof.frozen_version_digest,
+            )
+            or any(
+                member.matured_at > proof.registered_at for member in historical_population.members
+            )
+            or any(
+                member.prediction_frozen_at < proof.locked_at
+                for member in forward_population.members
+            )
+            or min(member.prediction_frozen_at for member in forward_population.members)
+            != proof.first_prediction_frozen_at
             or original_check is None
             or check is None
+            or not original_check.planned_nodes
+            or original_check.error_budget_id is None
             or check.sequence_id != original_check.sequence_id
             or check.index != original_check.index + 1
             or check.registered_at != original_check.registered_at
-            or check.scheduled_at <= original_check.scheduled_at
+            or check.planned_nodes != original_check.planned_nodes
+            or check.required_gates != original_check.required_gates
+            or check.error_budget_id != original_check.error_budget_id
+            or check.scheduled_at != next_node
+            or formal_check_passed(evidence) is not True
+            or (set(historical_population.required_gates) | set(forward_population.required_gates))
+            != set(check.required_gates)
             or not (evidence.evaluation_end <= check.scheduled_at <= evidence.available_at)
             or not evidence_is_current(evidence, now)
             or any(
@@ -115,6 +156,13 @@ def adjudicate(
             return GovernanceOutcome(
                 disposition="DENIED", reasons=("REQUALIFICATION_PROOF_INVALID",)
             )
+        disposition = FormalNodeDisposition(
+            scheduled_at=check.scheduled_at,
+            status="EXECUTED_PASS",
+            check_index=check.index,
+            evidence=evidence,
+            recorded_at=now,
+        )
         return GovernanceOutcome(
             disposition="APPROVED",
             reasons=("REQUALIFICATION_PASS",),
@@ -131,6 +179,13 @@ def adjudicate(
                 evidence=evidence,
                 alerts=previous.alerts,
                 requalification=proof,
+                formal_evidence=evidence,
+                formal_passing_evidence=evidence,
+                last_formal_node=check.scheduled_at,
+                formal_node_dispositions=(
+                    *previous.formal_node_dispositions,
+                    disposition,
+                ),
             ),
         )
     if command.action == "RESTORE":
@@ -521,6 +576,36 @@ def _next_formal_node(
             return None
         anchor = record.last_formal_node
     return next((node for node in original_check.planned_nodes if node > anchor), None)
+
+
+def _requalification_population_is_complete(
+    population: RequalificationPopulation,
+    evidence: QualificationEvidence,
+    frozen_version_digest: str,
+) -> bool:
+    registered_ids = population.registered_member_ids
+    member_ids = tuple(member.member_id for member in population.members)
+    required_gates = population.required_gates
+    gate_ids = tuple(gate.gate_id for gate in population.gate_results)
+    return (
+        population.evidence_id == evidence.evidence_id
+        and population.frozen_version_digest == frozen_version_digest
+        and len(set(registered_ids)) == len(registered_ids)
+        and len(set(member_ids)) == len(member_ids)
+        and set(member_ids) == set(registered_ids)
+        and len(set(required_gates)) == len(required_gates)
+        and len(set(gate_ids)) == len(gate_ids)
+        and set(gate_ids) == set(required_gates)
+        and all(gate.passed for gate in population.gate_results)
+        and all(
+            member.prediction_frozen_at
+            <= member.available_at
+            <= member.matured_at
+            <= evidence.evaluation_end
+            and member.available_at <= evidence.available_at
+            for member in population.members
+        )
+    )
 
 
 def _restores_restriction(
