@@ -1,0 +1,21 @@
+{
+  "synthetic": true,
+  "generator_version": "original-read-only-security-v1",
+  "seed": 4519,
+  "source": "Independently authored fictional security probes; no production or personal inputs.",
+  "contract_version": "1.0.0",
+  "case_contract_version": "3.0.0",
+  "definition_version": "2.0.0",
+  "user_id": "stock-profiler-single-user",
+  "account_ids": ["synthetic-account-4017"],
+  "wrong_user_id": "synthetic-other-user-4519",
+  "wrong_account_id": "synthetic-other-account-4519",
+  "order_operations": ["generate", "prefill", "submit", "modify", "cancel"],
+  "closed_surfaces": ["summary", "conversation", "export", "notification-callback"],
+  "forbidden_payload": {
+    "symbol": "XQZ-4017",
+    "direction": "BUY",
+    "quantity": 4519,
+    "opportunity": "synthetic-current-shadow-4519"
+  }
+}

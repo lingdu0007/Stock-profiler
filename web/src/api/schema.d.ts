@@ -194,6 +194,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/{report_version_id}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report User Facts */
+        get: operations["report_user_facts_api_v1_reports__report_version_id__facts_get"];
+        put?: never;
+        /** Record Report User Fact */
+        post: operations["record_report_user_fact_api_v1_reports__report_version_id__facts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -318,6 +336,7 @@ export interface components {
          * @description Read-only delivery projection derived from one committed host event.
          */
         FormalReport: {
+            access_scope?: components["schemas"]["ResultAccessScope"] | null;
             /** Business Object Id */
             business_object_id: string;
             /** Case Id */
@@ -357,10 +376,14 @@ export interface components {
              */
             status: "PASSED" | "FAILED" | "UNKNOWN";
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
+        /** OpaqueRequestErrorDto */
+        OpaqueRequestErrorDto: {
+            /**
+             * Detail
+             * @default request is not permitted
+             * @constant
+             */
+            detail: "request is not permitted";
         };
         /**
          * ReauthenticationVerificationDto
@@ -369,6 +392,26 @@ export interface components {
         ReauthenticationVerificationDto: {
             /** Credential Id */
             credential_id: string;
+        };
+        /**
+         * ResultAccessScope
+         * @description Immutable ownership and visibility bound before a scoped case is executed.
+         */
+        ResultAccessScope: {
+            /** Account Ids */
+            account_ids: string[];
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** User Id */
+            user_id: string;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "USER" | "SHADOW";
         };
         /**
          * SafetyCapabilitiesDiagnosticDto
@@ -410,18 +453,56 @@ export interface components {
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
+        /** UserFact */
+        UserFact: {
+            /**
+             * Authoritative Execution
+             * @default false
+             * @constant
+             */
+            authoritative_execution: false;
+            /** Choice */
+            choice: ("ACCEPT" | "DECLINE" | "DEFER") | null;
+            /** Declaration */
+            declaration: string | null;
+            /** Event Id */
+            event_id: string;
+            /** Fact Id */
+            fact_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "VIEWED" | "ACKNOWLEDGED" | "CONFIRMED" | "EXECUTION_DECLARED";
+            /**
+             * Reconciliation Status
+             * @enum {string}
+             */
+            reconciliation_status: "NOT_APPLICABLE" | "PENDING";
+            /** Recorded At */
+            recorded_at: string;
+            /** Report Version Id */
+            report_version_id: string;
+            /**
+             * Synthetic
+             * @default true
+             * @constant
+             */
+            synthetic: true;
+        };
+        /** UserFactRequest */
+        UserFactRequest: {
+            /** Choice */
+            choice?: ("ACCEPT" | "DECLINE" | "DEFER") | null;
+            /** Declaration */
+            declaration?: ("PREPARING" | "REPORTED_SUBMITTED" | "REPORTED_PARTIAL" | "REPORTED_FILLED" | "REPORTED_CANCELLED" | "UNABLE") | null;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "VIEWED" | "ACKNOWLEDGED" | "CONFIRMED" | "EXECUTION_DECLARED";
         };
         /**
          * VersionDiagnosticDto
@@ -477,13 +558,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -519,13 +600,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -560,13 +641,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -605,13 +686,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -644,13 +725,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -684,13 +765,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -723,13 +804,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -764,13 +845,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -793,6 +874,15 @@ export interface operations {
                     "application/json": components["schemas"]["SafetyCapabilitiesDiagnosticDto"];
                 };
             };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
         };
     };
     version_diagnostic_api_v1_diagnostics_version_get: {
@@ -811,6 +901,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionDiagnosticDto"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };
@@ -851,13 +950,86 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
+        };
+    };
+    report_user_facts_api_v1_reports__report_version_id__facts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_version_id: string;
+            };
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserFact"][];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
+        };
+    };
+    record_report_user_fact_api_v1_reports__report_version_id__facts_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path: {
+                report_version_id: string;
+            };
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserFactRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserFact"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
                 };
             };
         };

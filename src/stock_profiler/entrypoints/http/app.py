@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict
 from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import JSONResponse
 
 from stock_profiler.adapters.authentication.passkeys import (
     CSRF_COOKIE_NAME,
@@ -14,6 +16,7 @@ from stock_profiler.adapters.authentication.passkeys import (
     ChallengePurpose,
     PasskeyAuthenticator,
 )
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import get_formal_report
 from stock_profiler.bootstrap.settings import Settings, load_settings
@@ -21,6 +24,8 @@ from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.logging import log_operational_event
 from stock_profiler.foundation.versioning import build_version_bundle
 from stock_profiler.modules.decision_cases.domain import FormalReport
+from stock_profiler.modules.delivery.access import SINGLE_USER_ID, AccessPrincipal
+from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
 
 
 class VersionDiagnosticDto(BaseModel):
@@ -34,6 +39,12 @@ class VersionDiagnosticDto(BaseModel):
     m_agent_wheel_url: str
     m_agent_wheel_sha256: str
     m_agent_release_commit: str
+
+
+class OpaqueRequestErrorDto(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    detail: Literal["request is not permitted"] = "request is not permitted"
 
 
 class HealthDto(BaseModel):
@@ -111,6 +122,7 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         openapi_version="3.1.0",
         docs_url=None,
         redoc_url=None,
+        responses={422: {"model": OpaqueRequestErrorDto}},
     )
 
     @app.middleware("http")
@@ -118,12 +130,32 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         response = await call_next(request)
-        if request.url.path.startswith("/api/v1/auth/") or request.url.path.startswith(
-            "/api/v1/reports/"
-        ):
+        if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
+            if (response.status_code == 404 and request.scope.get("route") is None) or (
+                response.status_code == 405
+            ):
+                ResultDelivery.from_settings(app_settings, clock=clock).record_capability_denial(
+                    request.method + " " + request.url.path, "HTTP"
+                )
         return response
+
+    @app.exception_handler(RequestValidationError)
+    async def opaque_validation_denial(
+        request: Request, _error: RequestValidationError
+    ) -> JSONResponse:
+        ResultDelivery.from_settings(app_settings, clock=clock).record_capability_denial(
+            request.method + " " + request.url.path, "HTTP"
+        )
+        return JSONResponse(status_code=422, content=OpaqueRequestErrorDto().model_dump())
+
+    def report_principal() -> AccessPrincipal:
+        return AccessPrincipal(
+            user_id=SINGLE_USER_ID,
+            account_ids=app_settings.report_account_ids,
+            permissions=app_settings.report_permissions,
+        )
 
     def authenticator() -> PasskeyAuthenticator:
         return PasskeyAuthenticator(
@@ -375,11 +407,54 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         try:
             authenticator().require_session(session_token)
         except AuthenticationError as error:
+            get_formal_report(report_version_id, app_settings, clock=clock)
             raise HTTPException(status_code=401, detail=str(error)) from error
-        report = get_formal_report(report_version_id, app_settings)
+        report = get_formal_report(
+            report_version_id,
+            app_settings,
+            principal=report_principal(),
+            clock=clock,
+        )
         if report is None:
             raise HTTPException(status_code=404, detail="formal report not found")
         return report
+
+    @app.get("/api/v1/reports/{report_version_id}/facts", response_model=list[UserFact])
+    def report_user_facts(
+        report_version_id: str,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
+    ) -> list[UserFact]:
+        delivery = ResultDelivery.from_settings(app_settings, clock=clock)
+        try:
+            authenticator().require_session(session_token)
+        except AuthenticationError as error:
+            delivery.read_report(report_version_id)
+            raise HTTPException(status_code=401, detail="authentication required") from error
+        facts = delivery.user_facts(report_version_id, report_principal())
+        if facts is None:
+            raise HTTPException(status_code=404, detail="formal report not found")
+        return list(facts)
+
+    @app.post("/api/v1/reports/{report_version_id}/facts", response_model=UserFact)
+    def record_report_user_fact(
+        report_version_id: str,
+        request: UserFactRequest,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
+        csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+        origin: str | None = Header(default=None),
+    ) -> UserFact:
+        delivery = ResultDelivery.from_settings(app_settings, clock=clock)
+        try:
+            if origin != app_settings.auth_origin:
+                raise AuthenticationError("origin is not authorized")
+            authenticator().require_mutable_session(session_token, csrf_token)
+        except AuthenticationError as error:
+            delivery.read_report(report_version_id)
+            raise HTTPException(status_code=403, detail="request is not permitted") from error
+        fact = delivery.record_user_fact(report_version_id, report_principal(), request)
+        if fact is None:
+            raise HTTPException(status_code=404, detail="formal report not found")
+        return fact
 
     return app
 

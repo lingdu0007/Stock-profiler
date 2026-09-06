@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import Column, Integer, MetaData, String, Table, func, select
 from sqlalchemy.engine import Connection, Engine, Row
 
+from stock_profiler.adapters.persistence.access_audit import append_denial
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock, UtcClock
@@ -718,6 +719,20 @@ class DecisionLedger:
         report_version_id: str | None = None,
     ) -> FormalReport:
         """Create a report only after its source business event is durably committed."""
+        if fact.case.access_scope is not None and fact.case.access_scope.visibility == "SHADOW":
+            # Abandon uncommitted work before auditing, so the caller's rollback
+            # cannot erase the denial and its SQLite write lock cannot deadlock it.
+            connection.rollback()
+            with self._engine.begin() as audit_connection:
+                append_denial(
+                    audit_connection,
+                    fact.decision_event_id,
+                    None,
+                    "SHADOW_ISOLATED",
+                    "PUBLICATION",
+                    self.observed_at(),
+                )
+            raise DecisionEventCommitError("shadow events cannot become user reports")
         if not self._has_confirmed_business_commit(connection, fact.decision_event_id):
             raise DecisionEventCommitError("report source has no confirmed business commit")
         resolved_report_version_id = report_version_id or fact.case.report_version_id_for_event(

@@ -10,15 +10,18 @@ from dataclasses import dataclass
 from importlib.metadata import version
 from typing import cast
 
-from m_agent.adapters import DeterministicModelAdapter
+from m_agent.adapters import DeterministicContextProvider, DeterministicModelAdapter
 from m_agent.runtime import (
     DEFAULT_LEASE_TTL,
     AgentDefinition,
+    AllowAllRunPolicy,
+    ContextItem,
     DefinitionRegistry,
     DuplicateRunError,
     IllegalRunTransitionError,
     LeaseNotHeldError,
     ModelCapabilities,
+    ModelContractViolationError,
     OutputContract,
     Runner,
     RunNotFoundError,
@@ -27,7 +30,9 @@ from m_agent.runtime import (
     StructuredOutputMode,
 )
 
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.versioning import (
     M_AGENT_DISTRIBUTION,
     M_AGENT_RELEASE_COMMIT,
@@ -36,10 +41,10 @@ from stock_profiler.foundation.versioning import (
 )
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_AGENT_DEFINITION_ID,
-    FROZEN_AGENT_DEFINITION_VERSION,
     FROZEN_OUTPUT_CONTRACT_VERSION,
     FrameworkRunStatus,
     FrozenDecisionCase,
+    definition_version_for_case_contract,
     supports_case_host_contract,
     supports_report_projection_contract,
     synthetic_outcome_code_from_input,
@@ -56,6 +61,9 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError as MappedDurableRunMissingError,
 )
+from stock_profiler.modules.delivery.capabilities import CapabilityInventory
+
+READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset()
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
 D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
@@ -176,6 +184,22 @@ def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
         version=case.agent_definition.version,
         instructions=case.agent_definition.instructions,
         model_adapter=adapter,
+        context_provider=(
+            DeterministicContextProvider(
+                items=(
+                    ContextItem(
+                        item_id=case.frozen_input_fingerprint,
+                        source="frozen-synthetic-case",
+                        content=json.dumps(
+                            case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+                        ),
+                    ),
+                )
+            )
+            if case.access_scope is not None
+            else None
+        ),
+        tools=(),
         output_contract=OutputContract(
             contract_id=case.agent_definition.output_contract.contract_id,
             version=case.agent_definition.output_contract.version,
@@ -189,10 +213,17 @@ async def execute_frozen_decision_case(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
+    *,
+    clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
-    _assert_runtime_version_bundle(case)
-    definition = _frozen_definition(case)
+    try:
+        _assert_runtime_version_bundle(case)
+        definition = _frozen_definition(case)
+        _assert_registered_capabilities(case, definition)
+    except ValueError:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
+        raise
     registry = DefinitionRegistry()
     registry.register(definition)
     status_collector = _RunStatusCollector(case.framework_run_id, [])
@@ -286,6 +317,8 @@ async def execute_frozen_decision_case(
                     observe,
                 )
             await record_framework_statuses()
+    if run.error_code == ModelContractViolationError.code:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
     return FrameworkRunResult(
         run_id=run.run_id,
         status=cast(FrameworkRunStatus, run.status.value),
@@ -294,6 +327,41 @@ async def execute_frozen_decision_case(
         error_code=run.error_code,
         transitions=tuple(transitions),
         transitions_durably_recorded=record_transition is not None,
+    )
+
+
+def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentDefinition) -> None:
+    """No request, session, or definition metadata can install an executable extension."""
+    if (
+        definition.tools
+        or READ_ONLY_TOOL_ALLOWLIST
+        or type(definition.model_adapter) is not DeterministicModelAdapter
+        or definition.model_adapters
+        or type(definition.run_policy) is not AllowAllRunPolicy
+        or definition.context_plan.stages
+        or definition.compression_contract is not None
+        or (case.access_scope is None and definition.context_provider is not None)
+        or (
+            case.access_scope is not None
+            and type(definition.context_provider) is not DeterministicContextProvider
+        )
+    ):
+        raise ValueError("undeclared framework capability")
+
+
+def frozen_capability_inventory(case: FrozenDecisionCase) -> CapabilityInventory:
+    _assert_runtime_version_bundle(case)
+    definition = _frozen_definition(case)
+    _assert_registered_capabilities(case, definition)
+    snapshot = definition.frozen_snapshot()
+    return CapabilityInventory(
+        definition_id=snapshot.definition_id,
+        definition_version=snapshot.version,
+        context_provider=snapshot.has_context_provider,
+        tool_names=tuple(tool.name for tool in snapshot.tool_declarations),
+        model_routes=(case.agent_definition.model_adapter_id,),
+        session_enabled=False,
+        order_credentials=False,
     )
 
 
@@ -342,6 +410,7 @@ def _is_concurrent_creation_error(error: sqlite3.Error) -> bool:
 def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     """Reject frozen metadata that does not describe the installed deterministic route."""
     bundle = case.version_bundle
+    definition_version = definition_version_for_case_contract(bundle.case_contract_version)
     if (
         not supports_case_host_contract(
             bundle.case_contract_version,
@@ -349,7 +418,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         )
         or not supports_report_projection_contract(bundle.report_projection_contract_version)
         or bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
-        or bundle.agent_definition_version != FROZEN_AGENT_DEFINITION_VERSION
+        or bundle.agent_definition_version != definition_version
         or bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
     ):
         raise ValueError("full frozen version bundle is not supported by this runtime")
@@ -357,7 +426,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         bundle.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
         or bundle.routing_policy_version != D0_ROUTING_POLICY_VERSION
         or case.agent_definition.definition_id != FROZEN_AGENT_DEFINITION_ID
-        or case.agent_definition.version != FROZEN_AGENT_DEFINITION_VERSION
+        or case.agent_definition.version != definition_version
         or case.agent_definition.model_adapter_id != DETERMINISTIC_MODEL_ADAPTER_ID
         or case.agent_definition.instructions != FROZEN_DEFINITION_INSTRUCTIONS
         or case.agent_definition.output_contract.contract_id != FROZEN_OUTPUT_CONTRACT_ID
@@ -372,6 +441,10 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         or bundle.m_agent_release_commit != M_AGENT_RELEASE_COMMIT
     ):
         raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
+    try:
+        FrozenDecisionCase.model_validate(case.model_dump(mode="python"))
+    except ValueError as error:
+        raise ValueError("full frozen version bundle or scoped case is invalid") from error
 
 
 def _assert_existing_run_matches_case(

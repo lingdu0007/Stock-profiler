@@ -47,6 +47,13 @@ uv run stock-profiler decision-case-correct \
 The D0 case is explicitly synthetic and cannot be read as a recommendation,
 historical result, qualification, or order path. The report endpoint is
 `GET /api/v1/reports/{report_version_id}` and requires a valid Passkey session.
+Authentication alone grants no account access. Configure the host-local JSON
+array `STOCK_PROFILER_REPORT_ACCOUNT_IDS` outside Git; its default is empty.
+For the fictional D0 fixture only, the account grant is
+`["synthetic-account-4017"]`. `STOCK_PROFILER_REPORT_PERMISSIONS` defaults to
+`["REPORT_READ"]`; appending synthetic user facts additionally requires
+`USER_FACT`. Request headers, model responses, and browser sessions cannot
+expand these startup-frozen grants.
 Passkey registration has no public browser entry: it begins from a host-console
 bootstrap or recovery grant that expires after ten minutes. A directly operated
 host console creates those grants without an HTTP endpoint:
@@ -120,3 +127,6 @@ The single-user, non-public-recommendation, and no-order-writing constraints
 are official-project safety invariants. They define the maintained project's
 scope and do not add restrictions to Apache-2.0 forks; a fork is not an
 officially maintained or endorsed deployment.
+
+The credential-free isolation contract and its precise trusted-host boundary
+are documented in [`Read-only isolation`](docs/architecture/read-only-isolation.md).

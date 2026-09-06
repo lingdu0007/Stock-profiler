@@ -248,6 +248,16 @@
         "additionalProperties": false,
         "description": "Read-only delivery projection derived from one committed host event.",
         "properties": {
+          "access_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResultAccessScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "business_object_id": {
             "title": "Business Object Id",
             "type": "string"
@@ -348,17 +358,17 @@
         "title": "GateResult",
         "type": "object"
       },
-      "HTTPValidationError": {
+      "OpaqueRequestErrorDto": {
+        "additionalProperties": false,
         "properties": {
           "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
+            "const": "request is not permitted",
+            "default": "request is not permitted",
             "title": "Detail",
-            "type": "array"
+            "type": "string"
           }
         },
-        "title": "HTTPValidationError",
+        "title": "OpaqueRequestErrorDto",
         "type": "object"
       },
       "ReauthenticationVerificationDto": {
@@ -371,6 +381,38 @@
         },
         "required": ["credential_id"],
         "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
+      "ResultAccessScope": {
+        "additionalProperties": false,
+        "description": "Immutable ownership and visibility bound before a scoped case is executed.",
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          },
+          "visibility": {
+            "enum": ["USER", "SHADOW"],
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": ["contract_version", "user_id", "account_ids", "visibility"],
+        "title": "ResultAccessScope",
         "type": "object"
       },
       "SafetyCapabilitiesDiagnosticDto": {
@@ -463,40 +505,132 @@
         "title": "StageResult",
         "type": "object"
       },
-      "ValidationError": {
+      "UserFact": {
+        "additionalProperties": false,
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
+          "authoritative_execution": {
+            "const": false,
+            "default": false,
+            "title": "Authoritative Execution",
+            "type": "boolean"
           },
-          "input": {
-            "title": "Input"
+          "choice": {
+            "anyOf": [
+              {
+                "enum": ["ACCEPT", "DECLINE", "DEFER"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
           },
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
+          "declaration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaration"
           },
-          "msg": {
-            "title": "Message",
+          "event_id": {
+            "title": "Event Id",
             "type": "string"
           },
-          "type": {
-            "title": "Error Type",
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["VIEWED", "ACKNOWLEDGED", "CONFIRMED", "EXECUTION_DECLARED"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reconciliation_status": {
+            "enum": ["NOT_APPLICABLE", "PENDING"],
+            "title": "Reconciliation Status",
+            "type": "string"
+          },
+          "recorded_at": {
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": true,
+            "default": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fact_id",
+          "report_version_id",
+          "event_id",
+          "kind",
+          "choice",
+          "declaration",
+          "reconciliation_status",
+          "recorded_at"
+        ],
+        "title": "UserFact",
+        "type": "object"
+      },
+      "UserFactRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "enum": ["ACCEPT", "DECLINE", "DEFER"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "declaration": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PREPARING",
+                  "REPORTED_SUBMITTED",
+                  "REPORTED_PARTIAL",
+                  "REPORTED_FILLED",
+                  "REPORTED_CANCELLED",
+                  "UNABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaration"
+          },
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["VIEWED", "ACKNOWLEDGED", "CONFIRMED", "EXECUTION_DECLARED"],
+            "title": "Kind",
             "type": "string"
           }
         },
-        "required": ["loc", "msg", "type"],
-        "title": "ValidationError",
+        "required": ["kind", "idempotency_key"],
+        "title": "UserFactRequest",
         "type": "object"
       },
       "VersionDiagnosticDto": {
@@ -585,11 +719,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Authentication Options"
@@ -644,11 +778,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Authentication Verify"
@@ -725,11 +859,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Reauthentication Options"
@@ -816,11 +950,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Reauthentication Verify"
@@ -874,11 +1008,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Registration Options"
@@ -926,11 +1060,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Registration Verify"
@@ -1000,11 +1134,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Logout"
@@ -1081,11 +1215,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Refresh Session"
@@ -1105,6 +1239,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Safety Capabilities Diagnostic"
@@ -1123,6 +1267,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Version Diagnostic"
@@ -1179,14 +1333,168 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Formal Report"
+      }
+    },
+    "/api/v1/reports/{report_version_id}/facts": {
+      "get": {
+        "operationId": "report_user_facts_api_v1_reports__report_version_id__facts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_version_id",
+            "required": true,
+            "schema": {
+              "title": "Report Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserFact"
+                  },
+                  "title": "Response Report User Facts Api V1 Reports  Report Version Id  Facts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Report User Facts"
+      },
+      "post": {
+        "operationId": "record_report_user_fact_api_v1_reports__report_version_id__facts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_version_id",
+            "required": true,
+            "schema": {
+              "title": "Report Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserFactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserFact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Record Report User Fact"
       }
     }
   }

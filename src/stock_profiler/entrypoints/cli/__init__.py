@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import NoReturn
 
 from stock_profiler.adapters.authentication.passkeys import (
     AuthenticationError,
     HostGrantPurpose,
     PasskeyAuthenticator,
 )
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import (
     correct_default_frozen_decision_case,
@@ -25,21 +27,29 @@ from stock_profiler.entrypoints.cli.service import (
 )
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 
+CLI_COMMANDS = (
+    "version",
+    "doctor",
+    "process-health",
+    "decision-case-run",
+    "decision-case-replay",
+    "decision-case-correct",
+    "host-console-grant",
+)
+
+
+class _AuditedArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        ResultDelivery.from_settings(load_settings()).record_capability_denial(message, "CLI")
+        super().error("command or arguments are not permitted")
+
 
 def main() -> None:
     """Render a version or diagnostic snapshot without making an HTTP request."""
-    parser = argparse.ArgumentParser(prog="stock-profiler")
+    parser = _AuditedArgumentParser(prog="stock-profiler")
     parser.add_argument(
         "command",
-        choices=(
-            "version",
-            "doctor",
-            "process-health",
-            "decision-case-run",
-            "decision-case-replay",
-            "decision-case-correct",
-            "host-console-grant",
-        ),
+        choices=CLI_COMMANDS,
     )
     parser.add_argument("process", nargs="?", choices=("api", "scheduler", "worker"))
     parser.add_argument("--business-identity")

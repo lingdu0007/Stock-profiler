@@ -46,6 +46,7 @@ from stock_profiler.bootstrap.decision_cases import (
     run_default_frozen_decision_case,
 )
 from stock_profiler.bootstrap.settings import Settings, load_settings
+from stock_profiler.foundation.clock import Clock
 from stock_profiler.modules.decision_cases import domain as decision_domain
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -57,8 +58,14 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
     load_frozen_decision_case,
 )
+from stock_profiler.modules.delivery.access import AccessPrincipal
 
 ROOT = Path(__file__).resolve().parents[2]
+REPORT_READER = AccessPrincipal(
+    user_id="stock-profiler-single-user",
+    account_ids=("synthetic-account-4017",),
+    permissions=("REPORT_READ",),
+)
 
 
 class MutableClock:
@@ -133,7 +140,10 @@ def test_successful_case_publishes_one_event_and_report_after_a_framework_run(
         "All required fictional evidence records are present.",
         "The output is D0 synthetic evidence and is not a recommendation.",
     )
-    assert get_formal_report(outcome.report_version_id, migrated_settings) == outcome.report
+    assert (
+        get_formal_report(outcome.report_version_id, migrated_settings, principal=REPORT_READER)
+        == outcome.report
+    )
 
 
 def test_formal_report_projection_fixture_matches_the_frozen_runtime(
@@ -504,7 +514,7 @@ def test_framework_waiting_is_saved_without_inventing_a_host_result(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def waiting_framework_run(*_: object) -> FrameworkRunResult:
+    async def waiting_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="WAITING",
@@ -648,7 +658,7 @@ def test_repeated_framework_waiting_observations_are_preserved(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def waiting_framework_run(*_: object) -> FrameworkRunResult:
+    async def waiting_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="WAITING",
@@ -683,7 +693,7 @@ def test_framework_terminal_failures_remain_framework_results(
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def failed_framework_run(*_: object) -> FrameworkRunResult:
+    async def failed_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status=framework_status,
@@ -715,7 +725,7 @@ def test_invalid_framework_output_contract_is_saved_and_keeps_publication_closed
 ) -> None:
     case = load_frozen_decision_case(migrated_settings)
 
-    async def invalid_framework_run(*_: object) -> FrameworkRunResult:
+    async def invalid_framework_run(*_: object, clock: Clock | None = None) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="SUCCEEDED",
@@ -1088,8 +1098,10 @@ def test_cross_build_worker_interruption_resumes_the_original_m_agent_run(
         case: FrozenDecisionCase,
         runtime: RuntimeStorage,
         record_transition: frozen_adapter.FrameworkTransitionRecorder | None = None,
+        *,
+        clock: Clock | None = None,
     ) -> FrameworkRunResult:
-        await original_execute(case, runtime, record_transition)
+        await original_execute(case, runtime, record_transition, clock=clock)
         raise RuntimeError("synthetic worker interruption after framework checkpoint")
 
     with monkeypatch.context() as patch:
@@ -1647,7 +1659,10 @@ def test_report_projection_failure_preserves_the_unconfirmed_report_but_never_ex
 
     ledger = DecisionLedger.from_settings(migrated_settings)
     assert ledger.counts() == {"business_objects": 1, "decision_events": 1, "reports": 1}
-    assert get_formal_report(unpublished.report_version_id, migrated_settings) is None
+    assert (
+        get_formal_report(unpublished.report_version_id, migrated_settings, principal=REPORT_READER)
+        is None
+    )
 
     recovered = run_default_frozen_decision_case(migrated_settings)
 
@@ -1706,7 +1721,10 @@ def test_report_commit_acknowledgement_loss_reconciles_the_original_report_befor
     assert acknowledgement_lost is True
     assert outcome.publication_status == "PUBLISHED"
     assert outcome.report is not None
-    assert get_formal_report(outcome.report_version_id, migrated_settings) == outcome.report
+    assert (
+        get_formal_report(outcome.report_version_id, migrated_settings, principal=REPORT_READER)
+        == outcome.report
+    )
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
         "decision_events": 1,
@@ -1834,9 +1852,9 @@ def test_notification_failure_and_retry_preserve_the_original_published_report(
     assert repeated_failure.notification_attempt_id != failed.notification_attempt_id
     assert recovered.status == "SUCCEEDED"
     assert recovered.report_version_id == original_execution.report.report_version_id
-    assert get_formal_report(original_execution.report.report_version_id, migrated_settings) == (
-        original_execution.report
-    )
+    assert get_formal_report(
+        original_execution.report.report_version_id, migrated_settings, principal=REPORT_READER
+    ) == (original_execution.report)
     ledger = DecisionLedger.from_settings(migrated_settings)
     notification_attempts = ledger.get_notification_attempts(case.report_version_id)
     assert [attempt.status for attempt in notification_attempts] == [
@@ -1933,10 +1951,15 @@ def test_correction_appends_a_new_report_that_references_the_original_event(
     assert correction.report.evidence_clock == original_report.evidence_clock
     assert correction.report.generated_at == "2042-05-17T16:02:00Z"
     assert (
-        get_formal_report(original_report.report_version_id, migrated_settings) == original_report
+        get_formal_report(
+            original_report.report_version_id, migrated_settings, principal=REPORT_READER
+        )
+        == original_report
     )
     assert (
-        get_formal_report(correction.report.report_version_id, migrated_settings)
+        get_formal_report(
+            correction.report.report_version_id, migrated_settings, principal=REPORT_READER
+        )
         == correction.report
     )
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
@@ -2443,10 +2466,15 @@ def test_read_failure_does_not_remove_the_published_report(
             lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic read failure")),
         )
         with pytest.raises(RuntimeError, match="synthetic read failure"):
-            get_formal_report(original_report.report_version_id, migrated_settings)
+            get_formal_report(
+                original_report.report_version_id, migrated_settings, principal=REPORT_READER
+            )
 
     assert (
-        get_formal_report(original_report.report_version_id, migrated_settings) == original_report
+        get_formal_report(
+            original_report.report_version_id, migrated_settings, principal=REPORT_READER
+        )
+        == original_report
     )
     assert DecisionLedger.from_settings(migrated_settings).counts() == {
         "business_objects": 1,
@@ -2950,7 +2978,7 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
             row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
         }
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_persist_frozen_case_snapshots"
+            "0006_result_access_audit"
         )
 
     load_settings.cache_clear()
@@ -3332,7 +3360,7 @@ def test_correction_migration_retries_after_notification_table_creation_is_inter
     command.upgrade(config, "head")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_persist_frozen_case_snapshots"
+            "0006_result_access_audit"
         )
 
     load_settings.cache_clear()
@@ -3985,4 +4013,7 @@ def test_reading_a_published_report_does_not_rebuild_it_from_current_code(
         lambda *_: (_ for _ in ()).throw(AssertionError("report must be read from storage")),
     )
 
-    assert get_formal_report(original.report_version_id, migrated_settings) == original
+    assert (
+        get_formal_report(original.report_version_id, migrated_settings, principal=REPORT_READER)
+        == original
+    )
