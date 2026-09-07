@@ -1998,6 +1998,13 @@ export interface components {
             /** Security Id */
             security_id: string;
         };
+        /** StressLedgerReference */
+        StressLedgerReference: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+        };
         /** StressObligation */
         StressObligation: {
             /**
@@ -2007,6 +2014,11 @@ export interface components {
             direction: "REDUCE_TOTAL_STOCK_EXPOSURE";
             /** Obligation Id */
             obligation_id: string;
+            /**
+             * Restoration Corrections
+             * @default []
+             */
+            restoration_corrections: components["schemas"]["StressLedgerReference"][];
             /**
              * Restoration Fills
              * @default []
@@ -2031,6 +2043,8 @@ export interface components {
             account_id: string;
             /** Entry Id */
             entry_id: string;
+            /** Net Cash Delta */
+            net_cash_delta: string;
             /** Net Quantity */
             net_quantity: string;
         };

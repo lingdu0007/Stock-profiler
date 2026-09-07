@@ -720,3 +720,64 @@ def test_stress_requires_an_authorized_not_shadow_portfolio(migrated_settings: S
     assert result["calculation_policy"] is None
     assert result["obligation"] is None
     assert "STRESS_AUTHORIZATION_UNAVAILABLE" in result["reasons"]
+
+
+@pytest.mark.parametrize("corrects_sale", [True, False])
+def test_corrected_monetary_facts_reopen_restoration_without_a_new_hard_breach(
+    migrated_settings: Settings,
+    corrects_sale: bool,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    first = stress_payload(migrated_settings, authorization_id, "proceeds-correction")
+    account = first["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "1667.066"
+    account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
+    breach = stress_result(migrated_settings, first)
+    sold = next_stress_case(first, "18")
+    account = sold["stress"]["position_snapshot"]["accounts"][0]
+    account["positions"][0].update(
+        total_quantity="76", broker_sellable_quantity="50", reported_cost_basis="684"
+    )
+    account["cash_state"]["ledger_cash"] = "745.066"
+    account["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-restoring-sale",
+            "entry_type": "FILL",
+            "security_id": "XQZ-4017",
+            "quantity_delta": "-24",
+            "cost_basis_delta": "-216",
+            "cash_delta": "288",
+            "occurred_at": "2042-05-18T15:00:00Z",
+            "evidence": position_evidence(
+                "synthetic-restoring-sale", cutoff_at=sold["knowledge_cutoff"]
+            ),
+        }
+    )
+    assert stress_result(migrated_settings, sold)["obligation"]["status"] == "SATISFIED"
+    corrected = next_stress_case(sold, "19")
+    account = corrected["stress"]["position_snapshot"]["accounts"][0]
+    account["cash_state"]["ledger_cash"] = "695.066"
+    account["account_equity"] = "1617.066"
+    account["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-proceeds-correction",
+            "entry_type": "FEE",
+            "security_id": "XQZ-4017" if corrects_sale else None,
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "-50",
+            "occurred_at": "2042-05-19T15:00:00Z",
+            "corrects_entry_id": (
+                "synthetic-restoring-sale" if corrects_sale else "synthetic-transfer-4017-cash"
+            ),
+            "correction_reason": "Synthetic corrected settlement proceeds",
+            "evidence": position_evidence(
+                "synthetic-proceeds-correction", cutoff_at=corrected["knowledge_cutoff"]
+            ),
+        }
+    )
+    result = stress_result(migrated_settings, corrected)
+    assert result["state"] == "BUFFER"
+    assert result["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
+    assert result["obligation"]["status"] == "OUTSTANDING"
+    assert result["new_exposure_blocked"] is True

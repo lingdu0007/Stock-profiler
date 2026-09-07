@@ -4607,6 +4607,22 @@
         "title": "StressContribution",
         "type": "object"
       },
+      "StressLedgerReference": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "entry_id"],
+        "title": "StressLedgerReference",
+        "type": "object"
+      },
       "StressObligation": {
         "additionalProperties": false,
         "properties": {
@@ -4618,6 +4634,14 @@
           "obligation_id": {
             "title": "Obligation Id",
             "type": "string"
+          },
+          "restoration_corrections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressLedgerReference"
+            },
+            "title": "Restoration Corrections",
+            "type": "array"
           },
           "restoration_fills": {
             "default": [],
@@ -4658,13 +4682,18 @@
             "title": "Entry Id",
             "type": "string"
           },
+          "net_cash_delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Cash Delta",
+            "type": "string"
+          },
           "net_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Net Quantity",
             "type": "string"
           }
         },
-        "required": ["account_id", "entry_id", "net_quantity"],
+        "required": ["account_id", "entry_id", "net_quantity", "net_cash_delta"],
         "title": "StressRestorationFill",
         "type": "object"
       },

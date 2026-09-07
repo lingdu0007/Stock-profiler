@@ -48,10 +48,14 @@ class StressContribution(PortfolioContract):
     disposal_friction: Decimal
 
 
-class StressRestorationFill(PortfolioContract):
+class StressLedgerReference(PortfolioContract):
     account_id: str
     entry_id: str
+
+
+class StressRestorationFill(StressLedgerReference):
     net_quantity: Decimal = Field(lt=0)
+    net_cash_delta: Decimal
 
 
 class StressObligation(PortfolioContract):
@@ -61,6 +65,7 @@ class StressObligation(PortfolioContract):
     status: Literal["OUTSTANDING", "SATISFIED"]
     triggered_at: AwareDatetime
     restoration_fills: tuple[StressRestorationFill, ...] = ()
+    restoration_corrections: tuple[StressLedgerReference, ...] = ()
 
 
 class _StressIdentity(TypedDict):
@@ -123,6 +128,11 @@ def assess_stress(
     visible = tuple(item for item in lineage if item.cutoff_at < snapshot.cutoff_at)
     prior = visible[-1] if visible else None
     obligation = prior.obligation if prior is not None else None
+    corrections = tuple(
+        StressLedgerReference(account_id=entry.account_id, entry_id=entry.entry_id)
+        for entry in snapshot.authoritative_ledger
+        if entry.corrects_entry_id is not None
+    )
     if obligation is not None and obligation.status == "SATISFIED":
         with localcontext(_DECIMAL_CONTEXT):
             current_fills = _effective_sales(
@@ -130,15 +140,15 @@ def assess_stress(
                 after=obligation.triggered_at,
                 cutoff_at=snapshot.cutoff_at,
             )
-            current_quantities = {
-                (fill.account_id, fill.entry_id): fill.net_quantity for fill in current_fills
-            }
+            current_by_id = {(fill.account_id, fill.entry_id): fill for fill in current_fills}
             still_confirmed = (
                 position.disposition == "RECONCILED"
                 and bool(obligation.restoration_fills)
+                and set(corrections).issubset(obligation.restoration_corrections)
                 and all(
-                    current_quantities.get((fill.account_id, fill.entry_id), Decimal(0))
-                    <= fill.net_quantity
+                    (current := current_by_id.get((fill.account_id, fill.entry_id))) is not None
+                    and current.net_quantity <= fill.net_quantity
+                    and current.net_cash_delta >= fill.net_cash_delta
                     for fill in obligation.restoration_fills
                 )
             )
@@ -247,7 +257,11 @@ def assess_stress(
             )
             if confirmed_reduction and position.disposition == "RECONCILED":
                 obligation = obligation.model_copy(
-                    update={"status": "SATISFIED", "restoration_fills": confirmed_reduction}
+                    update={
+                        "status": "SATISFIED",
+                        "restoration_fills": confirmed_reduction,
+                        "restoration_corrections": corrections,
+                    }
                 )
         outstanding = obligation is not None and obligation.status == "OUTSTANDING"
         residual_gap: Decimal | None = None
@@ -297,6 +311,7 @@ def _effective_sales(
     """Count a fill only after applying its visible additive correction lineage."""
     indexed = {(entry.account_id, entry.entry_id): entry for entry in entries}
     quantities: dict[tuple[str, str], Decimal] = {}
+    cash_deltas: dict[tuple[str, str], Decimal] = {}
     for entry in entries:
         if not ledger_entry_evidence_is_visible(entry, cutoff_at):
             return ()
@@ -312,8 +327,14 @@ def _effective_sales(
             root = target
         key = (root.account_id, root.entry_id)
         quantities[key] = quantities.get(key, Decimal(0)) + entry.quantity_delta
+        cash_deltas[key] = cash_deltas.get(key, Decimal(0)) + entry.cash_delta
     return tuple(
-        StressRestorationFill(account_id=key[0], entry_id=key[1], net_quantity=quantity)
+        StressRestorationFill(
+            account_id=key[0],
+            entry_id=key[1],
+            net_quantity=quantity,
+            net_cash_delta=cash_deltas[key],
+        )
         for key, quantity in quantities.items()
         if quantity < 0 and indexed[key].entry_type == "FILL" and indexed[key].occurred_at > after
     )

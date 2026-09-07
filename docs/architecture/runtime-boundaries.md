@@ -121,7 +121,10 @@ obligation rather than selecting a security for liquidation. Subsequent
 snapshots retain that obligation through missing valuation evidence; a
 reconciled sale and a satisfied target are required to mark it satisfied.
 Additive broker corrections are applied before counting an effective sale;
-a later reversal reopens its retained obligation. Stricter successor targets
+a later reversal or corrected monetary evidence reopens its retained obligation
+for target reevaluation. Saved effective fill quantities, proceeds, and ledger
+correction identities distinguish corrections from ordinary market changes.
+Stricter successor targets
 apply to outstanding obligations. A residual restoration gap describes the
 shortfall even after all verified sellable quantities, without creating a
 security allocation or treating hypothetical sales as completed execution.
