@@ -99,6 +99,17 @@ describe("App", () => {
   });
 
   it("renders saved authoritative position facts, source clocks, and conflicts", async () => {
+    const positionEvidence = {
+      source: "synthetic-broker-4017-position",
+      source_version: "synthetic-broker-schema-v1",
+      business_effective_at: "2042-05-17T15:00:00Z",
+      source_observed_at: "2042-05-17T15:10:00Z",
+      locally_acquired_at: "2042-05-17T15:14:00Z",
+      validated_at: "2042-05-17T15:18:00Z",
+      cutoff_at: "2042-05-17T16:00:00Z",
+      complete_through_at: "2042-05-17T16:00:00Z",
+      expires_at: null
+    };
     const positionReport = {
       ...report,
       result: {
@@ -117,12 +128,16 @@ describe("App", () => {
               locally_acquired_at: "2042-05-17T15:14:00Z",
               validated_at: "2042-05-17T15:18:00Z"
             },
+            snapshot_evidence: positionEvidence,
             total_account_equity: "1800",
             action_units: [
               {
                 account_id: "synthetic-account-4017",
                 account_type: "SIMULATED_CASH",
                 currency: "XSP",
+                position_id: "synthetic-position-4017-xqz",
+                origin: "EXTERNAL",
+                lifecycle_id: "synthetic-lifecycle-4017-xqz",
                 issuer_id: "FICTIONAL-ORBITAL-MOSAIC",
                 security_id: "XQZ-4017",
                 total_quantity: "101",
@@ -133,7 +148,8 @@ describe("App", () => {
                 open_sell_order_quantity: "15",
                 exact_statistical_action_quantity: null,
                 exact_quantity_status: "BLOCKED",
-                reasons: ["LEDGER_QUANTITY_MISMATCH", "FACT_EXPIRED"]
+                reasons: ["LEDGER_QUANTITY_MISMATCH", "FACT_EXPIRED"],
+                position_evidence: positionEvidence
               }
             ],
             issuer_exposures: [
@@ -149,13 +165,19 @@ describe("App", () => {
                 account_id: "synthetic-account-4017",
                 account_type: "SIMULATED_CASH",
                 currency: "XSP",
+                account_evidence: positionEvidence,
                 account_equity: "1000",
+                account_equity_evidence: positionEvidence,
+                ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                opening_ledger_cash: "902",
+                opening_ledger_cash_evidence: positionEvidence,
                 ledger_cash: "100",
                 trading_cash: "95",
                 transferable_cash: "90",
                 frozen_cash: "5",
                 receivable_cash: "10",
-                payable_cash: "0"
+                payable_cash: "0",
+                cash_state_evidence: positionEvidence
               }
             ],
             unfinished_orders: [
@@ -262,6 +284,9 @@ describe("App", () => {
     expect(position).toHaveTextContent("Business effective");
     expect(position).toHaveTextContent("2042-05-17T15:00:00Z");
     expect(position).toHaveTextContent("Source observed");
+    expect(position).toHaveTextContent("Snapshot evidence");
+    expect(position).toHaveTextContent("synthetic-broker-schema-v1");
+    expect(position).toHaveTextContent("complete through");
     expect(position).toHaveTextContent("Locally acquired");
     expect(position).toHaveTextContent("Validated");
     expect(position).toHaveTextContent("BLOCKED");

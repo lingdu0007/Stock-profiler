@@ -17,6 +17,12 @@
             ],
             "title": "Account Equity"
           },
+          "account_equity_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "account_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
           "account_id": {
             "title": "Account Id",
             "type": "string"
@@ -24,6 +30,9 @@
           "account_type": {
             "title": "Account Type",
             "type": "string"
+          },
+          "cash_state_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
           },
           "currency": {
             "title": "Currency",
@@ -52,6 +61,26 @@
               }
             ],
             "title": "Ledger Cash"
+          },
+          "ledger_cash_semantics": {
+            "const": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+            "title": "Ledger Cash Semantics",
+            "type": "string"
+          },
+          "opening_ledger_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Ledger Cash"
+          },
+          "opening_ledger_cash_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
           },
           "payable_cash": {
             "anyOf": [
@@ -106,13 +135,19 @@
           "account_id",
           "account_type",
           "currency",
+          "account_evidence",
           "account_equity",
+          "account_equity_evidence",
+          "ledger_cash_semantics",
+          "opening_ledger_cash",
+          "opening_ledger_cash_evidence",
           "ledger_cash",
           "trading_cash",
           "transferable_cash",
           "frozen_cash",
           "receivable_cash",
-          "payable_cash"
+          "payable_cash",
+          "cash_state_evidence"
         ],
         "title": "AccountCashState",
         "type": "object"
@@ -191,6 +226,23 @@
             ],
             "title": "Remaining Quantity"
           },
+          "reserved_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reserved Cash"
+          },
+          "reserved_cash_semantics": {
+            "enum": ["BROKER_FINAL_RESERVED_CASH", "NOT_APPLICABLE"],
+            "title": "Reserved Cash Semantics",
+            "type": "string"
+          },
           "security_id": {
             "minLength": 1,
             "title": "Security Id",
@@ -207,6 +259,8 @@
           "security_id",
           "side",
           "remaining_quantity",
+          "reserved_cash",
+          "reserved_cash_semantics",
           "evidence",
           "account_id"
         ],
@@ -2366,6 +2420,10 @@
             "title": "Issuer Id",
             "type": "string"
           },
+          "lifecycle_id": {
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
           "open_sell_order_quantity": {
             "anyOf": [
               {
@@ -2377,6 +2435,18 @@
               }
             ],
             "title": "Open Sell Order Quantity"
+          },
+          "origin": {
+            "enum": ["SYSTEM", "EXTERNAL"],
+            "title": "Origin",
+            "type": "string"
+          },
+          "position_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "position_id": {
+            "title": "Position Id",
+            "type": "string"
           },
           "reasons": {
             "items": {
@@ -2430,6 +2500,9 @@
           "account_id",
           "account_type",
           "currency",
+          "position_id",
+          "origin",
+          "lifecycle_id",
           "issuer_id",
           "security_id",
           "total_quantity",
@@ -2440,7 +2513,8 @@
           "open_sell_order_quantity",
           "exact_statistical_action_quantity",
           "exact_quantity_status",
-          "reasons"
+          "reasons",
+          "position_evidence"
         ],
         "title": "PositionActionUnit",
         "type": "object"
@@ -2499,6 +2573,18 @@
               }
             ],
             "title": "Business Effective At"
+          },
+          "complete_through_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complete Through At"
           },
           "cutoff_at": {
             "anyOf": [
@@ -2559,6 +2645,17 @@
             ],
             "title": "Source Observed At"
           },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version"
+          },
           "validated_at": {
             "anyOf": [
               {
@@ -2574,11 +2671,13 @@
         },
         "required": [
           "source",
+          "source_version",
           "business_effective_at",
           "source_observed_at",
           "locally_acquired_at",
           "validated_at",
-          "cutoff_at"
+          "cutoff_at",
+          "complete_through_at"
         ],
         "title": "PositionEvidence",
         "type": "object"
@@ -3408,6 +3507,9 @@
             "title": "Issuer Exposures",
             "type": "array"
           },
+          "snapshot_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
           "snapshot_id": {
             "title": "Snapshot Id",
             "type": "string"
@@ -3460,6 +3562,7 @@
           "valuation_currency",
           "snapshot_source",
           "evidence_clock",
+          "snapshot_evidence",
           "total_account_equity",
           "action_units",
           "issuer_exposures",

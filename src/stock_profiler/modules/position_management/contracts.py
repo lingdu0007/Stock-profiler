@@ -28,11 +28,13 @@ class PositionEvidence(PositionContract):
     """Source provenance remains explicit even when an incomplete fact is retained."""
 
     source: str | None
+    source_version: str | None
     business_effective_at: AwareDatetime | None
     source_observed_at: AwareDatetime | None
     locally_acquired_at: AwareDatetime | None
     validated_at: AwareDatetime | None
     cutoff_at: AwareDatetime | None
+    complete_through_at: AwareDatetime | None
     expires_at: AwareDatetime | None = None
 
     @property
@@ -44,15 +46,27 @@ class PositionEvidence(PositionContract):
             validated_at=self.validated_at,
         )
 
-    def problem_codes(self, expected_cutoff: datetime) -> tuple[str, ...]:
+    def problem_codes(
+        self,
+        expected_cutoff: datetime,
+        *,
+        require_current_completeness: bool,
+    ) -> tuple[str, ...]:
         """Report retained evidence defects rather than guessing a broker fact."""
         codes: list[str] = []
         if not self.source:
             codes.append("SOURCE_MISSING")
+        if not self.source_version:
+            codes.append("SOURCE_VERSION_MISSING")
         if self.cutoff_at is None:
             codes.append("FACT_CUTOFF_MISSING")
         elif self.cutoff_at != expected_cutoff:
             codes.append("FACT_CUTOFF_MISMATCH")
+        if require_current_completeness:
+            if self.complete_through_at is None:
+                codes.append("FACT_COMPLETENESS_WATERMARK_MISSING")
+            elif self.complete_through_at < expected_cutoff:
+                codes.append("FACT_COMPLETENESS_WATERMARK_INSUFFICIENT")
         clock = (
             self.business_effective_at,
             self.source_observed_at,
@@ -79,6 +93,9 @@ class PositionEvidence(PositionContract):
 class CashState(PositionContract):
     """Broker cash facts remain decomposed instead of being collapsed into a balance."""
 
+    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
+    opening_ledger_cash: Decimal | None
+    opening_ledger_cash_evidence: PositionEvidence
     ledger_cash: Decimal | None
     trading_cash: Decimal | None
     transferable_cash: Decimal | None
@@ -92,6 +109,8 @@ class BrokerPositionFact(PositionContract):
     """One broker summary for one account and security at the frozen cutoff."""
 
     position_id: str = Field(min_length=1)
+    origin: Literal["SYSTEM", "EXTERNAL"]
+    lifecycle_id: str = Field(min_length=1)
     issuer_id: str = Field(min_length=1)
     security_id: str = Field(min_length=1)
     total_quantity: Decimal | None
@@ -113,6 +132,11 @@ class OpenOrder(PositionContract):
     security_id: str = Field(min_length=1)
     side: Literal["BUY", "SELL"]
     remaining_quantity: Decimal | None
+    reserved_cash: Decimal | None
+    reserved_cash_semantics: Literal[
+        "BROKER_FINAL_RESERVED_CASH",
+        "NOT_APPLICABLE",
+    ]
     evidence: PositionEvidence
 
 
@@ -242,6 +266,9 @@ class PositionActionUnit(PositionContract):
     account_id: str
     account_type: str
     currency: str
+    position_id: str
+    origin: Literal["SYSTEM", "EXTERNAL"]
+    lifecycle_id: str
     issuer_id: str
     security_id: str
     total_quantity: Decimal | None
@@ -253,6 +280,7 @@ class PositionActionUnit(PositionContract):
     exact_statistical_action_quantity: Decimal | None
     exact_quantity_status: Literal["AVAILABLE", "BLOCKED"]
     reasons: tuple[str, ...]
+    position_evidence: PositionEvidence
 
 
 class IssuerExposure(PositionContract):
@@ -270,13 +298,19 @@ class AccountCashState(PositionContract):
     account_id: str
     account_type: str
     currency: str
+    account_evidence: PositionEvidence
     account_equity: Decimal | None
+    account_equity_evidence: PositionEvidence
+    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
+    opening_ledger_cash: Decimal | None
+    opening_ledger_cash_evidence: PositionEvidence
     ledger_cash: Decimal | None
     trading_cash: Decimal | None
     transferable_cash: Decimal | None
     frozen_cash: Decimal | None
     receivable_cash: Decimal | None
     payable_cash: Decimal | None
+    cash_state_evidence: PositionEvidence
 
 
 class AuthoritativeLedgerEntry(PositionLedgerEntry):
@@ -305,6 +339,7 @@ class ReconciledPositionSnapshot(PositionContract):
     valuation_currency: str
     snapshot_source: str | None
     evidence_clock: PositionEvidenceClock
+    snapshot_evidence: PositionEvidence
     total_account_equity: Decimal | None
     action_units: tuple[PositionActionUnit, ...]
     issuer_exposures: tuple[IssuerExposure, ...]

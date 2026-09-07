@@ -223,16 +223,27 @@ export interface components {
         AccountCashState: {
             /** Account Equity */
             account_equity: string | null;
+            account_equity_evidence: components["schemas"]["PositionEvidence"];
+            account_evidence: components["schemas"]["PositionEvidence"];
             /** Account Id */
             account_id: string;
             /** Account Type */
             account_type: string;
+            cash_state_evidence: components["schemas"]["PositionEvidence"];
             /** Currency */
             currency: string;
             /** Frozen Cash */
             frozen_cash: string | null;
             /** Ledger Cash */
             ledger_cash: string | null;
+            /**
+             * Ledger Cash Semantics
+             * @constant
+             */
+            ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER";
+            /** Opening Ledger Cash */
+            opening_ledger_cash: string | null;
+            opening_ledger_cash_evidence: components["schemas"]["PositionEvidence"];
             /** Payable Cash */
             payable_cash: string | null;
             /** Receivable Cash */
@@ -273,6 +284,13 @@ export interface components {
             order_id: string;
             /** Remaining Quantity */
             remaining_quantity: string | null;
+            /** Reserved Cash */
+            reserved_cash: string | null;
+            /**
+             * Reserved Cash Semantics
+             * @enum {string}
+             */
+            reserved_cash_semantics: "BROKER_FINAL_RESERVED_CASH" | "NOT_APPLICABLE";
             /** Security Id */
             security_id: string;
             /**
@@ -1218,8 +1236,18 @@ export interface components {
             frozen_quantity: string | null;
             /** Issuer Id */
             issuer_id: string;
+            /** Lifecycle Id */
+            lifecycle_id: string;
             /** Open Sell Order Quantity */
             open_sell_order_quantity: string | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SYSTEM" | "EXTERNAL";
+            position_evidence: components["schemas"]["PositionEvidence"];
+            /** Position Id */
+            position_id: string;
             /** Reasons */
             reasons: string[];
             /** Restricted Quantity */
@@ -1250,6 +1278,8 @@ export interface components {
         PositionEvidence: {
             /** Business Effective At */
             business_effective_at: string | null;
+            /** Complete Through At */
+            complete_through_at: string | null;
             /** Cutoff At */
             cutoff_at: string | null;
             /** Expires At */
@@ -1260,6 +1290,8 @@ export interface components {
             source: string | null;
             /** Source Observed At */
             source_observed_at: string | null;
+            /** Source Version */
+            source_version: string | null;
             /** Validated At */
             validated_at: string | null;
         };
@@ -1536,6 +1568,7 @@ export interface components {
             execution_restrictions: components["schemas"]["AccountExecutionRestriction"][];
             /** Issuer Exposures */
             issuer_exposures: components["schemas"]["IssuerExposure"][];
+            snapshot_evidence: components["schemas"]["PositionEvidence"];
             /** Snapshot Id */
             snapshot_id: string;
             /** Snapshot Source */

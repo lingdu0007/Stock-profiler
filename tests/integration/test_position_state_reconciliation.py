@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -46,11 +51,13 @@ def position_case_payload(
 def position_evidence(source: str) -> dict[str, str]:
     return {
         "source": source,
+        "source_version": "synthetic-broker-schema-v1",
         "business_effective_at": "2042-05-17T15:00:00Z",
         "source_observed_at": "2042-05-17T15:10:00Z",
         "locally_acquired_at": "2042-05-17T15:14:00Z",
         "validated_at": "2042-05-17T15:18:00Z",
         "cutoff_at": "2042-05-17T16:00:00Z",
+        "complete_through_at": "2042-05-17T16:00:00Z",
     }
 
 
@@ -71,9 +78,14 @@ def position_snapshot_command() -> dict[str, Any]:
                 "account_type": "SIMULATED_CASH",
                 "currency": "XSP",
                 "snapshot_evidence": position_evidence("synthetic-broker-4017-snapshot"),
-                "account_equity": "1000",
+                "account_equity": "1310",
                 "account_equity_evidence": position_evidence("synthetic-broker-4017-equity"),
                 "cash_state": {
+                    "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                    "opening_ledger_cash": "902",
+                    "opening_ledger_cash_evidence": position_evidence(
+                        "synthetic-broker-4017-opening-cash"
+                    ),
                     "ledger_cash": "100",
                     "trading_cash": "95",
                     "transferable_cash": "90",
@@ -85,6 +97,8 @@ def position_snapshot_command() -> dict[str, Any]:
                 "positions": [
                     {
                         "position_id": "synthetic-position-4017-xqz",
+                        "origin": "EXTERNAL",
+                        "lifecycle_id": "synthetic-lifecycle-4017-xqz",
                         "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
                         "security_id": "XQZ-4017",
                         "total_quantity": "100",
@@ -105,6 +119,8 @@ def position_snapshot_command() -> dict[str, Any]:
                         "security_id": "XQZ-4017",
                         "side": "SELL",
                         "remaining_quantity": "15",
+                        "reserved_cash": None,
+                        "reserved_cash_semantics": "NOT_APPLICABLE",
                         "evidence": position_evidence("synthetic-broker-4017-order"),
                     }
                 ],
@@ -160,6 +176,11 @@ def position_snapshot_command() -> dict[str, Any]:
                 "account_equity": "800",
                 "account_equity_evidence": position_evidence("synthetic-broker-8029-equity"),
                 "cash_state": {
+                    "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                    "opening_ledger_cash": "650",
+                    "opening_ledger_cash_evidence": position_evidence(
+                        "synthetic-broker-8029-opening-cash"
+                    ),
                     "ledger_cash": "200",
                     "trading_cash": "200",
                     "transferable_cash": "200",
@@ -171,6 +192,8 @@ def position_snapshot_command() -> dict[str, Any]:
                 "positions": [
                     {
                         "position_id": "synthetic-position-8029-xqz",
+                        "origin": "EXTERNAL",
+                        "lifecycle_id": "synthetic-lifecycle-8029-xqz",
                         "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
                         "security_id": "XQZ-4017",
                         "total_quantity": "50",
@@ -248,13 +271,22 @@ def test_position_snapshot_reconciles_authoritative_account_facts_and_replays_ex
     assert evidence_clock.source_observed_at.isoformat() == ("2042-05-17T15:10:00+00:00")
     assert evidence_clock.locally_acquired_at.isoformat() == ("2042-05-17T15:14:00+00:00")
     assert evidence_clock.validated_at.isoformat() == "2042-05-17T15:18:00+00:00"
-    assert outcome.snapshot.total_account_equity == Decimal("1800")
+    assert outcome.snapshot.total_account_equity == Decimal("2110")
     assert len(outcome.snapshot.action_units) == 2
     assert [unit.account_id for unit in outcome.snapshot.action_units] == [
         "synthetic-account-4017",
         "synthetic-account-8029",
     ]
     assert outcome.snapshot.action_units[0].total_quantity == Decimal("100")
+    assert outcome.snapshot.action_units[0].position_id == "synthetic-position-4017-xqz"
+    assert outcome.snapshot.action_units[0].origin == "EXTERNAL"
+    assert outcome.snapshot.action_units[0].lifecycle_id == "synthetic-lifecycle-4017-xqz"
+    assert outcome.snapshot.action_units[0].position_evidence.source == (
+        "synthetic-broker-4017-position"
+    )
+    assert outcome.snapshot.action_units[0].position_evidence.source_version == (
+        "synthetic-broker-schema-v1"
+    )
     assert outcome.snapshot.action_units[0].exact_statistical_action_quantity == Decimal("70")
     assert outcome.snapshot.action_units[0].exact_quantity_status == "AVAILABLE"
     assert outcome.snapshot.action_units[1].total_quantity == Decimal("50")
@@ -266,6 +298,16 @@ def test_position_snapshot_reconciles_authoritative_account_facts_and_replays_ex
         "synthetic-account-8029",
     )
     assert outcome.snapshot.cash_states[0].transferable_cash == Decimal("90")
+    assert outcome.snapshot.cash_states[0].opening_ledger_cash == Decimal("902")
+    assert outcome.snapshot.cash_states[0].account_evidence.source == (
+        "synthetic-broker-4017-snapshot"
+    )
+    assert outcome.snapshot.cash_states[0].account_equity_evidence.source == (
+        "synthetic-broker-4017-equity"
+    )
+    assert outcome.snapshot.cash_states[0].cash_state_evidence.source == (
+        "synthetic-broker-4017-cash"
+    )
     assert [entry.entry_type for entry in outcome.snapshot.authoritative_ledger] == [
         "FILL",
         "FEE",
@@ -330,8 +372,8 @@ def test_position_snapshot_retains_conflicts_and_blocks_only_affected_exact_quan
     assert outcome.snapshot.action_units[0].total_quantity == Decimal("101")
     assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
     assert outcome.snapshot.action_units[0].exact_quantity_status == "BLOCKED"
-    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity == Decimal("45")
-    assert outcome.snapshot.action_units[1].exact_quantity_status == "AVAILABLE"
+    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity is None
+    assert outcome.snapshot.action_units[1].exact_quantity_status == "BLOCKED"
     assert outcome.snapshot.total_account_equity is None
     assert {
         conflict.code
@@ -352,8 +394,9 @@ def test_position_snapshot_retains_conflicts_and_blocks_only_affected_exact_quan
         "LEDGER_COST_BASIS_MISMATCH",
         "OPEN_SELL_ORDER_MISMATCH",
     }
-    assert all(
+    assert any(
         conflict.affected_scope.account_id == "synthetic-account-4017"
+        and conflict.code == "ACCOUNT_EQUITY_MISSING"
         for conflict in outcome.conflicts
     )
     assert any(
@@ -441,8 +484,8 @@ def test_position_snapshot_blocks_account_wide_restrictions_and_post_cutoff_fact
     assert outcome.disposition == "CONFLICTED"
     assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
     assert outcome.snapshot.action_units[0].exact_quantity_status == "BLOCKED"
-    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity == Decimal("45")
-    assert outcome.snapshot.cash_states[0].account_equity == Decimal("1000")
+    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity is None
+    assert outcome.snapshot.cash_states[0].account_equity == Decimal("1310")
     assert outcome.snapshot.unfinished_orders[0].order_id == "synthetic-open-sell-4017"
     assert outcome.snapshot.execution_restrictions[0].restriction_id == (
         "synthetic-account-wide-sell-block"
@@ -476,3 +519,203 @@ def test_position_snapshot_never_publishes_partial_issuer_exposure(
     assert "BROKER_POSITION_SUMMARY_MISSING" in {conflict.code for conflict in outcome.conflicts}
     assert outcome.snapshot.issuer_exposures[0].issuer_id == "FICTIONAL-ORBITAL-MOSAIC"
     assert outcome.snapshot.issuer_exposures[0].current_market_exposure is None
+
+
+def test_position_snapshot_blocks_all_quantities_for_unreconciled_cash_and_equity(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["cash_state"]["ledger_cash"] = "99"
+    account["account_equity"] = "1308"
+    account["open_orders"].append(
+        {
+            "order_id": "synthetic-open-buy-unresolved",
+            "security_id": "NEW-4017",
+            "side": "BUY",
+            "remaining_quantity": None,
+            "reserved_cash": None,
+            "reserved_cash_semantics": "BROKER_FINAL_RESERVED_CASH",
+            "evidence": position_evidence("synthetic-broker-4017-buy"),
+        }
+    )
+    payload = position_case_payload(migrated_settings, "cash-equity-conflict", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert all(
+        unit.exact_statistical_action_quantity is None and unit.exact_quantity_status == "BLOCKED"
+        for unit in outcome.snapshot.action_units
+    )
+    assert {conflict.code for conflict in outcome.conflicts} >= {
+        "LEDGER_CASH_MISMATCH",
+        "ACCOUNT_EQUITY_MISMATCH",
+        "BUY_ORDER_REMAINING_QUANTITY_MISSING",
+        "BUY_ORDER_RESERVED_CASH_MISSING",
+    }
+
+
+def test_position_snapshot_rejects_impossible_quantities_and_negative_valuations(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    position = command["accounts"][0]["positions"][0]
+    position["frozen_quantity"] = "101"
+    position["restricted_quantity"] = "-1"
+    position["market_price"] = "-12"
+    payload = position_case_payload(migrated_settings, "invalid-quantities", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+    assert outcome.snapshot.issuer_exposures[0].current_market_exposure is None
+    assert {
+        conflict.code
+        for conflict in outcome.conflicts
+        if conflict.affected_scope.account_id == "synthetic-account-4017"
+    } >= {
+        "FROZEN_QUANTITY_OUT_OF_BOUNDS",
+        "RESTRICTED_QUANTITY_NEGATIVE",
+        "MARKET_PRICE_NON_POSITIVE",
+    }
+
+
+def test_position_snapshot_rejects_conflicting_security_issuer_identity(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][1]["positions"][0]["issuer_id"] = "FICTIONAL-CONFLICTING-ISSUER"
+    payload = position_case_payload(migrated_settings, "issuer-identity-conflict", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert outcome.snapshot.issuer_exposures == ()
+    assert all(
+        unit.exact_statistical_action_quantity is None
+        and "SECURITY_ISSUER_IDENTITY_CONFLICT" in unit.reasons
+        for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_keeps_valuation_when_execution_is_restricted(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["execution_restrictions"] = [
+        {
+            "restriction_id": "synthetic-sell-block",
+            "security_id": "XQZ-4017",
+            "kind": "BROKER_SELL_BLOCK",
+            "reason": "Synthetic broker sell restriction.",
+            "active": True,
+            "evidence": position_evidence("synthetic-broker-4017-restriction"),
+        }
+    ]
+    payload = position_case_payload(migrated_settings, "restricted-exposure", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "RECONCILED"
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity == Decimal("45")
+    assert outcome.snapshot.issuer_exposures[0].current_market_exposure == Decimal("1800")
+
+
+def test_position_snapshot_requires_current_completeness_watermarks(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"][0]["evidence"]["complete_through_at"] = (
+        "2042-05-17T15:59:59Z"
+    )
+    payload = position_case_payload(migrated_settings, "stale-position-evidence", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+    assert "FACT_COMPLETENESS_WATERMARK_INSUFFICIENT" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+
+
+def test_position_snapshot_conflicts_have_unique_deterministic_identifiers(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["snapshot_evidence"]["source"] = None
+    account["account_equity_evidence"]["source"] = None
+    account["cash_state"]["evidence"]["source"] = None
+    payload = position_case_payload(migrated_settings, "unique-conflicts", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    conflict_ids = tuple(conflict.conflict_id for conflict in outcome.conflicts)
+    assert len(conflict_ids) == len(set(conflict_ids))
+
+
+def test_position_snapshot_reconciles_identically_in_fresh_processes() -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"] = []
+    for security_id in ("AAA-4017", "BBB-4017", "CCC-4017"):
+        command["accounts"][0]["ledger_entries"].append(
+            {
+                "entry_id": f"synthetic-orphan-{security_id}",
+                "entry_type": "CORPORATE_ACTION",
+                "security_id": security_id,
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "evidence": position_evidence(f"synthetic-broker-{security_id}"),
+            }
+        )
+
+    script = """
+import json
+import os
+from stock_profiler.modules.position_management.contracts import PositionSnapshotCommand
+from stock_profiler.modules.position_management.service import reconcile
+
+command = PositionSnapshotCommand.model_validate(json.loads(os.environ["POSITION_COMMAND"]))
+print(reconcile(command).model_dump_json())
+"""
+    outputs = []
+    for hash_seed in ("1", "2", "3"):
+        environment = os.environ | {
+            "PYTHONHASHSEED": hash_seed,
+            "POSITION_COMMAND": json.dumps(command),
+        }
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            cwd=Path(__file__).parents[2],
+            env=environment,
+            text=True,
+        )
+        outputs.append(completed.stdout)
+
+    assert outputs[0] == outputs[1] == outputs[2]

@@ -442,6 +442,10 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
         <Record label="Snapshot" value={snapshot.snapshot_id} />
         <Record label="Snapshot cutoff" value={snapshot.cutoff_at} />
         <Record label="Snapshot source" value={displayValue(snapshot.snapshot_source)} />
+        <Record
+          label="Snapshot evidence"
+          value={formatPositionEvidence(snapshot.snapshot_evidence)}
+        />
         <Record label="Valuation currency" value={snapshot.valuation_currency} />
         <Record label="Total account equity" value={displayValue(snapshot.total_account_equity)} />
         <Record label="Business effective" value={displayValue(clock.business_effective_at)} />
@@ -459,6 +463,9 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
               label={`Account ${unit.account_id} ${unit.security_id}`}
               value={[
                 `${unit.account_type} | ${unit.currency}`,
+                `position ${unit.position_id}`,
+                `origin ${unit.origin}`,
+                `lifecycle ${unit.lifecycle_id}`,
                 `issuer ${unit.issuer_id}`,
                 `total ${displayValue(unit.total_quantity)}`,
                 `broker sellable ${displayValue(unit.broker_sellable_quantity)}`,
@@ -468,7 +475,8 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 `open sell ${displayValue(unit.open_sell_order_quantity)}`,
                 `exact quantity ${displayValue(unit.exact_statistical_action_quantity)}`,
                 unit.exact_quantity_status,
-                unit.reasons.join(", ")
+                unit.reasons.join(", "),
+                formatPositionEvidence(unit.position_evidence)
               ]
                 .filter(Boolean)
                 .join(" | ")}
@@ -503,12 +511,17 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
               value={[
                 `${cash.account_type} | ${cash.currency}`,
                 `equity ${displayValue(cash.account_equity)}`,
+                `opening ledger ${displayValue(cash.opening_ledger_cash)}`,
+                cash.ledger_cash_semantics,
                 `ledger ${displayValue(cash.ledger_cash)}`,
                 `trading ${displayValue(cash.trading_cash)}`,
                 `transferable ${displayValue(cash.transferable_cash)}`,
                 `frozen ${displayValue(cash.frozen_cash)}`,
                 `receivable ${displayValue(cash.receivable_cash)}`,
-                `payable ${displayValue(cash.payable_cash)}`
+                `payable ${displayValue(cash.payable_cash)}`,
+                `account evidence ${formatPositionEvidence(cash.account_evidence)}`,
+                `equity evidence ${formatPositionEvidence(cash.account_equity_evidence)}`,
+                `cash evidence ${formatPositionEvidence(cash.cash_state_evidence)}`
               ].join(" | ")}
             />
           ))}
@@ -526,7 +539,9 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 order.order_id,
                 order.security_id,
                 `remaining ${displayValue(order.remaining_quantity)}`,
-                `source ${displayValue(order.evidence.source)}`
+                `reserved cash ${displayValue(order.reserved_cash)}`,
+                order.reserved_cash_semantics,
+                formatPositionEvidence(order.evidence)
               ].join(" | ")}
             />
           ))}
@@ -545,7 +560,7 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 displayValue(restriction.security_id),
                 restriction.active ? "ACTIVE" : "INACTIVE",
                 restriction.reason,
-                `source ${displayValue(restriction.evidence.source)}`
+                formatPositionEvidence(restriction.evidence)
               ].join(" | ")}
             />
           ))}
@@ -566,7 +581,7 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 `cost ${entry.cost_basis_delta}`,
                 `cash ${entry.cash_delta}`,
                 `occurred ${entry.occurred_at}`,
-                `source ${displayValue(entry.evidence.source)}`
+                formatPositionEvidence(entry.evidence)
               ].join(" | ")}
             />
           ))}
@@ -620,6 +635,30 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
 
 function displayValue(value: string | null | undefined): string {
   return value ?? "Unavailable";
+}
+
+type PositionEvidenceView = {
+  source?: string | null;
+  source_version?: string | null;
+  cutoff_at?: string | null;
+  complete_through_at?: string | null;
+  business_effective_at?: string | null;
+  source_observed_at?: string | null;
+  locally_acquired_at?: string | null;
+  validated_at?: string | null;
+};
+
+function formatPositionEvidence(evidence: PositionEvidenceView | null | undefined): string {
+  return [
+    `source ${displayValue(evidence?.source)}`,
+    `version ${displayValue(evidence?.source_version)}`,
+    `cutoff ${displayValue(evidence?.cutoff_at)}`,
+    `complete through ${displayValue(evidence?.complete_through_at)}`,
+    `business effective ${displayValue(evidence?.business_effective_at)}`,
+    `source observed ${displayValue(evidence?.source_observed_at)}`,
+    `locally acquired ${displayValue(evidence?.locally_acquired_at)}`,
+    `validated ${displayValue(evidence?.validated_at)}`
+  ].join(" | ");
 }
 
 function formatAccountSnapshot(account: PortfolioPreview["included_accounts"][number]): string {

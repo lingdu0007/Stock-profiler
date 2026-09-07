@@ -27,7 +27,7 @@ from stock_profiler.modules.position_management.contracts import (
 
 
 class ConflictRecorder(Protocol):
-    """Type the host-local callback that records a retained reconciliation conflict."""
+    """Type the host-local callback that retains a reconciliation conflict."""
 
     def __call__(
         self,
@@ -37,61 +37,183 @@ class ConflictRecorder(Protocol):
         code: str,
         fields: tuple[str, ...],
         blocks_exact_statistical_quantity: bool,
+        portfolio_dependency: bool = False,
+        blocks_current_valuation: bool = False,
     ) -> None: ...
 
 
 def reconcile(command: PositionSnapshotCommand) -> PositionReconciliationOutcome:
-    """Retain conflicts and only expose a precise quantity when broker facts agree."""
+    """Retain conflicts and expose exact quantities only from complete broker facts."""
     conflicts: list[PositionFactConflict] = []
-    blocking_scopes: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
+    conflict_keys: set[tuple[str | None, str | None, str, tuple[str, ...]]] = set()
+    blocking: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
+    valuation: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
+    portfolio_blocking: list[str] = []
 
-    def record_conflict(
+    def record(
         *,
         account_id: str | None,
         security_id: str | None,
         code: str,
         fields: tuple[str, ...],
         blocks_exact_statistical_quantity: bool,
+        portfolio_dependency: bool = False,
+        blocks_current_valuation: bool = False,
     ) -> None:
-        scope = (account_id, security_id)
-        conflict = PositionFactConflict(
-            conflict_id=_conflict_id(account_id, security_id, code),
-            code=code,
-            affected_scope=PositionAffectedScope(
-                account_id=account_id,
-                security_id=security_id,
-                fields=fields,
-            ),
-            blocks_exact_statistical_quantity=blocks_exact_statistical_quantity,
+        key = (account_id, security_id, code, fields)
+        if key in conflict_keys:
+            return
+        conflict_keys.add(key)
+        conflicts.append(
+            PositionFactConflict(
+                conflict_id=_conflict_id(account_id, security_id, code, fields),
+                code=code,
+                affected_scope=PositionAffectedScope(
+                    account_id=account_id,
+                    security_id=security_id,
+                    fields=fields,
+                ),
+                blocks_exact_statistical_quantity=blocks_exact_statistical_quantity,
+            )
         )
-        if conflict not in conflicts:
-            conflicts.append(conflict)
         if blocks_exact_statistical_quantity:
-            blocking_scopes[scope].append(code)
+            _append_unique(blocking[(account_id, security_id)], code)
+            if portfolio_dependency:
+                _append_unique(portfolio_blocking, code)
+        if blocks_current_valuation:
+            _append_unique(valuation[(account_id, security_id)], code)
 
-    _record_evidence_problems(
+    _record_evidence(
         command.snapshot_evidence,
         command.cutoff_at,
-        record_conflict,
+        record,
         account_id=None,
         security_id=None,
         fields=("snapshot_evidence",),
-        blocks_exact_statistical_quantity=True,
+        blocks=True,
+        current=True,
+        portfolio=True,
     )
 
-    action_units: list[PositionActionUnit] = []
+    equities: list[Decimal | None] = []
     cash_states: list[AccountCashState] = []
-    unfinished_orders: list[AccountOpenOrder] = []
-    execution_restrictions: list[AccountExecutionRestriction] = []
-    authoritative_ledger: list[AuthoritativeLedgerEntry] = []
-    issuer_account_exposure: dict[str, list[tuple[str, Decimal | None, bool]]] = defaultdict(list)
+    orders_output: list[AccountOpenOrder] = []
+    restrictions_output: list[AccountExecutionRestriction] = []
+    ledger_output: list[AuthoritativeLedgerEntry] = []
+    position_rows: list[tuple[AccountPositionSnapshot, BrokerPositionFact]] = []
+    active_restrictions: dict[tuple[str, str | None], list[ExecutionRestriction]] = defaultdict(
+        list
+    )
     issuer_by_security: dict[str, set[str]] = defaultdict(set)
-    unreconciled_security_ids: set[str] = set()
-    account_equities: list[Decimal | None] = []
+    missing_summary_security_ids: set[str] = set()
+
+    for account in command.accounts:
+        cash = account.cash_state
+        equities.append(account.account_equity)
+        _record_account_problems(account, command.cutoff_at, record)
+        cash_states.append(
+            AccountCashState(
+                account_id=account.account_id,
+                account_type=account.account_type,
+                currency=account.currency,
+                account_evidence=account.snapshot_evidence,
+                account_equity=account.account_equity,
+                account_equity_evidence=account.account_equity_evidence,
+                ledger_cash_semantics=cash.ledger_cash_semantics,
+                opening_ledger_cash=cash.opening_ledger_cash,
+                opening_ledger_cash_evidence=cash.opening_ledger_cash_evidence,
+                ledger_cash=cash.ledger_cash,
+                trading_cash=cash.trading_cash,
+                transferable_cash=cash.transferable_cash,
+                frozen_cash=cash.frozen_cash,
+                receivable_cash=cash.receivable_cash,
+                payable_cash=cash.payable_cash,
+                cash_state_evidence=cash.evidence,
+            )
+        )
+        orders_output.extend(
+            AccountOpenOrder(account_id=account.account_id, **order.model_dump())
+            for order in account.open_orders
+        )
+        restrictions_output.extend(
+            AccountExecutionRestriction(account_id=account.account_id, **restriction.model_dump())
+            for restriction in account.execution_restrictions
+        )
+
+        ledger_by_security, ledger_cash_delta = _reconstruct_ledger(
+            account,
+            command.cutoff_at,
+            record,
+            ledger_output,
+        )
+        sell_orders, buy_reserves = _reconcile_orders(account, command.cutoff_at, record)
+        _record_buy_reserve(account, buy_reserves, record)
+        for restriction in account.execution_restrictions:
+            evidence_codes = _record_evidence(
+                restriction.evidence,
+                command.cutoff_at,
+                record,
+                account_id=account.account_id,
+                security_id=restriction.security_id,
+                fields=("execution_restrictions.evidence",),
+                blocks=True,
+                current=True,
+            )
+            if restriction.active and not evidence_codes:
+                active_restrictions[(account.account_id, restriction.security_id)].append(
+                    restriction
+                )
+
+        position_security_ids = {position.security_id for position in account.positions}
+        for position in account.positions:
+            position_rows.append((account, position))
+            issuer_by_security[position.security_id].add(position.issuer_id)
+            _record_position_problems(
+                account,
+                position,
+                command.cutoff_at,
+                ledger_by_security,
+                sell_orders,
+                record,
+            )
+
+        summary_required = (
+            set(ledger_by_security)
+            | set(sell_orders)
+            | {
+                restriction.security_id
+                for restriction in account.execution_restrictions
+                if restriction.active and restriction.security_id is not None
+            }
+        )
+        for security_id in sorted(summary_required - position_security_ids):
+            record(
+                account_id=account.account_id,
+                security_id=security_id,
+                code="BROKER_POSITION_SUMMARY_MISSING",
+                fields=("positions", "ledger_entries", "open_orders", "execution_restrictions"),
+                blocks_exact_statistical_quantity=True,
+                blocks_current_valuation=True,
+            )
+            missing_summary_security_ids.add(security_id)
+        _record_cash_and_equity(account, ledger_cash_delta, record)
+
+    conflicting_security_ids: set[str] = set()
+    for security_id, issuers in sorted(issuer_by_security.items()):
+        if len(issuers) > 1:
+            record(
+                account_id=None,
+                security_id=security_id,
+                code="SECURITY_ISSUER_IDENTITY_CONFLICT",
+                fields=("positions.security_id", "positions.issuer_id"),
+                blocks_exact_statistical_quantity=True,
+                blocks_current_valuation=True,
+            )
+            conflicting_security_ids.add(security_id)
 
     for annotation in command.annotations:
         if annotation.created_at > command.cutoff_at:
-            record_conflict(
+            record(
                 account_id=annotation.account_id,
                 security_id=annotation.security_id,
                 code="ANNOTATION_AFTER_CUTOFF",
@@ -99,164 +221,33 @@ def reconcile(command: PositionSnapshotCommand) -> PositionReconciliationOutcome
                 blocks_exact_statistical_quantity=False,
             )
 
-    for account in command.accounts:
-        _record_account_problems(account, command.cutoff_at, record_conflict)
-        account_equities.append(account.account_equity)
-        cash = account.cash_state
-        cash_states.append(
-            AccountCashState(
-                account_id=account.account_id,
-                account_type=account.account_type,
-                currency=account.currency,
-                account_equity=account.account_equity,
-                ledger_cash=cash.ledger_cash,
-                trading_cash=cash.trading_cash,
-                transferable_cash=cash.transferable_cash,
-                frozen_cash=cash.frozen_cash,
-                receivable_cash=cash.receivable_cash,
-                payable_cash=cash.payable_cash,
-            )
-        )
-        unfinished_orders.extend(
-            AccountOpenOrder(account_id=account.account_id, **order.model_dump())
-            for order in account.open_orders
-        )
-        execution_restrictions.extend(
-            AccountExecutionRestriction(
-                account_id=account.account_id,
-                **restriction.model_dump(),
-            )
-            for restriction in account.execution_restrictions
-        )
-        ledger_by_security = _ledger_by_security(
-            account,
-            command.cutoff_at,
-            record_conflict,
-            authoritative_ledger,
-        )
-        open_sell_quantity = _open_sell_quantity_by_security(
-            account,
-            command.cutoff_at,
-            record_conflict,
-        )
-        active_restrictions = _active_restrictions_by_security(
-            account,
-            command.cutoff_at,
-            record_conflict,
-        )
-        position_security_ids = {position.security_id for position in account.positions}
-        for position in account.positions:
-            issuer_by_security[position.security_id].add(position.issuer_id)
-            _record_position_problems(
-                account,
-                position,
-                command.cutoff_at,
-                ledger_by_security,
-                open_sell_quantity,
-                record_conflict,
-            )
-            scoped_reasons = _blocking_reasons(
-                blocking_scopes,
-                account.account_id,
-                position.security_id,
-            )
-            restrictions = (
-                *active_restrictions.get(None, ()),
-                *active_restrictions.get(position.security_id, ()),
-            )
-            restriction_reasons = tuple(
-                f"EXECUTION_RESTRICTION_ACTIVE:{restriction.restriction_id}"
-                for restriction in restrictions
-            )
-            reasons = tuple(dict.fromkeys((*scoped_reasons, *restriction_reasons)))
-            exact_quantity = (
-                position.broker_sellable_quantity
-                if position.broker_sellable_quantity is not None
-                and position.sellable_quantity_semantics == "BROKER_FINAL_SELLABLE"
-                and not reasons
-                else None
-            )
-            action_units.append(
-                PositionActionUnit(
-                    account_id=account.account_id,
-                    account_type=account.account_type,
-                    currency=account.currency,
-                    issuer_id=position.issuer_id,
-                    security_id=position.security_id,
-                    total_quantity=position.total_quantity,
-                    broker_sellable_quantity=position.broker_sellable_quantity,
-                    unsettled_quantity=position.unsettled_quantity,
-                    frozen_quantity=position.frozen_quantity,
-                    restricted_quantity=position.restricted_quantity,
-                    open_sell_order_quantity=position.open_sell_order_quantity,
-                    exact_statistical_action_quantity=exact_quantity,
-                    exact_quantity_status=(
-                        "AVAILABLE" if exact_quantity is not None else "BLOCKED"
-                    ),
-                    reasons=reasons,
-                )
-            )
-            issuer_account_exposure[position.issuer_id].append(
-                (
-                    account.account_id,
-                    (
-                        position.total_quantity * position.market_price
-                        if position.total_quantity is not None and position.market_price is not None
-                        else None
-                    ),
-                    bool(reasons),
-                )
-            )
-        reconciled_security_ids = (
-            set(ledger_by_security)
-            | set(open_sell_quantity)
-            | {security_id for security_id in active_restrictions if security_id is not None}
-        )
-        for security_id in reconciled_security_ids - position_security_ids:
-            record_conflict(
-                account_id=account.account_id,
-                security_id=security_id,
-                code="BROKER_POSITION_SUMMARY_MISSING",
-                fields=("positions", "ledger_entries", "open_orders", "execution_restrictions"),
-                blocks_exact_statistical_quantity=True,
-            )
-            unreconciled_security_ids.add(security_id)
-
-    issuer_exposures = tuple(
-        IssuerExposure(
-            issuer_id=issuer_id,
-            valuation_currency=command.valuation_currency,
-            account_ids=tuple(account_id for account_id, _, _ in exposures),
-            current_market_exposure=(
-                None
-                if (
-                    issuer_id
-                    in {
-                        issuer
-                        for security_id in unreconciled_security_ids
-                        for issuer in issuer_by_security.get(security_id, ())
-                    }
-                    or any(has_conflict for _, _, has_conflict in exposures)
-                )
-                else _sum_if_complete(tuple(exposure for _, exposure, _ in exposures))
-            ),
-        )
-        for issuer_id, exposures in issuer_account_exposure.items()
+    action_units = _project_actions(
+        position_rows,
+        active_restrictions,
+        blocking,
+        portfolio_blocking,
     )
-    total_account_equity = _sum_if_complete(tuple(account_equities))
+    issuer_exposures = _project_exposures(
+        position_rows,
+        command.valuation_currency,
+        valuation,
+        missing_summary_security_ids,
+        conflicting_security_ids,
+    )
     snapshot = ReconciledPositionSnapshot(
         snapshot_id=command.snapshot_id,
         cutoff_at=command.cutoff_at,
         valuation_currency=command.valuation_currency,
         snapshot_source=command.snapshot_evidence.source,
         evidence_clock=command.snapshot_evidence.clock,
-        total_account_equity=total_account_equity,
-        action_units=tuple(action_units),
+        snapshot_evidence=command.snapshot_evidence,
+        total_account_equity=_sum_if_complete(tuple(equities)),
+        action_units=action_units,
         issuer_exposures=issuer_exposures,
         cash_states=tuple(cash_states),
-        unfinished_orders=tuple(unfinished_orders),
-        execution_restrictions=tuple(execution_restrictions),
-        authoritative_ledger=tuple(authoritative_ledger),
+        unfinished_orders=tuple(orders_output),
+        execution_restrictions=tuple(restrictions_output),
+        authoritative_ledger=tuple(ledger_output),
         user_annotations=command.annotations,
     )
     if conflicts:
@@ -277,35 +268,42 @@ def reconcile(command: PositionSnapshotCommand) -> PositionReconciliationOutcome
 def _record_account_problems(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
-    record_conflict: ConflictRecorder,
+    record: ConflictRecorder,
 ) -> None:
-    _record_evidence_problems(
+    cash = account.cash_state
+    _record_evidence(
         account.snapshot_evidence,
         cutoff_at,
-        record_conflict,
+        record,
         account_id=account.account_id,
         security_id=None,
         fields=("snapshot_evidence",),
-        blocks_exact_statistical_quantity=True,
+        blocks=True,
+        current=True,
+        portfolio=True,
     )
     if account.account_equity is None:
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=None,
             code="ACCOUNT_EQUITY_MISSING",
             fields=("account_equity",),
             blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
         )
-    _record_evidence_problems(
+    _record_evidence(
         account.account_equity_evidence,
         cutoff_at,
-        record_conflict,
+        record,
         account_id=account.account_id,
         security_id=None,
         fields=("account_equity_evidence",),
-        blocks_exact_statistical_quantity=True,
+        blocks=True,
+        current=True,
+        portfolio=True,
     )
-    cash_fields = (
+    fields = (
+        "opening_ledger_cash",
         "ledger_cash",
         "trading_cash",
         "transferable_cash",
@@ -313,118 +311,269 @@ def _record_account_problems(
         "receivable_cash",
         "payable_cash",
     )
-    if any(getattr(account.cash_state, field) is None for field in cash_fields):
-        record_conflict(
+    if any(getattr(cash, field) is None for field in fields):
+        record(
             account_id=account.account_id,
             security_id=None,
             code="CASH_STATE_INCOMPLETE",
-            fields=cash_fields,
+            fields=fields,
             blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
         )
-    _record_evidence_problems(
-        account.cash_state.evidence,
+    _record_evidence(
+        cash.opening_ledger_cash_evidence,
         cutoff_at,
-        record_conflict,
+        record,
+        account_id=account.account_id,
+        security_id=None,
+        fields=("cash_state.opening_ledger_cash_evidence",),
+        blocks=True,
+        current=True,
+        portfolio=True,
+    )
+    _record_evidence(
+        cash.evidence,
+        cutoff_at,
+        record,
         account_id=account.account_id,
         security_id=None,
         fields=("cash_state.evidence",),
-        blocks_exact_statistical_quantity=True,
+        blocks=True,
+        current=True,
+        portfolio=True,
     )
 
 
-def _ledger_by_security(
+def _reconstruct_ledger(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
-    record_conflict: ConflictRecorder,
-    authoritative_ledger: list[AuthoritativeLedgerEntry],
-) -> dict[str, tuple[Decimal, Decimal]]:
+    record: ConflictRecorder,
+    output: list[AuthoritativeLedgerEntry],
+) -> tuple[dict[str, tuple[Decimal, Decimal]], Decimal | None]:
     entries_by_security: dict[str, list[tuple[Decimal, Decimal]]] = defaultdict(list)
-    seen_entry_ids: set[str] = set()
+    cash_deltas: list[Decimal] = []
+    cash_complete = True
+    seen_ids: set[str] = set()
     for entry in account.ledger_entries:
-        if entry.entry_id in seen_entry_ids:
-            record_conflict(
+        output.append(AuthoritativeLedgerEntry(account_id=account.account_id, **entry.model_dump()))
+        if entry.entry_id in seen_ids:
+            record(
                 account_id=account.account_id,
                 security_id=entry.security_id,
                 code="LEDGER_ENTRY_ID_DUPLICATED",
                 fields=("ledger_entries.entry_id",),
                 blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+                blocks_current_valuation=entry.security_id is not None,
             )
-        seen_entry_ids.add(entry.entry_id)
+            cash_complete = False
+        seen_ids.add(entry.entry_id)
         if entry.occurred_at > cutoff_at:
-            record_conflict(
+            record(
                 account_id=account.account_id,
                 security_id=entry.security_id,
                 code="LEDGER_ENTRY_AFTER_CUTOFF",
                 fields=("ledger_entries.occurred_at",),
-                blocks_exact_statistical_quantity=entry.security_id is not None,
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+                blocks_current_valuation=entry.security_id is not None,
             )
-        _record_evidence_problems(
+            cash_complete = False
+            continue
+        evidence_codes = _record_evidence(
             entry.evidence,
             cutoff_at,
-            record_conflict,
+            record,
             account_id=account.account_id,
             security_id=entry.security_id,
             fields=("ledger_entries.evidence",),
-            blocks_exact_statistical_quantity=entry.security_id is not None,
+            blocks=True,
+            current=False,
+            portfolio=True,
+            valuation=entry.security_id is not None,
         )
-        authoritative_ledger.append(
-            AuthoritativeLedgerEntry(account_id=account.account_id, **entry.model_dump())
-        )
+        if evidence_codes:
+            cash_complete = False
+        cash_deltas.append(entry.cash_delta)
         if entry.security_id is not None:
             entries_by_security[entry.security_id].append(
                 (entry.quantity_delta, entry.cost_basis_delta)
             )
-    return {
-        security_id: (
-            sum((quantity for quantity, _ in entries), Decimal("0")),
-            sum((cost for _, cost in entries), Decimal("0")),
-        )
-        for security_id, entries in entries_by_security.items()
-    }
+    return (
+        {
+            security_id: (
+                sum((quantity for quantity, _ in entries), Decimal("0")),
+                sum((cost for _, cost in entries), Decimal("0")),
+            )
+            for security_id, entries in entries_by_security.items()
+        },
+        sum(cash_deltas, Decimal("0")) if cash_complete else None,
+    )
 
 
-def _open_sell_quantity_by_security(
+def _reconcile_orders(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
-    record_conflict: ConflictRecorder,
-) -> dict[str, Decimal | None]:
-    quantities: dict[str, list[Decimal | None]] = defaultdict(list)
+    record: ConflictRecorder,
+) -> tuple[dict[str, Decimal | None], Decimal | None]:
+    sell_quantities: dict[str, list[Decimal | None]] = defaultdict(list)
+    buy_reserves: list[Decimal | None] = []
     for order in account.open_orders:
-        _record_evidence_problems(
+        _record_evidence(
             order.evidence,
             cutoff_at,
-            record_conflict,
+            record,
             account_id=account.account_id,
             security_id=order.security_id,
             fields=("open_orders.evidence",),
-            blocks_exact_statistical_quantity=True,
+            blocks=True,
+            current=True,
+            portfolio=order.side == "BUY",
         )
+        if order.remaining_quantity is None:
+            record(
+                account_id=account.account_id,
+                security_id=order.security_id,
+                code=f"{order.side}_ORDER_REMAINING_QUANTITY_MISSING",
+                fields=("open_orders.remaining_quantity",),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=order.side == "BUY",
+            )
+        elif order.remaining_quantity < 0:
+            record(
+                account_id=account.account_id,
+                security_id=order.security_id,
+                code=f"{order.side}_ORDER_REMAINING_QUANTITY_NEGATIVE",
+                fields=("open_orders.remaining_quantity",),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=order.side == "BUY",
+            )
         if order.side == "SELL":
-            quantities[order.security_id].append(order.remaining_quantity)
-    return {
-        security_id: _sum_if_complete(tuple(values)) for security_id, values in quantities.items()
-    }
+            if order.reserved_cash is not None or order.reserved_cash_semantics != "NOT_APPLICABLE":
+                record(
+                    account_id=account.account_id,
+                    security_id=order.security_id,
+                    code="SELL_ORDER_CASH_RESERVATION_INVALID",
+                    fields=("open_orders.reserved_cash", "open_orders.reserved_cash_semantics"),
+                    blocks_exact_statistical_quantity=True,
+                )
+            sell_quantities[order.security_id].append(order.remaining_quantity)
+            continue
+        if order.reserved_cash_semantics != "BROKER_FINAL_RESERVED_CASH":
+            record(
+                account_id=account.account_id,
+                security_id=order.security_id,
+                code="BUY_ORDER_RESERVED_CASH_SEMANTICS_UNKNOWN",
+                fields=("open_orders.reserved_cash_semantics",),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+            )
+        if order.reserved_cash is None:
+            record(
+                account_id=account.account_id,
+                security_id=order.security_id,
+                code="BUY_ORDER_RESERVED_CASH_MISSING",
+                fields=("open_orders.reserved_cash",),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+            )
+        elif order.reserved_cash < 0:
+            record(
+                account_id=account.account_id,
+                security_id=order.security_id,
+                code="BUY_ORDER_RESERVED_CASH_NEGATIVE",
+                fields=("open_orders.reserved_cash",),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+            )
+        buy_reserves.append(order.reserved_cash)
+    return (
+        {
+            security_id: _sum_if_complete(tuple(values))
+            for security_id, values in sell_quantities.items()
+        },
+        _sum_if_complete(tuple(buy_reserves)),
+    )
 
 
-def _active_restrictions_by_security(
+def _record_buy_reserve(
     account: AccountPositionSnapshot,
-    cutoff_at: datetime,
-    record_conflict: ConflictRecorder,
-) -> dict[str | None, tuple[ExecutionRestriction, ...]]:
-    by_security: dict[str | None, list[ExecutionRestriction]] = defaultdict(list)
-    for restriction in account.execution_restrictions:
-        _record_evidence_problems(
-            restriction.evidence,
-            cutoff_at,
-            record_conflict,
+    buy_reserves: Decimal | None,
+    record: ConflictRecorder,
+) -> None:
+    if (
+        buy_reserves is not None
+        and account.cash_state.frozen_cash is not None
+        and buy_reserves > account.cash_state.frozen_cash
+    ):
+        record(
             account_id=account.account_id,
-            security_id=restriction.security_id,
-            fields=("execution_restrictions.evidence",),
+            security_id=None,
+            code="BUY_ORDER_RESERVE_EXCEEDS_FROZEN_CASH",
+            fields=("open_orders.reserved_cash", "cash_state.frozen_cash"),
             blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
         )
-        if restriction.active:
-            by_security[restriction.security_id].append(restriction)
-    return {security_id: tuple(items) for security_id, items in by_security.items()}
+
+
+def _record_cash_and_equity(
+    account: AccountPositionSnapshot,
+    ledger_cash_delta: Decimal | None,
+    record: ConflictRecorder,
+) -> None:
+    cash = account.cash_state
+    if (
+        cash.opening_ledger_cash is not None
+        and ledger_cash_delta is not None
+        and cash.ledger_cash is not None
+        and cash.opening_ledger_cash + ledger_cash_delta != cash.ledger_cash
+    ):
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="LEDGER_CASH_MISMATCH",
+            fields=(
+                "cash_state.ledger_cash",
+                "cash_state.opening_ledger_cash",
+                "ledger_entries.cash_delta",
+            ),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
+    values = tuple(
+        position.total_quantity * position.market_price
+        if position.total_quantity is not None
+        and position.total_quantity >= 0
+        and position.market_price is not None
+        and position.market_price > 0
+        else None
+        for position in account.positions
+    )
+    market_value = _sum_if_complete(values)
+    if (
+        market_value is not None
+        and cash.ledger_cash is not None
+        and cash.receivable_cash is not None
+        and cash.payable_cash is not None
+        and account.account_equity is not None
+        and cash.ledger_cash + market_value + cash.receivable_cash - cash.payable_cash
+        != account.account_equity
+    ):
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="ACCOUNT_EQUITY_MISMATCH",
+            fields=(
+                "account_equity",
+                "cash_state.ledger_cash",
+                "positions.total_quantity",
+                "positions.market_price",
+                "cash_state.receivable_cash",
+                "cash_state.payable_cash",
+            ),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
 
 
 def _record_position_problems(
@@ -432,28 +581,44 @@ def _record_position_problems(
     position: BrokerPositionFact,
     cutoff_at: datetime,
     ledger_by_security: dict[str, tuple[Decimal, Decimal]],
-    open_sell_quantity: dict[str, Decimal | None],
-    record_conflict: ConflictRecorder,
+    sell_orders: dict[str, Decimal | None],
+    record: ConflictRecorder,
 ) -> None:
-    _record_evidence_problems(
+    _record_evidence(
         position.evidence,
         cutoff_at,
-        record_conflict,
+        record,
         account_id=account.account_id,
         security_id=position.security_id,
         fields=("positions.evidence",),
-        blocks_exact_statistical_quantity=True,
+        blocks=True,
+        current=True,
+        valuation=True,
     )
-    if position.total_quantity is None:
-        record_conflict(
-            account_id=account.account_id,
-            security_id=position.security_id,
-            code="TOTAL_QUANTITY_MISSING",
-            fields=("positions.total_quantity",),
-            blocks_exact_statistical_quantity=True,
-        )
+    _record_quantity(account, position, "total_quantity", "TOTAL_QUANTITY", record, valuation=True)
+    for field, prefix in (
+        ("unsettled_quantity", "UNSETTLED_QUANTITY"),
+        ("frozen_quantity", "FROZEN_QUANTITY"),
+        ("restricted_quantity", "RESTRICTED_QUANTITY"),
+        ("open_sell_order_quantity", "OPEN_SELL_ORDER_QUANTITY"),
+    ):
+        _record_quantity(account, position, field, prefix, record)
+        value = getattr(position, field)
+        if (
+            value is not None
+            and position.total_quantity is not None
+            and position.total_quantity >= 0
+            and value > position.total_quantity
+        ):
+            record(
+                account_id=account.account_id,
+                security_id=position.security_id,
+                code=f"{prefix}_OUT_OF_BOUNDS",
+                fields=(f"positions.{field}", "positions.total_quantity"),
+                blocks_exact_statistical_quantity=True,
+            )
     if position.broker_sellable_quantity is None:
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="BROKER_SELLABLE_QUANTITY_MISSING",
@@ -462,9 +627,10 @@ def _record_position_problems(
         )
     elif position.broker_sellable_quantity < 0 or (
         position.total_quantity is not None
+        and position.total_quantity >= 0
         and position.broker_sellable_quantity > position.total_quantity
     ):
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="BROKER_SELLABLE_QUANTITY_OUT_OF_BOUNDS",
@@ -472,72 +638,72 @@ def _record_position_problems(
             blocks_exact_statistical_quantity=True,
         )
     if position.sellable_quantity_semantics == "UNKNOWN":
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="SELLABLE_QUANTITY_SEMANTICS_UNKNOWN",
             fields=("positions.sellable_quantity_semantics",),
             blocks_exact_statistical_quantity=True,
         )
-    for field_name, code in (
-        ("unsettled_quantity", "UNSETTLED_QUANTITY_MISSING"),
-        ("frozen_quantity", "FROZEN_QUANTITY_MISSING"),
-        ("restricted_quantity", "RESTRICTED_QUANTITY_MISSING"),
-    ):
-        if getattr(position, field_name) is None:
-            record_conflict(
-                account_id=account.account_id,
-                security_id=position.security_id,
-                code=code,
-                fields=(f"positions.{field_name}",),
-                blocks_exact_statistical_quantity=True,
-            )
     if position.reported_cost_basis is None:
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="COST_BASIS_MISSING",
             fields=("positions.reported_cost_basis",),
             blocks_exact_statistical_quantity=True,
         )
+    elif position.reported_cost_basis < 0:
+        record(
+            account_id=account.account_id,
+            security_id=position.security_id,
+            code="COST_BASIS_NEGATIVE",
+            fields=("positions.reported_cost_basis",),
+            blocks_exact_statistical_quantity=True,
+        )
     if position.market_price is None:
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="MARKET_PRICE_MISSING",
             fields=("positions.market_price",),
             blocks_exact_statistical_quantity=True,
+            blocks_current_valuation=True,
         )
-    reconstructed_quantity, reconstructed_cost = ledger_by_security.get(
-        position.security_id,
-        (Decimal("0"), Decimal("0")),
-    )
-    if position.total_quantity is not None and reconstructed_quantity != position.total_quantity:
-        record_conflict(
+    elif position.market_price <= 0:
+        record(
+            account_id=account.account_id,
+            security_id=position.security_id,
+            code="MARKET_PRICE_NON_POSITIVE",
+            fields=("positions.market_price",),
+            blocks_exact_statistical_quantity=True,
+            blocks_current_valuation=True,
+        )
+    quantity, cost = ledger_by_security.get(position.security_id, (Decimal("0"), Decimal("0")))
+    if position.total_quantity is not None and quantity != position.total_quantity:
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="LEDGER_QUANTITY_MISMATCH",
             fields=("positions.total_quantity", "ledger_entries.quantity_delta"),
             blocks_exact_statistical_quantity=True,
+            blocks_current_valuation=True,
         )
-    if (
-        position.reported_cost_basis is not None
-        and reconstructed_cost != position.reported_cost_basis
-    ):
-        record_conflict(
+    if position.reported_cost_basis is not None and cost != position.reported_cost_basis:
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="LEDGER_COST_BASIS_MISMATCH",
             fields=("positions.reported_cost_basis", "ledger_entries.cost_basis_delta"),
             blocks_exact_statistical_quantity=True,
         )
-    order_quantity = open_sell_quantity.get(position.security_id, Decimal("0"))
+    order_quantity = sell_orders.get(position.security_id, Decimal("0"))
     if (
         position.open_sell_order_quantity is None
         or order_quantity is None
         or position.open_sell_order_quantity != order_quantity
     ):
-        record_conflict(
+        record(
             account_id=account.account_id,
             security_id=position.security_id,
             code="OPEN_SELL_ORDER_MISMATCH",
@@ -546,50 +712,191 @@ def _record_position_problems(
         )
 
 
-def _record_evidence_problems(
+def _record_quantity(
+    account: AccountPositionSnapshot,
+    position: BrokerPositionFact,
+    field: str,
+    prefix: str,
+    record: ConflictRecorder,
+    *,
+    valuation: bool = False,
+) -> None:
+    value = getattr(position, field)
+    if value is None:
+        code = f"{prefix}_MISSING"
+    elif value < 0:
+        code = f"{prefix}_NEGATIVE"
+    else:
+        return
+    record(
+        account_id=account.account_id,
+        security_id=position.security_id,
+        code=code,
+        fields=(f"positions.{field}",),
+        blocks_exact_statistical_quantity=True,
+        blocks_current_valuation=valuation,
+    )
+
+
+def _project_actions(
+    rows: list[tuple[AccountPositionSnapshot, BrokerPositionFact]],
+    active_restrictions: dict[tuple[str, str | None], list[ExecutionRestriction]],
+    blocking: dict[tuple[str | None, str | None], list[str]],
+    portfolio_blocking: list[str],
+) -> tuple[PositionActionUnit, ...]:
+    actions: list[PositionActionUnit] = []
+    for account, position in rows:
+        restrictions = (
+            *active_restrictions[(account.account_id, None)],
+            *active_restrictions[(account.account_id, position.security_id)],
+        )
+        reasons = tuple(
+            dict.fromkeys(
+                (
+                    *portfolio_blocking,
+                    *_scoped_reasons(blocking, account.account_id, position.security_id),
+                    *(
+                        f"EXECUTION_RESTRICTION_ACTIVE:{restriction.restriction_id}"
+                        for restriction in restrictions
+                    ),
+                )
+            )
+        )
+        exact = (
+            position.broker_sellable_quantity
+            if position.broker_sellable_quantity is not None
+            and position.sellable_quantity_semantics == "BROKER_FINAL_SELLABLE"
+            and not reasons
+            else None
+        )
+        actions.append(
+            PositionActionUnit(
+                account_id=account.account_id,
+                account_type=account.account_type,
+                currency=account.currency,
+                position_id=position.position_id,
+                origin=position.origin,
+                lifecycle_id=position.lifecycle_id,
+                issuer_id=position.issuer_id,
+                security_id=position.security_id,
+                total_quantity=position.total_quantity,
+                broker_sellable_quantity=position.broker_sellable_quantity,
+                unsettled_quantity=position.unsettled_quantity,
+                frozen_quantity=position.frozen_quantity,
+                restricted_quantity=position.restricted_quantity,
+                open_sell_order_quantity=position.open_sell_order_quantity,
+                exact_statistical_action_quantity=exact,
+                exact_quantity_status="AVAILABLE" if exact is not None else "BLOCKED",
+                reasons=reasons,
+                position_evidence=position.evidence,
+            )
+        )
+    return tuple(actions)
+
+
+def _project_exposures(
+    rows: list[tuple[AccountPositionSnapshot, BrokerPositionFact]],
+    currency: str,
+    valuation: dict[tuple[str | None, str | None], list[str]],
+    missing_summary_security_ids: set[str],
+    conflicting_security_ids: set[str],
+) -> tuple[IssuerExposure, ...]:
+    issuer_rows: dict[str, list[tuple[str, BrokerPositionFact]]] = defaultdict(list)
+    invalid_issuers: set[str] = set()
+    for account, position in rows:
+        if position.security_id in conflicting_security_ids:
+            continue
+        issuer_rows[position.issuer_id].append((account.account_id, position))
+        if position.security_id in missing_summary_security_ids or _scoped_reasons(
+            valuation, account.account_id, position.security_id
+        ):
+            invalid_issuers.add(position.issuer_id)
+    return tuple(
+        IssuerExposure(
+            issuer_id=issuer_id,
+            valuation_currency=currency,
+            account_ids=tuple(dict.fromkeys(account_id for account_id, _ in values)),
+            current_market_exposure=(
+                None
+                if issuer_id in invalid_issuers
+                else sum(
+                    (
+                        position.total_quantity * position.market_price
+                        for _, position in values
+                        if position.total_quantity is not None and position.market_price is not None
+                    ),
+                    Decimal("0"),
+                )
+            ),
+        )
+        for issuer_id, values in sorted(issuer_rows.items())
+    )
+
+
+def _record_evidence(
     evidence: PositionEvidence,
     cutoff_at: datetime,
-    record_conflict: ConflictRecorder,
+    record: ConflictRecorder,
     *,
     account_id: str | None,
     security_id: str | None,
     fields: tuple[str, ...],
-    blocks_exact_statistical_quantity: bool,
-) -> None:
-    for code in evidence.problem_codes(cutoff_at):
-        record_conflict(
+    blocks: bool,
+    current: bool,
+    portfolio: bool = False,
+    valuation: bool = False,
+) -> tuple[str, ...]:
+    codes = evidence.problem_codes(
+        cutoff_at,
+        require_current_completeness=current,
+    )
+    for code in codes:
+        record(
             account_id=account_id,
             security_id=security_id,
             code=code,
             fields=fields,
-            blocks_exact_statistical_quantity=blocks_exact_statistical_quantity,
+            blocks_exact_statistical_quantity=blocks,
+            portfolio_dependency=portfolio,
+            blocks_current_valuation=valuation,
         )
+    return codes
 
 
-def _blocking_reasons(
-    blocking_scopes: dict[tuple[str | None, str | None], list[str]],
+def _scoped_reasons(
+    values: dict[tuple[str | None, str | None], list[str]],
     account_id: str,
     security_id: str,
 ) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
             (
-                *blocking_scopes.get((None, None), ()),
-                *blocking_scopes.get((account_id, None), ()),
-                *blocking_scopes.get((account_id, security_id), ()),
+                *values[(None, None)],
+                *values[(None, security_id)],
+                *values[(account_id, None)],
+                *values[(account_id, security_id)],
             )
         )
     )
 
 
-def _conflict_id(account_id: str | None, security_id: str | None, code: str) -> str:
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _conflict_id(
+    account_id: str | None,
+    security_id: str | None,
+    code: str,
+    fields: tuple[str, ...],
+) -> str:
     account = account_id or "SNAPSHOT"
     security = security_id or "ACCOUNT"
-    return f"position-conflict:{account}:{security}:{code}"
+    return f"position-conflict:{account}:{security}:{code}:{'|'.join(fields)}"
 
 
 def _sum_if_complete(values: tuple[Decimal | None, ...]) -> Decimal | None:
-    """Keep missing-value aggregate semantics identical across snapshot projections."""
     if not all(value is not None for value in values):
         return None
     return sum((value for value in values if value is not None), Decimal("0"))
