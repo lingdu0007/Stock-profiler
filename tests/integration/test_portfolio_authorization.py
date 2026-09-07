@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import json
+import sys
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from fastapi.testclient import TestClient
 from test_scoped_qualification import GovernanceClock
 
+from stock_profiler.adapters.authentication.passkeys import PasskeyAuthenticator
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import get_formal_report, run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.entrypoints import cli
+from stock_profiler.entrypoints.http.app import create_app
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
@@ -316,6 +322,68 @@ def test_preview_shows_full_cash_scope_and_excluded_account_types(
     assert preview.included_accounts[0].cash_fact_id == "synthetic-cash-fact-4017"
     assert preview.excluded_accounts[0].account_id == "synthetic-account-margin-2001"
     assert preview.excluded_accounts[0].reason == "UNSUPPORTED_ACCOUNT_TYPE"
+
+
+def test_cli_runs_a_versioned_portfolio_case_and_publishes_its_read_only_report(
+    migrated_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    proposal = portfolio_proposal()
+    historical_cutoff = "2025-05-17T16:00:00Z"
+    proposal["snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id="synthetic-portfolio-snapshot-cli-acceptance",
+        cutoff=historical_cutoff,
+    )
+    proposal["risk_budget"].update(
+        effective_at=historical_cutoff,
+        expires_at="2025-11-17T16:00:00Z",
+    )
+    proposal["cash_obligations"][0]["latest_usable_at"] = "2025-08-17T16:00:00Z"
+    settings = migrated_settings.model_copy(
+        update={"report_account_ids": tuple(proposal_account_ids(proposal))}
+    )
+    case_path = tmp_path / "synthetic-portfolio-case.json"
+    case_path.write_text(
+        json.dumps(
+            portfolio_case_payload(
+                settings,
+                "cli-acceptance",
+                portfolio_confirmation_command(proposal),
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["stock-profiler", "decision-case-run", "--case", str(case_path)],
+    )
+
+    cli.main()
+
+    execution = json.loads(capsys.readouterr().out)
+    assert execution["publication_status"] == "PUBLISHED"
+    assert execution["report_version_id"]
+    token, _ = PasskeyAuthenticator(
+        initialize_runtime_storage(settings).engine,
+        settings,
+    )._create_session("synthetic-portfolio-cli-session")
+    client = TestClient(create_app(settings), base_url="https://localhost")
+    client.cookies.set(settings.auth_session_cookie_name, token)
+    response = client.get(f"/api/v1/reports/{execution['report_version_id']}")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["event_id"] == execution["decision_event_id"]
+    portfolio = response.json()["result"]["portfolio"]
+    assert portfolio["disposition"] == "APPROVED"
+    assert portfolio["authorization"]["proposal"]["cash_obligations"][0]["obligation_id"] == (
+        "synthetic-cash-obligation-alpha"
+    )
 
 
 def test_preview_exposes_currency_permissions_and_fact_freshness(
@@ -1311,6 +1379,183 @@ def test_tightened_downside_grid_activates_without_relaxation_evidence(
     outcome = execution.report.result.portfolio
     assert outcome is not None
     assert outcome.disposition == "APPROVED"
+
+
+def test_adding_a_tighter_downside_grid_boundary_needs_no_relaxation_evidence(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-tightening-inserted-original",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = unobligated_portfolio_proposal()
+    selection_cutoff = "2042-06-16T15:00:00Z"
+    activation_cutoff = "2042-06-17T16:00:00Z"
+    proposal["snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id="synthetic-portfolio-snapshot-grid-tight-inserted",
+        cutoff=selection_cutoff,
+    )
+    proposal["activation_snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id="synthetic-portfolio-snapshot-grid-tight-inserted-activation",
+        cutoff=activation_cutoff,
+    )
+    action_policy_version_id = "synthetic-action-policy-grid-tight-inserted"
+    proposal["risk_budget"].update(
+        version_id="synthetic-risk-budget-grid-tight-inserted",
+        action_policy_version_id=action_policy_version_id,
+        effective_at=activation_cutoff,
+        expires_at="2042-12-17T16:00:00Z",
+        downside_grid=["0.03", "0.04", "0.09"],
+    )
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at=selection_cutoff,
+    )
+    command["confirmation"]["downside_grid_requalification"] = downside_grid_requalification(
+        original.decision_event_id,
+        action_policy_version_id=action_policy_version_id,
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-tightening-inserted",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+
+
+@pytest.mark.parametrize(
+    "reused_identity",
+    [
+        "evidence_id",
+        "historical_out_of_sample_evidence_id",
+        "locked_forward_confirmation_id",
+    ],
+)
+def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revision(
+    migrated_settings: Settings,
+    reused_identity: str,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"grid-requalification-identity-original-{reused_identity}",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    intermediate_proposal = relaxed_portfolio_proposal()
+    intermediate_policy_id = f"synthetic-action-policy-grid-beta-{reused_identity}"
+    intermediate_proposal["risk_budget"].update(
+        action_policy_version_id=intermediate_policy_id,
+        downside_grid=["0.40", "0.90"],
+    )
+    intermediate_budget_version_id = intermediate_proposal["risk_budget"]["version_id"]
+    intermediate_command = portfolio_confirmation_command(
+        intermediate_proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at="2042-06-16T15:00:00Z",
+    )
+    intermediate_command["confirmation"]["relaxation_evidence"] = relaxation_evidence(
+        original.decision_event_id
+    )
+    intermediate_command["confirmation"]["downside_grid_requalification"] = (
+        downside_grid_requalification(
+            original.decision_event_id,
+            action_policy_version_id=intermediate_policy_id,
+        )
+    )
+    intermediate = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"grid-requalification-identity-intermediate-{reused_identity}",
+            intermediate_command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+    assert intermediate.report is not None
+    intermediate_outcome = intermediate.report.result.portfolio
+    assert intermediate_outcome is not None
+    assert intermediate_outcome.authorization is not None
+    intermediate_evidence = (
+        intermediate_outcome.authorization.confirmation.downside_grid_requalification
+    )
+    assert intermediate_evidence is not None
+
+    successor_proposal = unobligated_portfolio_proposal()
+    selection_cutoff = "2042-06-18T15:00:00Z"
+    activation_cutoff = "2042-06-19T16:00:00Z"
+    successor_proposal["snapshot"] = snapshot_at(
+        successor_proposal["snapshot"],
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{reused_identity}",
+        cutoff=selection_cutoff,
+    )
+    successor_proposal["activation_snapshot"] = snapshot_at(
+        successor_proposal["snapshot"],
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{reused_identity}-activation",
+        cutoff=activation_cutoff,
+    )
+    successor_policy_id = f"synthetic-action-policy-grid-gamma-{reused_identity}"
+    successor_proposal["risk_budget"].update(
+        version_id=f"synthetic-risk-budget-grid-gamma-{reused_identity}",
+        action_policy_version_id=successor_policy_id,
+        effective_at=activation_cutoff,
+        expires_at="2042-12-19T16:00:00Z",
+        downside_grid=["0.30", "0.80"],
+    )
+    successor_command = portfolio_confirmation_command(
+        successor_proposal,
+        previous_authorization_id=intermediate.decision_event_id,
+        confirmed_at=selection_cutoff,
+    )
+    successor_evidence = downside_grid_requalification(
+        intermediate.decision_event_id,
+        action_policy_version_id=successor_policy_id,
+    )
+    successor_evidence.update(
+        predecessor_risk_budget_version_id=intermediate_budget_version_id,
+        historical_completed_at="2042-06-17T16:00:00Z",
+        locked_forward_confirmed_at="2042-06-18T14:59:00Z",
+        available_at=selection_cutoff,
+    )
+    successor_evidence[reused_identity] = getattr(intermediate_evidence, reused_identity)
+    successor_command["confirmation"]["downside_grid_requalification"] = successor_evidence
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"grid-requalification-identity-successor-{reused_identity}",
+            successor_command,
+        ),
+        clock=GovernanceClock("2042-06-19T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("DOWNSIDE_GRID_REQUALIFICATION_EVIDENCE_REDEFINED",)
 
 
 def test_action_policy_version_cannot_rebind_to_a_later_grid(

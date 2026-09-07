@@ -48,6 +48,9 @@ requalification evidence: a historical out-of-sample result and a locked
 forward confirmation must both predate the user confirmation and be available
 by the frozen cutoff. Reusing an action-policy version with a different grid or
 substituting the user confirmation for the locked forward record fails closed.
+Each requalification proof identity binds one exact retained proof; any later
+same-owner, same-visibility case that would attach one of those identities to
+different proof content fails closed without returning retained evidence.
 
 Governed D0 commands supply an explicit `QualificationPolicy` inside their
 capability version. Its contract version, policy version, original synthetic

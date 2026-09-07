@@ -4,6 +4,7 @@ from datetime import datetime
 
 from stock_profiler.modules.portfolio.contracts import (
     DatedCashObligation,
+    DownsideGridRequalificationEvidence,
     PortfolioAuthorization,
     PortfolioAuthorizationOutcome,
     PortfolioAuthorizationUsage,
@@ -121,6 +122,13 @@ def adjudicate(
         )
     ) is not None:
         reasons = (action_policy_reason,)
+    elif (
+        requalification_identity_reason := _redefined_downside_grid_requalification_identity_reason(
+            command,
+            owner_lineage_history,
+        )
+    ) is not None:
+        reasons = (requalification_identity_reason,)
     elif (
         identity_reason := _reused_authorization_identity_reason(command, lineage_history)
     ) is not None:
@@ -411,6 +419,34 @@ def _redefined_action_policy_grid_reason(
     ):
         return "DOWNSIDE_GRID_ACTION_POLICY_REDEFINED"
     return None
+
+
+def _redefined_downside_grid_requalification_identity_reason(
+    command: PortfolioConfirmationCommand,
+    owner_lineage_history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> str | None:
+    """Reject a proof identifier that would designate different retained evidence."""
+    submitted = command.confirmation.downside_grid_requalification
+    if submitted is None:
+        return None
+    for authorization in _authorizations(owner_lineage_history):
+        retained = authorization.confirmation.downside_grid_requalification
+        if retained is not None and _requalification_identity_is_rebound(retained, submitted):
+            return "DOWNSIDE_GRID_REQUALIFICATION_EVIDENCE_REDEFINED"
+    return None
+
+
+def _requalification_identity_is_rebound(
+    retained: DownsideGridRequalificationEvidence,
+    submitted: DownsideGridRequalificationEvidence,
+) -> bool:
+    identifiers_overlap = (
+        retained.evidence_id == submitted.evidence_id
+        or retained.historical_out_of_sample_evidence_id
+        == submitted.historical_out_of_sample_evidence_id
+        or retained.locked_forward_confirmation_id == submitted.locked_forward_confirmation_id
+    )
+    return identifiers_overlap and retained != submitted
 
 
 def _risk_budget_relaxation_reason(

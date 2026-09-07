@@ -55,6 +55,11 @@ when it would bind a different downside grid. This negative check returns no
 prior policy, portfolio, evidence, or account data, and cannot authorize a
 portfolio.
 
+The same negative host-only lookup also binds every downside-grid
+requalification proof identity to its original retained content. A conflicting
+reuse rejects the later request without returning the earlier proof, policy,
+portfolio, or account data and cannot itself authorize a portfolio.
+
 `GET` and `POST /api/v1/reports/{id}/facts` read and append independent VIEWED,
 ACKNOWLEDGED, CONFIRMED, and EXECUTION_DECLARED facts. Mutation additionally
 requires same-origin session/CSRF validation and `USER_FACT`. Confirmations

@@ -85,6 +85,27 @@ def test_cli_replay_rejects_an_unknown_business_identity(
         main()
 
 
+def test_cli_rejects_a_versioned_case_for_a_command_other_than_run(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "stock-profiler",
+            "decision-case-replay",
+            "--business-identity",
+            "synthetic:decision:orbital-mosaic:001",
+            "--case",
+            "/tmp/synthetic-case.json",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        main()
+
+
 def test_cli_creates_a_short_lived_host_console_grant_without_an_http_request(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

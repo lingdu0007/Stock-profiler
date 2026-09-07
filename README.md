@@ -38,6 +38,7 @@ The CLI calls host application modules directly and makes no HTTP request:
 uv run stock-profiler version
 uv run stock-profiler doctor
 uv run stock-profiler decision-case-run
+uv run stock-profiler decision-case-run --case /absolute/path/synthetic-case.json
 uv run stock-profiler decision-case-replay \
   --business-identity synthetic:decision:orbital-mosaic:001
 uv run stock-profiler decision-case-correct \
