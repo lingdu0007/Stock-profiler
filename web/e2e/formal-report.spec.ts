@@ -343,6 +343,9 @@ test("retains the CLI concentration obligation in authenticated desktop and mobi
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     ).toBe(true);
+    await concentration.screenshot({
+      path: testInfo.outputPath(`concentration-region-${width}.png`)
+    });
     await page.screenshot({
       path: testInfo.outputPath(`concentration-${width}.png`),
       fullPage: true

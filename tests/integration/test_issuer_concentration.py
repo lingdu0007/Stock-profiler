@@ -281,9 +281,11 @@ def test_missing_current_price_retains_reduction_with_unknown_execution_gap(
     assert current.targets[0].required_reduction_quantity is None
 
 
-def record_synthetic_sale(payload: dict[str, Any], quantity: str, identity: str) -> None:
+def record_synthetic_sale(
+    payload: dict[str, Any], quantity: str, identity: str, *, account_index: int = 0
+) -> None:
     snapshot = payload["concentration"]["position_snapshot"]
-    account = snapshot["accounts"][0]
+    account = snapshot["accounts"][account_index]
     position = account["positions"][0]
     sold = Decimal(quantity)
     position["total_quantity"] = str(Decimal(position["total_quantity"]) - sold)
@@ -724,6 +726,14 @@ def test_account_removal_requires_obligation_reconciliation_without_disclosing_o
     assert outcome.issuers[0].new_exposure_blocked is True
     assert outcome.issuers[0].obligation_id is None
     assert outcome.issuers[0].targets == ()
+    restored = later_concentration_payload(payload, "21")
+    recovered = run_frozen_decision_case(
+        migrated_settings, restored, clock=GovernanceClock("2042-05-21T17:00:00+00:00")
+    )
+    assert recovered.report is not None and recovered.report.result.concentration is not None
+    retained = recovered.report.result.concentration.issuers[0]
+    assert retained.direction == "REDUCE"
+    assert retained.targets[0].target_quantity == 130
 
 
 @pytest.mark.parametrize("result", ["ABSTAINED", "FAILED", "UNKNOWN"])
@@ -767,3 +777,120 @@ def test_conflicting_prices_for_one_security_cannot_produce_an_arbitrary_executi
     assert outcome.disposition == "BLOCKED"
     assert "CONCENTRATION_SECURITY_PRICE_CONFLICT" in outcome.reasons
     assert outcome.issuers[0].execution_blocked is True
+
+
+def test_asymmetric_fills_preserve_each_security_cap_within_one_issuer(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    second = payload["concentration"]["position_snapshot"]["accounts"][1]
+    second["positions"][0]["security_id"] = "XQZ-SECOND-CLASS"
+    second["ledger_entries"][0]["security_id"] = "XQZ-SECOND-CLASS"
+    original = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert original.report is not None and original.report.result.concentration is not None
+    initial = original.report.result.concentration.issuers[0]
+    assert [target.target_quantity for target in initial.targets] == [Decimal("65")] * 2
+    partial = later_concentration_payload(payload, "18")
+    record_synthetic_sale(partial, "35", "first-class")
+    execution = run_frozen_decision_case(
+        migrated_settings, partial, clock=GovernanceClock("2042-05-18T17:00:00+00:00")
+    )
+    assert execution.report is not None and execution.report.result.concentration is not None
+    issuer = execution.report.result.concentration.issuers[0]
+    assert issuer.obligation_id == initial.obligation_id
+    assert [target.target_quantity for target in issuer.targets] == [Decimal("65")] * 2
+    assert issuer.targets[0].required_reduction_quantity == 0
+    assert issuer.targets[1].required_reduction_quantity == 35
+    assert issuer.exposure_gap == 350
+
+
+def test_security_code_transfer_cannot_reset_the_unexecuted_cap(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    original = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert original.report is not None and original.report.result.concentration is not None
+    initial = original.report.result.concentration.issuers[0]
+    later = later_concentration_payload(payload, "18")
+    for account in later["concentration"]["position_snapshot"]["accounts"]:
+        position = account["positions"][0]
+        position.update(security_id="XQZ-SUCCESSOR", market_price="5")
+        position["position_id"] += "-successor"
+        position["lifecycle_id"] += "-successor"
+        account["account_equity"] = str(Decimal(account["account_equity"]) - 500)
+        for code, quantity, cost in (("XQZ-4017", "-100", "-900"), ("XQZ-SUCCESSOR", "100", "900")):
+            account["ledger_entries"].append(
+                {
+                    "entry_id": f"synthetic-code-transfer-{account['account_id']}-{code}",
+                    "entry_type": "TRANSFER_OUT" if Decimal(quantity) < 0 else "TRANSFER_IN",
+                    "security_id": code,
+                    "quantity_delta": quantity,
+                    "cost_basis_delta": cost,
+                    "cash_delta": "0",
+                    "occurred_at": "2042-05-18T15:00:00Z",
+                    "evidence": position_evidence(
+                        "synthetic-code-transfer", cutoff_at=later["knowledge_cutoff"]
+                    ),
+                }
+            )
+    execution = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-18T17:00:00+00:00")
+    )
+    assert execution.report is not None and execution.report.result.concentration is not None
+    issuer = execution.report.result.concentration.issuers[0]
+    assert issuer.obligation_id == initial.obligation_id
+    assert issuer.direction == "REDUCE"
+    assert issuer.execution_blocked is True
+    assert issuer.targets[0].security_id == "XQZ-4017"
+    assert issuer.targets[0].target_quantity == 130
+
+
+@pytest.mark.parametrize("cost_basis", [None, "10"])
+def test_cost_basis_defects_do_not_suppress_a_provable_hard_breach(
+    migrated_settings: Settings,
+    cost_basis: str | None,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    payload["concentration"]["position_snapshot"]["accounts"][0]["positions"][0][
+        "reported_cost_basis"
+    ] = cost_basis
+    execution = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert execution.report is not None and execution.report.result.concentration is not None
+    outcome = execution.report.result.concentration
+    assert outcome.portfolio_net_liquidation_equity == 10000
+    issuer = outcome.issuers[0]
+    assert issuer.current_market_exposure == 2000
+    assert issuer.direction == "REDUCE"
+    assert issuer.targets[0].target_quantity == 130
+    assert issuer.exposure_gap == 700
+
+
+def test_complete_closing_fills_resolve_obligation_without_zero_position_rows(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    first = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert first.report is not None and first.report.result.concentration is not None
+    initial = first.report.result.concentration.issuers[0]
+    later = later_concentration_payload(payload, "18")
+    record_synthetic_sale(later, "100", "close-first")
+    record_synthetic_sale(later, "100", "close-second", account_index=1)
+    for account in later["concentration"]["position_snapshot"]["accounts"]:
+        account["positions"] = []
+    execution = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-18T17:00:00+00:00")
+    )
+    assert execution.report is not None and execution.report.result.concentration is not None
+    outcome = execution.report.result.concentration
+    assert outcome.disposition == "ASSESSED"
+    issuer = outcome.issuers[0]
+    assert issuer.obligation_id == initial.obligation_id
+    assert issuer.state == "RESOLVED"
+    assert issuer.direction is None
+    assert issuer.current_market_exposure == 0
+    assert issuer.exposure_gap == 0
+    assert issuer.new_exposure_blocked is False

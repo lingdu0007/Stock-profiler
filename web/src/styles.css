@@ -82,6 +82,10 @@ h3 {
   margin-top: 28px;
 }
 
+.report-layout {
+  overflow-wrap: anywhere;
+}
+
 .report-heading {
   border-bottom: 1px solid #cbd5e1;
   padding-bottom: 24px;

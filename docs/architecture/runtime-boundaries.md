@@ -55,6 +55,11 @@ quantity caps and its originating policy identity. Later price, cash or account
 changes cannot relax an unexecuted cap. Open sell orders do not release exposure;
 reconciled fills reduce the remaining quantity, while unavailable execution
 retains the direction, target and current gap.
+Asymmetric fills do not redistribute the original caps between securities.
+The host tightens existing caps only when their remaining market value would
+still exceed the current target. Reconciled closing fills can discharge an
+obligation even when the account no longer includes zero-quantity position
+rows; a transfer or an unproven security-code lineage cannot do so.
 
 Missing evidence, incompatible prices for the same security, nonpositive net
 equity and unavailable quantity-basis conversion fail closed. Quantity-changing
@@ -63,6 +68,10 @@ an unknown execution gap until its basis can be reconciled. Historical account
 expansion retains covered obligations. A narrowed scope with an uncovered
 obligation receives only a blocking reason, never the inaccessible obligation
 details. Out-of-order snapshots cannot replace newer obligations. These saved
+facts distinguish valuation eligibility from execution uncertainty: an unrelated
+cost-basis defect does not suppress a hard breach supported by authoritative
+current value and equity. Scope-only denial records cannot erase an existing
+obligation when the full account scope is subsequently restored. The saved
 facts use the existing event/publication boundary and read-only report scope;
 corrections preserve them without re-adjudication. No order-writing or personal
 activation capability is introduced.

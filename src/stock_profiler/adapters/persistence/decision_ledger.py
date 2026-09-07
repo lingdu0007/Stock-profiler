@@ -141,9 +141,10 @@ class DecisionLedger:
             and concentration.portfolio_id == portfolio_id
             and "CONCENTRATION_SNAPSHOT_OUT_OF_ORDER" not in concentration.reasons
         ]
+        lineage.sort(key=lambda item: item[1].cutoff_at)
         latest = {
             issuer.issuer_id: (scope, issuer)
-            for scope, outcome in sorted(lineage, key=lambda item: item[1].cutoff_at)
+            for scope, outcome in lineage
             for issuer in outcome.issuers
             if issuer.obligation_id is not None
         }

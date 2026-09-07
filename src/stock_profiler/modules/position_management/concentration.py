@@ -13,7 +13,10 @@ from stock_profiler.modules.position_management.concentration_contracts import (
     ConcentrationTarget,
     IssuerConcentration,
 )
-from stock_profiler.modules.position_management.contracts import PositionReconciliationOutcome
+from stock_profiler.modules.position_management.contracts import (
+    PositionActionUnit,
+    PositionReconciliationOutcome,
+)
 
 
 def assess_concentration(
@@ -43,28 +46,44 @@ def _assess(
     reasons: list[str] = []
     if history.uncovered_obligation:
         reasons.append("CONCENTRATION_HISTORY_SCOPE_UNRESOLVED")
-    ordered_history = tuple(
-        item
-        for item in sorted(history.outcomes, key=lambda item: item.cutoff_at)
-        if "CONCENTRATION_SNAPSHOT_OUT_OF_ORDER" not in item.reasons
-    )
+    ordered_history = history.outcomes
     stale = any(item.cutoff_at >= snapshot.cutoff_at for item in ordered_history)
     if stale:
         reasons.append("CONCENTRATION_SNAPSHOT_OUT_OF_ORDER")
-    prior_issuers = {
-        issuer.issuer_id: issuer
-        for item in ordered_history
-        if item.cutoff_at <= snapshot.cutoff_at
-        for issuer in item.issuers
-    }
+    prior_issuers: dict[str, IssuerConcentration] = {}
+    for item in ordered_history:
+        if item.cutoff_at > snapshot.cutoff_at:
+            continue
+        for issuer in item.issuers:
+            prior = prior_issuers.get(issuer.issuer_id)
+            if prior is not None and prior.direction == "REDUCE" and issuer.obligation_id is None:
+                continue
+            prior_issuers[issuer.issuer_id] = issuer
     current_issuer_ids = {item.issuer_id for item in snapshot.issuer_exposures}
     missing_issuers = [
         issuer
         for issuer in prior_issuers.values()
         if issuer.direction == "REDUCE" and issuer.issuer_id not in current_issuer_ids
     ]
-    if missing_issuers:
+    closed_issuers = {
+        issuer.issuer_id
+        for issuer in missing_issuers
+        if all(_closed_by_fills(position, issuer, target.security_id) for target in issuer.targets)
+    }
+    if any(issuer.issuer_id not in closed_issuers for issuer in missing_issuers):
         reasons.append("CONCENTRATION_ISSUER_LINEAGE_UNRESOLVED")
+    for issuer in prior_issuers.values():
+        if issuer.direction != "REDUCE":
+            continue
+        current_codes = {
+            unit.security_id for unit in snapshot.action_units if unit.issuer_id == issuer.issuer_id
+        }
+        target_codes = {target.security_id for target in issuer.targets}
+        if current_codes - target_codes or any(
+            not _closed_by_fills(position, issuer, code) for code in target_codes - current_codes
+        ):
+            reasons.append("CONCENTRATION_SECURITY_LINEAGE_UNRESOLVED")
+            break
     if any(
         issuer.direction == "REDUCE"
         and issuer.obligation_started_at is not None
@@ -92,8 +111,6 @@ def _assess(
         for item in authorization_lineage
     ):
         reasons.append("CONCENTRATION_CURRENT_AUTHORIZATION_REQUIRED")
-    if position.disposition != "RECONCILED":
-        reasons.append("CONCENTRATION_POSITION_FACTS_UNRESOLVED")
     prices: dict[str, set[Decimal | None]] = {}
     for unit in snapshot.action_units:
         prices.setdefault(unit.security_id, set()).add(unit.market_price)
@@ -116,6 +133,8 @@ def _assess(
         if equity <= 0:
             reasons.append("CONCENTRATION_NET_EQUITY_NONPOSITIVE")
             equity = None
+    if position.disposition != "RECONCILED":
+        reasons.append("CONCENTRATION_POSITION_FACTS_UNRESOLVED")
     issuers = []
     for exposure in snapshot.issuer_exposures:
         previous = prior_issuers.get(exposure.issuer_id)
@@ -156,30 +175,7 @@ def _assess(
                 units = tuple(
                     unit for unit in snapshot.action_units if unit.issuer_id == exposure.issuer_id
                 )
-                for security_id in sorted({unit.security_id for unit in units}):
-                    quantity = sum(
-                        (
-                            unit.total_quantity
-                            for unit in units
-                            if unit.security_id == security_id and unit.total_quantity is not None
-                        ),
-                        Decimal(0),
-                    )
-                    with localcontext(Context(prec=34, rounding=ROUND_FLOOR)):
-                        target = quantity * target_value / value if value > 0 else Decimal(0)
-                    if previous is not None:
-                        old_targets = {
-                            item.security_id: item.target_quantity for item in previous.targets
-                        }
-                        if security_id in old_targets:
-                            target = min(target, old_targets[security_id])
-                    targets.append(
-                        ConcentrationTarget(
-                            security_id=security_id,
-                            target_quantity=target,
-                            required_reduction_quantity=max(Decimal(0), quantity - target),
-                        )
-                    )
+                targets = _quantity_targets(units, previous, target_value)
                 blocked = any(
                     sum(
                         (
@@ -211,10 +207,13 @@ def _assess(
                     (
                         (target.required_reduction_quantity or Decimal(0))
                         * next(
-                            unit.market_price
-                            for unit in units
-                            if unit.security_id == target.security_id
-                            and unit.market_price is not None
+                            (
+                                unit.market_price
+                                for unit in units
+                                if unit.security_id == target.security_id
+                                and unit.market_price is not None
+                            ),
+                            Decimal(0),
                         )
                         for target in targets
                     ),
@@ -269,21 +268,27 @@ def _assess(
                 execution_blocked=blocked,
             )
         )
-    issuers.extend(
-        issuer.model_copy(
-            update={
-                "current_market_exposure": None,
-                "position_weight": None,
-                "exposure_gap": None,
-                "execution_blocked": True,
-                "targets": tuple(
-                    target.model_copy(update={"required_reduction_quantity": None})
-                    for target in issuer.targets
-                ),
-            }
+    for issuer in missing_issuers:
+        closed = issuer.issuer_id in closed_issuers and not reasons and equity is not None
+        issuers.append(
+            issuer.model_copy(
+                update={
+                    "state": "RESOLVED" if closed else "REMEDIATION_REQUIRED",
+                    "direction": None if closed else "REDUCE",
+                    "new_exposure_blocked": not closed,
+                    "current_market_exposure": Decimal(0) if closed else None,
+                    "position_weight": Decimal(0) if closed else None,
+                    "exposure_gap": Decimal(0) if closed else None,
+                    "execution_blocked": not closed,
+                    "targets": tuple(
+                        target.model_copy(
+                            update={"required_reduction_quantity": Decimal(0) if closed else None}
+                        )
+                        for target in issuer.targets
+                    ),
+                }
+            )
         )
-        for issuer in missing_issuers
-    )
     return ConcentrationOutcome(
         disposition="BLOCKED" if reasons else "ASSESSED",
         reasons=tuple(reasons) or ("CONCENTRATION_ASSESSED",),
@@ -295,4 +300,78 @@ def _assess(
         risk_budget_version_id=budget.version_id if budget is not None else None,
         thresholds=budget.concentration if budget is not None else None,
         issuers=tuple(issuers),
+    )
+
+
+def _quantity_targets(
+    units: tuple[PositionActionUnit, ...],
+    previous: IssuerConcentration | None,
+    target_value: Decimal,
+) -> list[ConcentrationTarget]:
+    quantities: dict[str, Decimal] = {}
+    prices: dict[str, Decimal] = {}
+    for unit in units:
+        assert unit.total_quantity is not None and unit.market_price is not None
+        quantities[unit.security_id] = (
+            quantities.get(unit.security_id, Decimal(0)) + unit.total_quantity
+        )
+        prices[unit.security_id] = unit.market_price
+    caps = (
+        {target.security_id: target.target_quantity for target in previous.targets}
+        if previous is not None and previous.obligation_id is not None
+        else dict(quantities)
+    )
+    retained = {code: min(quantities.get(code, Decimal(0)), cap) for code, cap in caps.items()}
+    retained_value = sum(
+        (quantity * prices.get(code, Decimal(0)) for code, quantity in retained.items()),
+        Decimal(0),
+    )
+    if retained_value > target_value:
+        with localcontext(Context(prec=34, rounding=ROUND_FLOOR)):
+            caps = {
+                code: quantity * target_value / retained_value
+                for code, quantity in retained.items()
+            }
+    return [
+        ConcentrationTarget(
+            security_id=code,
+            target_quantity=cap,
+            required_reduction_quantity=max(Decimal(0), quantities.get(code, Decimal(0)) - cap),
+        )
+        for code, cap in sorted(caps.items())
+    ]
+
+
+def _closed_by_fills(
+    position: PositionReconciliationOutcome,
+    issuer: IssuerConcentration,
+    security_id: str,
+) -> bool:
+    if position.disposition != "RECONCILED" or issuer.obligation_started_at is None:
+        return False
+    entries = tuple(
+        entry
+        for entry in position.snapshot.authoritative_ledger
+        if entry.security_id == security_id
+    )
+    subsequent = tuple(
+        entry for entry in entries if entry.occurred_at > issuer.obligation_started_at
+    )
+    return (
+        bool(entries)
+        and sum((entry.quantity_delta for entry in entries), Decimal(0)) == 0
+        and sum(
+            (entry.quantity_delta for entry in subsequent if entry.entry_type == "FILL"),
+            Decimal(0),
+        )
+        < 0
+        and sum(
+            (entry.quantity_delta for entry in subsequent if entry.entry_type != "FILL"),
+            Decimal(0),
+        )
+        == 0
+        and not any(
+            unit.security_id == security_id and unit.total_quantity != 0
+            for unit in position.snapshot.action_units
+        )
     )
