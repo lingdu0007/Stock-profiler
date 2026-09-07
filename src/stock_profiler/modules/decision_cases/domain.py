@@ -646,13 +646,8 @@ class FrozenDecisionCase(FrozenContract):
             or self.version_bundle.report_projection_contract_version
             != self.version_bundle.case_contract_version
             or self.access_scope is None
-            or (
-                not portfolio_governed
-                and (
-                    not isinstance(account, dict)
-                    or account.get("account_id") not in self.access_scope.account_ids
-                )
-            )
+            or not isinstance(account, dict)
+            or account.get("account_id") not in self.access_scope.account_ids
         ):
             raise ValueError("scoped case versions and account facts must agree")
         if not self.synthetic:
@@ -943,6 +938,9 @@ _COMPLETE_SYNTHETIC_INPUT = {
         },
     ],
 }
+_COMPLETE_SYNTHETIC_PORTFOLIO_ACCOUNT_IDS = frozenset(
+    {"synthetic-account-4017", "synthetic-account-8029"}
+)
 
 
 def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
@@ -1091,6 +1089,14 @@ def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
     """Read the explicit synthetic scenario without consulting expected output."""
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    account = input_without_scenario.get("account")
+    if (
+        isinstance(account, dict)
+        and account.get("account_id") in _COMPLETE_SYNTHETIC_PORTFOLIO_ACCOUNT_IDS
+    ):
+        normalized_account = dict(account)
+        normalized_account["account_id"] = "synthetic-account-4017"
+        input_without_scenario["account"] = normalized_account
     if input_without_scenario != _COMPLETE_SYNTHETIC_INPUT:
         return None
     return outcome_code if outcome_code in _SYNTHETIC_OUTCOMES else None

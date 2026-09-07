@@ -167,7 +167,7 @@ class DecisionLedger:
         connection: Connection,
         access_scope: ResultAccessScope,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]:
-        """Read same-owner/visibility scope history only for a negative overlap guard."""
+        """Read same-owner/visibility history only for negative cross-portfolio guards."""
         return tuple(
             portfolio
             for fact in self._original_event_facts(

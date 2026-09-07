@@ -163,7 +163,7 @@ class PersonalRiskBudget(PortfolioContract):
             or self.drawdown.caution_ratio > previous.drawdown.caution_ratio
             or self.drawdown.defensive_ratio > previous.drawdown.defensive_ratio
             or self.drawdown.preservation_ratio > previous.drawdown.preservation_ratio
-            or self.downside_grid != previous.downside_grid
+            or self.relaxes_downside_grid(previous)
             or not set(previous.protection_floor.retained_directions).issubset(
                 self.protection_floor.retained_directions
             )
@@ -172,6 +172,13 @@ class PersonalRiskBudget(PortfolioContract):
     def changes_downside_grid(self, previous: PersonalRiskBudget) -> bool:
         """Identify a grid change that requires a new action-policy qualification."""
         return self.downside_grid != previous.downside_grid
+
+    def relaxes_downside_grid(self, previous: PersonalRiskBudget) -> bool:
+        """Treat a shape change or any wider registered loss boundary as a relaxation."""
+        return len(self.downside_grid) != len(previous.downside_grid) or any(
+            current > prior
+            for current, prior in zip(self.downside_grid, previous.downside_grid, strict=True)
+        )
 
 
 class DatedCashObligation(PortfolioContract):

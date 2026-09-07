@@ -50,6 +50,11 @@ account universe overlaps a retained authorization. It returns no predecessor,
 account, obligation, or successor data, and cannot itself authorize a new
 portfolio.
 
+The same host-only scope can also reject reuse of an action-policy identity
+when it would bind a different downside grid. This negative check returns no
+prior policy, portfolio, evidence, or account data, and cannot authorize a
+portfolio.
+
 `GET` and `POST /api/v1/reports/{id}/facts` read and append independent VIEWED,
 ACKNOWLEDGED, CONFIRMED, and EXECUTION_DECLARED facts. Mutation additionally
 requires same-origin session/CSRF validation and `USER_FACT`. Confirmations

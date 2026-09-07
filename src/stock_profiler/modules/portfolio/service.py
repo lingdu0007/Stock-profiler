@@ -108,13 +108,19 @@ def adjudicate(
             grid_requalification_reason := _downside_grid_requalification_reason(
                 command,
                 current,
-                lineage_history,
                 cutoff,
             )
         )
         is not None
     ):
         reasons = (grid_requalification_reason,)
+    elif (
+        action_policy_reason := _redefined_action_policy_grid_reason(
+            command.proposal,
+            owner_lineage_history,
+        )
+    ) is not None:
+        reasons = (action_policy_reason,)
     elif (
         identity_reason := _reused_authorization_identity_reason(command, lineage_history)
     ) is not None:
@@ -362,7 +368,6 @@ def _overlapping_portfolio_scope_reason(
 def _downside_grid_requalification_reason(
     command: PortfolioConfirmationCommand,
     current: PortfolioAuthorization,
-    history: tuple[PortfolioAuthorizationOutcome, ...],
     cutoff: datetime,
 ) -> str | None:
     previous_budget = current.proposal.risk_budget
@@ -373,13 +378,6 @@ def _downside_grid_requalification_reason(
         and proposed_budget.action_policy_version_id == previous_budget.action_policy_version_id
     ):
         return "DOWNSIDE_GRID_ACTION_POLICY_VERSION_REQUIRED"
-    if any(
-        authorization.proposal.risk_budget.action_policy_version_id
-        == proposed_budget.action_policy_version_id
-        and authorization.proposal.risk_budget.downside_grid != proposed_budget.downside_grid
-        for authorization in _portfolio_authorizations(history, command.proposal.portfolio_id)
-    ):
-        return "DOWNSIDE_GRID_ACTION_POLICY_REDEFINED"
     if not grid_changed:
         return None
     evidence = command.confirmation.downside_grid_requalification
@@ -390,12 +388,28 @@ def _downside_grid_requalification_reason(
         or evidence.predecessor_risk_budget_version_id != previous_budget.version_id
         or evidence.action_policy_version_id != proposed_budget.action_policy_version_id
         or evidence.historical_completed_at < previous_budget.effective_at
-        or evidence.locked_forward_confirmed_at > command.confirmation.confirmed_at
+        or evidence.locked_forward_confirmed_at >= command.confirmation.confirmed_at
         or evidence.locked_forward_confirmation_id == command.confirmation.confirmation_id
         or evidence.available_at > command.confirmation.confirmed_at
         or evidence.available_at > cutoff
     ):
         return "DOWNSIDE_GRID_REQUALIFICATION_INVALID"
+    return None
+
+
+def _redefined_action_policy_grid_reason(
+    proposal: PortfolioProposal,
+    owner_lineage_history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> str | None:
+    """Reject a reused policy identity that would bind a different downside grid."""
+    budget = proposal.risk_budget
+    if any(
+        authorization.proposal.risk_budget.action_policy_version_id
+        == budget.action_policy_version_id
+        and authorization.proposal.risk_budget.downside_grid != budget.downside_grid
+        for authorization in _authorizations(owner_lineage_history)
+    ):
+        return "DOWNSIDE_GRID_ACTION_POLICY_REDEFINED"
     return None
 
 
