@@ -108,6 +108,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
   const correction = report.result.correction_evidence;
   const portfolio = report.result.portfolio;
   const position = report.result.position;
+  const stress = report.result.stress;
   return (
     <section aria-label="Formal report" className="report-layout">
       <div className="report-heading">
@@ -150,6 +151,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
 
       {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
       {position && <PositionSnapshotEvidence position={position} />}
+      {stress && <PortfolioStressEvidence stress={stress} />}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
@@ -216,6 +218,56 @@ type PortfolioPreview = NonNullable<PortfolioAuthorizationOutcome["preview"]>;
 type PortfolioAuthorization = NonNullable<PortfolioAuthorizationOutcome["authorization"]>;
 type PortfolioAuthorizationUsage = NonNullable<PortfolioAuthorizationOutcome["usage"]>;
 type PositionReconciliationOutcome = NonNullable<FormalReport["result"]["position"]>;
+
+function PortfolioStressEvidence({
+  stress
+}: {
+  stress: NonNullable<FormalReport["result"]["stress"]>;
+}) {
+  const obligation = stress.obligation;
+  return (
+    <section className="report-section" aria-label="Portfolio gross stress">
+      <h2>Portfolio gross stress</h2>
+      <dl className="record-list">
+        <Record label="State" value={stress.state} />
+        <Record label="Reasons" value={stress.reasons.join(", ")} />
+        <Record label="Portfolio" value={stress.portfolio_id} />
+        <Record label="Authorization" value={stress.authorization_id} />
+        <Record label="Snapshot" value={stress.snapshot_id} />
+        <Record label="Cutoff" value={stress.cutoff_at} />
+        <Record label="Gross stress loss" value={stress.gross_stress_loss ?? "Unknown"} />
+        <Record label="Net liquidation equity" value={stress.net_liquidation_equity ?? "Unknown"} />
+        <Record label="Stress ratio" value={stress.stress_ratio ?? "Unknown"} />
+        <Record
+          label="New exposure"
+          value={stress.new_exposure_blocked ? "Blocked" : "Not blocked by this gate"}
+        />
+        <Record
+          label="Execution"
+          value={stress.execution_blocked ? "Blocked" : "Not assessed as an execution plan"}
+        />
+        <Record label="Restoration" value={obligation?.status ?? "No obligation"} />
+        {obligation && (
+          <>
+            <Record label="Obligation" value={obligation.obligation_id} />
+            <Record label="Direction" value={obligation.direction} />
+            <Record label="Target stress ratio" value={obligation.target_stress_ratio} />
+            <Record label="Triggered" value={obligation.triggered_at} />
+          </>
+        )}
+      </dl>
+      <dl className="record-list">
+        {stress.contributions.map((item) => (
+          <Record
+            key={`${item.account_id}:${item.security_id}`}
+            label={`${item.account_id} / ${item.security_id}`}
+            value={`Exposure ${item.current_exposure}; adverse price loss ${item.adverse_price_loss}; disposal friction ${item.disposal_friction}`}
+          />
+        ))}
+      </dl>
+    </section>
+  );
+}
 
 function PortfolioAuthorizationEvidence({
   portfolio

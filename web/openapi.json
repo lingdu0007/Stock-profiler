@@ -1415,6 +1415,16 @@
               }
             ]
           },
+          "stress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioStressOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -2003,6 +2013,16 @@
           "stress": {
             "$ref": "#/components/schemas/TwoThresholdBudget"
           },
+          "stress_calculation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressCalculationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "synthetic": {
             "const": true,
             "title": "Synthetic",
@@ -2385,6 +2405,153 @@
         },
         "required": ["snapshot_id", "cutoff_at", "accounts", "selected_account_ids"],
         "title": "PortfolioSnapshot",
+        "type": "object"
+      },
+      "PortfolioStressOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TwoThresholdBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calculation_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressCalculationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contributions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressContribution"
+            },
+            "title": "Contributions",
+            "type": "array"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "execution_blocked": {
+            "default": false,
+            "title": "Execution Blocked",
+            "type": "boolean"
+          },
+          "gross_stress_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Stress Loss"
+          },
+          "net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation Equity"
+          },
+          "new_exposure_blocked": {
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "obligation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressObligation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "risk_budget_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Budget Version Id"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["NORMAL", "BUFFER", "HARD_BREACH", "UNKNOWN"],
+            "title": "State",
+            "type": "string"
+          },
+          "stress_ratio": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stress Ratio"
+          }
+        },
+        "required": [
+          "state",
+          "reasons",
+          "portfolio_id",
+          "authorization_id",
+          "snapshot_id",
+          "cutoff_at",
+          "account_ids",
+          "new_exposure_blocked"
+        ],
+        "title": "PortfolioStressOutcome",
         "type": "object"
       },
       "PositionActionUnit": {
@@ -4302,6 +4469,7 @@
               "QUALIFICATION",
               "PORTFOLIO_AUTHORIZATION",
               "POSITION_RECONCILIATION",
+              "PORTFOLIO_STRESS",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -4342,6 +4510,121 @@
         },
         "required": ["phase", "status", "gate_results", "reasons"],
         "title": "StageResult",
+        "type": "object"
+      },
+      "StressCalculationPolicy": {
+        "additionalProperties": false,
+        "description": "Explicit conservative gross-stress inputs, never an engine default.",
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "disposal_friction_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction Ratio",
+            "type": "string"
+          },
+          "horizon_market_days": {
+            "const": 20,
+            "title": "Horizon Market Days",
+            "type": "integer"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "shock_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Shock Ratio",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "version_id",
+          "horizon_market_days",
+          "shock_ratio",
+          "disposal_friction_ratio",
+          "registered_at"
+        ],
+        "title": "StressCalculationPolicy",
+        "type": "object"
+      },
+      "StressContribution": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "adverse_price_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Adverse Price Loss",
+            "type": "string"
+          },
+          "current_exposure": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Exposure",
+            "type": "string"
+          },
+          "disposal_friction": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "current_exposure",
+          "adverse_price_loss",
+          "disposal_friction"
+        ],
+        "title": "StressContribution",
+        "type": "object"
+      },
+      "StressObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "const": "REDUCE_TOTAL_STOCK_EXPOSURE",
+            "title": "Direction",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["OUTSTANDING", "SATISFIED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_stress_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Stress Ratio",
+            "type": "string"
+          },
+          "triggered_at": {
+            "format": "date-time",
+            "title": "Triggered At",
+            "type": "string"
+          }
+        },
+        "required": ["obligation_id", "direction", "target_stress_ratio", "status", "triggered_at"],
+        "title": "StressObligation",
         "type": "object"
       },
       "TaskUsage": {

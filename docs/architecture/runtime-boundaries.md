@@ -99,6 +99,26 @@ input is compared against the current template without rewriting the original;
 unknown release identities and missing original Runs fail closed. Saved events,
 qualification evidence and report fixtures keep their original runtime identity.
 
+The version 8 frozen case accepts `PORTFOLIO_STRESS_ASSESS` with an existing
+portfolio authorization and a complete selected-account position snapshot.
+Its explicit risk-budget calculation policy binds a conservative proportional
+disposal-friction ratio and a simultaneous adverse price shock equal to the
+highest registered downside-grid boundary. No personal thresholds or policy
+fallback are supplied by the engine. Historical policy-free authorizations
+remain readable but cannot establish a known stress result.
+
+Gross stress includes every reconciled stock exposure, independently of its
+origin, sellability, cost basis, or model result. Estimated disposal friction
+also reduces the reconciled account equity to net liquidation equity.
+Target-inclusive normal and hard-inclusive buffer states preserve the
+original business result. A hard breach records a portfolio-level restoration
+obligation rather than selecting a security for liquidation. Subsequent
+snapshots retain that obligation through missing valuation evidence; a
+reconciled sale and a satisfied target are required to mark it satisfied.
+Reports expose the saved calculation policy, contribution amounts, cutoff,
+blocking state, and obligation. Report corrections retain the original
+stress decision. The authenticated report view does not recalculate it.
+
 The upstream store performs its own atomic schema migration. Before opening a
 real old store, stop every writer, take a consistent backup and upgrade every
 process together. Mixed writers, downgrade of a migrated file, and reconstructing

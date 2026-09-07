@@ -46,8 +46,9 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
-from stock_profiler.modules.portfolio.contracts import portfolio_id_for
+from stock_profiler.modules.portfolio.contracts import PortfolioUseCommand, portfolio_id_for
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
+from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
@@ -180,6 +181,7 @@ def correct_default_frozen_decision_case(
                 governance=original_event.result.governance,
                 portfolio=original_event.result.portfolio,
                 position=original_event.result.position,
+                stress=original_event.result.stress,
             )
             correction_stages = (
                 StageResult(
@@ -471,6 +473,7 @@ def _commit_framework_result(
     qualification_result: StageResult | None = None
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
+    stress_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -544,19 +547,22 @@ def _commit_framework_result(
                     ),
                     reasons=portfolio.reasons,
                 )
-            if business_result is not None and execution_case.position is not None:
+            position_command = execution_case.position or (
+                execution_case.stress.position_snapshot if execution_case.stress else None
+            )
+            if business_result is not None and position_command is not None:
                 assert execution_case.access_scope is not None
                 position = reconcile_position(
-                    execution_case.position,
+                    position_command,
                     prior_ledger=ledger.position_ledger_history(
                         connection,
                         execution_case.access_scope,
-                        execution_case.position.cutoff_at,
+                        position_command.cutoff_at,
                     ),
                     prior_cash_states=ledger.position_cash_history(
                         connection,
                         execution_case.access_scope,
-                        execution_case.position.cutoff_at,
+                        position_command.cutoff_at,
                     ),
                 )
                 result = result.model_copy(update={"position": position})
@@ -571,6 +577,51 @@ def _commit_framework_result(
                     ),
                     reasons=position.reasons,
                 )
+                if execution_case.stress is not None:
+                    command = execution_case.stress
+                    scope = execution_case.access_scope
+                    authorization = adjudicate_portfolio(
+                        PortfolioUseCommand(
+                            operation="PORTFOLIO_USE",
+                            portfolio_id=command.portfolio_id,
+                            authorization_id=command.authorization_id,
+                            requested_action="DETERMINISTIC_PROTECTION",
+                        ),
+                        event_id=execution_case.decision_event_id,
+                        observed_at=ledger.observed_at(),
+                        history=ledger.portfolio_authorization_history(
+                            connection, scope, command.portfolio_id, execution_case.knowledge_cutoff
+                        ),
+                        lineage_history=ledger.portfolio_authorization_lineage(
+                            connection, scope, command.portfolio_id
+                        ),
+                        owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
+                            connection, scope
+                        ),
+                        access_account_ids=scope.account_ids,
+                        knowledge_cutoff=execution_case.knowledge_cutoff,
+                        business_prerequisite_met=True,
+                    )
+                    stress = assess_stress(
+                        command,
+                        authorization,
+                        position,
+                        history=ledger.portfolio_stress_history(
+                            connection, scope, command.portfolio_id
+                        ),
+                    )
+                    result = result.model_copy(update={"stress": stress})
+                    stress_result = StageResult(
+                        phase="PORTFOLIO_STRESS",
+                        status="REJECTED" if stress.state == "UNKNOWN" else "SUCCEEDED",
+                        gate_results=(
+                            GateResult(
+                                gate_id="GROSS_STRESS_EVIDENCE",
+                                status="UNKNOWN" if stress.state == "UNKNOWN" else "PASSED",
+                            ),
+                        ),
+                        reasons=stress.reasons,
+                    )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -607,6 +658,13 @@ def _commit_framework_result(
             stage_result=position_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if stress_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=stress_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -615,6 +673,7 @@ def _commit_framework_result(
         *((qualification_result,) if qualification_result is not None else ()),
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
+        *((stress_result,) if stress_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

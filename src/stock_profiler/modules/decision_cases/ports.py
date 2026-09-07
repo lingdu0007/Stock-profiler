@@ -20,6 +20,7 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -121,6 +122,13 @@ class DecisionLedger(Protocol[Transaction]):
         access_scope: ResultAccessScope,
         cutoff_at: datetime,
     ) -> tuple[AuthoritativeLedgerEntry, ...]: ...
+
+    def portfolio_stress_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioStressOutcome, ...]: ...
 
     def position_cash_history(
         self,
