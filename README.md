@@ -2,12 +2,12 @@
 
 Stock Profiler is an Apache-2.0 licensed engineering baseline for a personal,
 single-user investment decision-support host application. This repository
-contains no market data, account data, credentials, policy values, or
+contains no market data, account data, credentials, personal policy values, or
 order-writing capability.
 
 The current `0.1.0.dev0` baseline provides:
 
-- a Python 3.11 host with a pinned M-Agent `0.5.0` release wheel;
+- a Python 3.11 host with a pinned M-Agent `0.5.1` release wheel;
 - one frozen, original D0 synthetic decision case with immutable clocks,
   version bundle, independent business/Run/event/report identities, durable
   Run recovery, append-only stage outcomes, and deterministic replay;

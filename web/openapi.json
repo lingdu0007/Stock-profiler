@@ -1,6 +1,115 @@
 {
   "components": {
     "schemas": {
+      "AlertClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/AlertClosureProof"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recorded_replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordedAlertReplay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "enum": ["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"],
+            "title": "Resolution",
+            "type": "string"
+          }
+        },
+        "required": ["alert_evidence_id", "resolution", "proof", "evidence", "recorded_at"],
+        "title": "AlertClosure",
+        "type": "object"
+      },
+      "AlertClosureProof": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "erroneous_replay_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erroneous Replay Id"
+          },
+          "observations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticObservation"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "resolution": {
+            "enum": ["DISAPPEARED", "PROVEN_ERRONEOUS", "TRANSFERRED", "ARCHIVED"],
+            "title": "Resolution",
+            "type": "string"
+          },
+          "resolution_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          },
+          "transferred_restriction_evidence_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transferred Restriction Evidence Id"
+          }
+        },
+        "required": ["contract_version", "alert_evidence_id", "resolution", "rule_version"],
+        "title": "AlertClosureProof",
+        "type": "object"
+      },
       "AuthenticationVerificationDto": {
         "description": "Pydantic transport contract for a completed passkey authentication.",
         "properties": {
@@ -11,6 +120,160 @@
         },
         "required": ["csrf_token"],
         "title": "AuthenticationVerificationDto",
+        "type": "object"
+      },
+      "BasisSubstitutionCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "check_id": {
+            "minLength": 1,
+            "title": "Check Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["EQUIVALENCE", "MIGRATION", "CROSS_VALIDATION", "REPLAY"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "original_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Basis Digest",
+            "type": "string"
+          },
+          "passed": {
+            "const": true,
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "substitute_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Substitute Basis Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check_id",
+          "kind",
+          "original_basis_digest",
+          "substitute_basis_digest",
+          "passed",
+          "available_at"
+        ],
+        "title": "BasisSubstitutionCheck",
+        "type": "object"
+      },
+      "CapabilityVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/components/schemas/DecisionCaseVersionBundle"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "qualification_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": ["version_id", "policy_version", "implementation"],
+        "title": "CapabilityVersion",
+        "type": "object"
+      },
+      "CertifiedBasisSubstitution": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/BasisSubstitutionCheck"
+            },
+            "minItems": 4,
+            "title": "Checks",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "dependency_windows": {
+            "items": {
+              "$ref": "#/components/schemas/CertifiedDependencyWindow"
+            },
+            "minItems": 1,
+            "title": "Dependency Windows",
+            "type": "array"
+          },
+          "original_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Basis Digest",
+            "type": "string"
+          },
+          "substitute_basis_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Substitute Basis Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "original_basis_digest",
+          "substitute_basis_digest",
+          "dependency_windows",
+          "checks"
+        ],
+        "title": "CertifiedBasisSubstitution",
+        "type": "object"
+      },
+      "CertifiedDependencyWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "original_dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Original Dependency Artifact Id",
+            "type": "string"
+          },
+          "required_from": {
+            "format": "date-time",
+            "title": "Required From",
+            "type": "string"
+          },
+          "required_until": {
+            "format": "date-time",
+            "title": "Required Until",
+            "type": "string"
+          },
+          "substitute_dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Substitute Dependency Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "original_dependency_artifact_id",
+          "substitute_dependency_artifact_id",
+          "required_from",
+          "required_until"
+        ],
+        "title": "CertifiedDependencyWindow",
         "type": "object"
       },
       "ChallengeDto": {
@@ -107,7 +370,7 @@
       },
       "DecisionCaseVersionBundle": {
         "additionalProperties": false,
-        "description": "The complete version set that participates in replay identity.",
+        "description": "The complete implementation version set that participates in replay.",
         "properties": {
           "agent_definition_id": {
             "title": "Agent Definition Id",
@@ -185,6 +448,237 @@
         "title": "DecisionCaseVersionBundle",
         "type": "object"
       },
+      "DiagnosticObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["CLEAR", "RECURRENT", "INSUFFICIENT", "UNAVAILABLE"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["scheduled_at", "status", "rule_version", "evidence"],
+        "title": "DiagnosticObservation",
+        "type": "object"
+      },
+      "DiagnosticPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "planned_nodes": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Planned Nodes",
+            "type": "array"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          }
+        },
+        "required": ["contract_version", "rule_version", "planned_nodes"],
+        "title": "DiagnosticPlan",
+        "type": "object"
+      },
+      "ErroneousAlertReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_evidence_id": {
+            "minLength": 1,
+            "title": "Alert Evidence Id",
+            "type": "string"
+          },
+          "alert_reproduced": {
+            "const": false,
+            "title": "Alert Reproduced",
+            "type": "boolean"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "original_information": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "original_information_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Original Information Digest",
+            "type": "string"
+          },
+          "replay_id": {
+            "minLength": 1,
+            "title": "Replay Id",
+            "type": "string"
+          },
+          "replay_result_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Replay Result Digest",
+            "type": "string"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "replay_id",
+          "alert_evidence_id",
+          "rule_version",
+          "original_information",
+          "original_information_digest",
+          "replay_result_digest",
+          "alert_reproduced",
+          "available_at"
+        ],
+        "title": "ErroneousAlertReplay",
+        "type": "object"
+      },
+      "EstablishedObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "basis_reference": {
+            "minLength": 1,
+            "title": "Basis Reference",
+            "type": "string"
+          },
+          "direction": {
+            "enum": ["REDUCE", "EXIT"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "obligation_id": {
+            "minLength": 1,
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "quantity_status": {
+            "const": "UNKNOWN",
+            "title": "Quantity Status",
+            "type": "string"
+          }
+        },
+        "required": ["obligation_id", "basis_reference", "direction", "quantity_status"],
+        "title": "EstablishedObligation",
+        "type": "object"
+      },
+      "EvidenceArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "minLength": 1,
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "license_id": {
+            "minLength": 1,
+            "title": "License Id",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "content",
+          "content_sha256",
+          "version",
+          "license_id",
+          "available_at",
+          "valid_from",
+          "valid_until"
+        ],
+        "title": "EvidenceArtifact",
+        "type": "object"
+      },
+      "EvidenceBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceArtifact"
+            },
+            "minItems": 1,
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "dependency_windows": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceDependencyWindow"
+            },
+            "minItems": 1,
+            "title": "Dependency Windows",
+            "type": "array"
+          },
+          "root_artifact": {
+            "$ref": "#/components/schemas/EvidenceArtifact"
+          }
+        },
+        "required": ["contract_version", "root_artifact", "dependencies", "dependency_windows"],
+        "title": "EvidenceBasis",
+        "type": "object"
+      },
       "EvidenceClock": {
         "additionalProperties": false,
         "description": "The immutable fact, publication, acquisition, and validation clocks.",
@@ -210,6 +704,39 @@
         "title": "EvidenceClock",
         "type": "object"
       },
+      "EvidenceDependencyWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "dependency_artifact_id": {
+            "minLength": 1,
+            "title": "Dependency Artifact Id",
+            "type": "string"
+          },
+          "parent_artifact_id": {
+            "minLength": 1,
+            "title": "Parent Artifact Id",
+            "type": "string"
+          },
+          "required_from": {
+            "format": "date-time",
+            "title": "Required From",
+            "type": "string"
+          },
+          "required_until": {
+            "format": "date-time",
+            "title": "Required Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_artifact_id",
+          "dependency_artifact_id",
+          "required_from",
+          "required_until"
+        ],
+        "title": "EvidenceDependencyWindow",
+        "type": "object"
+      },
       "ExternalResult": {
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
@@ -218,6 +745,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CorrectionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "governance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GovernanceOutcome"
               },
               {
                 "type": "null"
@@ -242,6 +779,94 @@
         },
         "required": ["outcome_code", "summary", "key_reasons"],
         "title": "ExternalResult",
+        "type": "object"
+      },
+      "FormalCheckIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "error_budget_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Budget Id"
+          },
+          "index": {
+            "minimum": 1.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "planned_nodes": {
+            "default": [],
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "title": "Planned Nodes",
+            "type": "array"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "required_gates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Gates",
+            "type": "array"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "sequence_id": {
+            "minLength": 1,
+            "title": "Sequence Id",
+            "type": "string"
+          }
+        },
+        "required": ["sequence_id", "index", "registered_at", "scheduled_at"],
+        "title": "FormalCheckIdentity",
+        "type": "object"
+      },
+      "FormalNodeDisposition": {
+        "additionalProperties": false,
+        "properties": {
+          "check_index": {
+            "minimum": 1.0,
+            "title": "Check Index",
+            "type": "integer"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["EXECUTED_PASS", "EXECUTED_FAIL", "INSUFFICIENT", "NOT_EXECUTED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["scheduled_at", "status", "check_index", "evidence", "recorded_at"],
+        "title": "FormalNodeDisposition",
         "type": "object"
       },
       "FormalReport": {
@@ -340,6 +965,75 @@
         "title": "FormalReport",
         "type": "object"
       },
+      "FrozenTask": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activation Id"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "freeze_status": {
+            "enum": ["APPROVED", "DENIED"],
+            "title": "Freeze Status",
+            "type": "string"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "title": "Frozen At",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/LegalTaskNode"
+          },
+          "qualification_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "node",
+          "activation_id",
+          "qualification_snapshot",
+          "freeze_status",
+          "reasons",
+          "frozen_at"
+        ],
+        "title": "FrozenTask",
+        "type": "object"
+      },
       "GateResult": {
         "additionalProperties": false,
         "description": "One deterministic gate evaluated during a saved decision stage.",
@@ -358,6 +1052,167 @@
         "title": "GateResult",
         "type": "object"
       },
+      "GovernanceOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "activation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disposition": {
+            "enum": ["APPROVED", "DENIED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "policy_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "recorded_alert_replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordedAlertReplay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registered_requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegisteredRequalificationApplication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_node": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegisteredTaskNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "GovernanceOutcome",
+        "type": "object"
+      },
+      "LegalTaskNode": {
+        "additionalProperties": false,
+        "properties": {
+          "deterministic_obligations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EstablishedObligation"
+            },
+            "title": "Deterministic Obligations",
+            "type": "array"
+          },
+          "kind": {
+            "enum": ["MONTHLY", "DAILY", "RENEWAL"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "node_id": {
+            "minLength": 1,
+            "title": "Node Id",
+            "type": "string"
+          },
+          "retained_objects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedObjectReference"
+            },
+            "title": "Retained Objects",
+            "type": "array"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "task_identity": {
+            "minLength": 1,
+            "title": "Task Identity",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "task_identity",
+          "kind",
+          "scheduled_at",
+          "knowledge_cutoff",
+          "valid_until"
+        ],
+        "title": "LegalTaskNode",
+        "type": "object"
+      },
       "OpaqueRequestErrorDto": {
         "additionalProperties": false,
         "properties": {
@@ -371,6 +1226,668 @@
         "title": "OpaqueRequestErrorDto",
         "type": "object"
       },
+      "PolicyBinding": {
+        "additionalProperties": false,
+        "description": "Frozen scoped policy input, independent of whether authority was obtained.",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": ["scope", "version"],
+        "title": "PolicyBinding",
+        "type": "object"
+      },
+      "QualificationEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "certified_substitution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CertifiedBasisSubstitution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostic_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "evaluation_end": {
+            "format": "date-time",
+            "title": "Evaluation End",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "formal_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormalCheckIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gate_results": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationGate"
+            },
+            "title": "Gate Results",
+            "type": "array"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "QUALIFICATION_PASS",
+              "DIAGNOSTIC_ALERT",
+              "INSUFFICIENT_EVIDENCE",
+              "REQUIRED_PREMISE_UNVERIFIABLE",
+              "ORIGINAL_BASIS_INVALID",
+              "RESTORATION_DECISION",
+              "ORIGINAL_BASIS_RESTORED",
+              "REQUALIFICATION_PASS",
+              "HISTORICAL_OOS_PASS",
+              "LOCKED_FORWARD_PASS",
+              "FORMAL_CHECK",
+              "FORMAL_NODE_NOT_EXECUTED",
+              "DIAGNOSTIC_CLEAR",
+              "DIAGNOSTIC_RECURRENT",
+              "DIAGNOSTIC_INSUFFICIENT",
+              "DIAGNOSTIC_UNAVAILABLE",
+              "ALERT_CLOSURE",
+              "ALERT_PROVEN_ERRONEOUS",
+              "ALERT_TRANSFERRED",
+              "ALERT_ARCHIVED",
+              "CERTIFIED_BASIS_SUBSTITUTION",
+              "STATE_ACTIVITY_RESTORED",
+              "REQUALIFICATION_APPLICATION_REGISTERED",
+              "ALERT_REPLAY_RECORDED"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "maturity_sufficient": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maturity Sufficient"
+          },
+          "requalification_application_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Application Id"
+          },
+          "requalification_population_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Population Id"
+          },
+          "requalification_registration_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requalification Registration Digest"
+          },
+          "resolves_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolves Evidence Id"
+          },
+          "restored_authorization_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored Authorization Digest"
+          },
+          "reviewed_alert_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed Alert Digest"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "state_activity_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Activity End"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "synthetic",
+          "generator_version",
+          "seed",
+          "version",
+          "scope",
+          "kind",
+          "digest",
+          "evaluation_end",
+          "available_at",
+          "expires_at"
+        ],
+        "title": "QualificationEvidence",
+        "type": "object"
+      },
+      "QualificationGate": {
+        "additionalProperties": false,
+        "properties": {
+          "gate_id": {
+            "minLength": 1,
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          }
+        },
+        "required": ["gate_id", "passed"],
+        "title": "QualificationGate",
+        "type": "object"
+      },
+      "QualificationPolicy": {
+        "additionalProperties": false,
+        "description": "Explicit D0 policy input, never a default for personal authorization.",
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "diagnostic_clear_node_count": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostic Clear Node Count"
+          },
+          "evaluation_max_age_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Evaluation Max Age Months",
+            "type": "integer"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "require_state_activity": {
+            "title": "Require State Activity",
+            "type": "boolean"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "state_activity_max_age_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "State Activity Max Age Months",
+            "type": "integer"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "contract_version",
+          "policy_version",
+          "synthetic",
+          "generator_version",
+          "seed",
+          "evaluation_max_age_months",
+          "state_activity_max_age_months",
+          "require_state_activity"
+        ],
+        "title": "QualificationPolicy",
+        "type": "object"
+      },
+      "QualificationRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_closures": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AlertClosure"
+            },
+            "title": "Alert Closures",
+            "type": "array"
+          },
+          "alerts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationEvidence"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "authorization_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authorization_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Id"
+          },
+          "authorization_terminated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Terminated At"
+          },
+          "cause": {
+            "title": "Cause",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "formal_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "formal_node_dispositions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FormalNodeDisposition"
+            },
+            "title": "Formal Node Dispositions",
+            "type": "array"
+          },
+          "formal_passing_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_formal_node": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Formal Node"
+          },
+          "previous_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Decision Id"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restoration_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationEvidence"
+            },
+            "title": "Restoration Evidence",
+            "type": "array"
+          },
+          "restrictions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationRestriction"
+            },
+            "title": "Restrictions",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "state_activity_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": ["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "authorization_id",
+          "scope",
+          "version",
+          "status",
+          "cause",
+          "authorization_evidence",
+          "recorded_at",
+          "evidence"
+        ],
+        "title": "QualificationRecord",
+        "type": "object"
+      },
+      "QualificationRestriction": {
+        "additionalProperties": false,
+        "properties": {
+          "cause": {
+            "enum": [
+              "REQUIRED_PREMISE_UNVERIFIABLE",
+              "ORIGINAL_BASIS_INVALID",
+              "EVIDENCE_EXPIRED",
+              "STATE_ACTIVITY_EXPIRED",
+              "FORMAL_PERFORMANCE_FAILURE"
+            ],
+            "title": "Cause",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          }
+        },
+        "required": ["cause", "evidence"],
+        "title": "QualificationRestriction",
+        "type": "object"
+      },
+      "QualificationScope": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "account_type": {
+            "minLength": 1,
+            "title": "Account Type",
+            "type": "string"
+          },
+          "board": {
+            "minLength": 1,
+            "title": "Board",
+            "type": "string"
+          },
+          "capability": {
+            "minLength": 1,
+            "title": "Capability",
+            "type": "string"
+          },
+          "evidence_level": {
+            "const": "D0",
+            "title": "Evidence Level",
+            "type": "string"
+          },
+          "holding_age_domain": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holding Age Domain"
+          },
+          "market_state": {
+            "minLength": 1,
+            "title": "Market State",
+            "type": "string"
+          },
+          "portfolio_scope": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Scope"
+          },
+          "probability_grid": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probability Grid"
+          },
+          "purpose": {
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "renewal_ordinal": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renewal Ordinal"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "purpose",
+          "evidence_level",
+          "user_id",
+          "account_ids",
+          "account_type",
+          "source",
+          "market_state",
+          "board",
+          "target"
+        ],
+        "title": "QualificationScope",
+        "type": "object"
+      },
       "ReauthenticationVerificationDto": {
         "description": "Pydantic transport contract for a completed recent reauthentication.",
         "properties": {
@@ -381,6 +1898,416 @@
         },
         "required": ["credential_id"],
         "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
+      "RecordedAlertReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "previous_qualification_decision_id": {
+            "title": "Previous Qualification Decision Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "replay": {
+            "$ref": "#/components/schemas/ErroneousAlertReplay"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "previous_qualification_decision_id",
+          "replay",
+          "evidence",
+          "recorded_at"
+        ],
+        "title": "RecordedAlertReplay",
+        "type": "object"
+      },
+      "RegisteredRequalificationApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "application": {
+            "$ref": "#/components/schemas/RequalificationApplication"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "previous_qualification_decision_id": {
+            "title": "Previous Qualification Decision Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "previous_qualification_decision_id",
+          "application",
+          "evidence",
+          "recorded_at"
+        ],
+        "title": "RegisteredRequalificationApplication",
+        "type": "object"
+      },
+      "RegisteredTaskNode": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/LegalTaskNode"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          }
+        },
+        "required": ["decision_id", "scope", "node", "registered_at"],
+        "title": "RegisteredTaskNode",
+        "type": "object"
+      },
+      "RequalificationApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "forward_registration": {
+            "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "historical_registration": {
+            "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "registered_at",
+          "locked_at",
+          "frozen_version_digest",
+          "historical_registration",
+          "forward_registration"
+        ],
+        "title": "RequalificationApplication",
+        "type": "object"
+      },
+      "RequalificationMember": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "matured_at": {
+            "format": "date-time",
+            "title": "Matured At",
+            "type": "string"
+          },
+          "member_id": {
+            "minLength": 1,
+            "title": "Member Id",
+            "type": "string"
+          },
+          "outcome_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Outcome Digest",
+            "type": "string"
+          },
+          "prediction_frozen_at": {
+            "format": "date-time",
+            "title": "Prediction Frozen At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "prediction_frozen_at",
+          "available_at",
+          "matured_at",
+          "outcome_digest"
+        ],
+        "title": "RequalificationMember",
+        "type": "object"
+      },
+      "RequalificationPopulation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "gate_results": {
+            "items": {
+              "$ref": "#/components/schemas/QualificationGate"
+            },
+            "minItems": 1,
+            "title": "Gate Results",
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/RequalificationMember"
+            },
+            "minItems": 1,
+            "title": "Members",
+            "type": "array"
+          },
+          "population_id": {
+            "minLength": 1,
+            "title": "Population Id",
+            "type": "string"
+          },
+          "registered_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Registered Member Ids",
+            "type": "array"
+          },
+          "required_gates": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Required Gates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "population_id",
+          "evidence_id",
+          "frozen_version_digest",
+          "registered_member_ids",
+          "members",
+          "required_gates",
+          "gate_results"
+        ],
+        "title": "RequalificationPopulation",
+        "type": "object"
+      },
+      "RequalificationPopulationRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "frozen_version_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Frozen Version Digest",
+            "type": "string"
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "population_id": {
+            "minLength": 1,
+            "title": "Population Id",
+            "type": "string"
+          },
+          "population_kind": {
+            "enum": ["HISTORICAL", "FORWARD"],
+            "title": "Population Kind",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "registered_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Registered Member Ids",
+            "type": "array"
+          },
+          "required_gates": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Required Gates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "application_id",
+          "population_kind",
+          "population_id",
+          "registered_at",
+          "locked_at",
+          "frozen_version_digest",
+          "registered_member_ids",
+          "required_gates",
+          "digest"
+        ],
+        "title": "RequalificationPopulationRegistration",
+        "type": "object"
+      },
+      "RequalificationProof": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "minLength": 1,
+            "title": "Application Id",
+            "type": "string"
+          },
+          "first_prediction_frozen_at": {
+            "format": "date-time",
+            "title": "First Prediction Frozen At",
+            "type": "string"
+          },
+          "forward_evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "forward_population": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "forward_registration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frozen_version_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Version Digest"
+          },
+          "historical_evidence": {
+            "$ref": "#/components/schemas/QualificationEvidence"
+          },
+          "historical_population": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "historical_registration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequalificationPopulationRegistration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked_at": {
+            "format": "date-time",
+            "title": "Locked At",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "registered_at",
+          "locked_at",
+          "first_prediction_frozen_at",
+          "historical_evidence",
+          "forward_evidence"
+        ],
+        "title": "RequalificationProof",
         "type": "object"
       },
       "ResultAccessScope": {
@@ -413,6 +2340,113 @@
         },
         "required": ["contract_version", "user_id", "account_ids", "visibility"],
         "title": "ResultAccessScope",
+        "type": "object"
+      },
+      "RetainedObjectReference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": ["CONCLUSION", "CONTRACT", "EVIDENCE", "EVALUATION"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "minLength": 1,
+            "title": "Object Id",
+            "type": "string"
+          }
+        },
+        "required": ["kind", "object_id"],
+        "title": "RetainedObjectReference",
+        "type": "object"
+      },
+      "RetainedTaskRelation": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activation Id"
+          },
+          "deterministic_obligations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EstablishedObligation"
+            },
+            "title": "Deterministic Obligations",
+            "type": "array"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "node_id": {
+            "minLength": 1,
+            "title": "Node Id",
+            "type": "string"
+          },
+          "original_version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          },
+          "qualification_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualification Decision Id"
+          },
+          "retained_objects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedObjectReference"
+            },
+            "title": "Retained Objects",
+            "type": "array"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "task_decision_id": {
+            "minLength": 1,
+            "title": "Task Decision Id",
+            "type": "string"
+          },
+          "task_identity": {
+            "minLength": 1,
+            "title": "Task Identity",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_identity",
+          "task_decision_id",
+          "original_version",
+          "node_id",
+          "activation_id",
+          "qualification_decision_id",
+          "knowledge_cutoff",
+          "scheduled_at",
+          "valid_until"
+        ],
+        "title": "RetainedTaskRelation",
         "type": "object"
       },
       "SafetyCapabilitiesDiagnosticDto": {
@@ -463,6 +2497,7 @@
               "FRAMEWORK_RUN",
               "HOST_VALIDATION",
               "BUSINESS_DECISION",
+              "QUALIFICATION",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -503,6 +2538,43 @@
         },
         "required": ["phase", "status", "gate_results", "reasons"],
         "title": "StageResult",
+        "type": "object"
+      },
+      "TaskUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "qualification_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualificationRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "task_snapshot": {
+            "$ref": "#/components/schemas/FrozenTask"
+          }
+        },
+        "required": ["allowed", "task_snapshot", "qualification_snapshot", "reasons", "checked_at"],
+        "title": "TaskUsage",
         "type": "object"
       },
       "UserFact": {
@@ -631,6 +2703,81 @@
         },
         "required": ["kind", "idempotency_key"],
         "title": "UserFactRequest",
+        "type": "object"
+      },
+      "VersionActivation": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "first_node": {
+            "$ref": "#/components/schemas/LegalTaskNode"
+          },
+          "previous_activation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Activation Id"
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapabilityVersion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualification_snapshot": {
+            "$ref": "#/components/schemas/QualificationRecord"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "retained_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retained Task Ids",
+            "type": "array"
+          },
+          "retained_tasks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RetainedTaskRelation"
+            },
+            "title": "Retained Tasks",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "decision_id",
+          "scope",
+          "version",
+          "previous_version",
+          "previous_activation_id",
+          "qualification_snapshot",
+          "first_node",
+          "retained_task_ids",
+          "recorded_at"
+        ],
+        "title": "VersionActivation",
         "type": "object"
       },
       "VersionDiagnosticDto": {

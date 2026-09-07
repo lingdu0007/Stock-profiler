@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from typing import Any, Literal, Protocol, cast, get_args
 
@@ -14,7 +15,19 @@ from pydantic import (
     model_validator,
 )
 
+from stock_profiler.foundation.decision_versions import (
+    CURRENT_M_AGENT_RELEASE,
+    HISTORICAL_M_AGENT_RELEASE,
+)
+from stock_profiler.foundation.decision_versions import (
+    DecisionCaseVersionBundle as DecisionCaseVersionBundle,
+)
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
+from stock_profiler.modules.qualification.contracts import (
+    GovernanceCommand,
+    GovernanceOutcome,
+    QualificationCommand,
+)
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
 FROZEN_HOST_CONTRACT_VERSION = "2.0.0"
@@ -22,14 +35,17 @@ FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
+_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0"})
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
-    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, "3.0.0"}
+    {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, *_SCOPED_CASE_CONTRACT_VERSIONS}
 )
 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
     {
         ("1.0.0", "1.0.0"),
         (FROZEN_CASE_CONTRACT_VERSION, FROZEN_HOST_CONTRACT_VERSION),
         ("3.0.0", "3.0.0"),
+        ("4.0.0", "4.0.0"),
+        ("5.0.0", "5.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -58,6 +74,12 @@ class ResultAccessScope(FrozenContract):
             raise ValueError("result account scope must be nonempty and unique")
         return self
 
+    def same_scope_as(self, other: ResultAccessScope) -> bool:
+        """Match historical ownership without normalizing its saved account order."""
+        return set(self.account_ids) == set(other.account_ids) and self.model_dump(
+            exclude={"account_ids"}
+        ) == other.model_dump(exclude={"account_ids"})
+
 
 class EvidenceClock(FrozenContract):
     """The immutable fact, publication, acquisition, and validation clocks."""
@@ -66,25 +88,6 @@ class EvidenceClock(FrozenContract):
     source_published_at: str
     acquired_at: str
     validated_at: str
-
-
-class DecisionCaseVersionBundle(FrozenContract):
-    """The complete version set that participates in replay identity."""
-
-    case_contract_version: str
-    host_contract_version: str
-    host_application_version: str
-    host_source_sha: str
-    agent_definition_id: str
-    agent_definition_version: str
-    model_adapter_id: str
-    routing_policy_version: str
-    output_contract_version: str
-    report_projection_contract_version: str
-    m_agent_version: str
-    m_agent_wheel_url: str
-    m_agent_wheel_sha256: str
-    m_agent_release_commit: str
 
 
 class FrozenOutputContract(FrozenContract):
@@ -129,6 +132,9 @@ class ExternalResult(FrozenContract):
     correction_evidence: CorrectionEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    governance: GovernanceOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class GateResult(FrozenContract):
@@ -161,6 +167,7 @@ StagePhase = Literal[
     "FRAMEWORK_RUN",
     "HOST_VALIDATION",
     "BUSINESS_DECISION",
+    "QUALIFICATION",
     "ADJUDICATION_LIFECYCLE",
     "VALIDITY_LIFECYCLE",
     "EXECUTION_LIFECYCLE",
@@ -211,6 +218,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
     "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
     "BUSINESS_DECISION": _BUSINESS_RESULT_STATUSES,
+    "QUALIFICATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
     "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
     "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
@@ -340,7 +348,11 @@ def supports_case_host_contract(case_version: str, host_version: str) -> bool:
 
 def definition_version_for_case_contract(case_version: str) -> str:
     """Keep host and framework boundary validation on the same compatibility rule."""
-    return "2.0.0" if case_version == "3.0.0" else FROZEN_AGENT_DEFINITION_VERSION
+    return (
+        "2.0.0"
+        if case_version in _SCOPED_CASE_CONTRACT_VERSIONS
+        else FROZEN_AGENT_DEFINITION_VERSION
+    )
 
 
 class FormalReport(FrozenContract):
@@ -554,20 +566,47 @@ class FrozenDecisionCase(FrozenContract):
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    governance: GovernanceCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
-        scoped = self.version_bundle.case_contract_version == "3.0.0"
+        scoped = self.version_bundle.case_contract_version in _SCOPED_CASE_CONTRACT_VERSIONS
+        governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
+        if governed != (self.governance is not None):
+            raise ValueError("governance requires a governed frozen contract")
+        if (
+            self.version_bundle.case_contract_version == "4.0.0"
+            and self.governance is not None
+            and (
+                not isinstance(self.governance, QualificationCommand)
+                or self.governance.action not in {"GRANT", "ALERT"}
+                or self.governance.evidence.kind not in {"QUALIFICATION_PASS", "DIAGNOSTIC_ALERT"}
+            )
+        ):
+            raise ValueError("extended governance requires the version 5 frozen contract")
+        if governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
+            raise ValueError("governed cases require a timezone-aware knowledge cutoff")
+        if self.expected_external_result.governance is not None:
+            raise ValueError("governance is a host decision, never framework output")
+        if self.governance is not None and (
+            self.access_scope is None
+            or self.governance.scope.user_id != self.access_scope.user_id
+            or set(self.governance.scope.account_ids) != set(self.access_scope.account_ids)
+        ):
+            raise ValueError("governance and frozen access scope must agree")
         account = self.input.get("account")
         definition_version = definition_version_for_case_contract(
             self.version_bundle.case_contract_version
         )
         if scoped != (self.access_scope is not None):
-            raise ValueError("scoped cases require the version 3 contract and frozen access scope")
+            raise ValueError("scoped cases require a scoped contract and frozen access scope")
         if scoped and (
-            self.version_bundle.host_contract_version != "3.0.0"
-            or self.version_bundle.report_projection_contract_version != "3.0.0"
+            self.version_bundle.host_contract_version != self.version_bundle.case_contract_version
+            or self.version_bundle.report_projection_contract_version
+            != self.version_bundle.case_contract_version
             or self.access_scope is None
             or not isinstance(account, dict)
             or account.get("account_id") not in self.access_scope.account_ids
@@ -648,7 +687,7 @@ class FrozenDecisionCase(FrozenContract):
                     },
                 )
                 for case_contract_version, _host_contract_version in supported_pairs
-                if case_contract_version != "3.0.0"
+                if case_contract_version not in _SCOPED_CASE_CONTRACT_VERSIONS
             )
         )
 
@@ -677,7 +716,7 @@ class FrozenDecisionCase(FrozenContract):
                 _SUPPORTED_CASE_HOST_CONTRACT_PAIRS
             )
             if (case_contract_version, host_contract_version) != current_pair
-            and case_contract_version != "3.0.0"
+            and case_contract_version not in _SCOPED_CASE_CONTRACT_VERSIONS
         )
 
     @property
@@ -699,6 +738,22 @@ class FrozenDecisionCase(FrozenContract):
         """Allow source identity updates while rejecting a changed frozen input."""
         return _recovery_input_payload(self) == _recovery_input_payload(other)
 
+    def matches_runtime_upgrade_recovery_input(self, other: FrozenDecisionCase) -> bool:
+        """Compare a supplied original snapshot without rebinding any durable identity."""
+        if (
+            self.version_bundle.runtime_release != HISTORICAL_M_AGENT_RELEASE
+            or other.version_bundle.runtime_release != CURRENT_M_AGENT_RELEASE
+        ):
+            return False
+        comparison = other.model_copy(
+            update={
+                "version_bundle": other.version_bundle.model_copy(
+                    update=HISTORICAL_M_AGENT_RELEASE.model_dump()
+                )
+            }
+        )
+        return self.matches_legacy_recovery_input(comparison)
+
     def matches_legacy_recovery_input(self, other: FrozenDecisionCase | None = None) -> bool:
         """Compare legacy projections without relaxing the immutable D0 input."""
         comparison_case = other or FrozenDecisionCase.model_validate(load_frozen_case_payload())
@@ -712,6 +767,7 @@ class FrozenDecisionCase(FrozenContract):
                         update={
                             "case_contract_version": self.version_bundle.case_contract_version,
                             "host_contract_version": self.version_bundle.host_contract_version,
+                            **self.version_bundle.runtime_release.model_dump(),
                         }
                     )
                 }
@@ -810,13 +866,14 @@ class FrozenBuildIdentity(Protocol):
 
 
 def load_frozen_decision_case(settings: FrozenBuildIdentity) -> FrozenDecisionCase:
-    """Bind the declared synthetic case to the exact configured host build."""
+    """Create a new synthetic input for this build; saved historical cases are never rebound."""
     payload = load_frozen_case_payload()
     version_bundle = payload.get("version_bundle")
     if not isinstance(version_bundle, dict):
         raise RuntimeError("frozen decision-case fixture has no version bundle")
     version_bundle["host_application_version"] = settings.configuration_version
     version_bundle["host_source_sha"] = settings.source_sha
+    version_bundle.update(CURRENT_M_AGENT_RELEASE.model_dump(mode="json"))
     return FrozenDecisionCase.model_validate(payload)
 
 

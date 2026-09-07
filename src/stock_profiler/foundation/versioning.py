@@ -6,14 +6,13 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 
 APPLICATION_VERSION = "0.1.0.dev0"
 M_AGENT_DISTRIBUTION = "m-agent"
-M_AGENT_WHEEL_URL = (
-    "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl"
-)
-M_AGENT_WHEEL_SHA256 = "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6"
-M_AGENT_RELEASE_COMMIT = "743651e5c74a4865f25a31dab68d188b5b0aed64"
+M_AGENT_WHEEL_URL = CURRENT_M_AGENT_RELEASE.m_agent_wheel_url
+M_AGENT_WHEEL_SHA256 = CURRENT_M_AGENT_RELEASE.m_agent_wheel_sha256
+M_AGENT_RELEASE_COMMIT = CURRENT_M_AGENT_RELEASE.m_agent_release_commit
 
 
 @dataclass(frozen=True)

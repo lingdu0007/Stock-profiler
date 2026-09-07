@@ -46,6 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
+from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -82,6 +83,7 @@ def replay_default_frozen_decision_case(
         original = recovery_case.model_copy(update={"recovery_framework_run_id": None})
         if not any(
             original.matches_legacy_recovery_input(candidate)
+            or original.matches_runtime_upgrade_recovery_input(candidate)
             for candidate in (case, *case.legacy_contract_recovery_cases)
         ):
             raise ValueError("original snapshot does not match the frozen recovery input")
@@ -172,6 +174,7 @@ def correct_default_frozen_decision_case(
                 correction_evidence=CorrectionEvidence.model_validate(
                     load_frozen_correction_payload()
                 ),
+                governance=original_event.result.governance,
             )
             correction_stages = (
                 StageResult(
@@ -259,13 +262,15 @@ def _run_frozen_decision_case(
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
         known_run_ids = ledger.mapped_framework_run_ids(connection)
-    if not has_existing_mapping:
+    if not has_existing_mapping and case.recovery_framework_run_id is None:
         try:
             legacy_case = asyncio.run(framework_adapter.recover_unmapped(case, known_run_ids))
         except ValueError as error:
             raise DecisionEventCommitError("durable legacy framework recovery failed") from error
         if legacy_case is not None:
             case = legacy_case
+        elif case.governance is not None:
+            validate_new_request(case.governance)
     business_object_id = ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         existing_report = ledger.get_original_formal_report(
@@ -458,6 +463,7 @@ def _commit_framework_result(
             business_commit_status="NOT_ATTEMPTED",
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
+    qualification_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -472,6 +478,28 @@ def _commit_framework_result(
             business_result = (
                 business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
             )
+            if business_result is not None and execution_case.governance is not None:
+                assert execution_case.access_scope is not None
+                governance = adjudicate(
+                    execution_case.governance,
+                    event_id=execution_case.decision_event_id,
+                    observed_at=ledger.observed_at(),
+                    knowledge_cutoff=execution_case.knowledge_cutoff,
+                    history=ledger.governance_history(connection, execution_case.access_scope),
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"governance": governance})
+                qualification_result = StageResult(
+                    phase="QUALIFICATION",
+                    status="SUCCEEDED" if governance.disposition == "APPROVED" else "REJECTED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="SCOPED_QUALIFICATION",
+                            status="PASSED" if governance.disposition == "APPROVED" else "FAILED",
+                        ),
+                    ),
+                    reasons=governance.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -487,11 +515,19 @@ def _commit_framework_result(
             stage_result=business_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if qualification_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=qualification_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
         validation_result,
         *((business_result,) if business_result is not None else ()),
+        *((qualification_result,) if qualification_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,
@@ -515,7 +551,6 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
-    result = ExternalResult.model_validate_json(framework.output)
     stage_results = (
         *stage_results_before_commit,
         StageResult(
@@ -963,7 +998,7 @@ def _correction_case(
                     ),
                     "host_source_sha": current_case.version_bundle.host_source_sha,
                     "report_projection_contract_version": (
-                        "3.0.0"
+                        original_case.version_bundle.report_projection_contract_version
                         if original_case.access_scope is not None
                         else FROZEN_REPORT_PROJECTION_CONTRACT_VERSION
                     ),

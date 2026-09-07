@@ -26,6 +26,11 @@ store are trusted host persistence, not tools available to a browser or model.
 This boundary does not claim to sandbox arbitrary Python execution or an
 operator who already controls the database or source.
 
+Governance-history reads require the frozen access scope. The host selects
+original events with the same saved owner, accounts, and visibility before
+adjudication, so a USER decision cannot inherit a SHADOW authorization,
+evidence record, or state. The source scope remains in each original event.
+
 `GET` and `POST /api/v1/reports/{id}/facts` read and append independent VIEWED,
 ACKNOWLEDGED, CONFIRMED, and EXECUTION_DECLARED facts. Mutation additionally
 requires same-origin session/CSRF validation and `USER_FACT`. Confirmations

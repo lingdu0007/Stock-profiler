@@ -24,6 +24,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
     stored_report_payload,
 )
@@ -39,6 +40,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 METADATA = MetaData()
 DECISION_CASE_BUSINESS_OBJECTS = Table(
@@ -107,6 +109,32 @@ class DecisionLedger:
     def observed_at(self) -> str:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
+
+    def governance_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[GovernanceOutcome, ...]:
+        """Select original authority by its saved owner, accounts and visibility before use."""
+        event_ids = (
+            connection.execute(
+                select(DECISION_EVENTS.c.decision_event_id).where(
+                    DECISION_EVENTS.c.corrects_event_id.is_(None)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        history = []
+        for event_id in event_ids:
+            fact = self.get_decision_event(event_id, connection)
+            if fact is None:
+                raise DecisionEventCommitError("governance history is unavailable")
+            if (
+                fact.case.access_scope is not None
+                and fact.case.access_scope.same_scope_as(access_scope)
+                and fact.result.governance is not None
+            ):
+                history.append(fact.result.governance)
+        return tuple(history)
 
     @contextmanager
     def serialize_case_execution(self) -> Iterator[Connection]:

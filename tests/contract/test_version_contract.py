@@ -24,11 +24,11 @@ def test_http_openapi_and_diagnostic_contract_share_one_version_bundle(settings:
     assert create_app(settings).openapi()["openapi"] == "3.1.0"  # type: ignore[arg-type]
     assert bundle.application_version == "0.1.0.dev0"
     assert bundle.source_sha == "a" * 40
-    assert bundle.m_agent_version == "0.5.0"
+    assert bundle.m_agent_version == "0.5.1"
     assert bundle.m_agent_wheel_sha256 == (
-        "8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6"
+        "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa"
     )
-    assert bundle.m_agent_release_commit == "743651e5c74a4865f25a31dab68d188b5b0aed64"
+    assert bundle.m_agent_release_commit == "99dd386b6f2c93645334ec81c9791f3b0333d597"
 
 
 def test_m_agent_diagnostic_identity_matches_the_locked_project_dependency() -> None:

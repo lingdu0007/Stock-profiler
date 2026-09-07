@@ -47,6 +47,7 @@ from stock_profiler.bootstrap.decision_cases import (
 )
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.foundation.clock import Clock
+from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.decision_cases import domain as decision_domain
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import (
@@ -87,6 +88,7 @@ def _load_result_family_fixture(name: str) -> FrozenDecisionCase:
             encoding="utf-8"
         )
     )
+    payload["version_bundle"].update(CURRENT_M_AGENT_RELEASE.model_dump(mode="json"))
     return FrozenDecisionCase.model_validate(payload)
 
 
@@ -153,6 +155,15 @@ def test_formal_report_projection_fixture_matches_the_frozen_runtime(
         (ROOT / "tests" / "fixtures" / "synthetic" / "formal_report_projection.json").read_text(
             encoding="utf-8"
         )
+    )
+    historical = FormalReport.model_validate(fixture["report"])
+    assert historical.model_dump(mode="json") == fixture["report"]
+    assert historical.version_bundle.m_agent_version == "0.5.0"
+    fixture["report"]["version_bundle"].update(CURRENT_M_AGENT_RELEASE.model_dump(mode="json"))
+    fixture["report"].update(
+        framework_run_id="framework-run-1b14d533cff8531ec0612df33ec4e38ae4854bb7221691350ff1296ccd544139",
+        event_id="decision-event-87845603ba92b0b3167aedae29a4dfc35f83acdcb19c27f4ea2da3efac4fbdcd",
+        report_version_id="report-version-a6893bae845ac58aadc9139b3b52e5920cf9b940a4f128a64e16a6deb17f88c7",
     )
     outcome = run_default_frozen_decision_case(
         migrated_settings,

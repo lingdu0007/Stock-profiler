@@ -15,8 +15,10 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
 )
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 Transaction = TypeVar("Transaction")
 
@@ -81,6 +83,10 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def governance_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[GovernanceOutcome, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 

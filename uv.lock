@@ -760,13 +760,13 @@ wheels = [
 
 [[package]]
 name = "m-agent"
-version = "0.5.0"
-source = { url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl" }
+version = "0.5.1"
+source = { url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl" }
 dependencies = [
     { name = "pydantic" },
 ]
 wheels = [
-    { url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl", hash = "sha256:8c2592715e840f5d8da4ce239c663864d0c24a16fa05edcefef09071c4fb59a6" },
+    { url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl", hash = "sha256:7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa" },
 ]
 
 [package.metadata]
@@ -1442,7 +1442,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.0,<1.0.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0.0,<7.0.0" },
-    { name = "m-agent", url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.0/m_agent-0.5.0-py3-none-any.whl" },
+    { name = "m-agent", url = "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.17.0,<2.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0,<5.0.0" },
     { name = "pydantic-settings", specifier = ">=2.10.0,<3.0.0" },

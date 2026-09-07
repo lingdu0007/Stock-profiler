@@ -33,12 +33,11 @@ from m_agent.runtime import (
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import RuntimeStorage
 from stock_profiler.foundation.clock import Clock
-from stock_profiler.foundation.versioning import (
-    M_AGENT_DISTRIBUTION,
-    M_AGENT_RELEASE_COMMIT,
-    M_AGENT_WHEEL_SHA256,
-    M_AGENT_WHEEL_URL,
+from stock_profiler.foundation.decision_versions import (
+    CURRENT_M_AGENT_RELEASE,
+    HISTORICAL_M_AGENT_RELEASE,
 )
+from stock_profiler.foundation.versioning import M_AGENT_DISTRIBUTION
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_AGENT_DEFINITION_ID,
     FROZEN_OUTPUT_CONTRACT_VERSION,
@@ -258,6 +257,10 @@ async def execute_frozen_decision_case(
     except RunNotFoundError:
         if case.recovery_framework_run_id is not None:
             raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
+        if case.version_bundle.runtime_release != CURRENT_M_AGENT_RELEASE:
+            raise MappedDurableRunMissingError(
+                "historical runtime identity requires the original durable Run"
+            ) from None
         try:
             created = await runner.create_run(
                 definition.definition_id,
@@ -434,11 +437,11 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         or case.agent_definition.output_contract.json_schema != FROZEN_OUTPUT_SCHEMA
     ):
         raise ValueError("frozen AgentDefinition does not match the runtime adapter")
-    if (
-        bundle.m_agent_version != version(M_AGENT_DISTRIBUTION)
-        or bundle.m_agent_wheel_url != M_AGENT_WHEEL_URL
-        or bundle.m_agent_wheel_sha256 != M_AGENT_WHEEL_SHA256
-        or bundle.m_agent_release_commit != M_AGENT_RELEASE_COMMIT
+    if version(
+        M_AGENT_DISTRIBUTION
+    ) != CURRENT_M_AGENT_RELEASE.m_agent_version or bundle.runtime_release not in (
+        CURRENT_M_AGENT_RELEASE,
+        HISTORICAL_M_AGENT_RELEASE,
     ):
         raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
     try:
