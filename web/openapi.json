@@ -198,6 +198,24 @@
         "title": "CapabilityVersion",
         "type": "object"
       },
+      "CashBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "hard_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Hard Ratio",
+            "type": "string"
+          },
+          "target_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Ratio",
+            "type": "string"
+          }
+        },
+        "required": ["target_ratio", "hard_ratio"],
+        "title": "CashBudget",
+        "type": "object"
+      },
       "CertifiedBasisSubstitution": {
         "additionalProperties": false,
         "properties": {
@@ -292,6 +310,85 @@
         "title": "ChallengeDto",
         "type": "object"
       },
+      "CompleteAccountSnapshot": {
+        "additionalProperties": false,
+        "description": "One whole account at the portfolio cutoff, never a virtual allocation slice.",
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_type": {
+            "minLength": 1,
+            "title": "Account Type",
+            "type": "string"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "cash_fact_id": {
+            "minLength": 1,
+            "title": "Cash Fact Id",
+            "type": "string"
+          },
+          "currency": {
+            "minLength": 1,
+            "title": "Currency",
+            "type": "string"
+          },
+          "payables_fact_id": {
+            "minLength": 1,
+            "title": "Payables Fact Id",
+            "type": "string"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Permissions",
+            "type": "array"
+          },
+          "positions_fact_id": {
+            "minLength": 1,
+            "title": "Positions Fact Id",
+            "type": "string"
+          },
+          "receivables_fact_id": {
+            "minLength": 1,
+            "title": "Receivables Fact Id",
+            "type": "string"
+          },
+          "scope": {
+            "const": "FULL_ACCOUNT",
+            "title": "Scope",
+            "type": "string"
+          },
+          "unfinished_trades_fact_id": {
+            "minLength": 1,
+            "title": "Unfinished Trades Fact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "account_type",
+          "currency",
+          "permissions",
+          "scope",
+          "captured_at",
+          "cash_fact_id",
+          "positions_fact_id",
+          "receivables_fact_id",
+          "payables_fact_id",
+          "unfinished_trades_fact_id"
+        ],
+        "title": "CompleteAccountSnapshot",
+        "type": "object"
+      },
       "CorrectionEvidence": {
         "additionalProperties": false,
         "description": "New authoritative synthetic facts, distinct from the original Run's evidence.",
@@ -366,6 +463,40 @@
         },
         "required": ["challenge_id", "credential"],
         "title": "CredentialRequest",
+        "type": "object"
+      },
+      "DatedCashObligation": {
+        "additionalProperties": false,
+        "description": "A forward-recorded cash requirement that the selected portfolio must preserve.",
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "latest_usable_at": {
+            "format": "date-time",
+            "title": "Latest Usable At",
+            "type": "string"
+          },
+          "obligation_id": {
+            "minLength": 1,
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "purpose": {
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "target_account_id": {
+            "minLength": 1,
+            "title": "Target Account Id",
+            "type": "string"
+          }
+        },
+        "required": ["obligation_id", "amount", "purpose", "latest_usable_at", "target_account_id"],
+        "title": "DatedCashObligation",
         "type": "object"
       },
       "DecisionCaseVersionBundle": {
@@ -448,6 +579,29 @@
         "title": "DecisionCaseVersionBundle",
         "type": "object"
       },
+      "DeterministicProtectionFloor": {
+        "additionalProperties": false,
+        "description": "The actions retained when an authorization can no longer admit new exposure.",
+        "properties": {
+          "new_exposure_blocked": {
+            "const": true,
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "retained_directions": {
+            "items": {
+              "enum": ["REDUCE", "EXIT"],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Retained Directions",
+            "type": "array"
+          }
+        },
+        "required": ["new_exposure_blocked", "retained_directions"],
+        "title": "DeterministicProtectionFloor",
+        "type": "object"
+      },
       "DiagnosticObservation": {
         "additionalProperties": false,
         "properties": {
@@ -499,6 +653,93 @@
         },
         "required": ["contract_version", "rule_version", "planned_nodes"],
         "title": "DiagnosticPlan",
+        "type": "object"
+      },
+      "DownsideGridRequalificationEvidence": {
+        "additionalProperties": false,
+        "description": "Immutable historical and locked-forward proof for a changed downside grid.",
+        "properties": {
+          "action_policy_version_id": {
+            "minLength": 1,
+            "title": "Action Policy Version Id",
+            "type": "string"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "historical_completed_at": {
+            "format": "date-time",
+            "title": "Historical Completed At",
+            "type": "string"
+          },
+          "historical_out_of_sample_evidence_id": {
+            "minLength": 1,
+            "title": "Historical Out Of Sample Evidence Id",
+            "type": "string"
+          },
+          "locked_forward_confirmation_id": {
+            "minLength": 1,
+            "title": "Locked Forward Confirmation Id",
+            "type": "string"
+          },
+          "locked_forward_confirmed_at": {
+            "format": "date-time",
+            "title": "Locked Forward Confirmed At",
+            "type": "string"
+          },
+          "predecessor_authorization_id": {
+            "minLength": 1,
+            "title": "Predecessor Authorization Id",
+            "type": "string"
+          },
+          "predecessor_risk_budget_version_id": {
+            "minLength": 1,
+            "title": "Predecessor Risk Budget Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "predecessor_authorization_id",
+          "predecessor_risk_budget_version_id",
+          "action_policy_version_id",
+          "historical_out_of_sample_evidence_id",
+          "historical_completed_at",
+          "locked_forward_confirmation_id",
+          "locked_forward_confirmed_at",
+          "available_at"
+        ],
+        "title": "DownsideGridRequalificationEvidence",
+        "type": "object"
+      },
+      "DrawdownBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "caution_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Caution Ratio",
+            "type": "string"
+          },
+          "defensive_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Defensive Ratio",
+            "type": "string"
+          },
+          "preservation_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Preservation Ratio",
+            "type": "string"
+          }
+        },
+        "required": ["caution_ratio", "defensive_ratio", "preservation_ratio"],
+        "title": "DrawdownBudget",
         "type": "object"
       },
       "ErroneousAlertReplay": {
@@ -737,6 +978,27 @@
         "title": "EvidenceDependencyWindow",
         "type": "object"
       },
+      "ExcludedAccount": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "reason": {
+            "enum": ["NOT_SELECTED", "UNSUPPORTED_ACCOUNT_TYPE", "UNKNOWN_ACCOUNT_TYPE"],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "account_type", "reason"],
+        "title": "ExcludedAccount",
+        "type": "object"
+      },
       "ExternalResult": {
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
@@ -771,6 +1033,16 @@
           "outcome_code": {
             "title": "Outcome Code",
             "type": "string"
+          },
+          "portfolio": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "summary": {
             "title": "Summary",
@@ -1213,6 +1485,46 @@
         "title": "LegalTaskNode",
         "type": "object"
       },
+      "NormalMarketSessionEvidence": {
+        "additionalProperties": false,
+        "description": "One immutable normal market session from a versioned synthetic calendar.",
+        "properties": {
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "market_calendar_version_id": {
+            "minLength": 1,
+            "title": "Market Calendar Version Id",
+            "type": "string"
+          },
+          "market_session_ordinal": {
+            "minimum": 1.0,
+            "title": "Market Session Ordinal",
+            "type": "integer"
+          },
+          "normal": {
+            "const": true,
+            "title": "Normal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "market_calendar_version_id",
+          "market_session_ordinal",
+          "closed_at",
+          "normal"
+        ],
+        "title": "NormalMarketSessionEvidence",
+        "type": "object"
+      },
       "OpaqueRequestErrorDto": {
         "additionalProperties": false,
         "properties": {
@@ -1224,6 +1536,93 @@
           }
         },
         "title": "OpaqueRequestErrorDto",
+        "type": "object"
+      },
+      "PersonalRiskBudget": {
+        "additionalProperties": false,
+        "description": "The explicit synthetic risk configuration bound to exactly six calendar months.",
+        "properties": {
+          "action_policy_version_id": {
+            "minLength": 1,
+            "title": "Action Policy Version Id",
+            "type": "string"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/CashBudget"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/TwoThresholdBudget"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "downside_grid": {
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Downside Grid",
+            "type": "array"
+          },
+          "drawdown": {
+            "$ref": "#/components/schemas/DrawdownBudget"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "protection_floor": {
+            "$ref": "#/components/schemas/DeterministicProtectionFloor"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "stress": {
+            "$ref": "#/components/schemas/TwoThresholdBudget"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "version_id",
+          "action_policy_version_id",
+          "synthetic",
+          "generator_version",
+          "seed",
+          "effective_at",
+          "expires_at",
+          "concentration",
+          "stress",
+          "cash",
+          "drawdown",
+          "downside_grid",
+          "protection_floor"
+        ],
+        "title": "PersonalRiskBudget",
         "type": "object"
       },
       "PolicyBinding": {
@@ -1239,6 +1638,345 @@
         },
         "required": ["scope", "version"],
         "title": "PolicyBinding",
+        "type": "object"
+      },
+      "PortfolioAuthorization": {
+        "additionalProperties": false,
+        "description": "The append-only risk-budget authorization retained by a formal report.",
+        "properties": {
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "confirmation": {
+            "$ref": "#/components/schemas/PortfolioConfirmation"
+          },
+          "previous_authorization_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Authorization Id"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/PortfolioProposal"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "required": ["authorization_id", "proposal", "confirmation", "recorded_at"],
+        "title": "PortfolioAuthorization",
+        "type": "object"
+      },
+      "PortfolioAuthorizationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorization"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disposition": {
+            "enum": ["PREVIEWED", "APPROVED", "DENIED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "PortfolioAuthorizationOutcome",
+        "type": "object"
+      },
+      "PortfolioAuthorizationUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "authorization_snapshot": {
+            "$ref": "#/components/schemas/PortfolioAuthorization"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "requested_action": {
+            "enum": ["NEW_EXPOSURE", "DETERMINISTIC_PROTECTION"],
+            "title": "Requested Action",
+            "type": "string"
+          },
+          "retained_protection_floor": {
+            "$ref": "#/components/schemas/DeterministicProtectionFloor"
+          },
+          "unfinished_cash_obligations": {
+            "items": {
+              "$ref": "#/components/schemas/DatedCashObligation"
+            },
+            "title": "Unfinished Cash Obligations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requested_action",
+          "allowed",
+          "authorization_snapshot",
+          "retained_protection_floor",
+          "unfinished_cash_obligations",
+          "reasons",
+          "checked_at"
+        ],
+        "title": "PortfolioAuthorizationUsage",
+        "type": "object"
+      },
+      "PortfolioConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_id": {
+            "minLength": 1,
+            "title": "Confirmation Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "format": "date-time",
+            "title": "Confirmed At",
+            "type": "string"
+          },
+          "downside_grid_requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DownsideGridRequalificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "portfolio_id": {
+            "minLength": 1,
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "relaxation_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskBudgetRelaxationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk_budget_version_id": {
+            "minLength": 1,
+            "title": "Risk Budget Version Id",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "minLength": 1,
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_id",
+          "user_id",
+          "portfolio_id",
+          "snapshot_id",
+          "risk_budget_version_id",
+          "confirmed_at",
+          "confirmed"
+        ],
+        "title": "PortfolioConfirmation",
+        "type": "object"
+      },
+      "PortfolioPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "blocking_account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocking Account Ids",
+            "type": "array"
+          },
+          "blocking_accounts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExcludedAccount"
+            },
+            "title": "Blocking Accounts",
+            "type": "array"
+          },
+          "excluded_accounts": {
+            "items": {
+              "$ref": "#/components/schemas/ExcludedAccount"
+            },
+            "title": "Excluded Accounts",
+            "type": "array"
+          },
+          "included_account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Included Account Ids",
+            "type": "array"
+          },
+          "included_accounts": {
+            "items": {
+              "$ref": "#/components/schemas/CompleteAccountSnapshot"
+            },
+            "minItems": 1,
+            "title": "Included Accounts",
+            "type": "array"
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "portfolio_id",
+          "snapshot_id",
+          "included_accounts",
+          "included_account_ids",
+          "excluded_accounts",
+          "blocking_account_ids"
+        ],
+        "title": "PortfolioPreview",
+        "type": "object"
+      },
+      "PortfolioProposal": {
+        "additionalProperties": false,
+        "description": "The complete selection and policy snapshot shown before a user confirmation.",
+        "properties": {
+          "activation_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cash_obligations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DatedCashObligation"
+            },
+            "title": "Cash Obligations",
+            "type": "array"
+          },
+          "portfolio_id": {
+            "minLength": 1,
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "risk_budget": {
+            "$ref": "#/components/schemas/PersonalRiskBudget"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/PortfolioSnapshot"
+          }
+        },
+        "required": ["portfolio_id", "snapshot", "risk_budget"],
+        "title": "PortfolioProposal",
+        "type": "object"
+      },
+      "PortfolioSnapshot": {
+        "additionalProperties": false,
+        "description": "The common-cutoff universe from which full accounts can be selected.",
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/CompleteAccountSnapshot"
+            },
+            "minItems": 1,
+            "title": "Accounts",
+            "type": "array"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "selected_account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Selected Account Ids",
+            "type": "array"
+          },
+          "snapshot_id": {
+            "minLength": 1,
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": ["snapshot_id", "cutoff_at", "accounts", "selected_account_ids"],
+        "title": "PortfolioSnapshot",
         "type": "object"
       },
       "QualificationEvidence": {
@@ -2449,6 +3187,67 @@
         "title": "RetainedTaskRelation",
         "type": "object"
       },
+      "RiskBudgetRelaxationEvidence": {
+        "additionalProperties": false,
+        "description": "Synthetic proof required before a successor can relax a frozen risk budget.",
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "monthly_selection_cutoff_at": {
+            "format": "date-time",
+            "title": "Monthly Selection Cutoff At",
+            "type": "string"
+          },
+          "normal_from_at": {
+            "format": "date-time",
+            "title": "Normal From At",
+            "type": "string"
+          },
+          "normal_market_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/NormalMarketSessionEvidence"
+            },
+            "minItems": 20,
+            "title": "Normal Market Sessions",
+            "type": "array"
+          },
+          "normal_through_at": {
+            "format": "date-time",
+            "title": "Normal Through At",
+            "type": "string"
+          },
+          "predecessor_authorization_id": {
+            "minLength": 1,
+            "title": "Predecessor Authorization Id",
+            "type": "string"
+          },
+          "predecessor_risk_budget_version_id": {
+            "minLength": 1,
+            "title": "Predecessor Risk Budget Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "predecessor_authorization_id",
+          "predecessor_risk_budget_version_id",
+          "normal_from_at",
+          "normal_through_at",
+          "normal_market_sessions",
+          "monthly_selection_cutoff_at",
+          "available_at"
+        ],
+        "title": "RiskBudgetRelaxationEvidence",
+        "type": "object"
+      },
       "SafetyCapabilitiesDiagnosticDto": {
         "description": "Machine-readable official-project safety invariants.",
         "properties": {
@@ -2498,6 +3297,7 @@
               "HOST_VALIDATION",
               "BUSINESS_DECISION",
               "QUALIFICATION",
+              "PORTFOLIO_AUTHORIZATION",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -2575,6 +3375,24 @@
         },
         "required": ["allowed", "task_snapshot", "qualification_snapshot", "reasons", "checked_at"],
         "title": "TaskUsage",
+        "type": "object"
+      },
+      "TwoThresholdBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "hard_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Hard Ratio",
+            "type": "string"
+          },
+          "target_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Ratio",
+            "type": "string"
+          }
+        },
+        "required": ["target_ratio", "hard_ratio"],
+        "title": "TwoThresholdBudget",
         "type": "object"
       },
       "UserFact": {

@@ -1,0 +1,246 @@
+{
+  "synthetic": true,
+  "generator_version": "portfolio-authorization-fixture-v1",
+  "seed": 6101,
+  "proposal": {
+    "portfolio_id": "synthetic-decision-portfolio-alpha",
+    "snapshot": {
+      "snapshot_id": "synthetic-portfolio-snapshot-alpha",
+      "cutoff_at": "2042-05-17T16:00:00Z",
+      "accounts": [
+        {
+          "account_id": "synthetic-account-4017",
+          "account_type": "SIMULATED_CASH",
+          "currency": "XSP",
+          "permissions": ["SIMULATED_STATISTICAL_ACTION"],
+          "scope": "FULL_ACCOUNT",
+          "captured_at": "2042-05-17T16:00:00Z",
+          "cash_fact_id": "synthetic-cash-fact-4017",
+          "positions_fact_id": "synthetic-positions-fact-4017",
+          "receivables_fact_id": "synthetic-receivables-fact-4017",
+          "payables_fact_id": "synthetic-payables-fact-4017",
+          "unfinished_trades_fact_id": "synthetic-trades-fact-4017"
+        },
+        {
+          "account_id": "synthetic-account-margin-2001",
+          "account_type": "SIMULATED_MARGIN",
+          "currency": "XSP",
+          "permissions": ["SIMULATED_ACCOUNT_READ"],
+          "scope": "FULL_ACCOUNT",
+          "captured_at": "2042-05-17T16:00:00Z",
+          "cash_fact_id": "synthetic-cash-fact-margin-2001",
+          "positions_fact_id": "synthetic-positions-fact-margin-2001",
+          "receivables_fact_id": "synthetic-receivables-fact-margin-2001",
+          "payables_fact_id": "synthetic-payables-fact-margin-2001",
+          "unfinished_trades_fact_id": "synthetic-trades-fact-margin-2001"
+        }
+      ],
+      "selected_account_ids": ["synthetic-account-4017"]
+    },
+    "risk_budget": {
+      "contract_version": "1.0.0",
+      "version_id": "synthetic-risk-budget-alpha",
+      "action_policy_version_id": "synthetic-action-policy-alpha",
+      "synthetic": true,
+      "generator_version": "portfolio-authorization/1",
+      "seed": 6101,
+      "effective_at": "2042-05-17T16:00:00Z",
+      "expires_at": "2042-11-17T16:00:00Z",
+      "concentration": {
+        "target_ratio": "0.13",
+        "hard_ratio": "0.19"
+      },
+      "stress": {
+        "target_ratio": "0.14",
+        "hard_ratio": "0.18"
+      },
+      "cash": {
+        "target_ratio": "0.39",
+        "hard_ratio": "0.23"
+      },
+      "drawdown": {
+        "caution_ratio": "0.11",
+        "defensive_ratio": "0.16",
+        "preservation_ratio": "0.21"
+      },
+      "downside_grid": ["0.04", "0.09"],
+      "protection_floor": {
+        "new_exposure_blocked": true,
+        "retained_directions": ["REDUCE", "EXIT"]
+      }
+    },
+    "cash_obligations": [
+      {
+        "obligation_id": "synthetic-cash-obligation-alpha",
+        "amount": "125.50",
+        "purpose": "synthetic-near-term-liquidity",
+        "latest_usable_at": "2042-08-17T16:00:00Z",
+        "target_account_id": "synthetic-account-4017"
+      }
+    ]
+  },
+  "next_cash_account": {
+    "account_id": "synthetic-account-8029",
+    "account_type": "SIMULATED_CASH",
+    "currency": "XSP",
+    "permissions": ["SIMULATED_STATISTICAL_ACTION"],
+    "scope": "FULL_ACCOUNT",
+    "captured_at": "2042-05-18T16:00:00Z",
+    "cash_fact_id": "synthetic-cash-fact-8029",
+    "positions_fact_id": "synthetic-positions-fact-8029",
+    "receivables_fact_id": "synthetic-receivables-fact-8029",
+    "payables_fact_id": "synthetic-payables-fact-8029",
+    "unfinished_trades_fact_id": "synthetic-trades-fact-8029"
+  },
+  "risk_relaxation_evidence": {
+    "evidence_id": "synthetic-risk-relaxation-evidence-alpha",
+    "predecessor_authorization_id": "synthetic-predecessor-authorization",
+    "predecessor_risk_budget_version_id": "synthetic-risk-budget-alpha",
+    "normal_from_at": "2042-05-20T15:00:00Z",
+    "normal_through_at": "2042-06-16T15:00:00Z",
+    "normal_market_sessions": [
+      {
+        "evidence_id": "synthetic-normal-market-session-01",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6101,
+        "closed_at": "2042-05-20T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-02",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6102,
+        "closed_at": "2042-05-21T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-03",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6103,
+        "closed_at": "2042-05-22T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-04",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6104,
+        "closed_at": "2042-05-25T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-05",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6105,
+        "closed_at": "2042-05-26T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-06",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6106,
+        "closed_at": "2042-05-27T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-07",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6107,
+        "closed_at": "2042-05-28T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-08",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6108,
+        "closed_at": "2042-05-29T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-09",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6109,
+        "closed_at": "2042-06-01T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-10",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6110,
+        "closed_at": "2042-06-02T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-11",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6111,
+        "closed_at": "2042-06-03T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-12",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6112,
+        "closed_at": "2042-06-04T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-13",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6113,
+        "closed_at": "2042-06-05T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-14",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6114,
+        "closed_at": "2042-06-08T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-15",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6115,
+        "closed_at": "2042-06-09T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-16",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6116,
+        "closed_at": "2042-06-10T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-17",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6117,
+        "closed_at": "2042-06-11T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-18",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6118,
+        "closed_at": "2042-06-12T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-19",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6119,
+        "closed_at": "2042-06-15T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-20",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6120,
+        "closed_at": "2042-06-16T15:00:00Z",
+        "normal": true
+      }
+    ],
+    "monthly_selection_cutoff_at": "2042-06-17T16:00:00Z",
+    "available_at": "2042-06-16T15:00:00Z"
+  }
+}

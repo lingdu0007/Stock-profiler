@@ -40,6 +40,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 METADATA = MetaData()
@@ -114,6 +115,76 @@ class DecisionLedger:
         self, connection: Connection, access_scope: ResultAccessScope
     ) -> tuple[GovernanceOutcome, ...]:
         """Select original authority by its saved owner, accounts and visibility before use."""
+        return tuple(
+            fact.result.governance
+            for fact in self._original_event_facts(connection, "governance history is unavailable")
+            if (
+                fact.case.access_scope is not None
+                and fact.case.access_scope.same_scope_as(access_scope)
+                and fact.result.governance is not None
+            )
+        )
+
+    def portfolio_authorization_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        knowledge_cutoff: str,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read only one visible lineage whose retained evidence predates the cutoff."""
+        cutoff = datetime.fromisoformat(knowledge_cutoff)
+        return tuple(
+            portfolio
+            for portfolio in self.portfolio_authorization_lineage(
+                connection,
+                access_scope,
+                portfolio_id,
+            )
+            if portfolio.authorization is not None
+            and portfolio.authorization.evidence_available_by(cutoff)
+        )
+
+    def portfolio_authorization_lineage(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read a trusted host-only lineage for stale revision/use rejection, never projection."""
+        return tuple(
+            portfolio
+            for portfolio in self.portfolio_authorization_owner_lineage(
+                connection,
+                access_scope,
+            )
+            if portfolio.authorization is not None
+            and portfolio.authorization.proposal.portfolio_id == portfolio_id
+        )
+
+    def portfolio_authorization_owner_lineage(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read same-owner/visibility history only for negative cross-portfolio guards."""
+        return tuple(
+            portfolio
+            for fact in self._original_event_facts(
+                connection, "portfolio authorization history is unavailable"
+            )
+            if (
+                (scope := fact.case.access_scope) is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and (portfolio := fact.result.portfolio) is not None
+                and portfolio.authorization is not None
+            )
+        )
+
+    def _original_event_facts(
+        self, connection: Connection, unavailable_message: str
+    ) -> tuple[DecisionEventFact, ...]:
         event_ids = (
             connection.execute(
                 select(DECISION_EVENTS.c.decision_event_id).where(
@@ -123,18 +194,13 @@ class DecisionLedger:
             .scalars()
             .all()
         )
-        history = []
+        facts = []
         for event_id in event_ids:
             fact = self.get_decision_event(event_id, connection)
             if fact is None:
-                raise DecisionEventCommitError("governance history is unavailable")
-            if (
-                fact.case.access_scope is not None
-                and fact.case.access_scope.same_scope_as(access_scope)
-                and fact.result.governance is not None
-            ):
-                history.append(fact.result.governance)
-        return tuple(history)
+                raise DecisionEventCommitError(unavailable_message)
+            facts.append(fact)
+        return tuple(facts)
 
     @contextmanager
     def serialize_case_execution(self) -> Iterator[Connection]:

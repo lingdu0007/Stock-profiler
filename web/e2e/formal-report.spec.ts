@@ -25,6 +25,7 @@ let apiPort = 0;
 let temporaryDirectory = "";
 let report: FormalReport;
 let correctionReport: FormalReport;
+let portfolioReport: FormalReport;
 let shadowReportId = "";
 let sessionToken = "";
 let csrfToken = "";
@@ -32,6 +33,7 @@ let apiProcess: ChildProcess | undefined;
 let httpsProxy: HttpsServer | undefined;
 
 test.beforeAll(async () => {
+  test.setTimeout(60_000);
   temporaryDirectory = await mkdtemp(join(tmpdir(), "stock-profiler-playwright-"));
   const applicationDatabase = join(temporaryDirectory, "application.sqlite3");
   const environment = {
@@ -40,7 +42,10 @@ test.beforeAll(async () => {
     STOCK_PROFILER_AUTH_ORIGIN: browserOrigin,
     STOCK_PROFILER_AUTH_RP_ID: "localhost",
     STOCK_PROFILER_ENVIRONMENT: "test",
-    STOCK_PROFILER_REPORT_ACCOUNT_IDS: JSON.stringify(["synthetic-account-4017"]),
+    STOCK_PROFILER_REPORT_ACCOUNT_IDS: JSON.stringify([
+      "synthetic-account-4017",
+      "synthetic-account-margin-2001"
+    ]),
     STOCK_PROFILER_REPORT_PERMISSIONS: JSON.stringify(["REPORT_READ", "USER_FACT"]),
     STOCK_PROFILER_M_AGENT_RUN_STORE_PATH: join(temporaryDirectory, "m-agent-runs.sqlite3"),
     STOCK_PROFILER_SOURCE_SHA: "a".repeat(40)
@@ -72,6 +77,76 @@ test.beforeAll(async () => {
     { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
   );
   correctionReport = (JSON.parse(correction.stdout) as DecisionCaseExecution).report;
+  const portfolioCasePath = join(temporaryDirectory, "synthetic-portfolio-case.json");
+  await execFile(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      [
+        "import json",
+        "import sys",
+        "from pathlib import Path",
+        "from stock_profiler.bootstrap.settings import load_settings",
+        "from stock_profiler.modules.decision_cases.domain import load_frozen_decision_case",
+        "settings = load_settings()",
+        "proposal = json.loads(",
+        "    Path('tests/fixtures/synthetic/portfolio_authorization.json').read_text(",
+        "        encoding='utf-8'",
+        "    )",
+        ")['proposal']",
+        "cutoff = '2025-05-17T16:00:00Z'",
+        "proposal['snapshot']['snapshot_id'] = 'synthetic-portfolio-snapshot-browser-acceptance'",
+        "proposal['snapshot']['cutoff_at'] = cutoff",
+        "for account in proposal['snapshot']['accounts']:",
+        "    account['captured_at'] = cutoff",
+        "proposal['risk_budget']['effective_at'] = cutoff",
+        "proposal['risk_budget']['expires_at'] = '2025-11-17T16:00:00Z'",
+        "proposal['cash_obligations'][0]['latest_usable_at'] = '2025-08-17T16:00:00Z'",
+        "case = load_frozen_decision_case(settings).model_dump(mode='json')",
+        "case['business_identity'] = 'synthetic:portfolio:browser-acceptance'",
+        "case['case_id'] = 'd0-portfolio-browser-acceptance'",
+        "case['version_bundle'].update(",
+        "    case_contract_version='6.0.0',",
+        "    host_contract_version='6.0.0',",
+        "    report_projection_contract_version='6.0.0',",
+        "    agent_definition_version='2.0.0'",
+        ")",
+        "case['agent_definition']['version'] = '2.0.0'",
+        "case['access_scope'] = {",
+        "    'contract_version': '1.0.0',",
+        "    'user_id': 'stock-profiler-single-user',",
+        "    'account_ids': [account['account_id'] for account in proposal['snapshot']['accounts']],",
+        "    'visibility': 'USER'",
+        "}",
+        "case['knowledge_cutoff'] = cutoff",
+        "case['portfolio'] = {",
+        "    'operation': 'PORTFOLIO_CONFIRM',",
+        "    'proposal': proposal,",
+        "    'previous_authorization_id': None,",
+        "    'confirmation': {",
+        "        'confirmation_id': 'synthetic-risk-confirmation-alpha',",
+        "        'user_id': 'stock-profiler-single-user',",
+        "        'portfolio_id': proposal['portfolio_id'],",
+        "        'snapshot_id': proposal['snapshot']['snapshot_id'],",
+        "        'risk_budget_version_id': proposal['risk_budget']['version_id'],",
+        "        'confirmed_at': cutoff,",
+        "        'confirmed': True",
+        "    }",
+        "}",
+        "Path(sys.argv[1]).write_text(json.dumps(case), encoding='utf-8')"
+      ].join("\n"),
+      portfolioCasePath
+    ],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  const portfolioExecution = await execFile(
+    "uv",
+    ["run", "stock-profiler", "decision-case-run", "--case", portfolioCasePath],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  portfolioReport = (JSON.parse(portfolioExecution.stdout) as DecisionCaseExecution).report;
   const shadow = await execFile(
     "uv",
     [
@@ -178,6 +253,34 @@ test("shows the committed CLI report from the authenticated API on every page lo
   await page.reload();
   expect((await reloadedReportResponse).status()).toBe(200);
   await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).toBeVisible();
+});
+
+test("projects the versioned portfolio CLI case through the authenticated PWA", async ({
+  page
+}) => {
+  await installAuthenticatedSession(page);
+  const receivedReport = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/reports/${portfolioReport.report_version_id}`
+  );
+
+  await page.goto(`${browserOrigin}/reports/${portfolioReport.report_version_id}`);
+
+  const response = await receivedReport;
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  expect(await response.json()).toEqual(portfolioReport);
+  const authorization = page.getByRole("region", { name: "Portfolio authorization" });
+  await expect(authorization).toBeVisible();
+  await expect(authorization.getByText("APPROVED", { exact: true })).toBeVisible();
+  const confirmation = page.getByRole("region", { name: "Portfolio confirmation" });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation.getByText("synthetic-risk-budget-alpha")).toBeVisible();
+  await expect(confirmation.getByText("synthetic-cash-obligation-alpha")).toBeVisible();
+  await expect(confirmation.getByText("synthetic-action-policy-alpha")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /generate|prefill|submit|modify|cancel order/i })
+  ).toHaveCount(0);
 });
 
 test("does not reveal a report when the API returns an unauthenticated response", async ({

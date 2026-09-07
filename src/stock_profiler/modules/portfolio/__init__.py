@@ -1,1 +1,1 @@
-"""Portfolio ownership boundary without account or allocation behavior."""
+"""Portfolio ownership boundary for frozen, synthetic risk-budget contracts."""

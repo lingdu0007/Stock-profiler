@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import correctionFixture from "../../tests/fixtures/synthetic/frozen_correction_evidence.json";
+import portfolioFixture from "../../tests/fixtures/synthetic/portfolio_authorization.json";
 import { App } from "./App";
 import { syntheticReport as report } from "./test-support/synthetic-report";
 
@@ -42,6 +43,160 @@ describe("App", () => {
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(
       `/api/v1/reports/${report.report_version_id}`
     );
+  });
+
+  it("renders the frozen portfolio authorization evidence from the committed report", async () => {
+    const portfolioReport = {
+      ...report,
+      result: {
+        ...report.result,
+        portfolio: {
+          disposition: "PREVIEWED",
+          reasons: ["PORTFOLIO_SCOPE_PREVIEWED"],
+          preview: {
+            portfolio_id: portfolioFixture.proposal.portfolio_id,
+            snapshot_id: portfolioFixture.proposal.snapshot.snapshot_id,
+            included_accounts: [portfolioFixture.proposal.snapshot.accounts[0]],
+            included_account_ids: ["synthetic-account-4017"],
+            excluded_accounts: [
+              {
+                account_id: "synthetic-account-margin-2001",
+                account_type: "SIMULATED_MARGIN",
+                reason: "UNSUPPORTED_ACCOUNT_TYPE"
+              }
+            ],
+            blocking_account_ids: [],
+            blocking_accounts: []
+          },
+          authorization: null,
+          usage: null
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${portfolioReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(portfolioReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const authorization = await screen.findByRole("region", {
+      name: "Portfolio authorization"
+    });
+    expect(authorization).toHaveTextContent("PORTFOLIO_SCOPE_PREVIEWED");
+    expect(authorization).toHaveTextContent("synthetic-account-4017");
+    expect(authorization).toHaveTextContent("FULL_ACCOUNT");
+    expect(authorization).toHaveTextContent("XSP");
+    expect(authorization).toHaveTextContent("SIMULATED_STATISTICAL_ACTION");
+    expect(authorization).toHaveTextContent("synthetic-account-margin-2001");
+    expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
+  });
+
+  it("renders the confirmation and budget snapshot retained by a portfolio use", async () => {
+    const proposal = {
+      ...portfolioFixture.proposal,
+      activation_snapshot: {
+        ...portfolioFixture.proposal.snapshot,
+        snapshot_id: "synthetic-portfolio-snapshot-alpha-activation",
+        cutoff_at: "2042-05-18T16:00:00Z",
+        accounts: portfolioFixture.proposal.snapshot.accounts.map((account) => ({
+          ...account,
+          captured_at: "2042-05-18T16:00:00Z"
+        }))
+      },
+      risk_budget: {
+        ...portfolioFixture.proposal.risk_budget,
+        effective_at: "2042-05-18T16:00:00Z",
+        expires_at: "2042-11-18T16:00:00Z"
+      }
+    };
+    const authorizationSnapshot = {
+      authorization_id: "decision-event-portfolio-alpha",
+      previous_authorization_id: null,
+      recorded_at: "2042-05-17T16:01:00Z",
+      confirmation: {
+        confirmation_id: "synthetic-risk-confirmation-alpha",
+        user_id: "stock-profiler-single-user",
+        portfolio_id: "synthetic-decision-portfolio-alpha",
+        snapshot_id: "synthetic-portfolio-snapshot-alpha",
+        risk_budget_version_id: "synthetic-risk-budget-alpha",
+        confirmed_at: "2042-05-17T16:00:00Z",
+        confirmed: true,
+        relaxation_evidence: portfolioFixture.risk_relaxation_evidence,
+        downside_grid_requalification: {
+          evidence_id: "synthetic-grid-requalification-alpha",
+          predecessor_authorization_id: "decision-event-portfolio-alpha",
+          predecessor_risk_budget_version_id: "synthetic-risk-budget-alpha",
+          action_policy_version_id: "synthetic-action-policy-grid-beta",
+          historical_out_of_sample_evidence_id: "synthetic-grid-history-grid-beta",
+          historical_completed_at: "2042-06-10T15:00:00Z",
+          locked_forward_confirmation_id: "synthetic-grid-forward-grid-beta",
+          locked_forward_confirmed_at: "2042-06-16T14:59:00Z",
+          available_at: "2042-06-16T15:00:00Z"
+        }
+      },
+      proposal
+    };
+    const usageReport = {
+      ...report,
+      result: {
+        ...report.result,
+        portfolio: {
+          disposition: "DENIED",
+          reasons: ["RISK_BUDGET_EXPIRED"],
+          preview: null,
+          authorization: null,
+          usage: {
+            requested_action: "NEW_EXPOSURE",
+            allowed: false,
+            authorization_snapshot: authorizationSnapshot,
+            retained_protection_floor: {
+              new_exposure_blocked: true,
+              retained_directions: ["REDUCE", "EXIT"]
+            },
+            unfinished_cash_obligations: authorizationSnapshot.proposal.cash_obligations,
+            reasons: ["RISK_BUDGET_EXPIRED"],
+            checked_at: "2042-11-17T16:01:00Z"
+          }
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${usageReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(usageReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const confirmation = await screen.findByRole("region", { name: "Portfolio confirmation" });
+    expect(confirmation).toHaveTextContent("synthetic-risk-confirmation-alpha");
+    expect(confirmation).toHaveTextContent("synthetic-risk-budget-alpha");
+    expect(confirmation).toHaveTextContent("2042-11-18T16:00:00Z");
+    expect(confirmation).toHaveTextContent("synthetic-cash-obligation-alpha");
+    expect(confirmation).toHaveTextContent("SIMULATED_STATISTICAL_ACTION");
+    expect(confirmation).toHaveTextContent("synthetic-risk-relaxation-evidence-alpha");
+    expect(confirmation).toHaveTextContent("Normal market sessions");
+    expect(confirmation).toHaveTextContent("20");
+    expect(confirmation).toHaveTextContent("synthetic-portfolio-snapshot-alpha-activation");
+    expect(confirmation).toHaveTextContent("Activation cutoff");
+    expect(confirmation).toHaveTextContent("synthetic-market-calendar-v1");
+    expect(confirmation).toHaveTextContent("Action policy");
+    expect(confirmation).toHaveTextContent("synthetic-action-policy-alpha");
+    expect(confirmation).toHaveTextContent("synthetic-grid-requalification-alpha");
+    expect(confirmation).toHaveTextContent("Historical out-of-sample evidence");
+    expect(confirmation).toHaveTextContent("Locked forward confirmation");
   });
 
   it("shows correction lineage supplied by the committed report projection", async () => {

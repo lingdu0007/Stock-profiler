@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
 
+from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.cli import main
 from stock_profiler.modules.decision_cases.domain import load_frozen_decision_case
@@ -83,6 +86,82 @@ def test_cli_replay_rejects_an_unknown_business_identity(
 
     with pytest.raises(SystemExit, match="2"):
         main()
+
+
+def test_cli_rejects_a_versioned_case_for_a_command_other_than_run(
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "stock-profiler",
+            "decision-case-replay",
+            "--business-identity",
+            "synthetic:decision:orbital-mosaic:001",
+            "--case",
+            "/tmp/synthetic-case.json",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        main()
+
+
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    [
+        pytest.param(
+            "recovery_framework_run_id",
+            "synthetic-original-run",
+            id="recovery-marked",
+        ),
+        pytest.param(
+            "host_application_version",
+            "synthetic-uninstalled-version",
+            id="incorrect-host-application-version",
+        ),
+    ],
+)
+def test_cli_rejects_an_invalid_host_case_before_creating_any_result(
+    migrated_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_field: str,
+    invalid_value: str,
+) -> None:
+    case_payload = load_frozen_decision_case(migrated_settings).model_dump(mode="json")
+    if invalid_field == "host_application_version":
+        version_bundle = case_payload["version_bundle"]
+        assert isinstance(version_bundle, dict)
+        version_bundle[invalid_field] = invalid_value
+    else:
+        case_payload[invalid_field] = invalid_value
+    case_path = tmp_path / f"synthetic-{invalid_field}-case.json"
+    case_path.write_text(json.dumps(case_payload), encoding="utf-8")
+    monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["stock-profiler", "decision-case-run", "--case", str(case_path)],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        main()
+
+    assert DecisionLedger.from_settings(migrated_settings).counts() == {
+        "business_objects": 0,
+        "decision_events": 0,
+        "reports": 0,
+    }
+    assert [
+        (fact.surface, fact.reason)
+        for fact in ResultDelivery.from_settings(migrated_settings).audit_history()
+    ] == [
+        ("HOST", "UNDECLARED_CAPABILITY"),
+        ("CLI", "UNDECLARED_CAPABILITY"),
+    ]
 
 
 def test_cli_creates_a_short_lived_host_console_grant_without_an_http_request(

@@ -23,6 +23,12 @@ from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
+from stock_profiler.modules.portfolio.contracts import (
+    PortfolioAuthorizationOutcome,
+    PortfolioCommand,
+    PortfolioConfirmationCommand,
+    PortfolioUseCommand,
+)
 from stock_profiler.modules.qualification.contracts import (
     GovernanceCommand,
     GovernanceOutcome,
@@ -35,7 +41,7 @@ FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
-_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0"})
+_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0", "6.0.0"})
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
     {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, *_SCOPED_CASE_CONTRACT_VERSIONS}
 )
@@ -46,6 +52,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("3.0.0", "3.0.0"),
         ("4.0.0", "4.0.0"),
         ("5.0.0", "5.0.0"),
+        ("6.0.0", "6.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -135,6 +142,9 @@ class ExternalResult(FrozenContract):
     governance: GovernanceOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    portfolio: PortfolioAuthorizationOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class GateResult(FrozenContract):
@@ -168,6 +178,7 @@ StagePhase = Literal[
     "HOST_VALIDATION",
     "BUSINESS_DECISION",
     "QUALIFICATION",
+    "PORTFOLIO_AUTHORIZATION",
     "ADJUDICATION_LIFECYCLE",
     "VALIDITY_LIFECYCLE",
     "EXECUTION_LIFECYCLE",
@@ -219,6 +230,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
     "BUSINESS_DECISION": _BUSINESS_RESULT_STATUSES,
     "QUALIFICATION": frozenset({"SUCCEEDED", "REJECTED"}),
+    "PORTFOLIO_AUTHORIZATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
     "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
     "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
@@ -569,14 +581,21 @@ class FrozenDecisionCase(FrozenContract):
     governance: GovernanceCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    portfolio: PortfolioCommand | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
         scoped = self.version_bundle.case_contract_version in _SCOPED_CASE_CONTRACT_VERSIONS
         governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
+        portfolio_governed = self.version_bundle.case_contract_version == "6.0.0"
+        authorization_governed = governed or portfolio_governed
         if governed != (self.governance is not None):
             raise ValueError("governance requires a governed frozen contract")
+        if portfolio_governed != (self.portfolio is not None):
+            raise ValueError("portfolio requires a portfolio frozen contract")
+        if self.governance is not None and self.portfolio is not None:
+            raise ValueError("a frozen case cannot combine governance and portfolio commands")
         if (
             self.version_bundle.case_contract_version == "4.0.0"
             and self.governance is not None
@@ -587,16 +606,35 @@ class FrozenDecisionCase(FrozenContract):
             )
         ):
             raise ValueError("extended governance requires the version 5 frozen contract")
-        if governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
+        if authorization_governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
             raise ValueError("governed cases require a timezone-aware knowledge cutoff")
-        if self.expected_external_result.governance is not None:
-            raise ValueError("governance is a host decision, never framework output")
+        if (
+            self.expected_external_result.governance is not None
+            or self.expected_external_result.portfolio is not None
+        ):
+            raise ValueError("host decisions are never framework output")
         if self.governance is not None and (
             self.access_scope is None
             or self.governance.scope.user_id != self.access_scope.user_id
             or set(self.governance.scope.account_ids) != set(self.access_scope.account_ids)
         ):
             raise ValueError("governance and frozen access scope must agree")
+        if (
+            self.portfolio is not None
+            and not isinstance(self.portfolio, PortfolioUseCommand)
+            and (
+                self.access_scope is None
+                or set(self.portfolio.proposal.snapshot.account_ids)
+                != set(self.access_scope.account_ids)
+            )
+        ):
+            raise ValueError("portfolio and frozen access scope must agree")
+        if (
+            isinstance(self.portfolio, PortfolioConfirmationCommand)
+            and self.access_scope is not None
+            and self.portfolio.confirmation.user_id != self.access_scope.user_id
+        ):
+            raise ValueError("portfolio confirmation and frozen access scope must agree")
         account = self.input.get("account")
         definition_version = definition_version_for_case_contract(
             self.version_bundle.case_contract_version
@@ -900,6 +938,9 @@ _COMPLETE_SYNTHETIC_INPUT = {
         },
     ],
 }
+_COMPLETE_SYNTHETIC_PORTFOLIO_ACCOUNT_IDS = frozenset(
+    {"synthetic-account-4017", "synthetic-account-8029"}
+)
 
 
 def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> StageResult:
@@ -1048,6 +1089,14 @@ def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
     """Read the explicit synthetic scenario without consulting expected output."""
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    account = input_without_scenario.get("account")
+    if (
+        isinstance(account, dict)
+        and account.get("account_id") in _COMPLETE_SYNTHETIC_PORTFOLIO_ACCOUNT_IDS
+    ):
+        normalized_account = dict(account)
+        normalized_account["account_id"] = "synthetic-account-4017"
+        input_without_scenario["account"] = normalized_account
     if input_without_scenario != _COMPLETE_SYNTHETIC_INPUT:
         return None
     return outcome_code if outcome_code in _SYNTHETIC_OUTCOMES else None

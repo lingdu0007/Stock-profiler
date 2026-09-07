@@ -66,7 +66,10 @@ def run_frozen_decision_case(
         case = FrozenDecisionCase.model_validate(payload)
         if case.recovery_framework_run_id is not None:
             raise ValueError("use explicit original-Run recovery")
-        if case.version_bundle.host_source_sha != settings.source_sha:
+        if (
+            case.version_bundle.host_application_version != settings.configuration_version
+            or case.version_bundle.host_source_sha != settings.source_sha
+        ):
             raise ValueError("frozen host provenance does not match the executing build")
     except ValueError:
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(

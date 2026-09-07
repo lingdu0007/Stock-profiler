@@ -69,6 +69,14 @@ h2 {
   text-transform: uppercase;
 }
 
+h3 {
+  color: #475569;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  margin: 0 0 12px;
+  text-transform: uppercase;
+}
+
 .report-layout,
 .sign-in {
   margin-top: 28px;
@@ -106,6 +114,10 @@ h2 {
 .report-section {
   border-bottom: 1px solid #cbd5e1;
   padding: 24px 0;
+}
+
+.portfolio-subsection {
+  margin-top: 24px;
 }
 
 .reason-list {

@@ -13,6 +13,18 @@ frontend type declaration match the FastAPI OpenAPI document. `make artifacts`
 creates local wheel, sdist, Web archive, checksum, version-bundle, and SPDX
 SBOM inputs. Local artifact output is ignored by Git.
 
+## Frozen Case Acceptance
+
+`stock-profiler decision-case-run --case /absolute/path/synthetic-case.json`
+accepts one complete versioned synthetic frozen case through the same host
+acceptance seam as the packaged demonstration case. The local input must pass
+the frozen contract and exact host-provenance checks for the executing
+application version and source SHA before it can create a Run or report; the
+CLI forwards its parsed JSON object unchanged to those host checks, and invalid
+input is rejected and audited. `--case` is available only for
+`decision-case-run`. These synthetic case files are local runtime inputs, not
+files to add to Git.
+
 ## Frozen Recovery
 
 `stock-profiler decision-case-replay --business-identity <identity>` reuses the

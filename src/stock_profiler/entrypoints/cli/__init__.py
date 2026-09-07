@@ -18,6 +18,7 @@ from stock_profiler.bootstrap.decision_cases import (
     correct_default_frozen_decision_case,
     replay_default_frozen_decision_case,
     run_default_frozen_decision_case,
+    run_frozen_decision_case,
 )
 from stock_profiler.bootstrap.settings import load_settings
 from stock_profiler.entrypoints.cli.service import (
@@ -54,8 +55,11 @@ def main() -> None:
     parser.add_argument("process", nargs="?", choices=("api", "scheduler", "worker"))
     parser.add_argument("--business-identity")
     parser.add_argument("--purpose", choices=("bootstrap", "recovery"))
+    parser.add_argument("--case", type=Path)
     parser.add_argument("--recovery-case", type=Path)
     args = parser.parse_args()
+    if args.case is not None and args.command != "decision-case-run":
+        parser.error("--case is only valid for decision-case-run")
     if args.recovery_case is not None and args.command != "decision-case-replay":
         parser.error("--recovery-case is only valid for decision-case-replay")
     settings = load_settings()
@@ -63,7 +67,18 @@ def main() -> None:
         print(json.dumps(version_snapshot(settings), sort_keys=True))
         return
     if args.command == "decision-case-run":
-        print(run_default_frozen_decision_case(settings).model_dump_json())
+        try:
+            execution = (
+                run_frozen_decision_case(
+                    settings,
+                    json.loads(args.case.read_text()),
+                )
+                if args.case is not None
+                else run_default_frozen_decision_case(settings)
+            )
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        print(execution.model_dump_json())
         return
     if args.command == "decision-case-replay":
         if args.business_identity is None:

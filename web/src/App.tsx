@@ -106,6 +106,7 @@ function VersionDiagnostics() {
 
 function FormalReportView({ report }: { report: FormalReport }) {
   const correction = report.result.correction_evidence;
+  const portfolio = report.result.portfolio;
   return (
     <section aria-label="Formal report" className="report-layout">
       <div className="report-heading">
@@ -145,6 +146,8 @@ function FormalReportView({ report }: { report: FormalReport }) {
           </dl>
         </section>
       )}
+
+      {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
@@ -204,6 +207,248 @@ function FormalReportView({ report }: { report: FormalReport }) {
       </section>
     </section>
   );
+}
+
+type PortfolioAuthorizationOutcome = NonNullable<FormalReport["result"]["portfolio"]>;
+type PortfolioPreview = NonNullable<PortfolioAuthorizationOutcome["preview"]>;
+type PortfolioAuthorization = NonNullable<PortfolioAuthorizationOutcome["authorization"]>;
+type PortfolioAuthorizationUsage = NonNullable<PortfolioAuthorizationOutcome["usage"]>;
+
+function PortfolioAuthorizationEvidence({
+  portfolio
+}: {
+  portfolio: PortfolioAuthorizationOutcome;
+}) {
+  const authorization = portfolio.authorization ?? portfolio.usage?.authorization_snapshot;
+  return (
+    <section className="report-section" aria-label="Portfolio authorization">
+      <h2>Portfolio authorization</h2>
+      <dl className="record-list">
+        <Record label="Disposition" value={portfolio.disposition} />
+        <Record label="Reasons" value={portfolio.reasons.join(", ")} />
+      </dl>
+      {portfolio.preview && <PortfolioPreviewEvidence preview={portfolio.preview} />}
+      {authorization && <PortfolioConfirmationEvidence authorization={authorization} />}
+      {portfolio.usage && <PortfolioUsageEvidence usage={portfolio.usage} />}
+    </section>
+  );
+}
+
+function PortfolioPreviewEvidence({ preview }: { preview: PortfolioPreview }) {
+  return (
+    <section className="portfolio-subsection" aria-label="Portfolio scope preview">
+      <h3>Scope preview</h3>
+      <dl className="record-list">
+        <Record label="Portfolio" value={preview.portfolio_id} />
+        <Record label="Snapshot" value={preview.snapshot_id} />
+        {preview.included_accounts.map((account) => (
+          <Record
+            key={account.account_id}
+            label={`Included ${account.account_id}`}
+            value={formatAccountSnapshot(account)}
+          />
+        ))}
+        {preview.excluded_accounts.map((account) => (
+          <Record
+            key={account.account_id}
+            label={`Excluded ${account.account_id}`}
+            value={`${account.account_type} | ${account.reason}`}
+          />
+        ))}
+        {preview.blocking_accounts.map((account) => (
+          <Record
+            key={account.account_id}
+            label={`Blocked ${account.account_id}`}
+            value={`${account.account_type} | ${account.reason}`}
+          />
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function PortfolioConfirmationEvidence({
+  authorization
+}: {
+  authorization: PortfolioAuthorization;
+}) {
+  const { confirmation, proposal } = authorization;
+  const { risk_budget: budget } = proposal;
+  return (
+    <section className="portfolio-subsection" aria-label="Portfolio confirmation">
+      <h3>Confirmation</h3>
+      <dl className="record-list">
+        <Record label="Authorization" value={authorization.authorization_id} />
+        {authorization.previous_authorization_id && (
+          <Record label="Previous authorization" value={authorization.previous_authorization_id} />
+        )}
+        <Record label="Recorded" value={authorization.recorded_at} />
+        <Record label="Confirmation" value={confirmation.confirmation_id} />
+        <Record label="Confirmed" value={confirmation.confirmed_at} />
+        <Record label="Selected snapshot" value={proposal.snapshot.snapshot_id} />
+        <Record label="Risk budget" value={budget.version_id} />
+        <Record label="Action policy" value={budget.action_policy_version_id} />
+        <Record label="Effective" value={budget.effective_at} />
+        <Record label="Expires" value={budget.expires_at} />
+        {proposal.snapshot.accounts
+          .filter((account) => proposal.snapshot.selected_account_ids.includes(account.account_id))
+          .map((account) => (
+            <Record
+              key={`selection-${account.account_id}`}
+              label={`Selected account ${account.account_id}`}
+              value={formatAccountSnapshot(account)}
+            />
+          ))}
+        {proposal.activation_snapshot && (
+          <>
+            <Record label="Activation snapshot" value={proposal.activation_snapshot.snapshot_id} />
+            <Record label="Activation cutoff" value={proposal.activation_snapshot.cutoff_at} />
+            {proposal.activation_snapshot.accounts
+              .filter((account) =>
+                proposal.activation_snapshot?.selected_account_ids.includes(account.account_id)
+              )
+              .map((account) => (
+                <Record
+                  key={`activation-${account.account_id}`}
+                  label={`Activation account ${account.account_id}`}
+                  value={formatAccountSnapshot(account)}
+                />
+              ))}
+          </>
+        )}
+        <Record
+          label="Concentration"
+          value={`${budget.concentration.target_ratio} target | ${budget.concentration.hard_ratio} hard`}
+        />
+        <Record
+          label="Stress"
+          value={`${budget.stress.target_ratio} target | ${budget.stress.hard_ratio} hard`}
+        />
+        <Record
+          label="Cash"
+          value={`${budget.cash.target_ratio} target | ${budget.cash.hard_ratio} hard`}
+        />
+        <Record
+          label="Drawdown"
+          value={`${budget.drawdown.caution_ratio} caution | ${budget.drawdown.defensive_ratio} defensive | ${budget.drawdown.preservation_ratio} preservation`}
+        />
+        <Record label="Downside grid" value={budget.downside_grid.join(", ")} />
+        <Record
+          label="Protection floor"
+          value={budget.protection_floor.retained_directions.join(", ")}
+        />
+        {confirmation.relaxation_evidence && (
+          <>
+            <Record
+              label="Risk relaxation evidence"
+              value={confirmation.relaxation_evidence.evidence_id}
+            />
+            <Record
+              label="Normal state through"
+              value={confirmation.relaxation_evidence.normal_through_at}
+            />
+            <Record
+              label="Normal market sessions"
+              value={String(confirmation.relaxation_evidence.normal_market_sessions.length)}
+            />
+            <Record
+              label="Market calendar"
+              value={
+                confirmation.relaxation_evidence.normal_market_sessions[0]
+                  ?.market_calendar_version_id ?? ""
+              }
+            />
+            <Record
+              label="Monthly activation cutoff"
+              value={confirmation.relaxation_evidence.monthly_selection_cutoff_at}
+            />
+          </>
+        )}
+        {confirmation.downside_grid_requalification && (
+          <>
+            <Record
+              label="Downside-grid requalification"
+              value={confirmation.downside_grid_requalification.evidence_id}
+            />
+            <Record
+              label="Requalified action policy"
+              value={confirmation.downside_grid_requalification.action_policy_version_id}
+            />
+            <Record
+              label="Historical out-of-sample evidence"
+              value={
+                confirmation.downside_grid_requalification.historical_out_of_sample_evidence_id
+              }
+            />
+            <Record
+              label="Locked forward confirmation"
+              value={confirmation.downside_grid_requalification.locked_forward_confirmation_id}
+            />
+          </>
+        )}
+        {proposal.cash_obligations.map((obligation) => (
+          <Record
+            key={obligation.obligation_id}
+            label={`Cash obligation ${obligation.obligation_id}`}
+            value={formatCashObligation(obligation)}
+          />
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function PortfolioUsageEvidence({ usage }: { usage: PortfolioAuthorizationUsage }) {
+  return (
+    <section className="portfolio-subsection" aria-label="Portfolio authorization use">
+      <h3>Authorization use</h3>
+      <dl className="record-list">
+        <Record label="Requested action" value={usage.requested_action} />
+        <Record label="Allowed" value={usage.allowed ? "ALLOWED" : "BLOCKED"} />
+        <Record label="Checked" value={usage.checked_at} />
+        <Record label="Reasons" value={usage.reasons.join(", ")} />
+        <Record
+          label="Authorization snapshot"
+          value={usage.authorization_snapshot.authorization_id}
+        />
+        <Record
+          label="Retained directions"
+          value={usage.retained_protection_floor.retained_directions.join(", ")}
+        />
+        {usage.unfinished_cash_obligations.map((obligation) => (
+          <Record
+            key={obligation.obligation_id}
+            label={`Unfinished obligation ${obligation.obligation_id}`}
+            value={formatCashObligation(obligation)}
+          />
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function formatAccountSnapshot(account: PortfolioPreview["included_accounts"][number]): string {
+  return [
+    `${account.account_type} | ${account.currency} | ${account.scope}`,
+    `permissions ${account.permissions.join(", ")}`,
+    `facts captured ${account.captured_at}`,
+    `cash ${account.cash_fact_id}`,
+    `positions ${account.positions_fact_id}`,
+    `receivables ${account.receivables_fact_id}`,
+    `payables ${account.payables_fact_id}`,
+    `unfinished trades ${account.unfinished_trades_fact_id}`
+  ].join(" | ");
+}
+
+function formatCashObligation(
+  obligation: PortfolioAuthorization["proposal"]["cash_obligations"][number]
+): string {
+  return [
+    obligation.amount,
+    obligation.purpose,
+    `latest ${obligation.latest_usable_at}`,
+    `account ${obligation.target_account_id}`
+  ].join(" | ");
 }
 
 function Record({ label, value }: { label: string; value: string }) {

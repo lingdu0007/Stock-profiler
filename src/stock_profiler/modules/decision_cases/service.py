@@ -46,6 +46,8 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
+from stock_profiler.modules.portfolio.contracts import portfolio_id_for
+from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -175,6 +177,7 @@ def correct_default_frozen_decision_case(
                     load_frozen_correction_payload()
                 ),
                 governance=original_event.result.governance,
+                portfolio=original_event.result.portfolio,
             )
             correction_stages = (
                 StageResult(
@@ -464,6 +467,7 @@ def _commit_framework_result(
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
     qualification_result: StageResult | None = None
+    portfolio_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -500,6 +504,43 @@ def _commit_framework_result(
                     ),
                     reasons=governance.reasons,
                 )
+            if business_result is not None and execution_case.portfolio is not None:
+                assert execution_case.access_scope is not None
+                portfolio = adjudicate_portfolio(
+                    execution_case.portfolio,
+                    event_id=execution_case.decision_event_id,
+                    observed_at=ledger.observed_at(),
+                    history=ledger.portfolio_authorization_history(
+                        connection,
+                        execution_case.access_scope,
+                        portfolio_id_for(execution_case.portfolio),
+                        execution_case.knowledge_cutoff,
+                    ),
+                    lineage_history=ledger.portfolio_authorization_lineage(
+                        connection,
+                        execution_case.access_scope,
+                        portfolio_id_for(execution_case.portfolio),
+                    ),
+                    owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
+                        connection,
+                        execution_case.access_scope,
+                    ),
+                    access_account_ids=execution_case.access_scope.account_ids,
+                    knowledge_cutoff=execution_case.knowledge_cutoff,
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"portfolio": portfolio})
+                portfolio_result = StageResult(
+                    phase="PORTFOLIO_AUTHORIZATION",
+                    status="SUCCEEDED" if portfolio.disposition != "DENIED" else "REJECTED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="PORTFOLIO_SCOPE",
+                            status="PASSED" if portfolio.disposition != "DENIED" else "FAILED",
+                        ),
+                    ),
+                    reasons=portfolio.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -522,12 +563,20 @@ def _commit_framework_result(
             stage_result=qualification_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if portfolio_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=portfolio_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
         validation_result,
         *((business_result,) if business_result is not None else ()),
         *((qualification_result,) if qualification_result is not None else ()),
+        *((portfolio_result,) if portfolio_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

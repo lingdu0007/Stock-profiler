@@ -24,15 +24,34 @@ nonterminal M-Agent Run is resumed under its original identity, while framework
 states, host validation outcomes, business commits, publication, notifications,
 and corrections retain their own append-only phase records.
 
-Governed D0 cases record qualification in a separate `QUALIFICATION` stage.
-Neither approval nor denial replaces the original business or lifecycle
-outcome. Non-success business prerequisites cannot create authorization;
-their saved negative outcomes remain readable. Evidence must have been
-available by the original frozen knowledge cutoff, even when execution is
-delayed. This also applies to inherited authorization evidence and every
-retained alert. Invalid or timezone-less governed cutoffs are rejected and
-audited before creating a Run. Reading a saved qualification outcome is
-historical replay, not a new grant or activation.
+Governed D0 cases record qualification and portfolio authorization in separate
+stages. Neither approval nor denial replaces the original business or lifecycle
+outcome. Non-success business prerequisites cannot create statistical
+authorization; established deterministic protection remains independently
+readable. Evidence must have been available by the original frozen knowledge
+cutoff, even when execution is delayed. This includes portfolio snapshots,
+user confirmations, risk-relaxation proof, inherited authorization evidence,
+and every retained alert. A forward portfolio authorization freezes the
+selected portfolio snapshot shown to the user and a complete activation snapshot
+that follows that confirmation; the latter retains the same complete account
+scope and selection and exactly binds the successor risk budget's effective
+instant. A synthetic risk-budget relaxation proof retains at least twenty
+consecutive normal-market sessions from one immutable synthetic calendar map,
+including each session's ordinal and close time. It must be available before the
+user's renewed confirmation, remain current at that confirmation, and bind the
+successor's next calendar-defined monthly activation snapshot and cutoff. Invalid or timezone-less
+governed cutoffs are rejected and audited before creating a Run. Reading a saved
+qualification outcome is historical replay, not a new grant or activation.
+
+A changed downside grid also binds a distinct action-policy version and immutable
+requalification evidence: a historical out-of-sample result and a locked
+forward confirmation must both predate the user confirmation and be available
+by the frozen cutoff. Reusing an action-policy version with a different grid or
+substituting the user confirmation for the locked forward record fails closed.
+Each requalification proof identity binds one exact retained proof regardless
+of which proof-identity field carries it; any later same-owner,
+same-visibility case that would attach one of those identities to different
+proof content fails closed without returning retained evidence.
 
 Governed D0 commands supply an explicit `QualificationPolicy` inside their
 capability version. Its contract version, policy version, original synthetic
