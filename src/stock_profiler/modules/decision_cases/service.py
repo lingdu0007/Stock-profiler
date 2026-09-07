@@ -48,6 +48,7 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.portfolio.contracts import portfolio_id_for
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
+from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
@@ -180,6 +181,7 @@ def correct_default_frozen_decision_case(
                 governance=original_event.result.governance,
                 portfolio=original_event.result.portfolio,
                 position=original_event.result.position,
+                concentration=original_event.result.concentration,
             )
             correction_stages = (
                 StageResult(
@@ -471,6 +473,7 @@ def _commit_framework_result(
     qualification_result: StageResult | None = None
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
+    concentration_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -507,22 +510,27 @@ def _commit_framework_result(
                     ),
                     reasons=governance.reasons,
                 )
-            if business_result is not None and execution_case.portfolio is not None:
+            portfolio_command = (
+                execution_case.concentration.authorization
+                if execution_case.concentration is not None
+                else execution_case.portfolio
+            )
+            if business_result is not None and portfolio_command is not None:
                 assert execution_case.access_scope is not None
                 portfolio = adjudicate_portfolio(
-                    execution_case.portfolio,
+                    portfolio_command,
                     event_id=execution_case.decision_event_id,
                     observed_at=ledger.observed_at(),
                     history=ledger.portfolio_authorization_history(
                         connection,
                         execution_case.access_scope,
-                        portfolio_id_for(execution_case.portfolio),
+                        portfolio_id_for(portfolio_command),
                         execution_case.knowledge_cutoff,
                     ),
                     lineage_history=ledger.portfolio_authorization_lineage(
                         connection,
                         execution_case.access_scope,
-                        portfolio_id_for(execution_case.portfolio),
+                        portfolio_id_for(portfolio_command),
                     ),
                     owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
                         connection,
@@ -544,19 +552,24 @@ def _commit_framework_result(
                     ),
                     reasons=portfolio.reasons,
                 )
-            if business_result is not None and execution_case.position is not None:
+            position_command = (
+                execution_case.concentration.position_snapshot
+                if execution_case.concentration is not None
+                else execution_case.position
+            )
+            if business_result is not None and position_command is not None:
                 assert execution_case.access_scope is not None
                 position = reconcile_position(
-                    execution_case.position,
+                    position_command,
                     prior_ledger=ledger.position_ledger_history(
                         connection,
                         execution_case.access_scope,
-                        execution_case.position.cutoff_at,
+                        position_command.cutoff_at,
                     ),
                     prior_cash_states=ledger.position_cash_history(
                         connection,
                         execution_case.access_scope,
-                        execution_case.position.cutoff_at,
+                        position_command.cutoff_at,
                     ),
                 )
                 result = result.model_copy(update={"position": position})
@@ -570,6 +583,38 @@ def _commit_framework_result(
                         ),
                     ),
                     reasons=position.reasons,
+                )
+            if business_result is not None and execution_case.concentration is not None:
+                assert result.portfolio is not None and result.position is not None
+                assert execution_case.access_scope is not None
+                concentration = assess_concentration(
+                    execution_case.concentration,
+                    result.portfolio,
+                    result.position,
+                    history=ledger.concentration_history(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.concentration.authorization.portfolio_id,
+                    ),
+                    authorization_lineage=ledger.portfolio_authorization_lineage(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.concentration.authorization.portfolio_id,
+                    ),
+                )
+                result = result.model_copy(update={"concentration": concentration})
+                concentration_result = StageResult(
+                    phase="ISSUER_CONCENTRATION",
+                    status="SUCCEEDED" if concentration.disposition == "ASSESSED" else "REJECTED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="CONCENTRATION_FACTS",
+                            status="PASSED"
+                            if concentration.disposition == "ASSESSED"
+                            else "FAILED",
+                        ),
+                    ),
+                    reasons=concentration.reasons,
                 )
     ledger.record_stage_result(
         connection,
@@ -607,6 +652,13 @@ def _commit_framework_result(
             stage_result=position_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if concentration_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=concentration_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -615,6 +667,7 @@ def _commit_framework_result(
         *((qualification_result,) if qualification_result is not None else ()),
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
+        *((concentration_result,) if concentration_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

@@ -43,6 +43,30 @@ successor's next calendar-defined monthly activation snapshot and cutoff. Invali
 governed cutoffs are rejected and audited before creating a Run. Reading a saved
 qualification outcome is historical replay, not a new grant or activation.
 
+Version 8 frozen cases add a distinct issuer-concentration stage using the
+saved deterministic portfolio authorization and reconciled position snapshot.
+Issuer exposure aggregates current market value across the selected accounts;
+the denominator is reconciled account equity less explicit, evidenced
+liquidation costs in the snapshot currency. Thresholds have no engine defaults.
+At the target boundary there is no concentration action; above target through
+the inclusive hard boundary, new exposure is blocked without a sell direction.
+Above the hard boundary a persistent reduction obligation freezes per-security
+quantity caps and its originating policy identity. Later price, cash or account
+changes cannot relax an unexecuted cap. Open sell orders do not release exposure;
+reconciled fills reduce the remaining quantity, while unavailable execution
+retains the direction, target and current gap.
+
+Missing evidence, incompatible prices for the same security, nonpositive net
+equity and unavailable quantity-basis conversion fail closed. Quantity-changing
+corporate actions after an obligation starts preserve the original target with
+an unknown execution gap until its basis can be reconciled. Historical account
+expansion retains covered obligations. A narrowed scope with an uncovered
+obligation receives only a blocking reason, never the inaccessible obligation
+details. Out-of-order snapshots cannot replace newer obligations. These saved
+facts use the existing event/publication boundary and read-only report scope;
+corrections preserve them without re-adjudication. No order-writing or personal
+activation capability is introduced.
+
 A changed downside grid also binds a distinct action-policy version and immutable
 requalification evidence: a historical out-of-sample result and a locked
 forward confirmation must both predate the user confirmation and be available

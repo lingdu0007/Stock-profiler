@@ -750,6 +750,123 @@
         "title": "CompleteAccountSnapshot",
         "type": "object"
       },
+      "ConcentrationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": ["ASSESSED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "issuers": {
+            "items": {
+              "$ref": "#/components/schemas/IssuerConcentration"
+            },
+            "title": "Issuers",
+            "type": "array"
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "portfolio_net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Net Liquidation Equity"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "risk_budget_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Budget Version Id"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TwoThresholdBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valuation_currency": {
+            "title": "Valuation Currency",
+            "type": "string"
+          }
+        },
+        "required": [
+          "disposition",
+          "reasons",
+          "portfolio_id",
+          "snapshot_id",
+          "cutoff_at",
+          "valuation_currency",
+          "portfolio_net_liquidation_equity",
+          "risk_budget_version_id",
+          "thresholds",
+          "issuers"
+        ],
+        "title": "ConcentrationOutcome",
+        "type": "object"
+      },
+      "ConcentrationTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "required_reduction_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Reduction Quantity"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "target_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Quantity",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "target_quantity", "required_reduction_quantity"],
+        "title": "ConcentrationTarget",
+        "type": "object"
+      },
       "CorrectionEvidence": {
         "additionalProperties": false,
         "description": "New authoritative synthetic facts, distinct from the original Run's evidence.",
@@ -1364,6 +1481,16 @@
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
         "properties": {
+          "concentration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConcentrationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "correction_evidence": {
             "anyOf": [
               {
@@ -1793,6 +1920,141 @@
         },
         "required": ["disposition", "reasons"],
         "title": "GovernanceOutcome",
+        "type": "object"
+      },
+      "IssuerConcentration": {
+        "additionalProperties": false,
+        "properties": {
+          "current_market_exposure": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Market Exposure"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "const": "REDUCE",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "execution_blocked": {
+            "title": "Execution Blocked",
+            "type": "boolean"
+          },
+          "exposure_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exposure Gap"
+          },
+          "issuer_id": {
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "new_exposure_blocked": {
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "obligation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Obligation Id"
+          },
+          "obligation_risk_budget_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Obligation Risk Budget Version Id"
+          },
+          "obligation_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Obligation Started At"
+          },
+          "obligation_thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TwoThresholdBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position_weight": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Weight"
+          },
+          "state": {
+            "enum": ["NORMAL", "BUFFER", "REMEDIATION_REQUIRED", "RESOLVED", "UNKNOWN"],
+            "title": "State",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ConcentrationTarget"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "issuer_id",
+          "current_market_exposure",
+          "position_weight",
+          "state",
+          "new_exposure_blocked",
+          "direction",
+          "obligation_id",
+          "targets",
+          "exposure_gap",
+          "execution_blocked"
+        ],
+        "title": "IssuerConcentration",
         "type": "object"
       },
       "IssuerExposure": {
@@ -4302,6 +4564,7 @@
               "QUALIFICATION",
               "PORTFOLIO_AUTHORIZATION",
               "POSITION_RECONCILIATION",
+              "ISSUER_CONCENTRATION",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",

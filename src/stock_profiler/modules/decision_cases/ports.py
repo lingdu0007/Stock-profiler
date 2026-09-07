@@ -20,6 +20,7 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.position_management.concentration_contracts import ConcentrationHistory
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -89,6 +90,13 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def concentration_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> ConcentrationHistory: ...
 
     def governance_history(
         self, connection: Transaction, access_scope: ResultAccessScope

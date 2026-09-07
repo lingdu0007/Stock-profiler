@@ -17,7 +17,7 @@ type DecisionCaseExecution = {
 
 const execFile = promisify(executeFile);
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
-const vitePort = 4173;
+const vitePort = Number(process.env.STOCK_PROFILER_E2E_WEB_PORT ?? "4173");
 const proxyPort = Number(process.env.STOCK_PROFILER_E2E_PROXY_PORT ?? "4174");
 const browserOrigin = `https://localhost:${proxyPort}`;
 const apiReadyTimeoutMilliseconds = 15_000;
@@ -26,6 +26,7 @@ let temporaryDirectory = "";
 let report: FormalReport;
 let correctionReport: FormalReport;
 let portfolioReport: FormalReport;
+let concentrationReport: FormalReport;
 let shadowReportId = "";
 let sessionToken = "";
 let csrfToken = "";
@@ -44,6 +45,8 @@ test.beforeAll(async () => {
     STOCK_PROFILER_ENVIRONMENT: "test",
     STOCK_PROFILER_REPORT_ACCOUNT_IDS: JSON.stringify([
       "synthetic-account-4017",
+      "synthetic-account-8029",
+      "synthetic-account-9031",
       "synthetic-account-margin-2001"
     ]),
     STOCK_PROFILER_REPORT_PERMISSIONS: JSON.stringify(["REPORT_READ", "USER_FACT"]),
@@ -147,6 +150,18 @@ test.beforeAll(async () => {
     { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
   );
   portfolioReport = (JSON.parse(portfolioExecution.stdout) as DecisionCaseExecution).report;
+  const concentrationCasePath = join(temporaryDirectory, "synthetic-concentration-case.json");
+  await execFile(
+    "uv",
+    ["run", "python", "tests/integration/concentration_browser_fixture.py", concentrationCasePath],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "api" } }
+  );
+  const concentrationExecution = await execFile(
+    "uv",
+    ["run", "stock-profiler", "decision-case-run", "--case", concentrationCasePath],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  concentrationReport = (JSON.parse(concentrationExecution.stdout) as DecisionCaseExecution).report;
   const shadow = await execFile(
     "uv",
     [
@@ -295,6 +310,44 @@ test("does not reveal a report when the API returns an unauthenticated response"
   expect((await deniedResponse).status()).toBe(401);
   await expect(page.getByRole("button", { name: "Continue with Passkey" })).toBeVisible();
   await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).not.toBeVisible();
+});
+
+test("retains the CLI concentration obligation in authenticated desktop and mobile reports", async ({
+  page
+}, testInfo) => {
+  await installAuthenticatedSession(page);
+  expect(concentrationReport.result.concentration?.disposition).toBe("ASSESSED");
+  const issuer = concentrationReport.result.concentration!.issuers[0];
+  const target = issuer.targets[0];
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const received = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        `/api/v1/reports/${concentrationReport.report_version_id}`
+    );
+    await page.goto(`${browserOrigin}/reports/${concentrationReport.report_version_id}`);
+    expect(await (await received).json()).toEqual(concentrationReport);
+    const concentration = page.getByRole("region", { name: "Issuer concentration" });
+    await expect(concentration).toBeVisible();
+    await expect(concentration.getByText("REDUCE", { exact: true })).toBeVisible();
+    await expect(
+      concentration.getByText(
+        `Target quantity ${target.target_quantity}; required reduction ${target.required_reduction_quantity}`,
+        { exact: true }
+      )
+    ).toBeVisible();
+    await expect(
+      concentration.getByText(String(issuer.exposure_gap), { exact: true })
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`concentration-${width}.png`),
+      fullPage: true
+    });
+  }
 });
 
 test("retains original and corrected evidence across desktop and mobile views", async ({
