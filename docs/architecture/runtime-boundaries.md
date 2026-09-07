@@ -137,6 +137,10 @@ reconciled equity under the frozen formula, not latched as a nominal amount.
 A valuation-only change cannot discharge the obligation: release requires
 confirmed cash restoration backed by a retained sale fill or a newly settled
 external obligation payment, as well as complete funding evidence.
+Discharge checks use the latest confirmed cash progress; an earlier insufficient
+partial fill cannot be reused to discharge the obligation after repricing.
+Confirmed target completion is retained independently while funding evidence
+is repaired. Rejected snapshots cannot broaden the authoritative protection scope.
 Unknown disposal terms preserve independently known cash deficits and valid
 settled payments. Account expansion retains same-owner, same-visibility
 protection history; omitting accounts with retained protection fails closed

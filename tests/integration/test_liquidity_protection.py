@@ -323,6 +323,26 @@ def test_partial_cash_restoration_keeps_the_original_normal_target_obligation(
     assert outcome["remediation_shortfall"] == Decimal("110")
     assert outcome["remediation_id"] == first.decision_event_id
     assert outcome["new_exposure_blocked"] is True
+    repriced = deepcopy(later)
+    repriced["business_identity"] += ":repriced"
+    repriced["case_id"] += "-repriced"
+    repriced["knowledge_cutoff"] = "2042-05-19T16:00:00Z"
+    repriced_snapshot = repriced["liquidity"]["position_snapshot"]
+    repriced_snapshot["cutoff_at"] = repriced["knowledge_cutoff"]
+    refresh_current_position_evidence(repriced_snapshot, repriced["knowledge_cutoff"])
+    repriced_snapshot["accounts"][0]["account_equity"] = "550"
+    repriced_snapshot["accounts"][0]["positions"][0]["market_price"] = "3"
+    repriced["liquidity"]["sale_terms"][0]["transferable_at"] = repriced["knowledge_cutoff"]
+    repriced_execution = run_frozen_decision_case(
+        migrated_settings, repriced, clock=GovernanceClock()
+    )
+    assert repriced_execution.report is not None
+    repriced_outcome = repriced_execution.report.result.liquidity
+    assert repriced_outcome is not None
+    assert repriced_outcome.normal_cash_target == Decimal("214.50")
+    assert repriced_outcome.remediation_id == first.decision_event_id
+    assert repriced_outcome.disposition == "REMEDIATION_REQUIRED"
+    assert repriced_outcome.new_exposure_blocked is True
 
 
 def test_evidence_failure_preserves_an_established_cash_restoration_obligation(
@@ -444,8 +464,10 @@ def test_business_failure_keeps_protection_without_authorizing_new_exposure(
     assert outcome["remediation_shortfall"] == (Decimal("190") if cash == "200" else Decimal("0"))
 
 
+@pytest.mark.parametrize("include_terms", [True, False])
 def test_confirmed_sell_restriction_is_zero_legal_funding_not_unknown_evidence(
     migrated_settings: Settings,
+    include_terms: bool,
 ) -> None:
     obligations = portfolio_proposal()["cash_obligations"]
     payload = liquidity_payload(migrated_settings, "restricted-sale", obligations=obligations)
@@ -460,6 +482,8 @@ def test_confirmed_sell_restriction_is_zero_legal_funding_not_unknown_evidence(
             "evidence": snapshot["snapshot_evidence"],
         }
     ]
+    if not include_terms:
+        payload["liquidity"]["sale_terms"] = []
     execution = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
     assert execution.report is not None
     outcome = execution.report.result.model_dump()["liquidity"]
@@ -632,3 +656,14 @@ def test_restoration_release_requires_confirmed_cash_and_complete_funding_eviden
         assert outcome["remediation_id"] == first.decision_event_id
         assert outcome["retained_remediation_shortfall"] == Decimal("190")
         assert outcome["new_exposure_blocked"] is True
+        assert outcome["restoration_cash_confirmed"] is True
+        recovered = deepcopy(later)
+        recovered["business_identity"] += ":funding-evidence-restored"
+        recovered["case_id"] += "-funding-evidence-restored"
+        recovered["liquidity"]["sale_terms"][0]["evidence"] = snapshot["snapshot_evidence"]
+        execution = run_frozen_decision_case(migrated_settings, recovered, clock=GovernanceClock())
+        assert execution.report is not None
+        recovered_outcome = execution.report.result.liquidity
+        assert recovered_outcome is not None
+        assert recovered_outcome.disposition == "AVAILABLE"
+        assert recovered_outcome.remediation_id is None

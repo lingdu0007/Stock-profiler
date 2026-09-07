@@ -8,6 +8,7 @@ from pydantic import AwareDatetime, Field
 
 from stock_profiler.modules.portfolio.contracts import DatedCashObligation, PortfolioContract
 from stock_profiler.modules.position_management.contracts import (
+    PositionActionUnit,
     PositionEvidence,
     ReconciledPositionSnapshot,
 )
@@ -88,8 +89,17 @@ def assess_funding(
             obligations=(),
         )
     by_security = {(item.account_id, item.security_id): item for item in terms}
-    expected = {(unit.account_id, unit.security_id) for unit in snapshot.action_units}
-    if len(by_security) != len(terms) or set(by_security) != expected:
+    captured = {(unit.account_id, unit.security_id) for unit in snapshot.action_units}
+    required = {
+        (unit.account_id, unit.security_id)
+        for unit in snapshot.action_units
+        if not _known_unsellable(unit)
+    }
+    if (
+        len(by_security) != len(terms)
+        or not required.issubset(by_security)
+        or not set(by_security).issubset(captured)
+    ):
         return FundingAssessment(
             reasons=("SALE_FUNDING_TERMS_INCOMPLETE",),
             maximum_fundable_cash=None,
@@ -99,6 +109,8 @@ def assess_funding(
         )
     plan: list[MaximumFundingLeg] = []
     for unit in snapshot.action_units:
+        if _known_unsellable(unit):
+            continue
         term = by_security[unit.account_id, unit.security_id]
         if (
             term.evidence.problem_codes(snapshot.cutoff_at, require_current_completeness=True)
@@ -112,12 +124,6 @@ def assess_funding(
                 obligations=(),
             )
         maximum = unit.exact_statistical_action_quantity
-        if (
-            maximum is None
-            and unit.reasons
-            and all(reason.startswith("EXECUTION_RESTRICTION_ACTIVE:") for reason in unit.reasons)
-        ):
-            continue
         if maximum is None or unit.market_price is None:
             return FundingAssessment(
                 reasons=("SALE_FUNDING_QUANTITY_UNKNOWN",),
@@ -178,6 +184,13 @@ def assess_funding(
             if not obligations or used[cash_resource_count + index] > 0
         ),
         obligations=tuple(results),
+    )
+
+
+def _known_unsellable(unit: PositionActionUnit) -> bool:
+    return unit.exact_statistical_action_quantity == 0 or (
+        bool(unit.reasons)
+        and all(reason.startswith("EXECUTION_RESTRICTION_ACTIVE:") for reason in unit.reasons)
     )
 
 

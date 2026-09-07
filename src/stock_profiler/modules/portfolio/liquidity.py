@@ -72,6 +72,7 @@ class LiquidityOutcome(PortfolioContract):
     deployable_purchase_cash: Decimal | None = None
     remediation_shortfall: Decimal | None = None
     remediation_id: str | None = None
+    restoration_cash_confirmed: bool = False
     retained_remediation_shortfall: Decimal | None = None
     maximum_fundable_cash: Decimal | None = None
     uncovered_obligation_gap: Decimal | None = None
@@ -102,11 +103,19 @@ def assess_liquidity(
         default=None,
     )
     prior = latest[1] if latest is not None else None
+    cash_progress = (
+        _last_cash_assessment(history, prior.remediation_id)
+        if prior is not None and prior.remediation_id is not None
+        else None
+    )
     history_scope_incomplete = (
         prior is not None
         and prior.remediation_id is not None
-        and not {cash.account_id for cash in prior.position_snapshot.snapshot.cash_states}.issubset(
-            command.position_snapshot.account_ids
+        and (
+            cash_progress is None
+            or not {
+                cash.account_id for cash in cash_progress.position_snapshot.snapshot.cash_states
+            }.issubset(command.position_snapshot.account_ids)
         )
     )
     if history_scope_incomplete:
@@ -132,6 +141,11 @@ def assess_liquidity(
             remediation_id=prior_remediation_id,
             retained_remediation_shortfall=retained_shortfall,
             settled_coverage=coverage,
+            restoration_cash_confirmed=(
+                cash_progress.restoration_cash_confirmed
+                if cash_progress is not None and not history_scope_incomplete
+                else False
+            ),
         )
 
     if history_scope_incomplete:
@@ -199,14 +213,14 @@ def assess_liquidity(
             else Decimal(0)
         )
         funding = assess_funding(snapshot, command.sale_terms, outstanding, command.transfer_routes)
+        cash_restoration_confirmed = (
+            prior_remediation_id is not None
+            and restoration == 0
+            and _restoration_confirmed(prior_remediation_id, position, qualified, coverage, history)
+        )
         remediation_active = restoration > 0 or (
             prior_remediation_id is not None
-            and (
-                bool(funding.reasons)
-                or not _restoration_confirmed(
-                    prior_remediation_id, position, qualified, coverage, history
-                )
-            )
+            and (bool(funding.reasons) or not cash_restoration_confirmed)
         )
         disposition: Literal["AVAILABLE", "ZERO_DEPLOYABLE_CASH", "REMEDIATION_REQUIRED"]
         if remediation_active:
@@ -259,6 +273,7 @@ def assess_liquidity(
             deployable_purchase_cash=deployable,
             remediation_shortfall=restoration,
             remediation_id=(prior_remediation_id or event_id) if remediation_active else None,
+            restoration_cash_confirmed=cash_restoration_confirmed,
             retained_remediation_shortfall=retained_shortfall if funding.reasons else None,
             maximum_fundable_cash=funding.maximum_fundable_cash,
             uncovered_obligation_gap=funding.uncovered_gap,
@@ -273,6 +288,22 @@ def assess_liquidity(
         )
 
 
+def _last_cash_assessment(
+    history: tuple[LiquidityOutcome, ...],
+    remediation_id: str,
+) -> LiquidityOutcome | None:
+    latest = max(
+        (
+            (index, item)
+            for index, item in enumerate(history)
+            if item.remediation_id == remediation_id and item.qualified_cash is not None
+        ),
+        key=lambda pair: (pair[1].position_snapshot.snapshot.cutoff_at, pair[0]),
+        default=None,
+    )
+    return latest[1] if latest is not None else None
+
+
 def _restoration_confirmed(
     remediation_id: str,
     position: PositionReconciliationOutcome,
@@ -280,12 +311,17 @@ def _restoration_confirmed(
     coverage: tuple[SettledObligationCoverage, ...],
     history: tuple[LiquidityOutcome, ...],
 ) -> bool:
-    trigger = next(item for item in history if item.remediation_id == remediation_id)
-    original_receipts = {item.receipt_id for item in trigger.settled_coverage}
-    if any(item.receipt_id not in original_receipts for item in coverage):
-        return True
-    if trigger.qualified_cash is None or qualified_cash <= trigger.qualified_cash:
+    progress = _last_cash_assessment(history, remediation_id)
+    if progress is None or progress.qualified_cash is None:
         return False
+    if progress.restoration_cash_confirmed and qualified_cash >= progress.qualified_cash:
+        return True
+    previous_receipts = {item.receipt_id for item in progress.settled_coverage}
+    if any(item.receipt_id not in previous_receipts for item in coverage):
+        return True
+    if qualified_cash <= progress.qualified_cash:
+        return False
+    trigger = next(item for item in history if item.remediation_id == remediation_id)
     original_snapshot = trigger.position_snapshot.snapshot
     original_entries = {
         (entry.account_id, entry.entry_id) for entry in original_snapshot.authoritative_ledger

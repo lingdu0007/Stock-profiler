@@ -2079,6 +2079,11 @@
             ],
             "title": "Reserved Buy Cash"
           },
+          "restoration_cash_confirmed": {
+            "default": false,
+            "title": "Restoration Cash Confirmed",
+            "type": "boolean"
+          },
           "retained_remediation_shortfall": {
             "anyOf": [
               {

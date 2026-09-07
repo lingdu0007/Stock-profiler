@@ -18,6 +18,35 @@ from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 
 
+def test_failed_scope_expansion_cannot_poison_authoritative_restoration_scope(
+    migrated_settings: Settings,
+) -> None:
+    payload = liquidity_payload(migrated_settings, "authorized-restoration-scope")
+    first = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    invalid = deepcopy(payload)
+    invalid["business_identity"] += ":invalid-expansion"
+    invalid["case_id"] += "-invalid-expansion"
+    invalid["access_scope"]["account_ids"].append("synthetic-account-8029")
+    invalid["liquidity"]["position_snapshot"]["accounts"].append(
+        position_snapshot_command()["accounts"][1]
+    )
+    failed = run_frozen_decision_case(migrated_settings, invalid, clock=GovernanceClock())
+    assert failed.report is not None
+    assert failed.report.result.liquidity is not None
+    assert failed.report.result.liquidity.reasons == ("LIQUIDITY_POSITION_EVIDENCE_FAILED",)
+    for attempt in range(2):
+        valid = deepcopy(payload)
+        valid["business_identity"] += f":valid-{attempt}"
+        valid["case_id"] += f"-valid-{attempt}"
+        execution = run_frozen_decision_case(migrated_settings, valid, clock=GovernanceClock())
+        assert execution.report is not None
+        outcome = execution.report.result.liquidity
+        assert outcome is not None
+        assert outcome.remediation_id == first.decision_event_id
+        assert outcome.remediation_shortfall == Decimal("415.90")
+        assert outcome.disposition == "REMEDIATION_REQUIRED"
+
+
 def test_unknown_sale_terms_preserve_the_known_cash_restoration_deficit(
     migrated_settings: Settings,
 ) -> None:

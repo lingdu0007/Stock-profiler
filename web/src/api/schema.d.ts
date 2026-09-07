@@ -1060,6 +1060,11 @@ export interface components {
             remediation_shortfall?: string | null;
             /** Reserved Buy Cash */
             reserved_buy_cash?: string | null;
+            /**
+             * Restoration Cash Confirmed
+             * @default false
+             */
+            restoration_cash_confirmed: boolean;
             /** Retained Remediation Shortfall */
             retained_remediation_shortfall?: string | null;
             /**

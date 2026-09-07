@@ -351,6 +351,9 @@ test("projects committed liquidity protection across desktop and mobile", async 
     await expect(liquidity).toContainText("Liquidity restoration required");
     await expect(liquidity).toContainText("415.90");
     await expect(liquidity).toContainText("Blocked");
+    expect(await liquidity.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    );
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     ).toBe(true);

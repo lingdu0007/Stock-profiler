@@ -23,10 +23,10 @@ export function LiquidityEvidence({ liquidity }: { liquidity: Liquidity }) {
   const policy =
     liquidity.protection_authorization?.usage?.authorization_snapshot.proposal.risk_budget;
   return (
-    <section className="report-section" aria-label="Liquidity protection">
+    <section className="report-section liquidity-evidence" aria-label="Liquidity protection">
       <h2>Liquidity protection</h2>
       <p className="outcome-code">{dispositionLabels[liquidity.disposition]}</p>
-      <p>{liquidity.reasons.join(", ")}</p>
+      <p className="stage-reasons">{liquidity.reasons.join(", ")}</p>
       <dl className="record-list">
         <Fact label="Authorization" value={liquidity.authorization_id} />
         <Fact
