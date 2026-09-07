@@ -132,6 +132,7 @@ def assess_stress(
         StressLedgerReference(account_id=entry.account_id, entry_id=entry.entry_id)
         for entry in snapshot.authoritative_ledger
         if entry.corrects_entry_id is not None
+        and (entry.quantity_delta > 0 or entry.cash_delta < 0)
     )
     if obligation is not None and obligation.status == "SATISFIED":
         with localcontext(_DECIMAL_CONTEXT):

@@ -124,6 +124,8 @@ Additive broker corrections are applied before counting an effective sale;
 a later reversal or corrected monetary evidence reopens its retained obligation
 for target reevaluation. Saved effective fill quantities, proceeds, and ledger
 correction identities distinguish corrections from ordinary market changes.
+Cost-only corrections do not reactivate obligations; the correction gate tracks
+added stock quantity or reduced cash, not bookkeeping cost basis.
 Stricter successor targets
 apply to outstanding obligations. A residual restoration gap describes the
 shortfall even after all verified sellable quantities, without creating a

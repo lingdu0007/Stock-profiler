@@ -722,11 +722,13 @@ def test_stress_requires_an_authorized_not_shadow_portfolio(migrated_settings: S
     assert "STRESS_AUTHORIZATION_UNAVAILABLE" in result["reasons"]
 
 
-@pytest.mark.parametrize("corrects_sale", [True, False])
+@pytest.mark.parametrize("correction_kind", ["sale-proceeds", "transfer", "cost-only"])
 def test_corrected_monetary_facts_reopen_restoration_without_a_new_hard_breach(
     migrated_settings: Settings,
-    corrects_sale: bool,
+    correction_kind: str,
 ) -> None:
+    cost_only = correction_kind == "cost-only"
+    corrects_sale = correction_kind != "transfer"
     authorization_id = stress_authorization(migrated_settings)
     first = stress_payload(migrated_settings, authorization_id, "proceeds-correction")
     account = first["stress"]["position_snapshot"]["accounts"][0]
@@ -754,19 +756,30 @@ def test_corrected_monetary_facts_reopen_restoration_without_a_new_hard_breach(
         }
     )
     assert stress_result(migrated_settings, sold)["obligation"]["status"] == "SATISFIED"
-    corrected = next_stress_case(sold, "19")
+    if cost_only:
+        sold = next_stress_case(sold, "19")
+        account = sold["stress"]["position_snapshot"]["accounts"][0]
+        account["positions"][0]["market_price"] = "12.8"
+        account["account_equity"] = "1727.866"
+        market_changed = stress_result(migrated_settings, sold)
+        assert market_changed["state"] == "BUFFER"
+        assert market_changed["obligation"]["status"] == "SATISFIED"
+    corrected = next_stress_case(sold, "20")
     account = corrected["stress"]["position_snapshot"]["accounts"][0]
-    account["cash_state"]["ledger_cash"] = "695.066"
-    account["account_equity"] = "1617.066"
+    if cost_only:
+        account["positions"][0]["reported_cost_basis"] = "685"
+    else:
+        account["cash_state"]["ledger_cash"] = "695.066"
+        account["account_equity"] = "1617.066"
     account["ledger_entries"].append(
         {
             "entry_id": "synthetic-proceeds-correction",
             "entry_type": "FEE",
             "security_id": "XQZ-4017" if corrects_sale else None,
             "quantity_delta": "0",
-            "cost_basis_delta": "0",
-            "cash_delta": "-50",
-            "occurred_at": "2042-05-19T15:00:00Z",
+            "cost_basis_delta": "1" if cost_only else "0",
+            "cash_delta": "0" if cost_only else "-50",
+            "occurred_at": "2042-05-20T15:00:00Z",
             "corrects_entry_id": (
                 "synthetic-restoring-sale" if corrects_sale else "synthetic-transfer-4017-cash"
             ),
@@ -779,5 +792,5 @@ def test_corrected_monetary_facts_reopen_restoration_without_a_new_hard_breach(
     result = stress_result(migrated_settings, corrected)
     assert result["state"] == "BUFFER"
     assert result["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
-    assert result["obligation"]["status"] == "OUTSTANDING"
+    assert result["obligation"]["status"] == ("SATISFIED" if cost_only else "OUTSTANDING")
     assert result["new_exposure_blocked"] is True
