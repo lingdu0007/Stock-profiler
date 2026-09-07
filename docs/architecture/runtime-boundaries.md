@@ -132,8 +132,16 @@ Liquidity outcomes, their original remediation identity, external settled-paymen
 receipts and frozen authorization evidence are retained in original committed
 events. Business failure or authorization expiry cannot release deterministic
 protection or grant new exposure. Partial restoration retains the original
-normal-target obligation; release requires reconciled restoration and complete
-funding evidence. Report corrections preserve this original adjudication.
+obligation identity. The normal target is recalculated from the current
+reconciled equity under the frozen formula, not latched as a nominal amount.
+A valuation-only change cannot discharge the obligation: release requires
+confirmed cash restoration backed by a retained sale fill or a newly settled
+external obligation payment, as well as complete funding evidence.
+Unknown disposal terms preserve independently known cash deficits and valid
+settled payments. Account expansion retains same-owner, same-visibility
+protection history; omitting accounts with retained protection fails closed
+without returning those accounts' historical shortfalls.
+Report corrections preserve the original adjudication.
 The report-only contract neither submits orders nor treats future income,
 unsettled deposits, unused credit or outside assets as available funding.
 

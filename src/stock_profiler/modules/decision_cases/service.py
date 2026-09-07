@@ -584,35 +584,27 @@ def _commit_framework_result(
                 authorization_lineage = ledger.portfolio_authorization_lineage(
                     connection, scope, command.portfolio_id
                 )
-                portfolio = adjudicate_portfolio(
-                    PortfolioUseCommand(
-                        operation="PORTFOLIO_USE",
-                        portfolio_id=command.portfolio_id,
-                        authorization_id=command.authorization_id,
-                        requested_action="DETERMINISTIC_PROTECTION",
-                    ),
-                    event_id=execution_case.decision_event_id,
-                    observed_at=execution_case.knowledge_cutoff,
-                    knowledge_cutoff=execution_case.knowledge_cutoff,
-                    history=authorization_history,
-                    lineage_history=authorization_lineage,
-                    access_account_ids=scope.account_ids,
-                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                protection_request = PortfolioUseCommand(
+                    operation="PORTFOLIO_USE",
+                    portfolio_id=command.portfolio_id,
+                    authorization_id=command.authorization_id,
+                    requested_action="DETERMINISTIC_PROTECTION",
                 )
-                purchase_authorization = adjudicate_portfolio(
-                    PortfolioUseCommand(
-                        operation="PORTFOLIO_USE",
-                        portfolio_id=command.portfolio_id,
-                        authorization_id=command.authorization_id,
-                        requested_action="NEW_EXPOSURE",
-                    ),
-                    event_id=execution_case.decision_event_id,
-                    observed_at=execution_case.knowledge_cutoff,
-                    knowledge_cutoff=execution_case.knowledge_cutoff,
-                    history=authorization_history,
-                    lineage_history=authorization_lineage,
-                    access_account_ids=scope.account_ids,
-                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                portfolio, purchase_authorization = (
+                    adjudicate_portfolio(
+                        request,
+                        event_id=execution_case.decision_event_id,
+                        observed_at=execution_case.knowledge_cutoff,
+                        knowledge_cutoff=execution_case.knowledge_cutoff,
+                        history=authorization_history,
+                        lineage_history=authorization_lineage,
+                        access_account_ids=scope.account_ids,
+                        business_prerequisite_met=business_result.status == "SUCCEEDED",
+                    )
+                    for request in (
+                        protection_request,
+                        protection_request.model_copy(update={"requested_action": "NEW_EXPOSURE"}),
+                    )
                 )
                 position = reconcile_position(
                     command.position_snapshot,

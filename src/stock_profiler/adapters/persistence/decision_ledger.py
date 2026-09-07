@@ -362,12 +362,13 @@ class DecisionLedger:
         portfolio_id: str,
         cutoff_at: datetime,
     ) -> tuple[LiquidityOutcome, ...]:
-        """Read prior portfolio protection only within the complete frozen result scope."""
+        """Read same-owner portfolio history; adjudication guards missing account scope."""
         return tuple(
             fact.result.liquidity
             for fact in self._original_event_facts(connection, "liquidity history is unavailable")
             if fact.case.access_scope is not None
-            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
             and fact.case.liquidity is not None
             and fact.case.liquidity.portfolio_id == portfolio_id
             and fact.case.liquidity.position_snapshot.cutoff_at <= cutoff_at

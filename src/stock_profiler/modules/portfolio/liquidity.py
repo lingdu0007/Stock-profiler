@@ -93,11 +93,24 @@ def assess_liquidity(
     """Use explicit frozen policy only; unknown facts never become a zero balance."""
     usage = authorization.usage
     latest = max(
-        enumerate(history),
+        (
+            (index, outcome)
+            for index, outcome in enumerate(history)
+            if outcome.disposition != "EVIDENCE_FAILED" or outcome.remediation_id is not None
+        ),
         key=lambda item: (item[1].position_snapshot.snapshot.cutoff_at, item[0]),
         default=None,
     )
     prior = latest[1] if latest is not None else None
+    history_scope_incomplete = (
+        prior is not None
+        and prior.remediation_id is not None
+        and not {cash.account_id for cash in prior.position_snapshot.snapshot.cash_states}.issubset(
+            command.position_snapshot.account_ids
+        )
+    )
+    if history_scope_incomplete:
+        prior = None
     prior_remediation_id = prior.remediation_id if prior is not None else None
     retained_shortfall = (
         prior.remediation_shortfall
@@ -106,6 +119,8 @@ def assess_liquidity(
         if prior is not None
         else None
     )
+    coverage: tuple[SettledObligationCoverage, ...] = ()
+
     def evidence_failure(reasons: tuple[str, ...]) -> LiquidityOutcome:
         return LiquidityOutcome(
             disposition="EVIDENCE_FAILED",
@@ -116,12 +131,21 @@ def assess_liquidity(
             position_snapshot=position,
             remediation_id=prior_remediation_id,
             retained_remediation_shortfall=retained_shortfall,
+            settled_coverage=coverage,
         )
 
+    if history_scope_incomplete:
+        return evidence_failure(("LIQUIDITY_HISTORY_SCOPE_INCOMPLETE",))
     if usage is None or not usage.allowed:
         return evidence_failure(authorization.reasons)
     proposal = usage.authorization_snapshot.proposal
     snapshot = position.snapshot
+    with localcontext(Context(prec=38)):
+        outstanding, coverage = _outstanding_obligations(
+            usage.unfinished_cash_obligations, command, history
+        )
+    if outstanding is None:
+        return evidence_failure(("SETTLED_OBLIGATION_COVERAGE_INVALID",))
     if command.cost_evidence is None or command.cost_evidence.problem_codes(
         snapshot.cutoff_at, require_current_completeness=True
     ):
@@ -134,14 +158,7 @@ def assess_liquidity(
     ):
         return evidence_failure(("LIQUIDITY_POSITION_EVIDENCE_FAILED",))
     with localcontext(Context(prec=38)):
-        outstanding, coverage = _outstanding_obligations(
-            usage.unfinished_cash_obligations, command, history
-        )
-        if outstanding is None:
-            return evidence_failure(("SETTLED_OBLIGATION_COVERAGE_INVALID",))
         equity = snapshot.total_account_equity - command.expected_liquidation_fees
-        if equity <= 0:
-            return evidence_failure(("POSITIVE_NET_LIQUIDATION_EQUITY_REQUIRED",))
         trading = sum(
             (cash.trading_cash for cash in snapshot.cash_states if cash.trading_cash is not None),
             Decimal(0),
@@ -173,7 +190,7 @@ def assess_liquidity(
         target = obligations + system_reserve
         floor = obligations + remaining_equity * proposal.risk_budget.cash.hard_ratio
         deployable = max(Decimal(0), qualified - system_reserve - all_obligations)
-        purchase_blocked = purchase_authorization.disposition != "APPROVED"
+        purchase_blocked = purchase_authorization.disposition != "APPROVED" or equity <= 0
         if purchase_blocked:
             deployable = Decimal(0)
         restoration = (
@@ -181,16 +198,27 @@ def assess_liquidity(
             if qualified < floor or prior_remediation_id is not None
             else Decimal(0)
         )
+        funding = assess_funding(snapshot, command.sale_terms, outstanding, command.transfer_routes)
+        remediation_active = restoration > 0 or (
+            prior_remediation_id is not None
+            and (
+                bool(funding.reasons)
+                or not _restoration_confirmed(
+                    prior_remediation_id, position, qualified, coverage, history
+                )
+            )
+        )
         disposition: Literal["AVAILABLE", "ZERO_DEPLOYABLE_CASH", "REMEDIATION_REQUIRED"]
-        if restoration > 0:
+        if remediation_active:
             disposition = "REMEDIATION_REQUIRED"
         elif deployable == 0:
             disposition = "ZERO_DEPLOYABLE_CASH"
         else:
             disposition = "AVAILABLE"
-        funding = assess_funding(snapshot, command.sale_terms, outstanding, command.transfer_routes)
-        funding_infeasible = obligations >= equity or (
-            funding.uncovered_gap is not None and funding.uncovered_gap > 0
+        funding_infeasible = (
+            bool(outstanding)
+            and obligations >= equity
+            or (funding.uncovered_gap is not None and funding.uncovered_gap > 0)
         )
         final_disposition = (
             "EVIDENCE_FAILED"
@@ -199,13 +227,23 @@ def assess_liquidity(
             if funding_infeasible
             else disposition
         )
-        if funding.reasons or funding_infeasible:
+        if funding.reasons or funding_infeasible or remediation_active:
             deployable = Decimal(0)
         return LiquidityOutcome(
             disposition=final_disposition,
             reasons=(
                 f"LIQUIDITY_{final_disposition}",
-                *(purchase_authorization.reasons if purchase_blocked else ()),
+                *(
+                    purchase_authorization.reasons
+                    if purchase_authorization.disposition != "APPROVED"
+                    else ()
+                ),
+                *(("NONPOSITIVE_NET_LIQUIDATION_EQUITY",) if equity <= 0 else ()),
+                *(
+                    ("RESTORATION_CONFIRMATION_REQUIRED",)
+                    if remediation_active and restoration == 0
+                    else ()
+                ),
                 *funding.reasons,
             ),
             authorization_id=command.authorization_id,
@@ -219,14 +257,8 @@ def assess_liquidity(
             reserved_buy_cash=reserved,
             six_month_obligations=obligations,
             deployable_purchase_cash=deployable,
-            remediation_shortfall=None if funding.reasons else restoration,
-            remediation_id=(
-                prior_remediation_id
-                if funding.reasons and prior_remediation_id is not None
-                else (prior_remediation_id or event_id)
-                if restoration > 0
-                else None
-            ),
+            remediation_shortfall=restoration,
+            remediation_id=(prior_remediation_id or event_id) if remediation_active else None,
             retained_remediation_shortfall=retained_shortfall if funding.reasons else None,
             maximum_fundable_cash=funding.maximum_fundable_cash,
             uncovered_obligation_gap=funding.uncovered_gap,
@@ -236,8 +268,37 @@ def assess_liquidity(
             new_exposure_blocked=qualified < target
             or purchase_blocked
             or funding_infeasible
+            or remediation_active
             or bool(funding.reasons),
         )
+
+
+def _restoration_confirmed(
+    remediation_id: str,
+    position: PositionReconciliationOutcome,
+    qualified_cash: Decimal,
+    coverage: tuple[SettledObligationCoverage, ...],
+    history: tuple[LiquidityOutcome, ...],
+) -> bool:
+    trigger = next(item for item in history if item.remediation_id == remediation_id)
+    original_receipts = {item.receipt_id for item in trigger.settled_coverage}
+    if any(item.receipt_id not in original_receipts for item in coverage):
+        return True
+    if trigger.qualified_cash is None or qualified_cash <= trigger.qualified_cash:
+        return False
+    original_snapshot = trigger.position_snapshot.snapshot
+    original_entries = {
+        (entry.account_id, entry.entry_id) for entry in original_snapshot.authoritative_ledger
+    }
+    # A price-only target change is not a broker-confirmed cash restoration.
+    return any(
+        entry.entry_type == "FILL"
+        and entry.quantity_delta < 0
+        and entry.cash_delta > 0
+        and entry.occurred_at > original_snapshot.cutoff_at
+        and (entry.account_id, entry.entry_id) not in original_entries
+        for entry in position.snapshot.authoritative_ledger
+    )
 
 
 def _outstanding_obligations(
