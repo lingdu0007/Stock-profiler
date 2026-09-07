@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -90,8 +92,8 @@ def portfolio_case_payload(
     payload = load_frozen_decision_case(settings).model_dump(mode="json")
     proposal = command.get("proposal", {})
     snapshot = proposal.get("snapshot", {}) if isinstance(proposal, dict) else {}
-    selected = (
-        snapshot.get("selected_account_ids", [])
+    visible_accounts = (
+        [account["account_id"] for account in snapshot.get("accounts", [])]
         if isinstance(snapshot, dict) and snapshot
         else account_ids or []
     )
@@ -107,7 +109,7 @@ def portfolio_case_payload(
     payload["access_scope"] = {
         "contract_version": "1.0.0",
         "user_id": "stock-profiler-single-user",
-        "account_ids": selected,
+        "account_ids": visible_accounts,
         "visibility": "USER",
     }
     payload["portfolio"] = command
@@ -115,7 +117,10 @@ def portfolio_case_payload(
 
 
 def portfolio_confirmation_command(
-    proposal: dict[str, Any], *, previous_authorization_id: str | None = None
+    proposal: dict[str, Any],
+    *,
+    previous_authorization_id: str | None = None,
+    confirmed_at: str | None = None,
 ) -> dict[str, Any]:
     confirmation_suffix = proposal["risk_budget"]["version_id"].rsplit("-", maxsplit=1)[-1]
     return {
@@ -128,7 +133,7 @@ def portfolio_confirmation_command(
             "portfolio_id": proposal["portfolio_id"],
             "snapshot_id": proposal["snapshot"]["snapshot_id"],
             "risk_budget_version_id": proposal["risk_budget"]["version_id"],
-            "confirmed_at": proposal["risk_budget"]["effective_at"],
+            "confirmed_at": confirmed_at or proposal["risk_budget"]["effective_at"],
             "confirmed": True,
         },
     }
@@ -166,22 +171,40 @@ def next_portfolio_proposal() -> dict[str, Any]:
 def reduced_portfolio_proposal() -> dict[str, Any]:
     proposal = next_portfolio_proposal()
     cutoff = "2042-05-19T16:00:00Z"
-    account = proposal["snapshot"]["accounts"][0]
+    account = proposal["snapshot"]["accounts"][-1]
     account["captured_at"] = cutoff
-    account["cash_fact_id"] = "synthetic-cash-fact-4017-funded-gamma"
+    account["cash_fact_id"] = "synthetic-cash-fact-8029-funded-gamma"
     proposal["snapshot"].update(
         snapshot_id="synthetic-portfolio-snapshot-gamma",
         cutoff_at=cutoff,
         accounts=[account],
-        selected_account_ids=["synthetic-account-4017"],
+        selected_account_ids=["synthetic-account-8029"],
     )
     proposal["risk_budget"].update(
         version_id="synthetic-risk-budget-gamma",
         effective_at=cutoff,
         expires_at="2042-11-19T16:00:00Z",
     )
+    proposal["cash_obligations"][0]["obligation_id"] = "synthetic-cash-obligation-gamma"
     proposal["cash_obligations"][0]["amount"] = "95.25"
+    proposal["cash_obligations"][0]["target_account_id"] = "synthetic-account-8029"
     return proposal
+
+
+def proposal_account_ids(proposal: dict[str, Any]) -> list[str]:
+    return [account["account_id"] for account in proposal["snapshot"]["accounts"]]
+
+
+def result_family(name: str) -> dict[str, Any]:
+    return json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "synthetic"
+            / "result-families"
+            / f"{name}.json"
+        ).read_text(encoding="utf-8")
+    )
 
 
 def test_preview_shows_full_cash_scope_and_excluded_account_types(
@@ -273,7 +296,7 @@ def test_confirmation_freezes_the_risk_budget_and_cash_obligation_in_the_report(
             migrated_settings,
             principal=AccessPrincipal(
                 user_id="stock-profiler-single-user",
-                account_ids=("synthetic-account-4017",),
+                account_ids=tuple(proposal_account_ids(proposal)),
                 permissions=("REPORT_READ",),
             ),
         )
@@ -350,6 +373,115 @@ def test_virtual_account_slices_and_non_calendar_budget_expiry_are_rejected(
             ),
             clock=GovernanceClock(),
         )
+
+
+@pytest.mark.parametrize(
+    ("fixture", "business_status"),
+    [
+        ("input-rejected", "REJECTED"),
+        ("result-abstained", "ABSTAINED"),
+        ("result-failed", "FAILED"),
+    ],
+)
+def test_non_success_business_results_cannot_create_portfolio_authorization(
+    migrated_settings: Settings, fixture: str, business_status: str
+) -> None:
+    source = result_family(fixture)
+    payload = portfolio_case_payload(
+        migrated_settings,
+        f"business-{fixture}",
+        portfolio_confirmation_command(portfolio_proposal()),
+    )
+    payload["input"] = source["input"]
+    payload["expected_external_result"] = source["expected_external_result"]
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        payload,
+        clock=GovernanceClock(),
+    )
+
+    assert execution.report is not None
+    assert execution.business_result_status == business_status
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("BUSINESS_PREREQUISITE_NOT_MET",)
+    assert outcome.authorization is None
+    assert outcome.preview is not None
+    stage = next(
+        stage
+        for stage in execution.report.stage_results
+        if stage.phase == "PORTFOLIO_AUTHORIZATION"
+    )
+    assert stage.status == "REJECTED"
+    assert stage.reasons == outcome.reasons
+
+
+@pytest.mark.parametrize(
+    ("reused_identity", "expected_reason"),
+    [
+        ("risk_budget", "RISK_BUDGET_VERSION_REUSE"),
+        ("snapshot", "PORTFOLIO_SNAPSHOT_VERSION_REUSE"),
+        ("confirmation", "PORTFOLIO_CONFIRMATION_REUSE"),
+    ],
+)
+def test_forward_authorizations_cannot_reuse_frozen_version_or_confirmation_evidence(
+    migrated_settings: Settings, reused_identity: str, expected_reason: str
+) -> None:
+    original_proposal = portfolio_proposal()
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"identity-original-{reused_identity}",
+            portfolio_confirmation_command(deepcopy(original_proposal)),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+
+    replacement_proposal = next_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        replacement_proposal,
+        previous_authorization_id=original.decision_event_id,
+    )
+    if reused_identity == "risk_budget":
+        replacement_proposal["risk_budget"]["version_id"] = original_proposal["risk_budget"][
+            "version_id"
+        ]
+        replacement_proposal["risk_budget"]["concentration"]["target_ratio"] = "0.12"
+        command = portfolio_confirmation_command(
+            replacement_proposal,
+            previous_authorization_id=original.decision_event_id,
+        )
+    elif reused_identity == "snapshot":
+        replacement_proposal["snapshot"]["snapshot_id"] = original_proposal["snapshot"][
+            "snapshot_id"
+        ]
+        command = portfolio_confirmation_command(
+            replacement_proposal,
+            previous_authorization_id=original.decision_event_id,
+        )
+    else:
+        command["confirmation"]["confirmation_id"] = "synthetic-risk-confirmation-alpha"
+
+    reused = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"identity-reused-{reused_identity}",
+            command,
+        ),
+        clock=GovernanceClock("2042-05-18T16:01:00Z"),
+    )
+
+    assert reused.report is not None
+    outcome = reused.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == (expected_reason,)
+    assert outcome.authorization is None
 
 
 def test_scope_or_budget_changes_require_a_new_forward_authorization_version(
@@ -432,13 +564,171 @@ def test_scope_or_budget_changes_require_a_new_forward_authorization_version(
     assert reduced_authorization.previous_authorization_id == replacement.decision_event_id
     assert reduced_authorization.proposal.risk_budget.version_id == "synthetic-risk-budget-gamma"
     assert reduced_authorization.proposal.snapshot.selected_account_ids == (
-        "synthetic-account-4017",
+        "synthetic-account-8029",
     )
     assert reduced_authorization.proposal.snapshot.accounts[0].cash_fact_id == (
-        "synthetic-cash-fact-4017-funded-gamma"
+        "synthetic-cash-fact-8029-funded-gamma"
     )
     assert reduced_authorization.proposal.cash_obligations[0].amount == Decimal("95.25")
+    assert reduced_authorization.proposal.cash_obligations[0].target_account_id == (
+        "synthetic-account-8029"
+    )
     assert replacement.report.model_dump_json() == replacement_report
+
+
+def test_future_version_preserves_the_prior_authorization_until_its_effective_time(
+    migrated_settings: Settings,
+) -> None:
+    original_proposal = portfolio_proposal()
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "future-original",
+            portfolio_confirmation_command(deepcopy(original_proposal)),
+        ),
+        clock=GovernanceClock("2042-05-17T16:01:00Z"),
+    )
+    assert original.report is not None
+
+    replacement_proposal = next_portfolio_proposal()
+    replacement = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "future-replacement",
+            portfolio_confirmation_command(
+                deepcopy(replacement_proposal),
+                previous_authorization_id=original.decision_event_id,
+                confirmed_at="2042-05-17T16:02:00Z",
+            ),
+        ),
+        clock=GovernanceClock("2042-05-17T16:02:00Z"),
+    )
+    assert replacement.report is not None
+
+    def use(
+        identity: str,
+        authorization_id: str,
+        proposal: dict[str, Any],
+        observed_at: str,
+    ) -> Any:
+        payload = portfolio_case_payload(
+            migrated_settings,
+            identity,
+            {
+                "operation": "PORTFOLIO_USE",
+                "portfolio_id": proposal["portfolio_id"],
+                "authorization_id": authorization_id,
+                "requested_action": "NEW_EXPOSURE",
+            },
+            account_ids=proposal_account_ids(proposal),
+        )
+        payload["knowledge_cutoff"] = observed_at
+        return run_frozen_decision_case(
+            migrated_settings,
+            payload,
+            clock=GovernanceClock(observed_at),
+        )
+
+    prior_before_effective = use(
+        "future-prior-before-effective",
+        original.decision_event_id,
+        original_proposal,
+        "2042-05-17T16:03:00Z",
+    )
+    assert prior_before_effective.report is not None
+    prior_outcome = prior_before_effective.report.result.portfolio
+    assert prior_outcome is not None
+    assert prior_outcome.disposition == "APPROVED"
+    assert prior_outcome.reasons == ("NEW_EXPOSURE_AUTHORIZED",)
+
+    replacement_before_effective = use(
+        "future-replacement-before-effective",
+        replacement.decision_event_id,
+        replacement_proposal,
+        "2042-05-17T16:03:00Z",
+    )
+    assert replacement_before_effective.report is not None
+    replacement_before_outcome = replacement_before_effective.report.result.portfolio
+    assert replacement_before_outcome is not None
+    assert replacement_before_outcome.disposition == "DENIED"
+    assert replacement_before_outcome.reasons == ("RISK_BUDGET_NOT_YET_EFFECTIVE",)
+
+    replacement_after_effective = use(
+        "future-replacement-after-effective",
+        replacement.decision_event_id,
+        replacement_proposal,
+        "2042-05-18T16:01:00Z",
+    )
+    assert replacement_after_effective.report is not None
+    replacement_after_outcome = replacement_after_effective.report.result.portfolio
+    assert replacement_after_outcome is not None
+    assert replacement_after_outcome.disposition == "APPROVED"
+    assert replacement_after_outcome.reasons == ("NEW_EXPOSURE_AUTHORIZED",)
+
+    prior_after_effective = use(
+        "future-prior-after-effective",
+        original.decision_event_id,
+        original_proposal,
+        "2042-05-18T16:01:00Z",
+    )
+    assert prior_after_effective.report is not None
+    prior_after_outcome = prior_after_effective.report.result.portfolio
+    assert prior_after_outcome is not None
+    assert prior_after_outcome.disposition == "DENIED"
+    assert prior_after_outcome.reasons == ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
+
+
+def test_insufficient_account_scope_cannot_reveal_another_authorization_snapshot(
+    migrated_settings: Settings,
+) -> None:
+    proposal = next_portfolio_proposal()
+    authorized = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "scope-leak-origin",
+            portfolio_confirmation_command(deepcopy(proposal)),
+        ),
+        clock=GovernanceClock("2042-05-18T16:01:00Z"),
+    )
+    assert authorized.report is not None
+
+    narrow_scope = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "scope-leak-denied",
+            {
+                "operation": "PORTFOLIO_USE",
+                "portfolio_id": proposal["portfolio_id"],
+                "authorization_id": authorized.decision_event_id,
+                "requested_action": "NEW_EXPOSURE",
+            },
+            account_ids=["synthetic-account-4017"],
+        ),
+        clock=GovernanceClock("2042-05-18T16:02:00Z"),
+    )
+
+    assert narrow_scope.report is not None
+    outcome = narrow_scope.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("AUTHORIZATION_SCOPE_MISMATCH",)
+    assert outcome.preview is None
+    assert outcome.usage is None
+    saved = get_formal_report(
+        narrow_scope.report_version_id,
+        migrated_settings,
+        principal=AccessPrincipal(
+            user_id="stock-profiler-single-user",
+            account_ids=("synthetic-account-4017",),
+            permissions=("REPORT_READ",),
+        ),
+    )
+    assert saved == narrow_scope.report
+    assert "synthetic-account-8029" not in saved.model_dump_json()
 
 
 def test_expired_authorization_blocks_new_exposure_but_retains_protection_and_obligations(
@@ -465,7 +755,7 @@ def test_expired_authorization_blocks_new_exposure_but_retains_protection_and_ob
                 "authorization_id": authorized.decision_event_id,
                 "requested_action": requested_action,
             },
-            account_ids=["synthetic-account-4017"],
+            account_ids=proposal_account_ids(portfolio_proposal()),
         )
         payload["knowledge_cutoff"] = "2042-11-17T16:00:00Z"
         return run_frozen_decision_case(

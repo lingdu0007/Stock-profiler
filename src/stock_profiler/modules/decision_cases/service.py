@@ -512,6 +512,7 @@ def _commit_framework_result(
                         connection, execution_case.access_scope
                     ),
                     access_account_ids=execution_case.access_scope.account_ids,
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
                 )
                 result = result.model_copy(update={"portfolio": portfolio})
                 portfolio_result = StageResult(

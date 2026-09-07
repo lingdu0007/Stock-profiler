@@ -107,6 +107,105 @@ describe("App", () => {
     expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
   });
 
+  it("renders the confirmation and budget snapshot retained by a portfolio use", async () => {
+    const authorizationSnapshot = {
+      authorization_id: "decision-event-portfolio-alpha",
+      previous_authorization_id: null,
+      recorded_at: "2042-05-17T16:01:00Z",
+      confirmation: {
+        confirmation_id: "synthetic-risk-confirmation-alpha",
+        user_id: "stock-profiler-single-user",
+        portfolio_id: "synthetic-decision-portfolio-alpha",
+        snapshot_id: "synthetic-portfolio-snapshot-alpha",
+        risk_budget_version_id: "synthetic-risk-budget-alpha",
+        confirmed_at: "2042-05-17T16:00:00Z",
+        confirmed: true
+      },
+      proposal: {
+        portfolio_id: "synthetic-decision-portfolio-alpha",
+        snapshot: {
+          snapshot_id: "synthetic-portfolio-snapshot-alpha",
+          cutoff_at: "2042-05-17T16:00:00Z",
+          accounts: [],
+          selected_account_ids: ["synthetic-account-4017"]
+        },
+        risk_budget: {
+          contract_version: "1.0.0",
+          version_id: "synthetic-risk-budget-alpha",
+          synthetic: true,
+          generator_version: "portfolio-authorization/1",
+          seed: 6101,
+          effective_at: "2042-05-17T16:00:00Z",
+          expires_at: "2042-11-17T16:00:00Z",
+          concentration: { target_ratio: "0.13", hard_ratio: "0.19" },
+          stress: { target_ratio: "0.14", hard_ratio: "0.18" },
+          cash: { target_ratio: "0.39", hard_ratio: "0.23" },
+          drawdown: {
+            caution_ratio: "0.11",
+            defensive_ratio: "0.16",
+            preservation_ratio: "0.21"
+          },
+          downside_grid: ["0.04", "0.09"],
+          protection_floor: {
+            new_exposure_blocked: true,
+            retained_directions: ["REDUCE", "EXIT"]
+          }
+        },
+        cash_obligations: [
+          {
+            obligation_id: "synthetic-cash-obligation-alpha",
+            amount: "125.50",
+            purpose: "synthetic-near-term-liquidity",
+            latest_usable_at: "2042-08-17T16:00:00Z",
+            target_account_id: "synthetic-account-4017"
+          }
+        ]
+      }
+    };
+    const usageReport = {
+      ...report,
+      result: {
+        ...report.result,
+        portfolio: {
+          disposition: "DENIED",
+          reasons: ["RISK_BUDGET_EXPIRED"],
+          preview: null,
+          authorization: null,
+          usage: {
+            requested_action: "NEW_EXPOSURE",
+            allowed: false,
+            authorization_snapshot: authorizationSnapshot,
+            retained_protection_floor: {
+              new_exposure_blocked: true,
+              retained_directions: ["REDUCE", "EXIT"]
+            },
+            unfinished_cash_obligations: authorizationSnapshot.proposal.cash_obligations,
+            reasons: ["RISK_BUDGET_EXPIRED"],
+            checked_at: "2042-11-17T16:01:00Z"
+          }
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${usageReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(usageReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const confirmation = await screen.findByRole("region", { name: "Portfolio confirmation" });
+    expect(confirmation).toHaveTextContent("synthetic-risk-confirmation-alpha");
+    expect(confirmation).toHaveTextContent("synthetic-risk-budget-alpha");
+    expect(confirmation).toHaveTextContent("2042-11-17T16:00:00Z");
+    expect(confirmation).toHaveTextContent("synthetic-cash-obligation-alpha");
+  });
+
   it("shows correction lineage supplied by the committed report projection", async () => {
     const correctedReport = {
       ...report,

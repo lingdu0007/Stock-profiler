@@ -115,32 +115,36 @@ class DecisionLedger:
         self, connection: Connection, access_scope: ResultAccessScope
     ) -> tuple[GovernanceOutcome, ...]:
         """Select original authority by its saved owner, accounts and visibility before use."""
-        event_ids = (
-            connection.execute(
-                select(DECISION_EVENTS.c.decision_event_id).where(
-                    DECISION_EVENTS.c.corrects_event_id.is_(None)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        history = []
-        for event_id in event_ids:
-            fact = self.get_decision_event(event_id, connection)
-            if fact is None:
-                raise DecisionEventCommitError("governance history is unavailable")
+        return tuple(
+            fact.result.governance
+            for fact in self._original_event_facts(connection, "governance history is unavailable")
             if (
                 fact.case.access_scope is not None
                 and fact.case.access_scope.same_scope_as(access_scope)
                 and fact.result.governance is not None
-            ):
-                history.append(fact.result.governance)
-        return tuple(history)
+            )
+        )
 
     def portfolio_authorization_history(
         self, connection: Connection, access_scope: ResultAccessScope
     ) -> tuple[PortfolioAuthorizationOutcome, ...]:
         """Read an owner's visible portfolio lineage across its forward scope revisions."""
+        return tuple(
+            fact.result.portfolio
+            for fact in self._original_event_facts(
+                connection, "portfolio authorization history is unavailable"
+            )
+            if (
+                (scope := fact.case.access_scope) is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and fact.result.portfolio is not None
+            )
+        )
+
+    def _original_event_facts(
+        self, connection: Connection, unavailable_message: str
+    ) -> tuple[DecisionEventFact, ...]:
         event_ids = (
             connection.execute(
                 select(DECISION_EVENTS.c.decision_event_id).where(
@@ -150,20 +154,13 @@ class DecisionLedger:
             .scalars()
             .all()
         )
-        history = []
+        facts = []
         for event_id in event_ids:
             fact = self.get_decision_event(event_id, connection)
             if fact is None:
-                raise DecisionEventCommitError("portfolio authorization history is unavailable")
-            scope = fact.case.access_scope
-            if (
-                scope is not None
-                and scope.user_id == access_scope.user_id
-                and scope.visibility == access_scope.visibility
-                and fact.result.portfolio is not None
-            ):
-                history.append(fact.result.portfolio)
-        return tuple(history)
+                raise DecisionEventCommitError(unavailable_message)
+            facts.append(fact)
+        return tuple(facts)
 
     @contextmanager
     def serialize_case_execution(self) -> Iterator[Connection]:

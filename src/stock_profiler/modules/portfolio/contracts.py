@@ -56,6 +56,11 @@ class PortfolioSnapshot(PortfolioContract):
         selected = set(self.selected_account_ids)
         return tuple(account for account in self.accounts if account.account_id in selected)
 
+    @property
+    def account_ids(self) -> tuple[str, ...]:
+        """Preserve the complete candidate-account universe that a report can expose."""
+        return tuple(account.account_id for account in self.accounts)
+
 
 class TwoThresholdBudget(PortfolioContract):
     target_ratio: Decimal = Field(gt=0, lt=1)

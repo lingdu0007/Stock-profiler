@@ -22,6 +22,7 @@ def adjudicate(
     observed_at: str,
     history: tuple[PortfolioAuthorizationOutcome, ...],
     access_account_ids: tuple[str, ...],
+    business_prerequisite_met: bool = True,
 ) -> PortfolioAuthorizationOutcome:
     """Preview a full scope or freeze its first confirmed synthetic authorization."""
     if isinstance(command, PortfolioUseCommand):
@@ -39,6 +40,12 @@ def adjudicate(
             preview=preview,
         )
     assert isinstance(command, PortfolioConfirmationCommand)
+    if not business_prerequisite_met:
+        return PortfolioAuthorizationOutcome(
+            disposition="DENIED",
+            reasons=("BUSINESS_PREREQUISITE_NOT_MET",),
+            preview=preview,
+        )
     reasons = confirmation_block_reasons(preview)
     current, history_reason = _current_authorization(history, command.proposal.portfolio_id)
     if history_reason is not None:
@@ -49,11 +56,8 @@ def adjudicate(
         reasons = ("PREVIOUS_AUTHORIZATION_REQUIRED",)
     elif current is not None and command.previous_authorization_id != current.authorization_id:
         reasons = ("AUTHORIZATION_REVISION_CONFLICT",)
-    elif (
-        current is not None
-        and command.proposal.risk_budget.version_id == current.proposal.risk_budget.version_id
-    ):
-        reasons = ("RISK_BUDGET_VERSION_REUSE",)
+    elif (identity_reason := _reused_authorization_identity_reason(command, history)) is not None:
+        reasons = (identity_reason,)
     elif (
         current is not None
         and command.proposal.risk_budget.effective_at <= current.proposal.risk_budget.effective_at
@@ -92,14 +96,13 @@ def _adjudicate_use(
             disposition="DENIED",
             reasons=("PORTFOLIO_AUTHORIZATION_REQUIRED",),
         )
-    preview = preview_for(authorization.proposal)
-    if set(authorization.proposal.snapshot.selected_account_ids) != set(access_account_ids):
+    if not set(authorization.proposal.snapshot.account_ids).issubset(access_account_ids):
         return PortfolioAuthorizationOutcome(
             disposition="DENIED",
             reasons=("AUTHORIZATION_SCOPE_MISMATCH",),
-            preview=preview,
         )
-    current, history_reason = _current_authorization(history, command.portfolio_id)
+    preview = preview_for(authorization.proposal)
+    _, history_reason = _current_authorization(history, command.portfolio_id)
     if history_reason is not None:
         return PortfolioAuthorizationOutcome(
             disposition="DENIED",
@@ -107,19 +110,29 @@ def _adjudicate_use(
             preview=preview,
         )
     now = datetime.fromisoformat(observed_at)
-    expired = now >= authorization.proposal.risk_budget.expires_at
-    if command.requested_action == "DETERMINISTIC_PROTECTION":
+    if now < authorization.proposal.risk_budget.effective_at:
+        allowed = False
+        reasons = ("RISK_BUDGET_NOT_YET_EFFECTIVE",)
+    elif command.requested_action == "DETERMINISTIC_PROTECTION":
         allowed = True
         reasons = ("DETERMINISTIC_PROTECTION_RETAINED",)
-    elif current is None or current.authorization_id != authorization.authorization_id:
-        allowed = False
-        reasons = ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
-    elif expired:
-        allowed = False
-        reasons = ("RISK_BUDGET_EXPIRED",)
     else:
-        allowed = True
-        reasons = ("NEW_EXPOSURE_AUTHORIZED",)
+        active, active_reason = _active_authorization(history, command.portfolio_id, now)
+        if active_reason is not None:
+            return PortfolioAuthorizationOutcome(
+                disposition="DENIED",
+                reasons=(active_reason,),
+                preview=preview,
+            )
+        if active is None or active.authorization_id != authorization.authorization_id:
+            allowed = False
+            reasons = ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
+        elif now >= authorization.proposal.risk_budget.expires_at:
+            allowed = False
+            reasons = ("RISK_BUDGET_EXPIRED",)
+        else:
+            allowed = True
+            reasons = ("NEW_EXPOSURE_AUTHORIZED",)
     return PortfolioAuthorizationOutcome(
         disposition="APPROVED" if allowed else "DENIED",
         reasons=reasons,
@@ -139,12 +152,7 @@ def _adjudicate_use(
 def _current_authorization(
     history: tuple[PortfolioAuthorizationOutcome, ...], portfolio_id: str
 ) -> tuple[PortfolioAuthorization | None, str | None]:
-    authorizations = tuple(
-        outcome.authorization
-        for outcome in history
-        if outcome.authorization is not None
-        and outcome.authorization.proposal.portfolio_id == portfolio_id
-    )
+    authorizations = _portfolio_authorizations(history, portfolio_id)
     if not authorizations:
         return None, None
     superseded = {
@@ -162,6 +170,67 @@ def _current_authorization(
     return current[0], None
 
 
+def _active_authorization(
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+    portfolio_id: str,
+    observed_at: datetime,
+) -> tuple[PortfolioAuthorization | None, str | None]:
+    effective = tuple(
+        authorization
+        for authorization in _portfolio_authorizations(history, portfolio_id)
+        if authorization.proposal.risk_budget.effective_at <= observed_at
+    )
+    if not effective:
+        return None, None
+    superseded = {
+        authorization.previous_authorization_id
+        for authorization in effective
+        if authorization.previous_authorization_id is not None
+    }
+    active = tuple(
+        authorization
+        for authorization in effective
+        if authorization.authorization_id not in superseded
+    )
+    if len(active) != 1:
+        return None, "AUTHORIZATION_HISTORY_CONFLICT"
+    return active[0], None
+
+
+def _reused_authorization_identity_reason(
+    command: PortfolioConfirmationCommand,
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> str | None:
+    authorizations = _portfolio_authorizations(history, command.proposal.portfolio_id)
+    if any(
+        authorization.proposal.risk_budget.version_id == command.proposal.risk_budget.version_id
+        for authorization in authorizations
+    ):
+        return "RISK_BUDGET_VERSION_REUSE"
+    if any(
+        authorization.proposal.snapshot.snapshot_id == command.proposal.snapshot.snapshot_id
+        for authorization in authorizations
+    ):
+        return "PORTFOLIO_SNAPSHOT_VERSION_REUSE"
+    if any(
+        authorization.confirmation.confirmation_id == command.confirmation.confirmation_id
+        for authorization in authorizations
+    ):
+        return "PORTFOLIO_CONFIRMATION_REUSE"
+    return None
+
+
+def _portfolio_authorizations(
+    history: tuple[PortfolioAuthorizationOutcome, ...], portfolio_id: str
+) -> tuple[PortfolioAuthorization, ...]:
+    return tuple(
+        outcome.authorization
+        for outcome in history
+        if outcome.authorization is not None
+        and outcome.authorization.proposal.portfolio_id == portfolio_id
+    )
+
+
 def _authorization_by_id(
     history: tuple[PortfolioAuthorizationOutcome, ...],
     portfolio_id: str,
@@ -169,11 +238,9 @@ def _authorization_by_id(
 ) -> PortfolioAuthorization | None:
     return next(
         (
-            outcome.authorization
-            for outcome in history
-            if outcome.authorization is not None
-            and outcome.authorization.proposal.portfolio_id == portfolio_id
-            and outcome.authorization.authorization_id == authorization_id
+            authorization
+            for authorization in _portfolio_authorizations(history, portfolio_id)
+            if authorization.authorization_id == authorization_id
         ),
         None,
     )

@@ -623,7 +623,7 @@ class FrozenDecisionCase(FrozenContract):
             and not isinstance(self.portfolio, PortfolioUseCommand)
             and (
                 self.access_scope is None
-                or set(self.portfolio.proposal.snapshot.selected_account_ids)
+                or set(self.portfolio.proposal.snapshot.account_ids)
                 != set(self.access_scope.account_ids)
             )
         ):
@@ -645,8 +645,13 @@ class FrozenDecisionCase(FrozenContract):
             or self.version_bundle.report_projection_contract_version
             != self.version_bundle.case_contract_version
             or self.access_scope is None
-            or not isinstance(account, dict)
-            or account.get("account_id") not in self.access_scope.account_ids
+            or (
+                not portfolio_governed
+                and (
+                    not isinstance(account, dict)
+                    or account.get("account_id") not in self.access_scope.account_ids
+                )
+            )
         ):
             raise ValueError("scoped case versions and account facts must agree")
         if not self.synthetic:

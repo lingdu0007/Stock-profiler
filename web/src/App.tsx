@@ -219,6 +219,7 @@ function PortfolioAuthorizationEvidence({
 }: {
   portfolio: PortfolioAuthorizationOutcome;
 }) {
+  const authorization = portfolio.authorization ?? portfolio.usage?.authorization_snapshot;
   return (
     <section className="report-section" aria-label="Portfolio authorization">
       <h2>Portfolio authorization</h2>
@@ -227,9 +228,7 @@ function PortfolioAuthorizationEvidence({
         <Record label="Reasons" value={portfolio.reasons.join(", ")} />
       </dl>
       {portfolio.preview && <PortfolioPreviewEvidence preview={portfolio.preview} />}
-      {portfolio.authorization && (
-        <PortfolioConfirmationEvidence authorization={portfolio.authorization} />
-      )}
+      {authorization && <PortfolioConfirmationEvidence authorization={authorization} />}
       {portfolio.usage && <PortfolioUsageEvidence usage={portfolio.usage} />}
     </section>
   );
