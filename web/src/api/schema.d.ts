@@ -516,6 +516,39 @@ export interface components {
             /** Rule Version */
             rule_version: string;
         };
+        /**
+         * DownsideGridRequalificationEvidence
+         * @description Immutable historical and locked-forward proof for a changed downside grid.
+         */
+        DownsideGridRequalificationEvidence: {
+            /** Action Policy Version Id */
+            action_policy_version_id: string;
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Historical Completed At
+             * Format: date-time
+             */
+            historical_completed_at: string;
+            /** Historical Out Of Sample Evidence Id */
+            historical_out_of_sample_evidence_id: string;
+            /** Locked Forward Confirmation Id */
+            locked_forward_confirmation_id: string;
+            /**
+             * Locked Forward Confirmed At
+             * Format: date-time
+             */
+            locked_forward_confirmed_at: string;
+            /** Predecessor Authorization Id */
+            predecessor_authorization_id: string;
+            /** Predecessor Risk Budget Version Id */
+            predecessor_risk_budget_version_id: string;
+        };
         /** DrawdownBudget */
         DrawdownBudget: {
             /** Caution Ratio */
@@ -879,6 +912,8 @@ export interface components {
          * @description The explicit synthetic risk configuration bound to exactly six calendar months.
          */
         PersonalRiskBudget: {
+            /** Action Policy Version Id */
+            action_policy_version_id: string;
             cash: components["schemas"]["CashBudget"];
             concentration: components["schemas"]["TwoThresholdBudget"];
             /**
@@ -986,6 +1021,7 @@ export interface components {
              * Format: date-time
              */
             confirmed_at: string;
+            downside_grid_requalification?: components["schemas"]["DownsideGridRequalificationEvidence"] | null;
             /** Portfolio Id */
             portfolio_id: string;
             relaxation_evidence?: components["schemas"]["RiskBudgetRelaxationEvidence"] | null;

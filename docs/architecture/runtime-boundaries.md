@@ -43,6 +43,12 @@ successor's next calendar-defined monthly activation snapshot and cutoff. Invali
 governed cutoffs are rejected and audited before creating a Run. Reading a saved
 qualification outcome is historical replay, not a new grant or activation.
 
+A changed downside grid also binds a distinct action-policy version and immutable
+requalification evidence: a historical out-of-sample result and a locked
+forward confirmation must both predate the user confirmation and be available
+by the frozen cutoff. Reusing an action-policy version with a different grid or
+substituting the user confirmation for the locked forward record fails closed.
+
 Governed D0 commands supply an explicit `QualificationPolicy` inside their
 capability version. Its contract version, policy version, original synthetic
 provenance and clock parameters have no engine defaults. The complete policy

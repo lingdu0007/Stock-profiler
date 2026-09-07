@@ -128,7 +128,18 @@ describe("App", () => {
         risk_budget_version_id: "synthetic-risk-budget-alpha",
         confirmed_at: "2042-05-17T16:00:00Z",
         confirmed: true,
-        relaxation_evidence: portfolioFixture.risk_relaxation_evidence
+        relaxation_evidence: portfolioFixture.risk_relaxation_evidence,
+        downside_grid_requalification: {
+          evidence_id: "synthetic-grid-requalification-alpha",
+          predecessor_authorization_id: "decision-event-portfolio-alpha",
+          predecessor_risk_budget_version_id: "synthetic-risk-budget-alpha",
+          action_policy_version_id: "synthetic-action-policy-grid-beta",
+          historical_out_of_sample_evidence_id: "synthetic-grid-history-grid-beta",
+          historical_completed_at: "2042-06-10T15:00:00Z",
+          locked_forward_confirmation_id: "synthetic-grid-forward-grid-beta",
+          locked_forward_confirmed_at: "2042-06-16T14:59:00Z",
+          available_at: "2042-06-16T15:00:00Z"
+        }
       },
       proposal
     };
@@ -181,6 +192,11 @@ describe("App", () => {
     expect(confirmation).toHaveTextContent("synthetic-portfolio-snapshot-alpha-activation");
     expect(confirmation).toHaveTextContent("Activation cutoff");
     expect(confirmation).toHaveTextContent("synthetic-market-calendar-v1");
+    expect(confirmation).toHaveTextContent("Action policy");
+    expect(confirmation).toHaveTextContent("synthetic-action-policy-alpha");
+    expect(confirmation).toHaveTextContent("synthetic-grid-requalification-alpha");
+    expect(confirmation).toHaveTextContent("Historical out-of-sample evidence");
+    expect(confirmation).toHaveTextContent("Locked forward confirmation");
   });
 
   it("shows correction lineage supplied by the committed report projection", async () => {

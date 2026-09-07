@@ -44,6 +44,12 @@ result can return a snapshot, preview, or unfinished obligation, the requesting
 frozen scope must cover every account represented by that returned data. Browser
 and model callers never receive either ledger lookup itself.
 
+A same-owner, same-visibility cross-portfolio lookup is also host-only and
+negative: it can reject an attempted new portfolio identity whose complete
+account universe overlaps a retained authorization. It returns no predecessor,
+account, obligation, or successor data, and cannot itself authorize a new
+portfolio.
+
 `GET` and `POST /api/v1/reports/{id}/facts` read and append independent VIEWED,
 ACKNOWLEDGED, CONFIRMED, and EXECUTION_DECLARED facts. Mutation additionally
 requires same-origin session/CSRF validation and `USER_FACT`. Confirmations

@@ -26,6 +26,7 @@ def adjudicate(
     knowledge_cutoff: str,
     history: tuple[PortfolioAuthorizationOutcome, ...],
     lineage_history: tuple[PortfolioAuthorizationOutcome, ...] | None = None,
+    owner_lineage_history: tuple[PortfolioAuthorizationOutcome, ...] | None = None,
     access_account_ids: tuple[str, ...],
     business_prerequisite_met: bool = True,
 ) -> PortfolioAuthorizationOutcome:
@@ -34,6 +35,9 @@ def adjudicate(
     cutoff = datetime.fromisoformat(knowledge_cutoff)
     history = _history_available_by(history, cutoff)
     lineage_history = lineage_history if lineage_history is not None else history
+    owner_lineage_history = (
+        owner_lineage_history if owner_lineage_history is not None else lineage_history
+    )
     if isinstance(command, PortfolioUseCommand):
         return _adjudicate_use(
             command,
@@ -81,7 +85,14 @@ def adjudicate(
         lineage_history,
         command.proposal.portfolio_id,
     )
-    if history_reason is not None:
+    if (
+        scope_reason := _overlapping_portfolio_scope_reason(
+            command.proposal,
+            owner_lineage_history,
+        )
+    ) is not None:
+        reasons = (scope_reason,)
+    elif history_reason is not None:
         reasons = (history_reason,)
     elif current is not None and not current.evidence_available_by(cutoff):
         reasons = ("PORTFOLIO_LINEAGE_AFTER_CUTOFF",)
@@ -91,6 +102,19 @@ def adjudicate(
         reasons = ("PREVIOUS_AUTHORIZATION_REQUIRED",)
     elif current is not None and command.previous_authorization_id != current.authorization_id:
         reasons = ("AUTHORIZATION_REVISION_CONFLICT",)
+    elif (
+        current is not None
+        and (
+            grid_requalification_reason := _downside_grid_requalification_reason(
+                command,
+                current,
+                lineage_history,
+                cutoff,
+            )
+        )
+        is not None
+    ):
+        reasons = (grid_requalification_reason,)
     elif (
         identity_reason := _reused_authorization_identity_reason(command, lineage_history)
     ) is not None:
@@ -320,6 +344,57 @@ def _reused_cash_obligation_identity_reason(
     return None
 
 
+def _overlapping_portfolio_scope_reason(
+    proposal: PortfolioProposal,
+    owner_lineage_history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> str | None:
+    """Reject a new portfolio identity that would split an existing account universe."""
+    proposed_account_ids = set(proposal.snapshot.account_ids)
+    if any(
+        authorization.proposal.portfolio_id != proposal.portfolio_id
+        and proposed_account_ids.intersection(authorization.proposal.snapshot.account_ids)
+        for authorization in _authorizations(owner_lineage_history)
+    ):
+        return "PORTFOLIO_ACCOUNT_SCOPE_CONFLICT"
+    return None
+
+
+def _downside_grid_requalification_reason(
+    command: PortfolioConfirmationCommand,
+    current: PortfolioAuthorization,
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+    cutoff: datetime,
+) -> str | None:
+    previous_budget = current.proposal.risk_budget
+    proposed_budget = command.proposal.risk_budget
+    if not proposed_budget.changes_downside_grid(previous_budget):
+        return None
+    evidence = command.confirmation.downside_grid_requalification
+    if evidence is None:
+        return "DOWNSIDE_GRID_REQUALIFICATION_REQUIRED"
+    if proposed_budget.action_policy_version_id == previous_budget.action_policy_version_id:
+        return "DOWNSIDE_GRID_ACTION_POLICY_VERSION_REQUIRED"
+    if any(
+        authorization.proposal.risk_budget.action_policy_version_id
+        == proposed_budget.action_policy_version_id
+        and authorization.proposal.risk_budget.downside_grid != proposed_budget.downside_grid
+        for authorization in _portfolio_authorizations(history, command.proposal.portfolio_id)
+    ):
+        return "DOWNSIDE_GRID_ACTION_POLICY_REDEFINED"
+    if (
+        evidence.predecessor_authorization_id != current.authorization_id
+        or evidence.predecessor_risk_budget_version_id != previous_budget.version_id
+        or evidence.action_policy_version_id != proposed_budget.action_policy_version_id
+        or evidence.historical_completed_at < previous_budget.effective_at
+        or evidence.locked_forward_confirmed_at > command.confirmation.confirmed_at
+        or evidence.locked_forward_confirmation_id == command.confirmation.confirmation_id
+        or evidence.available_at > command.confirmation.confirmed_at
+        or evidence.available_at > cutoff
+    ):
+        return "DOWNSIDE_GRID_REQUALIFICATION_INVALID"
+    return None
+
+
 def _risk_budget_relaxation_reason(
     command: PortfolioConfirmationCommand,
     current: PortfolioAuthorization,
@@ -366,13 +441,20 @@ def _confirmation_evidence_reason(
     cutoff: datetime,
     now: datetime,
 ) -> str | None:
-    evidence = command.confirmation.relaxation_evidence
-    if command.confirmation.confirmed_at > cutoff or (
-        evidence is not None and evidence.available_at > cutoff
+    evidence_available_at = tuple(
+        evidence.available_at
+        for evidence in (
+            command.confirmation.relaxation_evidence,
+            command.confirmation.downside_grid_requalification,
+        )
+        if evidence is not None
+    )
+    if command.confirmation.confirmed_at > cutoff or any(
+        available_at > cutoff for available_at in evidence_available_at
     ):
         return "PORTFOLIO_EVIDENCE_AFTER_CUTOFF"
-    if command.confirmation.confirmed_at > now or (
-        evidence is not None and evidence.available_at > now
+    if command.confirmation.confirmed_at > now or any(
+        available_at > now for available_at in evidence_available_at
     ):
         return "PORTFOLIO_EVIDENCE_NOT_AVAILABLE"
     return None
@@ -416,6 +498,12 @@ def _portfolio_authorizations(
         if outcome.authorization is not None
         and outcome.authorization.proposal.portfolio_id == portfolio_id
     )
+
+
+def _authorizations(
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> tuple[PortfolioAuthorization, ...]:
+    return tuple(outcome.authorization for outcome in history if outcome.authorization is not None)
 
 
 def _authorization_by_id(

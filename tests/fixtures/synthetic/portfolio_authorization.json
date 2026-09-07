@@ -40,6 +40,7 @@
     "risk_budget": {
       "contract_version": "1.0.0",
       "version_id": "synthetic-risk-budget-alpha",
+      "action_policy_version_id": "synthetic-action-policy-alpha",
       "synthetic": true,
       "generator_version": "portfolio-authorization/1",
       "seed": 6101,

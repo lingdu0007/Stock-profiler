@@ -287,6 +287,7 @@ function PortfolioConfirmationEvidence({
         <Record label="Confirmed" value={confirmation.confirmed_at} />
         <Record label="Selected snapshot" value={proposal.snapshot.snapshot_id} />
         <Record label="Risk budget" value={budget.version_id} />
+        <Record label="Action policy" value={budget.action_policy_version_id} />
         <Record label="Effective" value={budget.effective_at} />
         <Record label="Expires" value={budget.expires_at} />
         {proposal.snapshot.accounts
@@ -360,6 +361,28 @@ function PortfolioConfirmationEvidence({
             <Record
               label="Monthly activation cutoff"
               value={confirmation.relaxation_evidence.monthly_selection_cutoff_at}
+            />
+          </>
+        )}
+        {confirmation.downside_grid_requalification && (
+          <>
+            <Record
+              label="Downside-grid requalification"
+              value={confirmation.downside_grid_requalification.evidence_id}
+            />
+            <Record
+              label="Requalified action policy"
+              value={confirmation.downside_grid_requalification.action_policy_version_id}
+            />
+            <Record
+              label="Historical out-of-sample evidence"
+              value={
+                confirmation.downside_grid_requalification.historical_out_of_sample_evidence_id
+              }
+            />
+            <Record
+              label="Locked forward confirmation"
+              value={confirmation.downside_grid_requalification.locked_forward_confirmation_id}
             />
           </>
         )}

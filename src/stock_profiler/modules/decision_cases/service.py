@@ -521,6 +521,10 @@ def _commit_framework_result(
                         execution_case.access_scope,
                         portfolio_id_for(execution_case.portfolio),
                     ),
+                    owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
+                        connection,
+                        execution_case.access_scope,
+                    ),
                     access_account_ids=execution_case.access_scope.account_ids,
                     knowledge_cutoff=execution_case.knowledge_cutoff,
                     business_prerequisite_met=business_result.status == "SUCCEEDED",

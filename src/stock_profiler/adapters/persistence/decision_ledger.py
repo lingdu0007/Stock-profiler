@@ -154,6 +154,22 @@ class DecisionLedger:
         """Read a trusted host-only lineage for stale revision/use rejection, never projection."""
         return tuple(
             portfolio
+            for portfolio in self.portfolio_authorization_owner_lineage(
+                connection,
+                access_scope,
+            )
+            if portfolio.authorization is not None
+            and portfolio.authorization.proposal.portfolio_id == portfolio_id
+        )
+
+    def portfolio_authorization_owner_lineage(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read same-owner/visibility scope history only for a negative overlap guard."""
+        return tuple(
+            portfolio
             for fact in self._original_event_facts(
                 connection, "portfolio authorization history is unavailable"
             )
@@ -162,8 +178,7 @@ class DecisionLedger:
                 and scope.user_id == access_scope.user_id
                 and scope.visibility == access_scope.visibility
                 and (portfolio := fact.result.portfolio) is not None
-                and (authorization := portfolio.authorization) is not None
-                and authorization.proposal.portfolio_id == portfolio_id
+                and portfolio.authorization is not None
             )
         )
 

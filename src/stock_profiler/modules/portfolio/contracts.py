@@ -124,6 +124,7 @@ class PersonalRiskBudget(PortfolioContract):
 
     contract_version: Literal["1.0.0"]
     version_id: str = Field(min_length=1)
+    action_policy_version_id: str = Field(min_length=1)
     synthetic: Literal[True]
     generator_version: str = Field(min_length=1)
     seed: int
@@ -167,6 +168,10 @@ class PersonalRiskBudget(PortfolioContract):
                 self.protection_floor.retained_directions
             )
         )
+
+    def changes_downside_grid(self, previous: PersonalRiskBudget) -> bool:
+        """Identify a grid change that requires a new action-policy qualification."""
+        return self.downside_grid != previous.downside_grid
 
 
 class DatedCashObligation(PortfolioContract):
@@ -321,6 +326,41 @@ class RiskBudgetRelaxationEvidence(PortfolioContract):
         return next_session is not None and instant < next_session.closed_at
 
 
+class DownsideGridRequalificationEvidence(PortfolioContract):
+    """Immutable historical and locked-forward proof for a changed downside grid."""
+
+    evidence_id: str = Field(min_length=1)
+    predecessor_authorization_id: str = Field(min_length=1)
+    predecessor_risk_budget_version_id: str = Field(min_length=1)
+    action_policy_version_id: str = Field(min_length=1)
+    historical_out_of_sample_evidence_id: str = Field(min_length=1)
+    historical_completed_at: AwareDatetime
+    locked_forward_confirmation_id: str = Field(min_length=1)
+    locked_forward_confirmed_at: AwareDatetime
+    available_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_immutable_requalification_proof(self) -> DownsideGridRequalificationEvidence:
+        if not (
+            self.historical_completed_at <= self.locked_forward_confirmed_at <= self.available_at
+        ):
+            raise ValueError(
+                "downside-grid requalification must preserve historical and locked-forward order"
+            )
+        if (
+            len(
+                {
+                    self.evidence_id,
+                    self.historical_out_of_sample_evidence_id,
+                    self.locked_forward_confirmation_id,
+                }
+            )
+            != 3
+        ):
+            raise ValueError("downside-grid requalification evidence identities must be distinct")
+        return self
+
+
 class PortfolioConfirmation(PortfolioContract):
     confirmation_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
@@ -330,6 +370,7 @@ class PortfolioConfirmation(PortfolioContract):
     confirmed_at: AwareDatetime
     confirmed: Literal[True]
     relaxation_evidence: RiskBudgetRelaxationEvidence | None = None
+    downside_grid_requalification: DownsideGridRequalificationEvidence | None = None
 
 
 class PortfolioConfirmationCommand(PortfolioContract):
@@ -401,10 +442,12 @@ class PortfolioAuthorization(PortfolioContract):
 
     def evidence_available_by(self, cutoff: datetime) -> bool:
         relaxation = self.confirmation.relaxation_evidence
+        grid_requalification = self.confirmation.downside_grid_requalification
         return (
             self.proposal.evidence_available_by(cutoff)
             and self.confirmation.confirmed_at <= cutoff
             and (relaxation is None or relaxation.available_at <= cutoff)
+            and (grid_requalification is None or grid_requalification.available_at <= cutoff)
         )
 
 

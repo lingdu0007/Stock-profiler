@@ -228,6 +228,24 @@ def relaxation_evidence(previous_authorization_id: str) -> dict[str, Any]:
     return evidence
 
 
+def downside_grid_requalification(
+    previous_authorization_id: str,
+    *,
+    action_policy_version_id: str,
+) -> dict[str, Any]:
+    return {
+        "evidence_id": f"synthetic-grid-requalification-{action_policy_version_id}",
+        "predecessor_authorization_id": previous_authorization_id,
+        "predecessor_risk_budget_version_id": "synthetic-risk-budget-alpha",
+        "action_policy_version_id": action_policy_version_id,
+        "historical_out_of_sample_evidence_id": "synthetic-grid-history-grid-beta",
+        "historical_completed_at": "2042-06-10T15:00:00Z",
+        "locked_forward_confirmation_id": "synthetic-grid-forward-grid-beta",
+        "locked_forward_confirmed_at": "2042-06-16T14:59:00Z",
+        "available_at": "2042-06-16T15:00:00Z",
+    }
+
+
 def proposal_account_ids(proposal: dict[str, Any]) -> list[str]:
     return [account["account_id"] for account in proposal["snapshot"]["accounts"]]
 
@@ -1037,6 +1055,151 @@ def test_risk_budget_relaxation_cannot_drop_unfinished_obligations(
     assert outcome.reasons == ("RISK_BUDGET_RELAXATION_OBLIGATIONS_UNRESOLVED",)
 
 
+def test_downside_grid_change_requires_action_policy_requalification(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-original",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = relaxed_portfolio_proposal()
+    proposal["risk_budget"].update(
+        action_policy_version_id="synthetic-action-policy-grid-beta",
+        downside_grid=["0.40", "0.90"],
+    )
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at="2042-06-16T15:00:00Z",
+    )
+    command["confirmation"]["relaxation_evidence"] = relaxation_evidence(original.decision_event_id)
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-missing",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("DOWNSIDE_GRID_REQUALIFICATION_REQUIRED",)
+
+
+def test_downside_grid_change_requires_a_new_action_policy_version(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-version-original",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = relaxed_portfolio_proposal()
+    proposal["risk_budget"].update(
+        action_policy_version_id="synthetic-action-policy-alpha",
+        downside_grid=["0.40", "0.90"],
+    )
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at="2042-06-16T15:00:00Z",
+    )
+    command["confirmation"]["relaxation_evidence"] = relaxation_evidence(original.decision_event_id)
+    command["confirmation"]["downside_grid_requalification"] = downside_grid_requalification(
+        original.decision_event_id,
+        action_policy_version_id="synthetic-action-policy-alpha",
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-version-reused",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("DOWNSIDE_GRID_ACTION_POLICY_VERSION_REQUIRED",)
+
+
+def test_downside_grid_change_freezes_new_action_policy_requalification(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-approved-original",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = relaxed_portfolio_proposal()
+    action_policy_version_id = "synthetic-action-policy-grid-beta"
+    proposal["risk_budget"].update(
+        action_policy_version_id=action_policy_version_id,
+        downside_grid=["0.40", "0.90"],
+    )
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at="2042-06-16T15:00:00Z",
+    )
+    command["confirmation"]["relaxation_evidence"] = relaxation_evidence(original.decision_event_id)
+    command["confirmation"]["downside_grid_requalification"] = downside_grid_requalification(
+        original.decision_event_id,
+        action_policy_version_id=action_policy_version_id,
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "grid-requalification-approved",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    assert outcome.authorization is not None
+    assert outcome.authorization.proposal.risk_budget.action_policy_version_id == (
+        action_policy_version_id
+    )
+    requalification = outcome.authorization.confirmation.downside_grid_requalification
+    assert requalification is not None
+    assert requalification.action_policy_version_id == action_policy_version_id
+    assert requalification.historical_out_of_sample_evidence_id == (
+        "synthetic-grid-history-grid-beta"
+    )
+    assert requalification.locked_forward_confirmation_id == "synthetic-grid-forward-grid-beta"
+
+
 def test_confirmation_freezes_the_risk_budget_and_cash_obligation_in_the_report(
     migrated_settings: Settings,
 ) -> None:
@@ -1719,6 +1882,84 @@ def test_delayed_new_exposure_cannot_bypass_an_effective_tightened_successor(
     assert protected_outcome is not None
     assert protected_outcome.disposition == "APPROVED"
     assert protected_outcome.reasons == ("DETERMINISTIC_PROTECTION_RETAINED",)
+
+
+def test_overlapping_portfolio_scope_cannot_start_a_new_lineage(
+    migrated_settings: Settings,
+) -> None:
+    original_proposal = portfolio_proposal()
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "scope-rebinding-original",
+            portfolio_confirmation_command(original_proposal),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    replacement = scheduled_portfolio_proposal()
+    replacement["portfolio_id"] = "synthetic-portfolio-reidentified"
+    replacement["risk_budget"]["version_id"] = "synthetic-risk-budget-reidentified"
+    replacement["risk_budget"]["concentration"].update(
+        target_ratio="0.50",
+        hard_ratio="0.90",
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "scope-rebinding-bypass",
+            portfolio_confirmation_command(replacement),
+        ),
+        clock=GovernanceClock("2042-05-18T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("PORTFOLIO_ACCOUNT_SCOPE_CONFLICT",)
+    assert outcome.authorization is None
+
+
+def test_portfolio_owner_lineage_filters_owner_and_visibility(
+    migrated_settings: Settings,
+) -> None:
+    payload = portfolio_case_payload(
+        migrated_settings,
+        "owner-lineage-isolation",
+        portfolio_confirmation_command(portfolio_proposal()),
+    )
+    case = FrozenDecisionCase.model_validate(payload)
+    assert case.access_scope is not None
+    execution = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert execution.report is not None
+    ledger = DecisionLedger.from_settings(migrated_settings)
+
+    with ledger.serialize_case_execution() as connection:
+        owner_lineage = ledger.portfolio_authorization_owner_lineage(
+            connection,
+            case.access_scope,
+        )
+        assert len(owner_lineage) == 1
+        assert owner_lineage[0].authorization is not None
+        assert owner_lineage[0].authorization.authorization_id == execution.decision_event_id
+        assert (
+            ledger.portfolio_authorization_owner_lineage(
+                connection,
+                case.access_scope.model_copy(update={"user_id": "synthetic-other-user"}),
+            )
+            == ()
+        )
+        assert (
+            ledger.portfolio_authorization_owner_lineage(
+                connection,
+                case.access_scope.model_copy(update={"visibility": "SHADOW"}),
+            )
+            == ()
+        )
 
 
 def test_unsupported_activation_account_type_blocks_forward_authorization(

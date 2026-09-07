@@ -655,6 +655,70 @@
         "title": "DiagnosticPlan",
         "type": "object"
       },
+      "DownsideGridRequalificationEvidence": {
+        "additionalProperties": false,
+        "description": "Immutable historical and locked-forward proof for a changed downside grid.",
+        "properties": {
+          "action_policy_version_id": {
+            "minLength": 1,
+            "title": "Action Policy Version Id",
+            "type": "string"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "historical_completed_at": {
+            "format": "date-time",
+            "title": "Historical Completed At",
+            "type": "string"
+          },
+          "historical_out_of_sample_evidence_id": {
+            "minLength": 1,
+            "title": "Historical Out Of Sample Evidence Id",
+            "type": "string"
+          },
+          "locked_forward_confirmation_id": {
+            "minLength": 1,
+            "title": "Locked Forward Confirmation Id",
+            "type": "string"
+          },
+          "locked_forward_confirmed_at": {
+            "format": "date-time",
+            "title": "Locked Forward Confirmed At",
+            "type": "string"
+          },
+          "predecessor_authorization_id": {
+            "minLength": 1,
+            "title": "Predecessor Authorization Id",
+            "type": "string"
+          },
+          "predecessor_risk_budget_version_id": {
+            "minLength": 1,
+            "title": "Predecessor Risk Budget Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "predecessor_authorization_id",
+          "predecessor_risk_budget_version_id",
+          "action_policy_version_id",
+          "historical_out_of_sample_evidence_id",
+          "historical_completed_at",
+          "locked_forward_confirmation_id",
+          "locked_forward_confirmed_at",
+          "available_at"
+        ],
+        "title": "DownsideGridRequalificationEvidence",
+        "type": "object"
+      },
       "DrawdownBudget": {
         "additionalProperties": false,
         "properties": {
@@ -1478,6 +1542,11 @@
         "additionalProperties": false,
         "description": "The explicit synthetic risk configuration bound to exactly six calendar months.",
         "properties": {
+          "action_policy_version_id": {
+            "minLength": 1,
+            "title": "Action Policy Version Id",
+            "type": "string"
+          },
           "cash": {
             "$ref": "#/components/schemas/CashBudget"
           },
@@ -1540,6 +1609,7 @@
         "required": [
           "contract_version",
           "version_id",
+          "action_policy_version_id",
           "synthetic",
           "generator_version",
           "seed",
@@ -1722,6 +1792,16 @@
             "format": "date-time",
             "title": "Confirmed At",
             "type": "string"
+          },
+          "downside_grid_requalification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DownsideGridRequalificationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "portfolio_id": {
             "minLength": 1,
