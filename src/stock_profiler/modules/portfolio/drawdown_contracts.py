@@ -93,6 +93,7 @@ class DrawdownState(PortfolioContract):
     authorization_id: str
     account_ids: tuple[str, ...]
     cutoff_at: AwareDatetime
+    accounting_cutoff_at: AwareDatetime
     policy: DrawdownPolicy
     thresholds: DrawdownBudget
     net_liquidation_equity: Decimal | None

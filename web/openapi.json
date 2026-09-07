@@ -1262,6 +1262,11 @@
             "title": "Account Ids",
             "type": "array"
           },
+          "accounting_cutoff_at": {
+            "format": "date-time",
+            "title": "Accounting Cutoff At",
+            "type": "string"
+          },
           "authorization_id": {
             "title": "Authorization Id",
             "type": "string"
@@ -1493,6 +1498,7 @@
           "authorization_id",
           "account_ids",
           "cutoff_at",
+          "accounting_cutoff_at",
           "policy",
           "thresholds",
           "net_liquidation_equity",

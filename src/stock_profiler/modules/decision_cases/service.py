@@ -165,22 +165,22 @@ def correct_default_frozen_decision_case(
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
-            correction_result = ExternalResult(
-                outcome_code="SYNTHETIC_CORRECTION_RECORDED",
-                summary=(
-                    "Synthetic D0 correction recorded without replacing "
-                    "the original decision event."
-                ),
-                key_reasons=(
-                    "The original completion statement is corrected to an incomplete checklist.",
-                    "The original evidence cutoff and formal report remain available.",
-                ),
-                correction_evidence=CorrectionEvidence.model_validate(
-                    load_frozen_correction_payload()
-                ),
-                governance=original_event.result.governance,
-                portfolio=original_event.result.portfolio,
-                position=original_event.result.position,
+            correction_result = original_event.result.model_copy(
+                update={
+                    "outcome_code": "SYNTHETIC_CORRECTION_RECORDED",
+                    "summary": (
+                        "Synthetic D0 correction recorded without replacing "
+                        "the original decision event."
+                    ),
+                    "key_reasons": (
+                        "The original completion statement is corrected "
+                        "to an incomplete checklist.",
+                        "The original evidence cutoff and formal report remain available.",
+                    ),
+                    "correction_evidence": CorrectionEvidence.model_validate(
+                        load_frozen_correction_payload()
+                    ),
+                }
             )
             correction_stages = (
                 StageResult(

@@ -743,6 +743,11 @@ export interface components {
         DrawdownState: {
             /** Account Ids */
             account_ids: string[];
+            /**
+             * Accounting Cutoff At
+             * Format: date-time
+             */
+            accounting_cutoff_at: string;
             /** Authorization Id */
             authorization_id: string;
             /** Closed At */

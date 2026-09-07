@@ -15,6 +15,9 @@ must cover the same complete account scope and the command's frozen cutoff.
 Liquidation costs and their source clocks are explicit. Missing material
 valuation or flow evidence produces `UNKNOWN`, blocks new exposure and retains
 the previously triggered protection. No market value is replaced with cost.
+The observation cutoff advances independently of the last qualified accounting
+cutoff, so a later complete proof can resolve intervening flows without losing
+the original unit-accounting anchor.
 
 The policy has explicit synthetic provenance, a version identity, exposure and
 recovery ratios, session counts and an immutable synthetic calendar reference.
@@ -26,6 +29,7 @@ Net liquidation equity divided by capital units gives unit NAV. Exact rational
 units and the epoch high-water mark are saved alongside decimal report values.
 External cash and asset flows issue or cancel units at the qualified pre-flow
 NAV. Each flow must cover new committed transfer ledger entries exactly once.
+Each pre-flow valuation must include all earlier flows in the interval.
 Asset flows also require qualified contemporaneous asset prices. Internal
 transfers must reconcile across accounts to zero value and do not change units.
 Pre-flow qualified peaks and troughs participate in risk history.
@@ -52,6 +56,8 @@ protected throughout a complete zero-exposure cooling sequence. Reopening
 requires a new approved capital authorization and an explicit confirmation
 linked to the predecessor epoch. The successor records that predecessor; old
 reports and their historical maximum drawdowns remain append-only.
+An observation of an open epoch uses the effective authorized successor budget;
+requesting a predecessor cannot bypass a confirmed tightening.
 
 ## Scope
 

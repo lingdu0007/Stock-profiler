@@ -31,6 +31,7 @@ def adjudicate(
     business_prerequisite_met: bool,
     before_positions: dict[str, PositionReconciliationOutcome | None],
 ) -> DrawdownOutcome:
+    prior = next((item.state for item in reversed(history) if item.state is not None), None)
     capital = next(
         (
             item.authorization
@@ -42,6 +43,18 @@ def adjudicate(
     )
     if capital is None or not business_prerequisite_met:
         return DrawdownOutcome(disposition="DENIED", reasons=("CAPITAL_AUTHORIZATION_REQUIRED",))
+    if command.operation == "OBSERVE" and prior is not None and prior.epoch_status == "OPEN":
+        capital = next(
+            (
+                item.authorization
+                for item in reversed(authorizations)
+                if item.authorization is not None
+                and item.authorization.proposal.portfolio_id == command.portfolio_id
+                and item.authorization.evidence_available_by(command.cutoff_at)
+                and item.authorization.proposal.risk_budget.effective_at <= command.cutoff_at
+            ),
+            capital,
+        )
     budget = capital.proposal.risk_budget
     if (
         capital.proposal.portfolio_id != command.portfolio_id
@@ -51,7 +64,6 @@ def adjudicate(
         or (command.operation in {"OPEN", "REAUTHORIZE"} and command.cutoff_at >= budget.expires_at)
     ):
         return DrawdownOutcome(disposition="DENIED", reasons=("CAPITAL_AUTHORIZATION_SCOPE",))
-    prior = next((item.state for item in reversed(history) if item.state is not None), None)
     if command.operation == "OPEN" and (
         prior is not None or command.previous_decision_id is not None
     ):
@@ -91,10 +103,12 @@ def adjudicate(
                 disposition="DENIED", reasons=("CAPITAL_REAUTHORIZATION_REQUIRED",)
             )
         predecessor_epoch_id = prior.epoch_id
-    if (
-        synthetic_market_calendar(command.policy.market_calendar_version_id) is None
-        or command.policy.caution_recovery_ratio >= budget.drawdown.caution_ratio
-        or command.policy.defensive_recovery_ratio >= budget.drawdown.defensive_ratio
+    if synthetic_market_calendar(command.policy.market_calendar_version_id) is None or (
+        command.operation in {"OPEN", "REAUTHORIZE"}
+        and (
+            command.policy.caution_recovery_ratio >= budget.drawdown.caution_ratio
+            or command.policy.defensive_recovery_ratio >= budget.drawdown.defensive_ratio
+        )
     ):
         return DrawdownOutcome(disposition="DENIED", reasons=("DRAWDOWN_POLICY_INVALID",))
     if (
@@ -108,30 +122,7 @@ def adjudicate(
             command.cutoff_at, require_current_completeness=True
         )
     ):
-        retained = (
-            prior.model_copy(
-                update={
-                    "decision_id": event_id,
-                    "cutoff_at": command.cutoff_at,
-                    "valuation": command.valuation,
-                    "net_liquidation_equity": None,
-                    "unit_nav": None,
-                    "current_drawdown": None,
-                    "current_stock_exposure": None,
-                    "new_exposure_blocked": True,
-                    "recovery_sessions": 0,
-                    "last_recovery_session": None,
-                    "cooling_sessions": 0,
-                    "execution_blocked": True,
-                    "stock_exposure_target_value": None,
-                }
-            )
-            if prior is not None
-            else None
-        )
-        return DrawdownOutcome(
-            disposition="UNKNOWN", reasons=("DRAWDOWN_EVIDENCE_UNKNOWN",), state=retained
-        )
+        return unknown_evidence(prior, command, event_id, "DRAWDOWN_EVIDENCE_UNKNOWN")
     with localcontext() as context:
         context.prec = 50
         equity = position.snapshot.total_account_equity - command.valuation.liquidation_cost
@@ -160,30 +151,13 @@ def adjudicate(
     interval_drawdown = Fraction(0)
     if prior is not None:
         try:
-            units_fraction, peak_fraction, flow_ids, interval_drawdown = adjusted_units(
-                command, prior, position, before_positions
-            )
+            accounting = adjusted_units(command, prior, position, before_positions)
+            units_fraction = accounting.units
+            peak_fraction = accounting.peak
+            flow_ids = accounting.flow_ids
+            interval_drawdown = accounting.interval_drawdown
         except ValueError as error:
-            return DrawdownOutcome(
-                disposition="UNKNOWN",
-                reasons=(str(error),),
-                state=prior.model_copy(
-                    update={
-                        "decision_id": event_id,
-                        "cutoff_at": command.cutoff_at,
-                        "unit_nav": None,
-                        "current_drawdown": None,
-                        "net_liquidation_equity": None,
-                        "current_stock_exposure": None,
-                        "new_exposure_blocked": True,
-                        "recovery_sessions": 0,
-                        "last_recovery_session": None,
-                        "cooling_sessions": 0,
-                        "execution_blocked": True,
-                        "stock_exposure_target_value": None,
-                    }
-                ),
-            )
+            return unknown_evidence(prior, command, event_id, str(error))
     nav_fraction = Fraction(equity) / units_fraction
     peak_fraction = max(peak_fraction, nav_fraction)
     drawdown_fraction = 1 - nav_fraction / peak_fraction
@@ -234,10 +208,16 @@ def adjudicate(
         )
     )
     if prior is not None and risk == prior.risk_state and valid_close and session is not None:
-        eligible = (risk == "CAUTION" and drawdown < command.policy.caution_recovery_ratio) or (
+        eligible = (
+            risk == "CAUTION"
+            and interval_drawdown < budget.drawdown.caution_ratio
+            and drawdown_fraction < command.policy.caution_recovery_ratio
+        ) or (
             risk == "DEFENSIVE"
-            and drawdown < command.policy.defensive_recovery_ratio
-            and exposure <= equity * command.policy.defensive_exposure_ratio
+            and interval_drawdown < budget.drawdown.defensive_ratio
+            and drawdown_fraction < command.policy.defensive_recovery_ratio
+            and Fraction(exposure)
+            <= Fraction(equity) * Fraction(command.policy.defensive_exposure_ratio)
         )
         if eligible:
             count = (
@@ -303,9 +283,10 @@ def adjudicate(
         decision_id=event_id,
         epoch_id=command.epoch_id,
         portfolio_id=command.portfolio_id,
-        authorization_id=command.authorization_id,
+        authorization_id=capital.authorization_id,
         account_ids=account_ids,
         cutoff_at=command.cutoff_at,
+        accounting_cutoff_at=command.cutoff_at,
         policy=command.policy,
         thresholds=budget.drawdown,
         net_liquidation_equity=equity,
@@ -341,3 +322,33 @@ def adjudicate(
         reasons=("CAPITAL_EPOCH_OPENED" if prior is None else "DRAWDOWN_OBSERVED",),
         state=state,
     )
+
+
+def unknown_evidence(
+    prior: DrawdownState | None,
+    command: DrawdownCommand,
+    event_id: str,
+    reason: str,
+) -> DrawdownOutcome:
+    retained = (
+        prior.model_copy(
+            update={
+                "decision_id": event_id,
+                "cutoff_at": command.cutoff_at,
+                "valuation": command.valuation,
+                "net_liquidation_equity": None,
+                "unit_nav": None,
+                "current_drawdown": None,
+                "current_stock_exposure": None,
+                "new_exposure_blocked": True,
+                "recovery_sessions": 0,
+                "last_recovery_session": None,
+                "cooling_sessions": 0,
+                "execution_blocked": True,
+                "stock_exposure_target_value": None,
+            }
+        )
+        if prior is not None
+        else None
+    )
+    return DrawdownOutcome(disposition="UNKNOWN", reasons=(reason,), state=retained)

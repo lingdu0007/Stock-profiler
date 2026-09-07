@@ -1,5 +1,6 @@
 """Exact unit accounting for complete, broker-bound capital flows."""
 
+from dataclasses import dataclass
 from decimal import Context, Decimal, localcontext
 from fractions import Fraction
 
@@ -10,6 +11,14 @@ from stock_profiler.modules.portfolio.drawdown_contracts import (
     FlowLedgerKey,
 )
 from stock_profiler.modules.position_management.contracts import PositionReconciliationOutcome
+
+
+@dataclass(frozen=True)
+class UnitAccounting:
+    units: Fraction
+    peak: Fraction
+    flow_ids: tuple[str, ...]
+    interval_drawdown: Fraction
 
 
 def decimal_value(value: Fraction) -> Decimal:
@@ -49,7 +58,7 @@ def adjusted_units(
     prior: DrawdownState,
     position: PositionReconciliationOutcome,
     before_positions: dict[str, PositionReconciliationOutcome | None],
-) -> tuple[Fraction, Fraction, tuple[str, ...], Fraction]:
+) -> UnitAccounting:
     units = prior.exact_units.fraction
     peak = prior.exact_peak.fraction
     interval_drawdown = Fraction(0)
@@ -69,16 +78,21 @@ def adjusted_units(
         FlowLedgerKey(account_id=entry.account_id, entry_id=entry.entry_id): entry
         for entry in position.snapshot.authoritative_ledger
     }
+    processed = set(prior.processed_transfers)
+    preceding_flow_at = None
     for flow in flows:
         before = before_positions.get(flow.before_valuation.position_event_id)
         if before is None or not (
-            prior.valuation.evidence.cutoff_at is not None
-            and prior.valuation.evidence.cutoff_at
+            prior.accounting_cutoff_at
             <= before.snapshot.cutoff_at
             <= flow.occurred_at
             <= command.cutoff_at
         ):
             raise ValueError("CAPITAL_FLOW_CLOCK_UNKNOWN")
+        if (preceding_flow_at is not None and before.snapshot.cutoff_at < preceding_flow_at) or set(
+            transfer_keys(before)
+        ) != processed:
+            raise ValueError("CAPITAL_FLOW_SEQUENCE_UNKNOWN")
         pre_equity = equity_for(flow.before_valuation, before, prior.account_ids)
         if pre_equity <= 0 or units <= 0:
             raise ValueError("CAPITAL_FLOW_VALUE_UNKNOWN")
@@ -115,4 +129,6 @@ def adjusted_units(
             units += amount / pre_nav
         if units <= 0:
             raise ValueError("CAPITAL_UNITS_EXHAUSTED")
-    return units, peak, (*prior.processed_flow_ids, *ids), interval_drawdown
+        processed.update(flow.ledger_keys)
+        preceding_flow_at = flow.occurred_at
+    return UnitAccounting(units, peak, (*prior.processed_flow_ids, *ids), interval_drawdown)
