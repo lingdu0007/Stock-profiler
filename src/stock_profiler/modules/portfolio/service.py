@@ -10,6 +10,7 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioCommand,
     PortfolioConfirmationCommand,
     PortfolioPreviewCommand,
+    PortfolioProposal,
     PortfolioUseCommand,
     confirmation_block_reasons,
     preview_for,
@@ -23,6 +24,7 @@ def adjudicate(
     observed_at: str,
     knowledge_cutoff: str,
     history: tuple[PortfolioAuthorizationOutcome, ...],
+    lineage_history: tuple[PortfolioAuthorizationOutcome, ...] | None = None,
     access_account_ids: tuple[str, ...],
     business_prerequisite_met: bool = True,
 ) -> PortfolioAuthorizationOutcome:
@@ -30,6 +32,7 @@ def adjudicate(
     now = datetime.fromisoformat(observed_at)
     cutoff = datetime.fromisoformat(knowledge_cutoff)
     history = _history_available_by(history, cutoff)
+    lineage_history = lineage_history if lineage_history is not None else history
     if isinstance(command, PortfolioUseCommand):
         return _adjudicate_use(
             command,
@@ -65,19 +68,26 @@ def adjudicate(
             preview=preview,
         )
     reasons = confirmation_block_reasons(preview)
-    current, history_reason = _current_authorization(history, command.proposal.portfolio_id)
+    current, history_reason = _current_authorization(
+        lineage_history,
+        command.proposal.portfolio_id,
+    )
     if history_reason is not None:
         reasons = (history_reason,)
+    elif current is not None and not current.evidence_available_by(cutoff):
+        reasons = ("PORTFOLIO_LINEAGE_AFTER_CUTOFF",)
     elif current is None and command.previous_authorization_id is not None:
         reasons = ("PREVIOUS_AUTHORIZATION_NOT_FOUND",)
     elif current is not None and command.previous_authorization_id is None:
         reasons = ("PREVIOUS_AUTHORIZATION_REQUIRED",)
     elif current is not None and command.previous_authorization_id != current.authorization_id:
         reasons = ("AUTHORIZATION_REVISION_CONFLICT",)
-    elif (identity_reason := _reused_authorization_identity_reason(command, history)) is not None:
+    elif (
+        identity_reason := _reused_authorization_identity_reason(command, lineage_history)
+    ) is not None:
         reasons = (identity_reason,)
     elif (
-        obligation_reason := _reused_cash_obligation_identity_reason(command, history)
+        obligation_reason := _reused_cash_obligation_identity_reason(command, lineage_history)
     ) is not None:
         reasons = (obligation_reason,)
     elif (
@@ -92,7 +102,7 @@ def adjudicate(
             relaxation_reason := _risk_budget_relaxation_reason(
                 command,
                 current,
-                history,
+                lineage_history,
                 cutoff,
             )
         )
@@ -148,13 +158,6 @@ def _adjudicate_use(
             reasons=("AUTHORIZATION_SCOPE_MISMATCH",),
         )
     preview = preview_for(authorization.proposal)
-    _, history_reason = _current_authorization(history, command.portfolio_id)
-    if history_reason is not None:
-        return PortfolioAuthorizationOutcome(
-            disposition="DENIED",
-            reasons=(history_reason,),
-            preview=preview,
-        )
     if now < authorization.proposal.risk_budget.effective_at:
         allowed = False
         reasons = ("RISK_BUDGET_NOT_YET_EFFECTIVE",)
@@ -162,6 +165,13 @@ def _adjudicate_use(
         allowed = True
         reasons = ("DETERMINISTIC_PROTECTION_RETAINED",)
     else:
+        _, history_reason = _current_authorization(history, command.portfolio_id)
+        if history_reason is not None:
+            return PortfolioAuthorizationOutcome(
+                disposition="DENIED",
+                reasons=(history_reason,),
+                preview=preview,
+            )
         active, active_reason = _active_authorization(history, command.portfolio_id, now)
         if active_reason is not None:
             return PortfolioAuthorizationOutcome(
@@ -245,7 +255,9 @@ def _reused_authorization_identity_reason(
     ):
         return "RISK_BUDGET_VERSION_REUSE"
     if any(
-        authorization.proposal.snapshot.snapshot_id == command.proposal.snapshot.snapshot_id
+        _proposal_snapshot_ids(authorization.proposal).intersection(
+            _proposal_snapshot_ids(command.proposal)
+        )
         for authorization in authorizations
     ):
         return "PORTFOLIO_SNAPSHOT_VERSION_REUSE"
@@ -255,6 +267,13 @@ def _reused_authorization_identity_reason(
     ):
         return "PORTFOLIO_CONFIRMATION_REUSE"
     return None
+
+
+def _proposal_snapshot_ids(proposal: PortfolioProposal) -> frozenset[str]:
+    ids = {proposal.snapshot.snapshot_id}
+    if proposal.activation_snapshot is not None:
+        ids.add(proposal.activation_snapshot.snapshot_id)
+    return frozenset(ids)
 
 
 def _reused_cash_obligation_identity_reason(
@@ -285,11 +304,16 @@ def _risk_budget_relaxation_reason(
     if (
         evidence.predecessor_authorization_id != current.authorization_id
         or evidence.predecessor_risk_budget_version_id != current.proposal.risk_budget.version_id
-        or evidence.normal_from_at != current.proposal.risk_budget.effective_at
+        or evidence.normal_from_at < current.proposal.risk_budget.effective_at
+        or evidence.normal_through_at > current.proposal.risk_budget.expires_at
         or evidence.normal_through_at != command.confirmation.confirmed_at
         or evidence.available_at > command.confirmation.confirmed_at
         or evidence.available_at > cutoff
-        or evidence.monthly_selection_cutoff_at != command.proposal.risk_budget.effective_at
+        or command.proposal.activation_snapshot is None
+        or evidence.monthly_selection_cutoff_at
+        != command.proposal.activation_snapshot.cutoff_at
+        or command.proposal.activation_snapshot.cutoff_at
+        != command.proposal.risk_budget.effective_at
     ):
         return "RISK_BUDGET_RELAXATION_EVIDENCE_INVALID"
     if _unresolved_cash_obligations(history, command.proposal.portfolio_id):

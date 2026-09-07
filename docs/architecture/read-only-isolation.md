@@ -32,13 +32,16 @@ adjudication, so a USER decision cannot inherit a SHADOW authorization,
 evidence record, or state. The source scope remains in each original event.
 
 Portfolio authorization history is a narrower trusted-host lineage lookup:
-it selects only the same saved owner, visibility, portfolio identity, and
-evidence available by the requesting case's frozen knowledge cutoff. Forward
-scope revisions may therefore locate their explicit predecessor without
-presenting that predecessor's account data. Before a portfolio use result can
-return a snapshot, preview, or unfinished obligation, the requesting frozen
-scope must cover every account represented by that returned data. Browser and
-model callers never receive the ledger lookup itself.
+positive evidence selects only the same saved owner, visibility, portfolio
+identity, and evidence available by the requesting case's frozen knowledge
+cutoff. A separate full same-owner, same-visibility, same-portfolio lineage
+read is permitted only inside the serialized host transaction as a negative
+stale-write guard: it can reject a delayed forward authorization that would
+fork a later lineage, but cannot positively authorize, preload, return, or
+project a later authorization or its account data. Before a portfolio use
+result can return a snapshot, preview, or unfinished obligation, the requesting
+frozen scope must cover every account represented by that returned data. Browser
+and model callers never receive either ledger lookup itself.
 
 `GET` and `POST /api/v1/reports/{id}/facts` read and append independent VIEWED,
 ACKNOWLEDGED, CONFIRMED, and EXECUTION_DECLARED facts. Mutation additionally

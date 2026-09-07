@@ -177,6 +177,7 @@ def correct_default_frozen_decision_case(
                     load_frozen_correction_payload()
                 ),
                 governance=original_event.result.governance,
+                portfolio=original_event.result.portfolio,
             )
             correction_stages = (
                 StageResult(
@@ -514,6 +515,11 @@ def _commit_framework_result(
                         execution_case.access_scope,
                         portfolio_id_for(execution_case.portfolio),
                         execution_case.knowledge_cutoff,
+                    ),
+                    lineage_history=ledger.portfolio_authorization_lineage(
+                        connection,
+                        execution_case.access_scope,
+                        portfolio_id_for(execution_case.portfolio),
                     ),
                     access_account_ids=execution_case.access_scope.account_ids,
                     knowledge_cutoff=execution_case.knowledge_cutoff,

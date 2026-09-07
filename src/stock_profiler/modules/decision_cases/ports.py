@@ -97,6 +97,13 @@ class DecisionLedger(Protocol[Transaction]):
         knowledge_cutoff: str,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]: ...
 
+    def portfolio_authorization_lineage(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]: ...
+
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 
     def get_formal_report(self, report_version_id: str) -> FormalReport | None: ...

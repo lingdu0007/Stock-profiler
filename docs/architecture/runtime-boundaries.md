@@ -31,13 +31,17 @@ authorization; established deterministic protection remains independently
 readable. Evidence must have been available by the original frozen knowledge
 cutoff, even when execution is delayed. This includes portfolio snapshots,
 user confirmations, risk-relaxation proof, inherited authorization evidence,
-and every retained alert. A synthetic risk-budget relaxation proof retains at
-least twenty distinct normal-market-session evidence identities, must be
-available before the user's renewed confirmation, must cover that confirmation
-instant, and binds the successor's next monthly activation cutoff. Invalid or
-timezone-less governed cutoffs are rejected and audited before creating a Run.
-Reading a saved qualification outcome is historical replay, not a new grant or
-activation.
+and every retained alert. A forward portfolio authorization freezes the
+selected portfolio snapshot shown to the user and a complete activation snapshot
+that follows that confirmation; the latter retains the same complete account
+scope and selection and exactly binds the successor risk budget's effective
+instant. A synthetic risk-budget relaxation proof retains at least twenty
+consecutive normal-market sessions from one immutable calendar version,
+including each session's ordinal and close time. It must be available before the
+user's renewed confirmation, cover that confirmation instant, and bind the
+successor's next monthly activation snapshot and cutoff. Invalid or timezone-less
+governed cutoffs are rejected and audited before creating a Run. Reading a saved
+qualification outcome is historical replay, not a new grant or activation.
 
 Governed D0 commands supply an explicit `QualificationPolicy` inside their
 capability version. Its contract version, policy version, original synthetic

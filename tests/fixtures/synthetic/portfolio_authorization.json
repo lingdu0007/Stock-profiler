@@ -95,29 +95,149 @@
     "evidence_id": "synthetic-risk-relaxation-evidence-alpha",
     "predecessor_authorization_id": "synthetic-predecessor-authorization",
     "predecessor_risk_budget_version_id": "synthetic-risk-budget-alpha",
-    "normal_from_at": "2042-05-17T16:00:00Z",
+    "normal_from_at": "2042-05-20T15:00:00Z",
     "normal_through_at": "2042-06-16T15:00:00Z",
-    "normal_market_session_evidence_ids": [
-      "synthetic-normal-market-session-01",
-      "synthetic-normal-market-session-02",
-      "synthetic-normal-market-session-03",
-      "synthetic-normal-market-session-04",
-      "synthetic-normal-market-session-05",
-      "synthetic-normal-market-session-06",
-      "synthetic-normal-market-session-07",
-      "synthetic-normal-market-session-08",
-      "synthetic-normal-market-session-09",
-      "synthetic-normal-market-session-10",
-      "synthetic-normal-market-session-11",
-      "synthetic-normal-market-session-12",
-      "synthetic-normal-market-session-13",
-      "synthetic-normal-market-session-14",
-      "synthetic-normal-market-session-15",
-      "synthetic-normal-market-session-16",
-      "synthetic-normal-market-session-17",
-      "synthetic-normal-market-session-18",
-      "synthetic-normal-market-session-19",
-      "synthetic-normal-market-session-20"
+    "normal_market_sessions": [
+      {
+        "evidence_id": "synthetic-normal-market-session-01",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6101,
+        "closed_at": "2042-05-20T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-02",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6102,
+        "closed_at": "2042-05-21T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-03",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6103,
+        "closed_at": "2042-05-22T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-04",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6104,
+        "closed_at": "2042-05-25T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-05",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6105,
+        "closed_at": "2042-05-26T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-06",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6106,
+        "closed_at": "2042-05-27T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-07",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6107,
+        "closed_at": "2042-05-28T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-08",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6108,
+        "closed_at": "2042-05-29T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-09",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6109,
+        "closed_at": "2042-06-01T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-10",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6110,
+        "closed_at": "2042-06-02T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-11",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6111,
+        "closed_at": "2042-06-03T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-12",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6112,
+        "closed_at": "2042-06-04T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-13",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6113,
+        "closed_at": "2042-06-05T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-14",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6114,
+        "closed_at": "2042-06-08T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-15",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6115,
+        "closed_at": "2042-06-09T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-16",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6116,
+        "closed_at": "2042-06-10T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-17",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6117,
+        "closed_at": "2042-06-11T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-18",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6118,
+        "closed_at": "2042-06-12T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-19",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6119,
+        "closed_at": "2042-06-15T15:00:00Z",
+        "normal": true
+      },
+      {
+        "evidence_id": "synthetic-normal-market-session-20",
+        "market_calendar_version_id": "synthetic-market-calendar-v1",
+        "market_session_ordinal": 6120,
+        "closed_at": "2042-06-16T15:00:00Z",
+        "normal": true
+      }
     ],
     "monthly_selection_cutoff_at": "2042-06-17T16:00:00Z",
     "available_at": "2042-06-16T15:00:00Z"

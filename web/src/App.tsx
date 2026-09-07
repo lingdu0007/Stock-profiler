@@ -285,6 +285,7 @@ function PortfolioConfirmationEvidence({
         <Record label="Recorded" value={authorization.recorded_at} />
         <Record label="Confirmation" value={confirmation.confirmation_id} />
         <Record label="Confirmed" value={confirmation.confirmed_at} />
+        <Record label="Selected snapshot" value={proposal.snapshot.snapshot_id} />
         <Record label="Risk budget" value={budget.version_id} />
         <Record label="Effective" value={budget.effective_at} />
         <Record label="Expires" value={budget.expires_at} />
@@ -292,11 +293,28 @@ function PortfolioConfirmationEvidence({
           .filter((account) => proposal.snapshot.selected_account_ids.includes(account.account_id))
           .map((account) => (
             <Record
-              key={account.account_id}
-              label={`Frozen account ${account.account_id}`}
+              key={`selection-${account.account_id}`}
+              label={`Selected account ${account.account_id}`}
               value={formatAccountSnapshot(account)}
             />
           ))}
+        {proposal.activation_snapshot && (
+          <>
+            <Record label="Activation snapshot" value={proposal.activation_snapshot.snapshot_id} />
+            <Record label="Activation cutoff" value={proposal.activation_snapshot.cutoff_at} />
+            {proposal.activation_snapshot.accounts
+              .filter((account) =>
+                proposal.activation_snapshot?.selected_account_ids.includes(account.account_id)
+              )
+              .map((account) => (
+                <Record
+                  key={`activation-${account.account_id}`}
+                  label={`Activation account ${account.account_id}`}
+                  value={formatAccountSnapshot(account)}
+                />
+              ))}
+          </>
+        )}
         <Record
           label="Concentration"
           value={`${budget.concentration.target_ratio} target | ${budget.concentration.hard_ratio} hard`}
@@ -330,9 +348,14 @@ function PortfolioConfirmationEvidence({
             />
             <Record
               label="Normal market sessions"
-              value={String(
-                confirmation.relaxation_evidence.normal_market_session_evidence_ids.length
-              )}
+              value={String(confirmation.relaxation_evidence.normal_market_sessions.length)}
+            />
+            <Record
+              label="Market calendar"
+              value={
+                confirmation.relaxation_evidence.normal_market_sessions[0]
+                  ?.market_calendar_version_id ?? ""
+              }
             />
             <Record
               label="Monthly activation cutoff"

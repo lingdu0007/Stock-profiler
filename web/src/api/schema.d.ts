@@ -843,6 +843,28 @@ export interface components {
              */
             valid_until: string;
         };
+        /**
+         * NormalMarketSessionEvidence
+         * @description One immutable normal market session from a versioned synthetic calendar.
+         */
+        NormalMarketSessionEvidence: {
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Market Calendar Version Id */
+            market_calendar_version_id: string;
+            /** Market Session Ordinal */
+            market_session_ordinal: number;
+            /**
+             * Normal
+             * @constant
+             */
+            normal: true;
+        };
         /** OpaqueRequestErrorDto */
         OpaqueRequestErrorDto: {
             /**
@@ -999,6 +1021,7 @@ export interface components {
          * @description The complete selection and policy snapshot shown before a user confirmation.
          */
         PortfolioProposal: {
+            activation_snapshot?: components["schemas"]["PortfolioSnapshot"] | null;
             /**
              * Cash Obligations
              * @default []
@@ -1486,8 +1509,8 @@ export interface components {
              * Format: date-time
              */
             normal_from_at: string;
-            /** Normal Market Session Evidence Ids */
-            normal_market_session_evidence_ids: string[];
+            /** Normal Market Sessions */
+            normal_market_sessions: components["schemas"]["NormalMarketSessionEvidence"][];
             /**
              * Normal Through At
              * Format: date-time

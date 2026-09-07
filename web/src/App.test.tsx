@@ -99,6 +99,23 @@ describe("App", () => {
   });
 
   it("renders the confirmation and budget snapshot retained by a portfolio use", async () => {
+    const proposal = {
+      ...portfolioFixture.proposal,
+      activation_snapshot: {
+        ...portfolioFixture.proposal.snapshot,
+        snapshot_id: "synthetic-portfolio-snapshot-alpha-activation",
+        cutoff_at: "2042-05-18T16:00:00Z",
+        accounts: portfolioFixture.proposal.snapshot.accounts.map((account) => ({
+          ...account,
+          captured_at: "2042-05-18T16:00:00Z"
+        }))
+      },
+      risk_budget: {
+        ...portfolioFixture.proposal.risk_budget,
+        effective_at: "2042-05-18T16:00:00Z",
+        expires_at: "2042-11-18T16:00:00Z"
+      }
+    };
     const authorizationSnapshot = {
       authorization_id: "decision-event-portfolio-alpha",
       previous_authorization_id: null,
@@ -113,7 +130,7 @@ describe("App", () => {
         confirmed: true,
         relaxation_evidence: portfolioFixture.risk_relaxation_evidence
       },
-      proposal: portfolioFixture.proposal
+      proposal
     };
     const usageReport = {
       ...report,
@@ -155,12 +172,15 @@ describe("App", () => {
     const confirmation = await screen.findByRole("region", { name: "Portfolio confirmation" });
     expect(confirmation).toHaveTextContent("synthetic-risk-confirmation-alpha");
     expect(confirmation).toHaveTextContent("synthetic-risk-budget-alpha");
-    expect(confirmation).toHaveTextContent("2042-11-17T16:00:00Z");
+    expect(confirmation).toHaveTextContent("2042-11-18T16:00:00Z");
     expect(confirmation).toHaveTextContent("synthetic-cash-obligation-alpha");
     expect(confirmation).toHaveTextContent("SIMULATED_STATISTICAL_ACTION");
     expect(confirmation).toHaveTextContent("synthetic-risk-relaxation-evidence-alpha");
     expect(confirmation).toHaveTextContent("Normal market sessions");
     expect(confirmation).toHaveTextContent("20");
+    expect(confirmation).toHaveTextContent("synthetic-portfolio-snapshot-alpha-activation");
+    expect(confirmation).toHaveTextContent("Activation cutoff");
+    expect(confirmation).toHaveTextContent("synthetic-market-calendar-v1");
   });
 
   it("shows correction lineage supplied by the committed report projection", async () => {

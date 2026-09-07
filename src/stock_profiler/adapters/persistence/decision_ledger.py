@@ -136,6 +136,24 @@ class DecisionLedger:
         cutoff = datetime.fromisoformat(knowledge_cutoff)
         return tuple(
             portfolio
+            for portfolio in self.portfolio_authorization_lineage(
+                connection,
+                access_scope,
+                portfolio_id,
+            )
+            if portfolio.authorization is not None
+            and portfolio.authorization.evidence_available_by(cutoff)
+        )
+
+    def portfolio_authorization_lineage(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read a trusted host-only lineage for stale-write rejection, never projection."""
+        return tuple(
+            portfolio
             for fact in self._original_event_facts(
                 connection, "portfolio authorization history is unavailable"
             )
@@ -146,7 +164,6 @@ class DecisionLedger:
                 and (portfolio := fact.result.portfolio) is not None
                 and (authorization := portfolio.authorization) is not None
                 and authorization.proposal.portfolio_id == portfolio_id
-                and authorization.evidence_available_by(cutoff)
             )
         )
 

@@ -182,13 +182,29 @@ class PortfolioProposal(PortfolioContract):
 
     portfolio_id: str = Field(min_length=1)
     snapshot: PortfolioSnapshot
+    activation_snapshot: PortfolioSnapshot | None = None
     risk_budget: PersonalRiskBudget
     cash_obligations: tuple[DatedCashObligation, ...] = ()
 
     @model_validator(mode="after")
     def validate_proposal_binding(self) -> PortfolioProposal:
-        if self.risk_budget.effective_at < self.snapshot.cutoff_at:
-            raise ValueError("risk budget cannot become effective before the portfolio cutoff")
+        activation = self.activation_snapshot
+        effective_snapshot = activation or self.snapshot
+        if self.risk_budget.effective_at != effective_snapshot.cutoff_at:
+            raise ValueError(
+                "risk budget effective_at must match the activation portfolio snapshot cutoff"
+            )
+        if activation is not None:
+            if activation.cutoff_at <= self.snapshot.cutoff_at:
+                raise ValueError("activation snapshot must follow the selected portfolio snapshot")
+            if activation.account_ids != self.snapshot.account_ids:
+                raise ValueError(
+                    "activation snapshot must retain the selected portfolio account scope"
+                )
+            if activation.selected_account_ids != self.snapshot.selected_account_ids:
+                raise ValueError(
+                    "activation snapshot must retain the selected portfolio account selection"
+                )
         if len({item.obligation_id for item in self.cash_obligations}) != len(
             self.cash_obligations
         ):
@@ -201,12 +217,24 @@ class PortfolioProposal(PortfolioContract):
 
     def evidence_available_by(self, cutoff: datetime) -> bool:
         """Keep the account snapshot within the frozen information set."""
-        return self.snapshot.cutoff_at <= cutoff
+        return self.snapshot.cutoff_at <= cutoff and (
+            self.activation_snapshot is None or self.activation_snapshot.cutoff_at <= cutoff
+        )
 
 
 class PortfolioPreviewCommand(PortfolioContract):
     operation: Literal["PORTFOLIO_PREVIEW"]
     proposal: PortfolioProposal
+
+
+class NormalMarketSessionEvidence(PortfolioContract):
+    """One immutable normal market session from a versioned synthetic calendar."""
+
+    evidence_id: str = Field(min_length=1)
+    market_calendar_version_id: str = Field(min_length=1)
+    market_session_ordinal: int = Field(ge=1)
+    closed_at: AwareDatetime
+    normal: Literal[True]
 
 
 class RiskBudgetRelaxationEvidence(PortfolioContract):
@@ -217,14 +245,13 @@ class RiskBudgetRelaxationEvidence(PortfolioContract):
     predecessor_risk_budget_version_id: str = Field(min_length=1)
     normal_from_at: AwareDatetime
     normal_through_at: AwareDatetime
-    normal_market_session_evidence_ids: tuple[Annotated[str, Field(min_length=1)], ...] = Field(
-        min_length=20
-    )
+    normal_market_sessions: tuple[NormalMarketSessionEvidence, ...] = Field(min_length=20)
     monthly_selection_cutoff_at: AwareDatetime
     available_at: AwareDatetime
 
     @model_validator(mode="after")
     def validate_normal_window(self) -> RiskBudgetRelaxationEvidence:
+        sessions = self.normal_market_sessions
         if not (
             self.normal_from_at
             <= self.normal_through_at
@@ -232,10 +259,30 @@ class RiskBudgetRelaxationEvidence(PortfolioContract):
             <= self.monthly_selection_cutoff_at
         ):
             raise ValueError("risk relaxation evidence must preserve its normal-state window")
-        if len(set(self.normal_market_session_evidence_ids)) != len(
-            self.normal_market_session_evidence_ids
-        ):
+        if len({session.evidence_id for session in sessions}) != len(sessions):
             raise ValueError("risk relaxation market-session evidence must be unique")
+        if len({session.market_calendar_version_id for session in sessions}) != 1:
+            raise ValueError(
+                "risk relaxation sessions must use one immutable market calendar version"
+            )
+        ordinals = tuple(session.market_session_ordinal for session in sessions)
+        if ordinals != tuple(range(ordinals[0], ordinals[0] + len(ordinals))):
+            raise ValueError("risk relaxation market sessions must be consecutive")
+        closed_at = tuple(session.closed_at for session in sessions)
+        if any(
+            current <= previous
+            for previous, current in zip(closed_at, closed_at[1:], strict=False)
+        ):
+            raise ValueError(
+                "risk relaxation market sessions must close in strictly increasing order"
+            )
+        if (
+            self.normal_from_at != closed_at[0]
+            or self.normal_through_at != closed_at[-1]
+        ):
+            raise ValueError(
+                "risk relaxation evidence must bind the first and last normal market sessions"
+            )
         return self
 
 
@@ -268,6 +315,14 @@ class PortfolioConfirmationCommand(PortfolioContract):
             raise ValueError("confirmation must not postdate the risk budget effective_at")
         if self.confirmation.confirmed_at < self.proposal.snapshot.cutoff_at:
             raise ValueError("confirmation must not predate the portfolio cutoff")
+        if self.previous_authorization_id is not None:
+            activation = self.proposal.activation_snapshot
+            if activation is None:
+                raise ValueError(
+                    "forward authorization requires a post-confirmation activation snapshot"
+                )
+            if activation.cutoff_at <= self.confirmation.confirmed_at:
+                raise ValueError("activation snapshot must follow user confirmation")
         return self
 
 

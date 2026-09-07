@@ -1421,6 +1421,46 @@
         "title": "LegalTaskNode",
         "type": "object"
       },
+      "NormalMarketSessionEvidence": {
+        "additionalProperties": false,
+        "description": "One immutable normal market session from a versioned synthetic calendar.",
+        "properties": {
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "market_calendar_version_id": {
+            "minLength": 1,
+            "title": "Market Calendar Version Id",
+            "type": "string"
+          },
+          "market_session_ordinal": {
+            "minimum": 1.0,
+            "title": "Market Session Ordinal",
+            "type": "integer"
+          },
+          "normal": {
+            "const": true,
+            "title": "Normal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "market_calendar_version_id",
+          "market_session_ordinal",
+          "closed_at",
+          "normal"
+        ],
+        "title": "NormalMarketSessionEvidence",
+        "type": "object"
+      },
       "OpaqueRequestErrorDto": {
         "additionalProperties": false,
         "properties": {
@@ -1790,6 +1830,16 @@
         "additionalProperties": false,
         "description": "The complete selection and policy snapshot shown before a user confirmation.",
         "properties": {
+          "activation_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cash_obligations": {
             "default": [],
             "items": {
@@ -3081,13 +3131,12 @@
             "title": "Normal From At",
             "type": "string"
           },
-          "normal_market_session_evidence_ids": {
+          "normal_market_sessions": {
             "items": {
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/components/schemas/NormalMarketSessionEvidence"
             },
             "minItems": 20,
-            "title": "Normal Market Session Evidence Ids",
+            "title": "Normal Market Sessions",
             "type": "array"
           },
           "normal_through_at": {
@@ -3112,7 +3161,7 @@
           "predecessor_risk_budget_version_id",
           "normal_from_at",
           "normal_through_at",
-          "normal_market_session_evidence_ids",
+          "normal_market_sessions",
           "monthly_selection_cutoff_at",
           "available_at"
         ],
