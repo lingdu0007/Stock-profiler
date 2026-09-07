@@ -188,8 +188,11 @@ class DecisionLedger:
     ) -> tuple[DecisionEventFact, ...]:
         event_ids = (
             connection.execute(
-                select(DECISION_EVENTS.c.decision_event_id).where(
-                    DECISION_EVENTS.c.corrects_event_id.is_(None)
+                select(DECISION_EVENTS.c.decision_event_id)
+                .where(DECISION_EVENTS.c.corrects_event_id.is_(None))
+                .order_by(
+                    DECISION_EVENTS.c.committed_at,
+                    DECISION_EVENTS.c.decision_event_id,
                 )
             )
             .scalars()
@@ -316,26 +319,25 @@ class DecisionLedger:
             return business_object_id
 
     def position_ledger_history(
-        self, connection: Connection, account_ids: tuple[str, ...]
+        self, connection: Connection, access_scope: ResultAccessScope
     ) -> tuple[AuthoritativeLedgerEntry, ...]:
-        """Return immutable broker-ledger facts retained by prior committed snapshots."""
-        rows = connection.execute(
-            select(
-                DECISION_EVENTS.c.decision_event_id,
-                DECISION_EVENTS.c.business_object_id,
-                DECISION_EVENTS.c.framework_run_id,
-                DECISION_EVENTS.c.corrects_event_id,
-                DECISION_EVENTS.c.event_payload,
-            ).order_by(DECISION_EVENTS.c.committed_at)
-        ).all()
+        """Return only reconciled, same-scope broker-ledger facts from original events."""
         history: list[AuthoritativeLedgerEntry] = []
-        for row in rows:
-            position = self._stored_decision_event(connection, row).result.position
-            if position is not None:
+        for fact in self._original_event_facts(
+            connection,
+            "position ledger history is unavailable",
+        ):
+            position = fact.result.position
+            if (
+                fact.case.access_scope is not None
+                and fact.case.access_scope.same_scope_as(access_scope)
+                and position is not None
+                and position.disposition == "RECONCILED"
+            ):
                 history.extend(
                     entry
                     for entry in position.snapshot.authoritative_ledger
-                    if entry.account_id in account_ids
+                    if entry.account_id in access_scope.account_ids
                 )
         return tuple(history)
 

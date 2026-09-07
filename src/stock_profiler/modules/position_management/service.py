@@ -123,7 +123,9 @@ def _reconcile(
     )
     issuer_by_security: dict[str, set[str]] = defaultdict(set)
     missing_summary_security_ids: set[str] = set()
-    prior_entries = {(entry.account_id, entry.entry_id): entry for entry in prior_ledger}
+    prior_entries: dict[tuple[str, str], AuthoritativeLedgerEntry] = {}
+    for entry in prior_ledger:
+        prior_entries.setdefault((entry.account_id, entry.entry_id), entry)
 
     for account in command.accounts:
         cash = account.cash_state
@@ -715,7 +717,15 @@ def _record_position_problems(
         valuation=True,
         portfolio=True,
     )
-    _record_quantity(account, position, "total_quantity", "TOTAL_QUANTITY", record, valuation=True)
+    _record_quantity(
+        account,
+        position,
+        "total_quantity",
+        "TOTAL_QUANTITY",
+        record,
+        valuation=True,
+        portfolio=True,
+    )
     for field, prefix in (
         ("unsettled_quantity", "UNSETTLED_QUANTITY"),
         ("frozen_quantity", "FROZEN_QUANTITY"),
@@ -877,6 +887,7 @@ def _record_quantity(
     record: ConflictRecorder,
     *,
     valuation: bool = False,
+    portfolio: bool = False,
 ) -> None:
     value = getattr(position, field)
     if value is None:
@@ -891,6 +902,7 @@ def _record_quantity(
         code=code,
         fields=(f"positions.{field}",),
         blocks_exact_statistical_quantity=True,
+        portfolio_dependency=portfolio,
         blocks_current_valuation=valuation,
     )
 

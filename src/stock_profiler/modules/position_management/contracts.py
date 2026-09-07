@@ -60,8 +60,10 @@ class PositionEvidence(PositionContract):
             codes.append("SOURCE_VERSION_MISSING")
         if self.cutoff_at is None:
             codes.append("FACT_CUTOFF_MISSING")
-        elif self.cutoff_at != expected_cutoff:
+        elif require_current_completeness and self.cutoff_at != expected_cutoff:
             codes.append("FACT_CUTOFF_MISMATCH")
+        elif not require_current_completeness and self.cutoff_at > expected_cutoff:
+            codes.append("FACT_CUTOFF_AFTER_SNAPSHOT")
         if require_current_completeness:
             if self.complete_through_at is None:
                 codes.append("FACT_COMPLETENESS_WATERMARK_MISSING")
@@ -83,9 +85,17 @@ class PositionEvidence(PositionContract):
                 and acquired is not None
                 and validated is not None
             )
-            if not effective <= observed <= acquired <= validated <= expected_cutoff:
+            clock_ceiling = expected_cutoff if require_current_completeness else self.cutoff_at
+            if (
+                clock_ceiling is None
+                or not effective <= observed <= acquired <= validated <= clock_ceiling
+            ):
                 codes.append("EVIDENCE_CLOCK_INVALID")
-        if self.expires_at is not None and self.expires_at < expected_cutoff:
+        if (
+            require_current_completeness
+            and self.expires_at is not None
+            and self.expires_at < expected_cutoff
+        ):
             codes.append("FACT_EXPIRED")
         return tuple(codes)
 
