@@ -75,6 +75,14 @@ def _assess(
     for issuer in prior_issuers.values():
         if issuer.direction != "REDUCE":
             continue
+        origin = next(
+            saved
+            for item in ordered_history
+            for saved in item.issuers
+            if saved.obligation_id == issuer.obligation_id
+        )
+        if not _quantities_explained_by_fills(position, origin):
+            reasons.append("CONCENTRATION_EXECUTION_LINEAGE_UNRESOLVED")
         current_codes = {
             unit.security_id for unit in snapshot.action_units if unit.issuer_id == issuer.issuer_id
         }
@@ -375,3 +383,35 @@ def _closed_by_fills(
             for unit in position.snapshot.action_units
         )
     )
+
+
+def _quantities_explained_by_fills(
+    position: PositionReconciliationOutcome, origin: IssuerConcentration
+) -> bool:
+    if origin.obligation_started_at is None:
+        return False
+    for target in origin.targets:
+        quantities = tuple(
+            unit.total_quantity
+            for unit in position.snapshot.action_units
+            if unit.security_id == target.security_id
+        )
+        if target.required_reduction_quantity is None or any(
+            quantity is None for quantity in quantities
+        ):
+            return False
+        current = sum((quantity for quantity in quantities if quantity is not None), Decimal(0))
+        fills = sum(
+            (
+                entry.quantity_delta
+                for entry in position.snapshot.authoritative_ledger
+                if entry.security_id == target.security_id
+                and entry.entry_type == "FILL"
+                and origin.obligation_started_at < entry.occurred_at <= position.snapshot.cutoff_at
+            ),
+            Decimal(0),
+        )
+        original_quantity = target.target_quantity + target.required_reduction_quantity
+        if current < original_quantity + fills:
+            return False
+    return True

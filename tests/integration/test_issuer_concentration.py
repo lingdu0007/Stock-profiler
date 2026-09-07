@@ -894,3 +894,33 @@ def test_complete_closing_fills_resolve_obligation_without_zero_position_rows(
     assert issuer.current_market_exposure == 0
     assert issuer.exposure_gap == 0
     assert issuer.new_exposure_blocked is False
+
+
+@pytest.mark.parametrize("transferred_accounts", [1, 2])
+def test_transfers_do_not_discharge_obligation_when_security_rows_remain(
+    migrated_settings: Settings,
+    transferred_accounts: int,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    first = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert first.report is not None and first.report.result.concentration is not None
+    original = first.report.result.concentration.issuers[0]
+    later = later_concentration_payload(payload, "18")
+    for index in range(transferred_accounts):
+        record_synthetic_sale(later, "100", f"transfer-{index}", account_index=index)
+        account = later["concentration"]["position_snapshot"]["accounts"][index]
+        account["ledger_entries"][-1].update(entry_type="TRANSFER_OUT", cash_delta="0")
+        for field in ("ledger_cash", "trading_cash", "transferable_cash"):
+            account["cash_state"][field] = str(Decimal(account["cash_state"][field]) - 1000)
+        account["account_equity"] = str(Decimal(account["account_equity"]) - 1000)
+    execution = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-18T17:00:00+00:00")
+    )
+    assert execution.report is not None and execution.report.result.concentration is not None
+    issuer = execution.report.result.concentration.issuers[0]
+    assert issuer.obligation_id == original.obligation_id
+    assert issuer.direction == "REDUCE"
+    assert issuer.new_exposure_blocked is True
+    assert issuer.targets[0].target_quantity == 130
+    assert issuer.execution_blocked is True
