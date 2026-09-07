@@ -98,6 +98,215 @@ describe("App", () => {
     expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
   });
 
+  it("renders saved authoritative position facts, source clocks, and conflicts", async () => {
+    const positionEvidence = {
+      source: "synthetic-broker-4017-position",
+      source_version: "synthetic-broker-schema-v1",
+      business_effective_at: "2042-05-17T15:00:00Z",
+      source_observed_at: "2042-05-17T15:10:00Z",
+      locally_acquired_at: "2042-05-17T15:14:00Z",
+      validated_at: "2042-05-17T15:18:00Z",
+      cutoff_at: "2042-05-17T16:00:00Z",
+      complete_through_at: "2042-05-17T16:00:00Z",
+      expires_at: null
+    };
+    const openingCashEvidence = {
+      ...positionEvidence,
+      source: "synthetic-broker-4017-opening-cash"
+    };
+    const positionReport = {
+      ...report,
+      result: {
+        ...report.result,
+        position: {
+          disposition: "CONFLICTED",
+          reasons: ["LEDGER_QUANTITY_MISMATCH", "FACT_EXPIRED"],
+          snapshot: {
+            snapshot_id: "synthetic-position-snapshot-alpha",
+            cutoff_at: "2042-05-17T16:00:00Z",
+            valuation_currency: "XSP",
+            snapshot_source: "synthetic-position-snapshot-manifest",
+            evidence_clock: {
+              business_effective_at: "2042-05-17T15:00:00Z",
+              source_observed_at: "2042-05-17T15:10:00Z",
+              locally_acquired_at: "2042-05-17T15:14:00Z",
+              validated_at: "2042-05-17T15:18:00Z"
+            },
+            snapshot_evidence: positionEvidence,
+            total_account_equity: "1800",
+            action_units: [
+              {
+                account_id: "synthetic-account-4017",
+                account_type: "SIMULATED_CASH",
+                currency: "XSP",
+                position_id: "synthetic-position-4017-xqz",
+                origin: "EXTERNAL",
+                lifecycle_id: "synthetic-lifecycle-4017-xqz",
+                issuer_id: "FICTIONAL-ORBITAL-MOSAIC",
+                security_id: "XQZ-4017",
+                total_quantity: "101",
+                broker_sellable_quantity: null,
+                unsettled_quantity: "10",
+                frozen_quantity: "5",
+                restricted_quantity: "0",
+                open_sell_order_quantity: "15",
+                exact_statistical_action_quantity: null,
+                exact_quantity_status: "BLOCKED",
+                reasons: ["LEDGER_QUANTITY_MISMATCH", "FACT_EXPIRED"],
+                position_evidence: positionEvidence
+              }
+            ],
+            issuer_exposures: [
+              {
+                issuer_id: "FICTIONAL-ORBITAL-MOSAIC",
+                valuation_currency: "XSP",
+                account_ids: ["synthetic-account-4017", "synthetic-account-8029"],
+                current_market_exposure: "1800"
+              }
+            ],
+            cash_states: [
+              {
+                account_id: "synthetic-account-4017",
+                account_type: "SIMULATED_CASH",
+                currency: "XSP",
+                account_evidence: positionEvidence,
+                account_equity: "1000",
+                account_equity_evidence: positionEvidence,
+                ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                opening_ledger_cash: "902",
+                opening_ledger_cash_evidence: openingCashEvidence,
+                ledger_cash: "100",
+                trading_cash: "95",
+                transferable_cash: "90",
+                frozen_cash: "5",
+                receivable_cash: "10",
+                payable_cash: "0",
+                cash_state_evidence: positionEvidence
+              }
+            ],
+            unfinished_orders: [
+              {
+                account_id: "synthetic-account-4017",
+                order_id: "synthetic-open-sell-4017",
+                security_id: "XQZ-4017",
+                side: "SELL",
+                remaining_quantity: "15",
+                evidence: {
+                  source: "synthetic-broker-4017-order",
+                  business_effective_at: "2042-05-17T15:00:00Z",
+                  source_observed_at: "2042-05-17T15:10:00Z",
+                  locally_acquired_at: "2042-05-17T15:14:00Z",
+                  validated_at: "2042-05-17T15:18:00Z",
+                  cutoff_at: "2042-05-17T16:00:00Z",
+                  expires_at: null
+                }
+              }
+            ],
+            execution_restrictions: [
+              {
+                account_id: "synthetic-account-4017",
+                restriction_id: "synthetic-account-wide-sell-block",
+                security_id: null,
+                kind: "BROKER_SELL_BLOCK",
+                reason: "Synthetic account-wide broker restriction.",
+                active: true,
+                evidence: {
+                  source: "synthetic-broker-4017-restriction",
+                  business_effective_at: "2042-05-17T15:00:00Z",
+                  source_observed_at: "2042-05-17T15:10:00Z",
+                  locally_acquired_at: "2042-05-17T15:14:00Z",
+                  validated_at: "2042-05-17T15:18:00Z",
+                  cutoff_at: "2042-05-17T16:00:00Z",
+                  expires_at: null
+                }
+              }
+            ],
+            authoritative_ledger: [
+              {
+                account_id: "synthetic-account-4017",
+                entry_id: "synthetic-fill-4017-xqz",
+                entry_type: "FILL",
+                security_id: "XQZ-4017",
+                quantity_delta: "100",
+                cost_basis_delta: "890",
+                cash_delta: "-890",
+                occurred_at: "2042-05-16T15:00:00Z",
+                corrects_entry_id: "synthetic-prior-ledger-entry",
+                correction_reason: "Synthetic broker fee correction.",
+                evidence: {
+                  source: "synthetic-broker-4017-fill",
+                  business_effective_at: "2042-05-17T15:00:00Z",
+                  source_observed_at: "2042-05-17T15:10:00Z",
+                  locally_acquired_at: "2042-05-17T15:14:00Z",
+                  validated_at: "2042-05-17T15:18:00Z",
+                  cutoff_at: "2042-05-17T16:00:00Z",
+                  expires_at: null
+                }
+              }
+            ],
+            user_annotations: [
+              {
+                annotation_id: "synthetic-user-position-note-4017",
+                account_id: "synthetic-account-4017",
+                security_id: "XQZ-4017",
+                note: "Synthetic user note retains a different claimed quantity.",
+                claimed_total_quantity: "999",
+                claimed_cost_basis: null,
+                created_at: "2042-05-17T15:30:00Z"
+              }
+            ]
+          },
+          conflicts: [
+            {
+              conflict_id:
+                "position-conflict:synthetic-account-4017:XQZ-4017:LEDGER_QUANTITY_MISMATCH",
+              code: "LEDGER_QUANTITY_MISMATCH",
+              affected_scope: {
+                account_id: "synthetic-account-4017",
+                security_id: "XQZ-4017",
+                fields: ["positions.total_quantity", "ledger_entries.quantity_delta"]
+              },
+              blocks_exact_statistical_quantity: true
+            }
+          ]
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${positionReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(positionReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const position = await screen.findByRole("region", { name: "Position state snapshot" });
+    expect(position).toHaveTextContent("synthetic-position-snapshot-manifest");
+    expect(position).toHaveTextContent("Business effective");
+    expect(position).toHaveTextContent("2042-05-17T15:00:00Z");
+    expect(position).toHaveTextContent("Source observed");
+    expect(position).toHaveTextContent("Snapshot evidence");
+    expect(position).toHaveTextContent("synthetic-broker-schema-v1");
+    expect(position).toHaveTextContent("complete through");
+    expect(position).toHaveTextContent("Locally acquired");
+    expect(position).toHaveTextContent("Validated");
+    expect(position).toHaveTextContent("BLOCKED");
+    expect(position).toHaveTextContent("LEDGER_QUANTITY_MISMATCH");
+    expect(position).toHaveTextContent("synthetic-broker-4017-fill");
+    expect(position).toHaveTextContent("synthetic-open-sell-4017");
+    expect(position).toHaveTextContent("synthetic-account-wide-sell-block");
+    expect(position).toHaveTextContent("Synthetic user note retains a different claimed quantity.");
+    expect(position).toHaveTextContent("opening ledger evidence");
+    expect(position).toHaveTextContent("synthetic-broker-4017-opening-cash");
+    expect(position).toHaveTextContent("corrects synthetic-prior-ledger-entry");
+    expect(position).toHaveTextContent("correction reason Synthetic broker fee correction.");
+  });
+
   it("renders the confirmation and budget snapshot retained by a portfolio use", async () => {
     const proposal = {
       ...portfolioFixture.proposal,

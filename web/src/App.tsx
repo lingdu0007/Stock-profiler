@@ -107,6 +107,7 @@ function VersionDiagnostics() {
 function FormalReportView({ report }: { report: FormalReport }) {
   const correction = report.result.correction_evidence;
   const portfolio = report.result.portfolio;
+  const position = report.result.position;
   return (
     <section aria-label="Formal report" className="report-layout">
       <div className="report-heading">
@@ -148,6 +149,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
       )}
 
       {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
+      {position && <PositionSnapshotEvidence position={position} />}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
@@ -213,6 +215,7 @@ type PortfolioAuthorizationOutcome = NonNullable<FormalReport["result"]["portfol
 type PortfolioPreview = NonNullable<PortfolioAuthorizationOutcome["preview"]>;
 type PortfolioAuthorization = NonNullable<PortfolioAuthorizationOutcome["authorization"]>;
 type PortfolioAuthorizationUsage = NonNullable<PortfolioAuthorizationOutcome["usage"]>;
+type PositionReconciliationOutcome = NonNullable<FormalReport["result"]["position"]>;
 
 function PortfolioAuthorizationEvidence({
   portfolio
@@ -425,6 +428,247 @@ function PortfolioUsageEvidence({ usage }: { usage: PortfolioAuthorizationUsage 
       </dl>
     </section>
   );
+}
+
+function PositionSnapshotEvidence({ position }: { position: PositionReconciliationOutcome }) {
+  const { snapshot } = position;
+  const clock = snapshot.evidence_clock;
+  return (
+    <section className="report-section" aria-label="Position state snapshot">
+      <h2>Position state snapshot</h2>
+      <dl className="record-list">
+        <Record label="Disposition" value={position.disposition} />
+        <Record label="Reasons" value={position.reasons.join(", ")} />
+        <Record label="Snapshot" value={snapshot.snapshot_id} />
+        <Record label="Snapshot cutoff" value={snapshot.cutoff_at} />
+        <Record label="Snapshot source" value={displayValue(snapshot.snapshot_source)} />
+        <Record
+          label="Snapshot evidence"
+          value={formatPositionEvidence(snapshot.snapshot_evidence)}
+        />
+        <Record label="Valuation currency" value={snapshot.valuation_currency} />
+        <Record label="Total account equity" value={displayValue(snapshot.total_account_equity)} />
+        <Record label="Business effective" value={displayValue(clock.business_effective_at)} />
+        <Record label="Source observed" value={displayValue(clock.source_observed_at)} />
+        <Record label="Locally acquired" value={displayValue(clock.locally_acquired_at)} />
+        <Record label="Validated" value={displayValue(clock.validated_at)} />
+      </dl>
+
+      <section className="portfolio-subsection" aria-label="Position action units">
+        <h3>Action units</h3>
+        <dl className="record-list">
+          {snapshot.action_units.map((unit) => (
+            <Record
+              key={`${unit.account_id}:${unit.security_id}`}
+              label={`Account ${unit.account_id} ${unit.security_id}`}
+              value={[
+                `${unit.account_type} | ${unit.currency}`,
+                `position ${unit.position_id}`,
+                `origin ${unit.origin}`,
+                `lifecycle ${unit.lifecycle_id}`,
+                `issuer ${unit.issuer_id}`,
+                `total ${displayValue(unit.total_quantity)}`,
+                `broker sellable ${displayValue(unit.broker_sellable_quantity)}`,
+                unit.sellable_quantity_semantics,
+                unit.encumbrance_quantity_semantics,
+                `unsettled ${displayValue(unit.unsettled_quantity)}`,
+                `frozen ${displayValue(unit.frozen_quantity)}`,
+                `restricted ${displayValue(unit.restricted_quantity)}`,
+                `open sell ${displayValue(unit.open_sell_order_quantity)}`,
+                `reported cost ${displayValue(unit.reported_cost_basis)}`,
+                `market price ${displayValue(unit.market_price)}`,
+                `exact quantity ${displayValue(unit.exact_statistical_action_quantity)}`,
+                unit.exact_quantity_status,
+                unit.reasons.join(", "),
+                formatPositionEvidence(unit.position_evidence)
+              ]
+                .filter(Boolean)
+                .join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Issuer exposure">
+        <h3>Issuer exposure</h3>
+        <dl className="record-list">
+          {snapshot.issuer_exposures.map((exposure) => (
+            <Record
+              key={exposure.issuer_id}
+              label={exposure.issuer_id}
+              value={[
+                `${displayValue(exposure.current_market_exposure)} ${exposure.valuation_currency}`,
+                `accounts ${exposure.account_ids.join(", ")}`
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Cash state">
+        <h3>Cash state</h3>
+        <dl className="record-list">
+          {snapshot.cash_states.map((cash) => (
+            <Record
+              key={cash.account_id}
+              label={`Account ${cash.account_id}`}
+              value={[
+                `${cash.account_type} | ${cash.currency}`,
+                `equity ${displayValue(cash.account_equity)}`,
+                cash.cash_availability_semantics,
+                `opening ledger ${displayValue(cash.opening_ledger_cash)}`,
+                cash.ledger_cash_semantics,
+                `ledger ${displayValue(cash.ledger_cash)}`,
+                `trading ${displayValue(cash.trading_cash)}`,
+                `transferable ${displayValue(cash.transferable_cash)}`,
+                `frozen ${displayValue(cash.frozen_cash)}`,
+                `receivable ${displayValue(cash.receivable_cash)}`,
+                `payable ${displayValue(cash.payable_cash)}`,
+                `account evidence ${formatPositionEvidence(cash.account_evidence)}`,
+                `equity evidence ${formatPositionEvidence(cash.account_equity_evidence)}`,
+                `opening ledger evidence ${formatPositionEvidence(
+                  cash.opening_ledger_cash_evidence
+                )}`,
+                `cash evidence ${formatPositionEvidence(cash.cash_state_evidence)}`
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Unfinished orders">
+        <h3>Unfinished orders</h3>
+        <dl className="record-list">
+          {snapshot.unfinished_orders.map((order) => (
+            <Record
+              key={`${order.account_id}:${order.order_id}`}
+              label={`${order.account_id} ${order.side}`}
+              value={[
+                order.order_id,
+                order.security_id,
+                `remaining ${displayValue(order.remaining_quantity)}`,
+                `reserved cash ${displayValue(order.reserved_cash)}`,
+                order.reserved_cash_semantics,
+                formatPositionEvidence(order.evidence)
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Execution restrictions">
+        <h3>Execution restrictions</h3>
+        <dl className="record-list">
+          {snapshot.execution_restrictions.map((restriction) => (
+            <Record
+              key={`${restriction.account_id}:${restriction.restriction_id}`}
+              label={`${restriction.account_id} ${restriction.kind}`}
+              value={[
+                restriction.restriction_id,
+                displayValue(restriction.security_id),
+                restriction.active ? "ACTIVE" : "INACTIVE",
+                restriction.reason,
+                formatPositionEvidence(restriction.evidence)
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Authoritative position ledger">
+        <h3>Authoritative ledger</h3>
+        <dl className="record-list">
+          {snapshot.authoritative_ledger.map((entry) => (
+            <Record
+              key={`${entry.account_id}:${entry.entry_id}`}
+              label={`${entry.account_id} ${entry.entry_type}`}
+              value={[
+                entry.entry_id,
+                displayValue(entry.security_id),
+                `quantity ${entry.quantity_delta}`,
+                `cost ${entry.cost_basis_delta}`,
+                `cash ${entry.cash_delta}`,
+                `occurred ${entry.occurred_at}`,
+                `corrects ${displayValue(entry.corrects_entry_id)}`,
+                `correction reason ${displayValue(entry.correction_reason)}`,
+                formatPositionEvidence(entry.evidence)
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      {snapshot.user_annotations.length > 0 && (
+        <section className="portfolio-subsection" aria-label="Position annotations">
+          <h3>Annotations</h3>
+          <dl className="record-list">
+            {snapshot.user_annotations.map((annotation) => (
+              <Record
+                key={annotation.annotation_id}
+                label={`${annotation.account_id} ${annotation.security_id}`}
+                value={[
+                  annotation.note,
+                  `claimed total ${displayValue(annotation.claimed_total_quantity)}`,
+                  `claimed cost ${displayValue(annotation.claimed_cost_basis)}`,
+                  `recorded ${annotation.created_at}`
+                ].join(" | ")}
+              />
+            ))}
+          </dl>
+        </section>
+      )}
+
+      {position.conflicts.length > 0 && (
+        <section className="portfolio-subsection" aria-label="Position fact conflicts">
+          <h3>Conflicts</h3>
+          <dl className="record-list">
+            {position.conflicts.map((conflict) => (
+              <Record
+                key={conflict.conflict_id}
+                label={conflict.code}
+                value={[
+                  displayValue(conflict.affected_scope.account_id),
+                  displayValue(conflict.affected_scope.security_id),
+                  conflict.affected_scope.fields.join(", "),
+                  conflict.blocks_exact_statistical_quantity
+                    ? "exact quantity blocked"
+                    : "exact quantity unaffected"
+                ].join(" | ")}
+              />
+            ))}
+          </dl>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function displayValue(value: string | null | undefined): string {
+  return value ?? "Unavailable";
+}
+
+type PositionEvidenceView = {
+  source?: string | null;
+  source_version?: string | null;
+  cutoff_at?: string | null;
+  complete_through_at?: string | null;
+  business_effective_at?: string | null;
+  source_observed_at?: string | null;
+  locally_acquired_at?: string | null;
+  validated_at?: string | null;
+};
+
+function formatPositionEvidence(evidence: PositionEvidenceView | null | undefined): string {
+  return [
+    `source ${displayValue(evidence?.source)}`,
+    `version ${displayValue(evidence?.source_version)}`,
+    `cutoff ${displayValue(evidence?.cutoff_at)}`,
+    `complete through ${displayValue(evidence?.complete_through_at)}`,
+    `business effective ${displayValue(evidence?.business_effective_at)}`,
+    `source observed ${displayValue(evidence?.source_observed_at)}`,
+    `locally acquired ${displayValue(evidence?.locally_acquired_at)}`,
+    `validated ${displayValue(evidence?.validated_at)}`
+  ].join(" | ");
 }
 
 function formatAccountSnapshot(account: PortfolioPreview["included_accounts"][number]): string {

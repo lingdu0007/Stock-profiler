@@ -1,1 +1,1 @@
-"""Position-management boundary without position facts or action behavior."""
+"""Authoritative position-state reconciliation without execution behavior."""

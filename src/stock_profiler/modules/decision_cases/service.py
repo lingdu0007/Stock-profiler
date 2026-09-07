@@ -48,6 +48,7 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.portfolio.contracts import portfolio_id_for
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
+from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -178,6 +179,7 @@ def correct_default_frozen_decision_case(
                 ),
                 governance=original_event.result.governance,
                 portfolio=original_event.result.portfolio,
+                position=original_event.result.position,
             )
             correction_stages = (
                 StageResult(
@@ -468,6 +470,7 @@ def _commit_framework_result(
         )
     qualification_result: StageResult | None = None
     portfolio_result: StageResult | None = None
+    position_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -541,6 +544,33 @@ def _commit_framework_result(
                     ),
                     reasons=portfolio.reasons,
                 )
+            if business_result is not None and execution_case.position is not None:
+                assert execution_case.access_scope is not None
+                position = reconcile_position(
+                    execution_case.position,
+                    prior_ledger=ledger.position_ledger_history(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.position.cutoff_at,
+                    ),
+                    prior_cash_states=ledger.position_cash_history(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.position.cutoff_at,
+                    ),
+                )
+                result = result.model_copy(update={"position": position})
+                position_result = StageResult(
+                    phase="POSITION_RECONCILIATION",
+                    status=("SUCCEEDED" if position.disposition == "RECONCILED" else "REJECTED"),
+                    gate_results=(
+                        GateResult(
+                            gate_id="AUTHORITATIVE_POSITION_FACTS",
+                            status=("PASSED" if position.disposition == "RECONCILED" else "FAILED"),
+                        ),
+                    ),
+                    reasons=position.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -570,6 +600,13 @@ def _commit_framework_result(
             stage_result=portfolio_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if position_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=position_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -577,6 +614,7 @@ def _commit_framework_result(
         *((business_result,) if business_result is not None else ()),
         *((qualification_result,) if qualification_result is not None else ()),
         *((portfolio_result,) if portfolio_result is not None else ()),
+        *((position_result,) if position_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

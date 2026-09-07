@@ -216,6 +216,94 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountCashState
+         * @description Cash decomposition retained with the account that supplied it.
+         */
+        AccountCashState: {
+            /** Account Equity */
+            account_equity: string | null;
+            account_equity_evidence: components["schemas"]["PositionEvidence"];
+            account_evidence: components["schemas"]["PositionEvidence"];
+            /** Account Id */
+            account_id: string;
+            /** Account Type */
+            account_type: string;
+            /**
+             * Cash Availability Semantics
+             * @enum {string}
+             */
+            cash_availability_semantics: "BROKER_FINAL_CASH_LAYERS" | "UNKNOWN";
+            cash_state_evidence: components["schemas"]["PositionEvidence"];
+            /** Currency */
+            currency: string;
+            /** Frozen Cash */
+            frozen_cash: string | null;
+            /** Ledger Cash */
+            ledger_cash: string | null;
+            /**
+             * Ledger Cash Semantics
+             * @enum {string}
+             */
+            ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER" | "UNKNOWN";
+            /** Opening Ledger Cash */
+            opening_ledger_cash: string | null;
+            opening_ledger_cash_evidence: components["schemas"]["PositionEvidence"];
+            /** Payable Cash */
+            payable_cash: string | null;
+            /** Receivable Cash */
+            receivable_cash: string | null;
+            /** Trading Cash */
+            trading_cash: string | null;
+            /** Transferable Cash */
+            transferable_cash: string | null;
+        };
+        /**
+         * AccountExecutionRestriction
+         * @description An execution restriction projected with the account that supplied it.
+         */
+        AccountExecutionRestriction: {
+            /** Account Id */
+            account_id: string;
+            /** Active */
+            active: boolean;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string;
+            /** Restriction Id */
+            restriction_id: string;
+            /** Security Id */
+            security_id?: string | null;
+        };
+        /**
+         * AccountOpenOrder
+         * @description An unfinished order projected with the account that supplied it.
+         */
+        AccountOpenOrder: {
+            /** Account Id */
+            account_id: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Order Id */
+            order_id: string;
+            /** Remaining Quantity */
+            remaining_quantity: string | null;
+            /** Reserved Cash */
+            reserved_cash: string | null;
+            /**
+             * Reserved Cash Semantics
+             * @enum {string}
+             */
+            reserved_cash_semantics: "BROKER_FINAL_RESERVED_CASH" | "NOT_APPLICABLE";
+            /** Security Id */
+            security_id: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "BUY" | "SELL";
+        };
         /** AlertClosure */
         AlertClosure: {
             /** Alert Evidence Id */
@@ -268,6 +356,39 @@ export interface components {
         AuthenticationVerificationDto: {
             /** Csrf Token */
             csrf_token: string;
+        };
+        /**
+         * AuthoritativeLedgerEntry
+         * @description An append-only ledger entry projected with its source account identity.
+         */
+        AuthoritativeLedgerEntry: {
+            /** Account Id */
+            account_id: string;
+            /** Cash Delta */
+            cash_delta: string;
+            /** Correction Reason */
+            correction_reason?: string | null;
+            /** Corrects Entry Id */
+            corrects_entry_id?: string | null;
+            /** Cost Basis Delta */
+            cost_basis_delta: string;
+            /** Entry Id */
+            entry_id: string;
+            /**
+             * Entry Type
+             * @enum {string}
+             */
+            entry_type: "FILL" | "FEE" | "TRANSFER_IN" | "TRANSFER_OUT" | "CORPORATE_ACTION";
+            evidence: components["schemas"]["PositionEvidence"];
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Quantity Delta */
+            quantity_delta: string;
+            /** Security Id */
+            security_id: string | null;
         };
         /** BasisSubstitutionCheck */
         BasisSubstitutionCheck: {
@@ -700,6 +821,7 @@ export interface components {
             /** Outcome Code */
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
+            position?: components["schemas"]["PositionReconciliationOutcome"] | null;
             /** Summary */
             summary: string;
         };
@@ -838,6 +960,20 @@ export interface components {
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
+        };
+        /**
+         * IssuerExposure
+         * @description Current issuer exposure aggregates market value only after account facts stay separate.
+         */
+        IssuerExposure: {
+            /** Account Ids */
+            account_ids: string[];
+            /** Current Market Exposure */
+            current_market_exposure: string | null;
+            /** Issuer Id */
+            issuer_id: string;
+            /** Valuation Currency */
+            valuation_currency: string;
         };
         /** LegalTaskNode */
         LegalTaskNode: {
@@ -1085,6 +1221,146 @@ export interface components {
             /** Snapshot Id */
             snapshot_id: string;
         };
+        /**
+         * PositionActionUnit
+         * @description One account-local action quantity, never an issuer-level order instruction.
+         */
+        PositionActionUnit: {
+            /** Account Id */
+            account_id: string;
+            /** Account Type */
+            account_type: string;
+            /** Broker Sellable Quantity */
+            broker_sellable_quantity: string | null;
+            /** Currency */
+            currency: string;
+            /**
+             * Encumbrance Quantity Semantics
+             * @enum {string}
+             */
+            encumbrance_quantity_semantics: "OVERLAPPING_NON_SELLABLE" | "UNKNOWN";
+            /**
+             * Exact Quantity Status
+             * @enum {string}
+             */
+            exact_quantity_status: "AVAILABLE" | "BLOCKED";
+            /** Exact Statistical Action Quantity */
+            exact_statistical_action_quantity: string | null;
+            /** Frozen Quantity */
+            frozen_quantity: string | null;
+            /** Issuer Id */
+            issuer_id: string;
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /** Market Price */
+            market_price: string | null;
+            /** Open Sell Order Quantity */
+            open_sell_order_quantity: string | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SYSTEM" | "EXTERNAL";
+            position_evidence: components["schemas"]["PositionEvidence"];
+            /** Position Id */
+            position_id: string;
+            /** Reasons */
+            reasons: string[];
+            /** Reported Cost Basis */
+            reported_cost_basis: string | null;
+            /** Restricted Quantity */
+            restricted_quantity: string | null;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Sellable Quantity Semantics
+             * @enum {string}
+             */
+            sellable_quantity_semantics: "BROKER_FINAL_SELLABLE" | "UNKNOWN";
+            /** Total Quantity */
+            total_quantity: string | null;
+            /** Unsettled Quantity */
+            unsettled_quantity: string | null;
+        };
+        /**
+         * PositionAffectedScope
+         * @description The account/security scope for a conflict and its statistical consequence.
+         */
+        PositionAffectedScope: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Fields */
+            fields: string[];
+            /** Security Id */
+            security_id?: string | null;
+        };
+        /**
+         * PositionEvidence
+         * @description Source provenance remains explicit even when an incomplete fact is retained.
+         */
+        PositionEvidence: {
+            /** Business Effective At */
+            business_effective_at: string | null;
+            /** Complete Through At */
+            complete_through_at: string | null;
+            /** Cutoff At */
+            cutoff_at: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Locally Acquired At */
+            locally_acquired_at: string | null;
+            /** Source */
+            source: string | null;
+            /** Source Observed At */
+            source_observed_at: string | null;
+            /** Source Version */
+            source_version: string | null;
+            /** Validated At */
+            validated_at: string | null;
+        };
+        /**
+         * PositionEvidenceClock
+         * @description The source clock retained with a displayed position-state snapshot.
+         */
+        PositionEvidenceClock: {
+            /** Business Effective At */
+            business_effective_at: string | null;
+            /** Locally Acquired At */
+            locally_acquired_at: string | null;
+            /** Source Observed At */
+            source_observed_at: string | null;
+            /** Validated At */
+            validated_at: string | null;
+        };
+        /**
+         * PositionFactConflict
+         * @description An unreconciled source fact; it never selects one conflicting value.
+         */
+        PositionFactConflict: {
+            affected_scope: components["schemas"]["PositionAffectedScope"];
+            /** Blocks Exact Statistical Quantity */
+            blocks_exact_statistical_quantity: boolean;
+            /** Code */
+            code: string;
+            /** Conflict Id */
+            conflict_id: string;
+        };
+        /**
+         * PositionReconciliationOutcome
+         * @description The host-owned result appended after a valid frozen framework output.
+         */
+        PositionReconciliationOutcome: {
+            /** Conflicts */
+            conflicts: components["schemas"]["PositionFactConflict"][];
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "RECONCILED" | "CONFLICTED";
+            /** Reasons */
+            reasons: string[];
+            snapshot: components["schemas"]["ReconciledPositionSnapshot"];
+        };
         /** QualificationEvidence */
         QualificationEvidence: {
             /**
@@ -1293,6 +1569,41 @@ export interface components {
         ReauthenticationVerificationDto: {
             /** Credential Id */
             credential_id: string;
+        };
+        /**
+         * ReconciledPositionSnapshot
+         * @description A read-only, same-cutoff result derived from broker facts and their ledgers.
+         */
+        ReconciledPositionSnapshot: {
+            /** Action Units */
+            action_units: components["schemas"]["PositionActionUnit"][];
+            /** Authoritative Ledger */
+            authoritative_ledger: components["schemas"]["AuthoritativeLedgerEntry"][];
+            /** Cash States */
+            cash_states: components["schemas"]["AccountCashState"][];
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            evidence_clock: components["schemas"]["PositionEvidenceClock"];
+            /** Execution Restrictions */
+            execution_restrictions: components["schemas"]["AccountExecutionRestriction"][];
+            /** Issuer Exposures */
+            issuer_exposures: components["schemas"]["IssuerExposure"][];
+            snapshot_evidence: components["schemas"]["PositionEvidence"];
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Snapshot Source */
+            snapshot_source: string | null;
+            /** Total Account Equity */
+            total_account_equity: string | null;
+            /** Unfinished Orders */
+            unfinished_orders: components["schemas"]["AccountOpenOrder"][];
+            /** User Annotations */
+            user_annotations: components["schemas"]["UserPositionAnnotation"][];
+            /** Valuation Currency */
+            valuation_currency: string;
         };
         /** RecordedAlertReplay */
         RecordedAlertReplay: {
@@ -1588,7 +1899,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**
@@ -1668,6 +1979,29 @@ export interface components {
              * @enum {string}
              */
             kind: "VIEWED" | "ACKNOWLEDGED" | "CONFIRMED" | "EXECUTION_DECLARED";
+        };
+        /**
+         * UserPositionAnnotation
+         * @description A user-supplied note retained separately from broker-authoritative records.
+         */
+        UserPositionAnnotation: {
+            /** Account Id */
+            account_id: string;
+            /** Annotation Id */
+            annotation_id: string;
+            /** Claimed Cost Basis */
+            claimed_cost_basis?: string | null;
+            /** Claimed Total Quantity */
+            claimed_total_quantity?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Note */
+            note: string;
+            /** Security Id */
+            security_id: string;
         };
         /** VersionActivation */
         VersionActivation: {

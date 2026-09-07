@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, TypeVar
 
 from stock_profiler.modules.decision_cases.domain import (
@@ -19,6 +20,10 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.position_management.contracts import (
+    AccountCashState,
+    AuthoritativeLedgerEntry,
+)
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 Transaction = TypeVar("Transaction")
@@ -109,6 +114,20 @@ class DecisionLedger(Protocol[Transaction]):
         connection: Transaction,
         access_scope: ResultAccessScope,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]: ...
+
+    def position_ledger_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        cutoff_at: datetime,
+    ) -> tuple[AuthoritativeLedgerEntry, ...]: ...
+
+    def position_cash_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        cutoff_at: datetime,
+    ) -> tuple[AccountCashState, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 

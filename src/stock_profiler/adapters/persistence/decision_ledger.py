@@ -41,6 +41,15 @@ from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.position_management.contracts import (
+    AccountCashState,
+    AuthoritativeLedgerEntry,
+    PositionReconciliationOutcome,
+)
+from stock_profiler.modules.position_management.history import (
+    authoritative_cash_history,
+    authoritative_ledger_history,
+)
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 METADATA = MetaData()
@@ -58,6 +67,7 @@ DECISION_EVENTS = Table(
     "decision_events",
     METADATA,
     Column("decision_event_id", String(96), primary_key=True),
+    Column("event_sequence", Integer, nullable=True, unique=True),
     Column("business_object_id", String(96), nullable=False),
     Column("framework_run_id", String(96), nullable=False),
     Column("corrects_event_id", String(96), nullable=True),
@@ -187,8 +197,12 @@ class DecisionLedger:
     ) -> tuple[DecisionEventFact, ...]:
         event_ids = (
             connection.execute(
-                select(DECISION_EVENTS.c.decision_event_id).where(
-                    DECISION_EVENTS.c.corrects_event_id.is_(None)
+                select(DECISION_EVENTS.c.decision_event_id)
+                .where(DECISION_EVENTS.c.corrects_event_id.is_(None))
+                .order_by(
+                    DECISION_EVENTS.c.event_sequence,
+                    DECISION_EVENTS.c.committed_at,
+                    DECISION_EVENTS.c.decision_event_id,
                 )
             )
             .scalars()
@@ -313,6 +327,52 @@ class DecisionLedger:
             ):
                 self.ensure_business_object(connection, case)
             return business_object_id
+
+    def position_ledger_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        cutoff_at: datetime,
+    ) -> tuple[AuthoritativeLedgerEntry, ...]:
+        """Return first-observed, visible ledger facts available by the frozen cutoff."""
+        return authoritative_ledger_history(
+            self._position_history(connection, access_scope),
+            account_ids=frozenset(access_scope.account_ids),
+            cutoff_at=cutoff_at,
+        )
+
+    def position_cash_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        cutoff_at: datetime,
+    ) -> tuple[AccountCashState, ...]:
+        """Return first-observed visible opening-cash baselines by account."""
+        return authoritative_cash_history(
+            self._position_history(connection, access_scope),
+            account_ids=frozenset(access_scope.account_ids),
+            cutoff_at=cutoff_at,
+        )
+
+    def _position_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[PositionReconciliationOutcome, ...]:
+        """Read same-owner, same-visibility position facts in durable event order."""
+        return tuple(
+            position
+            for fact in self._original_event_facts(
+                connection,
+                "position ledger history is unavailable",
+            )
+            if (
+                (scope := fact.case.access_scope) is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and (position := fact.result.position) is not None
+            )
+        )
 
     def get_decision_event(
         self, decision_event_id: str, connection: Connection
@@ -697,9 +757,18 @@ class DecisionLedger:
                 raise DecisionEventCommitError("decision event identity maps to different facts")
             return existing
         try:
+            next_event_sequence = (
+                int(
+                    connection.execute(
+                        select(func.coalesce(func.max(DECISION_EVENTS.c.event_sequence), 0))
+                    ).scalar_one()
+                )
+                + 1
+            )
             connection.execute(
                 DECISION_EVENTS.insert().values(
                     decision_event_id=fact.decision_event_id,
+                    event_sequence=next_event_sequence,
                     business_object_id=case.business_object_id,
                     framework_run_id=framework_run_id,
                     corrects_event_id=corrects_event_id,
