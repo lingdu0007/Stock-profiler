@@ -229,6 +229,11 @@ export interface components {
             account_id: string;
             /** Account Type */
             account_type: string;
+            /**
+             * Cash Availability Semantics
+             * @constant
+             */
+            cash_availability_semantics: "BROKER_FINAL_CASH_LAYERS";
             cash_state_evidence: components["schemas"]["PositionEvidence"];
             /** Currency */
             currency: string;
@@ -361,6 +366,8 @@ export interface components {
             account_id: string;
             /** Cash Delta */
             cash_delta: string;
+            /** Corrects Entry Id */
+            corrects_entry_id?: string | null;
             /** Cost Basis Delta */
             cost_basis_delta: string;
             /** Entry Id */
@@ -1226,6 +1233,11 @@ export interface components {
             /** Currency */
             currency: string;
             /**
+             * Encumbrance Quantity Semantics
+             * @enum {string}
+             */
+            encumbrance_quantity_semantics: "OVERLAPPING_NON_SELLABLE" | "UNKNOWN";
+            /**
              * Exact Quantity Status
              * @enum {string}
              */
@@ -1238,6 +1250,8 @@ export interface components {
             issuer_id: string;
             /** Lifecycle Id */
             lifecycle_id: string;
+            /** Market Price */
+            market_price: string | null;
             /** Open Sell Order Quantity */
             open_sell_order_quantity: string | null;
             /**
@@ -1250,10 +1264,17 @@ export interface components {
             position_id: string;
             /** Reasons */
             reasons: string[];
+            /** Reported Cost Basis */
+            reported_cost_basis: string | null;
             /** Restricted Quantity */
             restricted_quantity: string | null;
             /** Security Id */
             security_id: string;
+            /**
+             * Sellable Quantity Semantics
+             * @enum {string}
+             */
+            sellable_quantity_semantics: "BROKER_FINAL_SELLABLE" | "UNKNOWN";
             /** Total Quantity */
             total_quantity: string | null;
             /** Unsettled Quantity */

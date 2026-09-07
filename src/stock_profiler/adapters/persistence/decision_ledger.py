@@ -41,6 +41,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.position_management.contracts import AuthoritativeLedgerEntry
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 METADATA = MetaData()
@@ -313,6 +314,30 @@ class DecisionLedger:
             ):
                 self.ensure_business_object(connection, case)
             return business_object_id
+
+    def position_ledger_history(
+        self, connection: Connection, account_ids: tuple[str, ...]
+    ) -> tuple[AuthoritativeLedgerEntry, ...]:
+        """Return immutable broker-ledger facts retained by prior committed snapshots."""
+        rows = connection.execute(
+            select(
+                DECISION_EVENTS.c.decision_event_id,
+                DECISION_EVENTS.c.business_object_id,
+                DECISION_EVENTS.c.framework_run_id,
+                DECISION_EVENTS.c.corrects_event_id,
+                DECISION_EVENTS.c.event_payload,
+            ).order_by(DECISION_EVENTS.c.committed_at)
+        ).all()
+        history: list[AuthoritativeLedgerEntry] = []
+        for row in rows:
+            position = self._stored_decision_event(connection, row).result.position
+            if position is not None:
+                history.extend(
+                    entry
+                    for entry in position.snapshot.authoritative_ledger
+                    if entry.account_id in account_ids
+                )
+        return tuple(history)
 
     def get_decision_event(
         self, decision_event_id: str, connection: Connection

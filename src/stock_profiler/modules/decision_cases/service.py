@@ -545,7 +545,13 @@ def _commit_framework_result(
                     reasons=portfolio.reasons,
                 )
             if business_result is not None and execution_case.position is not None:
-                position = reconcile_position(execution_case.position)
+                position = reconcile_position(
+                    execution_case.position,
+                    prior_ledger=ledger.position_ledger_history(
+                        connection,
+                        execution_case.position.account_ids,
+                    ),
+                )
                 result = result.model_copy(update={"position": position})
                 position_result = StageResult(
                     phase="POSITION_RECONCILIATION",

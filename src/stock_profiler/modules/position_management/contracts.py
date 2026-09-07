@@ -93,6 +93,7 @@ class PositionEvidence(PositionContract):
 class CashState(PositionContract):
     """Broker cash facts remain decomposed instead of being collapsed into a balance."""
 
+    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS"]
     ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
     opening_ledger_cash: Decimal | None
     opening_ledger_cash_evidence: PositionEvidence
@@ -116,6 +117,7 @@ class BrokerPositionFact(PositionContract):
     total_quantity: Decimal | None
     broker_sellable_quantity: Decimal | None
     sellable_quantity_semantics: Literal["BROKER_FINAL_SELLABLE", "UNKNOWN"]
+    encumbrance_quantity_semantics: Literal["OVERLAPPING_NON_SELLABLE", "UNKNOWN"]
     unsettled_quantity: Decimal | None
     frozen_quantity: Decimal | None
     restricted_quantity: Decimal | None
@@ -156,6 +158,7 @@ class PositionLedgerEntry(PositionContract):
     cost_basis_delta: Decimal
     cash_delta: Decimal
     occurred_at: AwareDatetime
+    corrects_entry_id: str | None = None
     evidence: PositionEvidence
 
 
@@ -273,10 +276,14 @@ class PositionActionUnit(PositionContract):
     security_id: str
     total_quantity: Decimal | None
     broker_sellable_quantity: Decimal | None
+    sellable_quantity_semantics: Literal["BROKER_FINAL_SELLABLE", "UNKNOWN"]
+    encumbrance_quantity_semantics: Literal["OVERLAPPING_NON_SELLABLE", "UNKNOWN"]
     unsettled_quantity: Decimal | None
     frozen_quantity: Decimal | None
     restricted_quantity: Decimal | None
     open_sell_order_quantity: Decimal | None
+    reported_cost_basis: Decimal | None
+    market_price: Decimal | None
     exact_statistical_action_quantity: Decimal | None
     exact_quantity_status: Literal["AVAILABLE", "BLOCKED"]
     reasons: tuple[str, ...]
@@ -301,6 +308,7 @@ class AccountCashState(PositionContract):
     account_evidence: PositionEvidence
     account_equity: Decimal | None
     account_equity_evidence: PositionEvidence
+    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS"]
     ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
     opening_ledger_cash: Decimal | None
     opening_ledger_cash_evidence: PositionEvidence

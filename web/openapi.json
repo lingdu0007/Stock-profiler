@@ -31,6 +31,11 @@
             "title": "Account Type",
             "type": "string"
           },
+          "cash_availability_semantics": {
+            "const": "BROKER_FINAL_CASH_LAYERS",
+            "title": "Cash Availability Semantics",
+            "type": "string"
+          },
           "cash_state_evidence": {
             "$ref": "#/components/schemas/PositionEvidence"
           },
@@ -138,6 +143,7 @@
           "account_evidence",
           "account_equity",
           "account_equity_evidence",
+          "cash_availability_semantics",
           "ledger_cash_semantics",
           "opening_ledger_cash",
           "opening_ledger_cash_evidence",
@@ -400,6 +406,17 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Cash Delta",
             "type": "string"
+          },
+          "corrects_entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Entry Id"
           },
           "cost_basis_delta": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -2387,6 +2404,11 @@
             "title": "Currency",
             "type": "string"
           },
+          "encumbrance_quantity_semantics": {
+            "enum": ["OVERLAPPING_NON_SELLABLE", "UNKNOWN"],
+            "title": "Encumbrance Quantity Semantics",
+            "type": "string"
+          },
           "exact_quantity_status": {
             "enum": ["AVAILABLE", "BLOCKED"],
             "title": "Exact Quantity Status",
@@ -2424,6 +2446,18 @@
             "title": "Lifecycle Id",
             "type": "string"
           },
+          "market_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Price"
+          },
           "open_sell_order_quantity": {
             "anyOf": [
               {
@@ -2455,6 +2489,18 @@
             "title": "Reasons",
             "type": "array"
           },
+          "reported_cost_basis": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Cost Basis"
+          },
           "restricted_quantity": {
             "anyOf": [
               {
@@ -2469,6 +2515,11 @@
           },
           "security_id": {
             "title": "Security Id",
+            "type": "string"
+          },
+          "sellable_quantity_semantics": {
+            "enum": ["BROKER_FINAL_SELLABLE", "UNKNOWN"],
+            "title": "Sellable Quantity Semantics",
             "type": "string"
           },
           "total_quantity": {
@@ -2507,10 +2558,14 @@
           "security_id",
           "total_quantity",
           "broker_sellable_quantity",
+          "sellable_quantity_semantics",
+          "encumbrance_quantity_semantics",
           "unsettled_quantity",
           "frozen_quantity",
           "restricted_quantity",
           "open_sell_order_quantity",
+          "reported_cost_basis",
+          "market_price",
           "exact_statistical_action_quantity",
           "exact_quantity_status",
           "reasons",

@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from copy import deepcopy
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,8 @@ from stock_profiler.modules.decision_cases.domain import (
     load_frozen_decision_case,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
+from stock_profiler.modules.position_management.contracts import PositionSnapshotCommand
+from stock_profiler.modules.position_management.service import reconcile
 
 
 def position_case_payload(
@@ -81,6 +83,7 @@ def position_snapshot_command() -> dict[str, Any]:
                 "account_equity": "1310",
                 "account_equity_evidence": position_evidence("synthetic-broker-4017-equity"),
                 "cash_state": {
+                    "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
                     "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
                     "opening_ledger_cash": "902",
                     "opening_ledger_cash_evidence": position_evidence(
@@ -104,6 +107,7 @@ def position_snapshot_command() -> dict[str, Any]:
                         "total_quantity": "100",
                         "broker_sellable_quantity": "70",
                         "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                        "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
                         "unsettled_quantity": "10",
                         "frozen_quantity": "5",
                         "restricted_quantity": "0",
@@ -176,6 +180,7 @@ def position_snapshot_command() -> dict[str, Any]:
                 "account_equity": "800",
                 "account_equity_evidence": position_evidence("synthetic-broker-8029-equity"),
                 "cash_state": {
+                    "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
                     "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
                     "opening_ledger_cash": "650",
                     "opening_ledger_cash_evidence": position_evidence(
@@ -199,6 +204,7 @@ def position_snapshot_command() -> dict[str, Any]:
                         "total_quantity": "50",
                         "broker_sellable_quantity": "45",
                         "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                        "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
                         "unsettled_quantity": "5",
                         "frozen_quantity": "0",
                         "restricted_quantity": "0",
@@ -601,7 +607,13 @@ def test_position_snapshot_rejects_conflicting_security_issuer_identity(
     outcome = execution.report.result.position
     assert outcome is not None
     assert outcome.disposition == "CONFLICTED"
-    assert outcome.snapshot.issuer_exposures == ()
+    assert {
+        exposure.issuer_id: exposure.current_market_exposure
+        for exposure in outcome.snapshot.issuer_exposures
+    } == {
+        "FICTIONAL-CONFLICTING-ISSUER": None,
+        "FICTIONAL-ORBITAL-MOSAIC": None,
+    }
     assert all(
         unit.exact_statistical_action_quantity is None
         and "SECURITY_ISSUER_IDENTITY_CONFLICT" in unit.reasons
@@ -719,3 +731,191 @@ print(reconcile(command).model_dump_json())
         outputs.append(completed.stdout)
 
     assert outputs[0] == outputs[1] == outputs[2]
+
+
+def test_position_snapshot_uses_its_fixed_decimal_contract() -> None:
+    payload = position_snapshot_command()
+    position = payload["accounts"][0]["positions"][0]
+    position["total_quantity"] = "1.234567890123456789012345678901234"
+    position["market_price"] = "1.234567890123456789012345678901234"
+    payload["accounts"][0]["ledger_entries"][0]["quantity_delta"] = position["total_quantity"]
+    command = PositionSnapshotCommand.model_validate(payload)
+
+    baseline = reconcile(command)
+    with localcontext() as context:
+        context.prec = 2
+        context.traps[Inexact] = False
+        low_precision = reconcile(command)
+
+    assert low_precision == baseline
+
+
+def test_position_snapshot_rejects_mutated_historical_ledger_entry(
+    migrated_settings: Settings,
+) -> None:
+    original = position_snapshot_command()
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "historical-ledger-original", original),
+    )
+    assert first.report is not None
+
+    changed = position_snapshot_command()
+    changed["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    changed["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "historical-ledger-mutated", changed),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_retains_closed_ledger_history_without_missing_summary_conflict(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-closed-buy",
+                "entry_type": "FILL",
+                "security_id": "CLOSED-4017",
+                "quantity_delta": "1",
+                "cost_basis_delta": "10",
+                "cash_delta": "-10",
+                "occurred_at": "2042-05-16T15:01:00Z",
+                "evidence": position_evidence("synthetic-closed-buy"),
+            },
+            {
+                "entry_id": "synthetic-closed-sell",
+                "entry_type": "FILL",
+                "security_id": "CLOSED-4017",
+                "quantity_delta": "-1",
+                "cost_basis_delta": "-10",
+                "cash_delta": "10",
+                "occurred_at": "2042-05-16T15:02:00Z",
+                "evidence": position_evidence("synthetic-closed-sell"),
+            },
+        ]
+    )
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "closed-history", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    assert "BROKER_POSITION_SUMMARY_MISSING" not in {
+        conflict.code for conflict in execution.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_blocks_inconsistent_cash_layers_for_every_account(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["cash_state"]["transferable_cash"] = "96"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "cash-layer-conflict", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "CASH_AVAILABILITY_LAYERS_INCONSISTENT" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_rejects_contradictory_final_sellable_components(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"][0]["frozen_quantity"] = "100"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "sellable-component-conflict", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "BROKER_SELLABLE_QUANTITY_CONTRADICTS_ENCUMBRANCES" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+
+
+def test_position_snapshot_accepts_append_only_historical_ledger_correction(
+    migrated_settings: Settings,
+) -> None:
+    original = position_snapshot_command()
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-correction-original", original),
+    )
+    assert first.report is not None
+
+    corrected = position_snapshot_command()
+    corrected["accounts"][0]["positions"][0]["reported_cost_basis"] = "890"
+    corrected["accounts"][0]["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-fee-correction-4017-xqz",
+            "entry_type": "FEE",
+            "security_id": "XQZ-4017",
+            "quantity_delta": "0",
+            "cost_basis_delta": "-10",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "corrects_entry_id": "synthetic-fee-4017-xqz",
+            "evidence": position_evidence("synthetic-broker-4017-fee-correction"),
+        }
+    )
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-correction", corrected),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert second.report.result.position.disposition == "RECONCILED"
+    assert (
+        second.report.result.position.snapshot.authoritative_ledger[-3].corrects_entry_id
+        == "synthetic-fee-4017-xqz"
+    )
+
+
+def test_position_snapshot_rejects_removed_historical_ledger_entry(
+    migrated_settings: Settings,
+) -> None:
+    original = position_snapshot_command()
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-removal-original", original),
+    )
+    assert first.report is not None
+
+    removed = position_snapshot_command()
+    removed["accounts"][0]["ledger_entries"].pop(1)
+    removed["accounts"][0]["positions"][0]["reported_cost_basis"] = "890"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-removal", removed),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
