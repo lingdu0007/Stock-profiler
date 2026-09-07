@@ -551,6 +551,7 @@ def _commit_framework_result(
                     prior_ledger=ledger.position_ledger_history(
                         connection,
                         execution_case.access_scope,
+                        execution_case.position.cutoff_at,
                     ),
                 )
                 result = result.model_copy(update={"position": position})

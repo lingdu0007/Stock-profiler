@@ -18,6 +18,7 @@ from stock_profiler.modules.position_management.contracts import (
     BrokerPositionFact,
     ExecutionRestriction,
     IssuerExposure,
+    OpenOrder,
     PositionActionUnit,
     PositionAffectedScope,
     PositionEvidence,
@@ -219,6 +220,7 @@ def _reconcile(
                 code="BROKER_POSITION_SUMMARY_MISSING",
                 fields=("positions", "ledger_entries", "open_orders", "execution_restrictions"),
                 blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
                 blocks_current_valuation=True,
             )
             missing_summary_security_ids.add(security_id)
@@ -377,6 +379,14 @@ def _record_ledger_history_conflicts(
     record: ConflictRecorder,
 ) -> None:
     current_entry_ids = {entry.entry_id for entry in account.ledger_entries}
+    correction_targets = {
+        entry_id: entry.corrects_entry_id
+        for (prior_account_id, entry_id), entry in prior_entries.items()
+        if prior_account_id == account.account_id
+    }
+    correction_targets.update(
+        {entry.entry_id: entry.corrects_entry_id for entry in account.ledger_entries}
+    )
     for (prior_account_id, prior_entry_id), historical_entry in prior_entries.items():
         if prior_account_id == account.account_id and prior_entry_id not in current_entry_ids:
             record(
@@ -407,19 +417,54 @@ def _record_ledger_history_conflicts(
                 portfolio_dependency=True,
                 blocks_current_valuation=entry.security_id is not None,
             )
-        if entry.corrects_entry_id is not None and (
-            entry.corrects_entry_id not in current_entry_ids
-            and (account.account_id, entry.corrects_entry_id) not in prior_entries
-        ):
-            record(
-                account_id=account.account_id,
-                security_id=entry.security_id,
-                code="LEDGER_CORRECTION_TARGET_MISSING",
-                fields=("ledger_entries.corrects_entry_id",),
-                blocks_exact_statistical_quantity=True,
-                portfolio_dependency=True,
-                blocks_current_valuation=entry.security_id is not None,
-            )
+        if entry.corrects_entry_id is not None:
+            if entry.corrects_entry_id == entry.entry_id:
+                record(
+                    account_id=account.account_id,
+                    security_id=entry.security_id,
+                    code="LEDGER_CORRECTION_SELF_REFERENCE",
+                    fields=("ledger_entries.corrects_entry_id",),
+                    blocks_exact_statistical_quantity=True,
+                    portfolio_dependency=True,
+                    blocks_current_valuation=entry.security_id is not None,
+                )
+            elif (
+                entry.corrects_entry_id not in current_entry_ids
+                and (account.account_id, entry.corrects_entry_id) not in prior_entries
+            ):
+                record(
+                    account_id=account.account_id,
+                    security_id=entry.security_id,
+                    code="LEDGER_CORRECTION_TARGET_MISSING",
+                    fields=("ledger_entries.corrects_entry_id",),
+                    blocks_exact_statistical_quantity=True,
+                    portfolio_dependency=True,
+                    blocks_current_valuation=entry.security_id is not None,
+                )
+            elif _has_correction_cycle(entry.entry_id, correction_targets):
+                record(
+                    account_id=account.account_id,
+                    security_id=entry.security_id,
+                    code="LEDGER_CORRECTION_CYCLE",
+                    fields=("ledger_entries.corrects_entry_id",),
+                    blocks_exact_statistical_quantity=True,
+                    portfolio_dependency=True,
+                    blocks_current_valuation=entry.security_id is not None,
+                )
+
+
+def _has_correction_cycle(
+    entry_id: str,
+    correction_targets: dict[str, str | None],
+) -> bool:
+    seen_entry_ids = {entry_id}
+    target = correction_targets.get(entry_id)
+    while target is not None:
+        if target in seen_entry_ids:
+            return True
+        seen_entry_ids.add(target)
+        target = correction_targets.get(target)
+    return False
 
 
 def _reconstruct_ledger(
@@ -472,6 +517,23 @@ def _reconstruct_ledger(
         )
         if evidence_codes:
             cash_complete = False
+        if (
+            entry.evidence.source_observed_at is not None
+            and entry.evidence.source_observed_at < entry.occurred_at
+        ):
+            record(
+                account_id=account.account_id,
+                security_id=entry.security_id,
+                code="LEDGER_ENTRY_EVIDENCE_PRECEDES_OCCURRENCE",
+                fields=(
+                    "ledger_entries.occurred_at",
+                    "ledger_entries.evidence.source_observed_at",
+                ),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+                blocks_current_valuation=entry.security_id is not None,
+            )
+            cash_complete = False
         cash_deltas.append(entry.cash_delta)
         if entry.security_id is not None:
             entries_by_security[entry.security_id].append(
@@ -496,7 +558,22 @@ def _reconcile_orders(
 ) -> tuple[dict[str, Decimal | None], Decimal | None]:
     sell_quantities: dict[str, list[Decimal | None]] = defaultdict(list)
     buy_reserves: list[Decimal | None] = []
+    orders_by_id: dict[str, OpenOrder] = {}
     for order in account.open_orders:
+        prior_order = orders_by_id.get(order.order_id)
+        if prior_order is not None:
+            portfolio_dependency = order.side == "BUY" or prior_order.side == "BUY"
+            for security_id in dict.fromkeys((prior_order.security_id, order.security_id)):
+                record(
+                    account_id=account.account_id,
+                    security_id=security_id,
+                    code="OPEN_ORDER_ID_DUPLICATED",
+                    fields=("open_orders.order_id",),
+                    blocks_exact_statistical_quantity=True,
+                    portfolio_dependency=portfolio_dependency,
+                )
+            continue
+        orders_by_id[order.order_id] = order
         _record_evidence(
             order.evidence,
             cutoff_at,
@@ -631,6 +708,24 @@ def _record_cash_layer_relationships(
                 "cash_state.ledger_cash",
                 "cash_state.trading_cash",
                 "cash_state.transferable_cash",
+            ),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
+    if (
+        cash.ledger_cash is not None
+        and cash.trading_cash is not None
+        and cash.frozen_cash is not None
+        and cash.trading_cash + cash.frozen_cash > cash.ledger_cash
+    ):
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="CASH_FROZEN_EXCEEDS_LEDGER_AVAILABILITY",
+            fields=(
+                "cash_state.ledger_cash",
+                "cash_state.trading_cash",
+                "cash_state.frozen_cash",
             ),
             blocks_exact_statistical_quantity=True,
             portfolio_dependency=True,
@@ -854,6 +949,7 @@ def _record_position_problems(
             code="LEDGER_QUANTITY_MISMATCH",
             fields=("positions.total_quantity", "ledger_entries.quantity_delta"),
             blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
             blocks_current_valuation=True,
         )
     if position.reported_cost_basis is not None and cost != position.reported_cost_basis:

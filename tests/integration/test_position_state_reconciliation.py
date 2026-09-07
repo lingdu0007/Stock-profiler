@@ -89,6 +89,61 @@ def refresh_current_position_evidence(command: dict[str, Any], cutoff_at: str) -
         evidence.update(position_evidence(evidence["source"], cutoff_at=cutoff_at))
 
 
+def position_snapshot_with_later_security(
+    security_id: str,
+    *,
+    cutoff_at: str = "2042-05-18T16:00:00Z",
+) -> dict[str, Any]:
+    command = position_snapshot_command()
+    command["snapshot_id"] = f"synthetic-position-snapshot-{security_id.lower()}"
+    command["cutoff_at"] = cutoff_at
+    refresh_current_position_evidence(command, cutoff_at)
+    account = command["accounts"][0]
+    account["positions"].append(
+        {
+            "position_id": f"synthetic-position-4017-{security_id.lower()}",
+            "origin": "EXTERNAL",
+            "lifecycle_id": f"synthetic-lifecycle-4017-{security_id.lower()}",
+            "issuer_id": f"FICTIONAL-{security_id}",
+            "security_id": security_id,
+            "total_quantity": "1",
+            "broker_sellable_quantity": "1",
+            "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+            "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+            "unsettled_quantity": "0",
+            "frozen_quantity": "0",
+            "restricted_quantity": "0",
+            "open_sell_order_quantity": "0",
+            "reported_cost_basis": "10",
+            "market_price": "10",
+            "evidence": position_evidence(
+                f"synthetic-broker-4017-{security_id}",
+                cutoff_at=cutoff_at,
+            ),
+        }
+    )
+    account["ledger_entries"].append(
+        {
+            "entry_id": f"synthetic-fill-4017-{security_id.lower()}",
+            "entry_type": "FILL",
+            "security_id": security_id,
+            "quantity_delta": "1",
+            "cost_basis_delta": "10",
+            "cash_delta": "-10",
+            "occurred_at": f"{cutoff_at.partition('T')[0]}T15:00:00Z",
+            "evidence": position_evidence(
+                f"synthetic-broker-4017-{security_id}-fill",
+                cutoff_at=cutoff_at,
+            ),
+        }
+    )
+    cash = account["cash_state"]
+    cash["ledger_cash"] = "90"
+    cash["trading_cash"] = "85"
+    cash["transferable_cash"] = "80"
+    return command
+
+
 def position_snapshot_command() -> dict[str, Any]:
     return {
         "operation": "POSITION_SNAPSHOT_RECONCILE",
@@ -1071,6 +1126,234 @@ def test_position_snapshot_blocks_all_quantities_when_a_portfolio_total_is_missi
     assert execution.report.result.position is not None
     outcome = execution.report.result.position
     assert "TOTAL_QUANTITY_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_ignores_later_ledger_history_for_an_earlier_cutoff(
+    migrated_settings: Settings,
+) -> None:
+    future_security_id = "FUTURE-ONLY-4017"
+    future = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-ledger-history",
+            position_snapshot_with_later_security(future_security_id),
+        ),
+    )
+    assert future.report is not None
+    assert future.report.result.position is not None
+    assert future.report.result.position.disposition == "RECONCILED"
+
+    earlier = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "earlier-after-future-ledger-history",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert earlier.report is not None
+    assert earlier.report.result.position is not None
+    assert earlier.report.result.position.disposition == "RECONCILED"
+    assert future_security_id not in earlier.report.model_dump_json()
+
+
+def test_position_snapshot_retains_overlapping_account_ledger_history(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "overlapping-ledger-history-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert original.report is not None
+
+    narrowed = position_snapshot_command()
+    narrowed["accounts"] = [narrowed["accounts"][0]]
+    narrowed_account = narrowed["accounts"][0]
+    narrowed_account["ledger_entries"].pop(1)
+    narrowed_account["positions"][0]["reported_cost_basis"] = "890"
+    narrowed_account["account_equity"] = "1320"
+    narrowed_cash = narrowed_account["cash_state"]
+    narrowed_cash["ledger_cash"] = "110"
+    narrowed_cash["trading_cash"] = "105"
+    narrowed_cash["transferable_cash"] = "100"
+    narrowed_execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "overlapping-ledger-history-narrowed",
+            narrowed,
+        ),
+    )
+
+    assert narrowed_execution.report is not None
+    assert narrowed_execution.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in narrowed_execution.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_blocks_all_quantities_for_ledger_quantity_mismatch(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"][0]["total_quantity"] = "101"
+    command["accounts"][0]["account_equity"] = "1322"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-quantity-conflict", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_QUANTITY_MISMATCH" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_blocks_all_quantities_for_missing_position_summary(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"] = []
+    command["accounts"][0]["account_equity"] = "110"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "summary-missing-global-block", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "BROKER_POSITION_SUMMARY_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_rejects_duplicate_broker_order_identity(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["open_orders"][0]["remaining_quantity"] = "5"
+    duplicate = deepcopy(command["accounts"][0]["open_orders"][0])
+    duplicate["remaining_quantity"] = "10"
+    command["accounts"][0]["open_orders"].append(duplicate)
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "duplicate-open-order", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "OPEN_ORDER_ID_DUPLICATED" in {conflict.code for conflict in outcome.conflicts}
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+
+
+@pytest.mark.parametrize(
+    ("entry_ids", "targets", "expected_code"),
+    [
+        (
+            ("synthetic-self-correction",),
+            ("synthetic-self-correction",),
+            "LEDGER_CORRECTION_SELF_REFERENCE",
+        ),
+        (
+            ("synthetic-cycle-correction-a", "synthetic-cycle-correction-b"),
+            ("synthetic-cycle-correction-b", "synthetic-cycle-correction-a"),
+            "LEDGER_CORRECTION_CYCLE",
+        ),
+    ],
+)
+def test_position_snapshot_rejects_invalid_ledger_correction_lineage(
+    migrated_settings: Settings,
+    entry_ids: tuple[str, ...],
+    targets: tuple[str, ...],
+    expected_code: str,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["ledger_entries"].extend(
+        {
+            "entry_id": entry_id,
+            "entry_type": "CORPORATE_ACTION",
+            "security_id": None,
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "corrects_entry_id": target,
+            "evidence": position_evidence(f"synthetic-broker-{entry_id}"),
+        }
+        for entry_id, target in zip(entry_ids, targets, strict=True)
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, f"invalid-correction-{expected_code}", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    assert expected_code in {
+        conflict.code for conflict in execution.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_rejects_ledger_evidence_before_its_fill(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_with_later_security("CAUSAL-4017")
+    command["accounts"][0]["ledger_entries"][-1]["evidence"] = position_evidence(
+        "synthetic-broker-4017-causal-fill"
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "ledger-evidence-precedes-fill", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_ENTRY_EVIDENCE_PRECEDES_OCCURRENCE" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_rejects_frozen_cash_above_ledger_availability(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["cash_state"]["frozen_cash"] = "1000000"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "frozen-cash-conflict", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "CASH_FROZEN_EXCEEDS_LEDGER_AVAILABILITY" in {
+        conflict.code for conflict in outcome.conflicts
+    }
     assert all(
         unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
     )

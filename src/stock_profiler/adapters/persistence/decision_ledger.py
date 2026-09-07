@@ -319,20 +319,26 @@ class DecisionLedger:
             return business_object_id
 
     def position_ledger_history(
-        self, connection: Connection, access_scope: ResultAccessScope
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        cutoff_at: datetime,
     ) -> tuple[AuthoritativeLedgerEntry, ...]:
-        """Return only reconciled, same-scope broker-ledger facts from original events."""
+        """Return reconciled, visible ledger facts that were available by the frozen cutoff."""
         history: list[AuthoritativeLedgerEntry] = []
         for fact in self._original_event_facts(
             connection,
             "position ledger history is unavailable",
         ):
             position = fact.result.position
+            scope = fact.case.access_scope
             if (
-                fact.case.access_scope is not None
-                and fact.case.access_scope.same_scope_as(access_scope)
+                scope is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
                 and position is not None
                 and position.disposition == "RECONCILED"
+                and position.snapshot.cutoff_at <= cutoff_at
             ):
                 history.extend(
                     entry
