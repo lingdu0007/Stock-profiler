@@ -116,6 +116,27 @@ version remains independently readable.
 Scoped corrections retain the original projection contract and qualification
 snapshot. They do not re-adjudicate authorization or add qualification history.
 
+Liquidity D0 cases use the explicit `8.2.0` frozen host contract. The host
+reconciles their complete position snapshot before applying a retained,
+parameterized reserve policy. Broker-final trading cash already excludes
+unfinished-buy reserves; the report preserves those reserves separately rather
+than deducting them twice. Cash reserve calculations and deadline funding use
+fixed-context decimal arithmetic, never browser arithmetic or model estimates.
+Deadline funding is hypothetical: legal quantities, cost terms and settlement
+times do not credit current cash. A time-expanded account network enforces
+verified transfer capacity and timing without reusing money across obligations.
+Each disposal distinguishes its net proceeds from its deadline-funding contribution.
+Unknown funding evidence is distinct from a known funding gap.
+
+Liquidity outcomes, their original remediation identity, external settled-payment
+receipts and frozen authorization evidence are retained in original committed
+events. Business failure or authorization expiry cannot release deterministic
+protection or grant new exposure. Partial restoration retains the original
+normal-target obligation; release requires reconciled restoration and complete
+funding evidence. Report corrections preserve this original adjudication.
+The report-only contract neither submits orders nor treats future income,
+unsettled deposits, unused credit or outside assets as available funding.
+
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic
 reports the official single-user, non-public-recommendation, and no-order-

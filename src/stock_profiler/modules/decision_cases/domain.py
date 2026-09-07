@@ -29,6 +29,7 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioConfirmationCommand,
     PortfolioUseCommand,
 )
+from stock_profiler.modules.portfolio.liquidity import LiquidityCommand, LiquidityOutcome
 from stock_profiler.modules.position_management.contracts import (
     PositionReconciliationOutcome,
     PositionSnapshotCommand,
@@ -45,7 +46,7 @@ FROZEN_AGENT_DEFINITION_ID = "synthetic-frozen-decision-case"
 FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
-_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0", "6.0.0", "7.0.0"})
+_SCOPED_CASE_CONTRACT_VERSIONS = frozenset({"3.0.0", "4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.2.0"})
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
     {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, *_SCOPED_CASE_CONTRACT_VERSIONS}
 )
@@ -58,6 +59,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("5.0.0", "5.0.0"),
         ("6.0.0", "6.0.0"),
         ("7.0.0", "7.0.0"),
+        ("8.2.0", "8.2.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -153,6 +155,7 @@ class ExternalResult(FrozenContract):
     position: PositionReconciliationOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    liquidity: LiquidityOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class GateResult(FrozenContract):
@@ -188,6 +191,7 @@ StagePhase = Literal[
     "QUALIFICATION",
     "PORTFOLIO_AUTHORIZATION",
     "POSITION_RECONCILIATION",
+    "LIQUIDITY_PROTECTION",
     "ADJUDICATION_LIFECYCLE",
     "VALIDITY_LIFECYCLE",
     "EXECUTION_LIFECYCLE",
@@ -241,6 +245,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "QUALIFICATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "PORTFOLIO_AUTHORIZATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "POSITION_RECONCILIATION": frozenset({"SUCCEEDED", "REJECTED"}),
+    "LIQUIDITY_PROTECTION": frozenset({"SUCCEEDED", "REJECTED"}),
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
     "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
     "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
@@ -595,6 +600,7 @@ class FrozenDecisionCase(FrozenContract):
     position: PositionSnapshotCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    liquidity: LiquidityCommand | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
@@ -603,15 +609,23 @@ class FrozenDecisionCase(FrozenContract):
         governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
         portfolio_governed = self.version_bundle.case_contract_version == "6.0.0"
         position_governed = self.version_bundle.case_contract_version == "7.0.0"
-        host_command_case = governed or portfolio_governed or position_governed
+        liquidity_governed = self.version_bundle.case_contract_version == "8.2.0"
+        host_command_case = (
+            governed or portfolio_governed or position_governed or liquidity_governed
+        )
         if governed != (self.governance is not None):
             raise ValueError("governance requires a governed frozen contract")
         if portfolio_governed != (self.portfolio is not None):
             raise ValueError("portfolio requires a portfolio frozen contract")
         if position_governed != (self.position is not None):
             raise ValueError("position reconciliation requires the version 7 frozen contract")
+        if liquidity_governed != (self.liquidity is not None):
+            raise ValueError("liquidity requires the version 8.2 frozen contract")
         if (
-            sum(command is not None for command in (self.governance, self.portfolio, self.position))
+            sum(
+                command is not None
+                for command in (self.governance, self.portfolio, self.position, self.liquidity)
+            )
             > 1
         ):
             raise ValueError("a frozen case cannot combine host commands")
@@ -631,6 +645,7 @@ class FrozenDecisionCase(FrozenContract):
             self.expected_external_result.governance is not None
             or self.expected_external_result.portfolio is not None
             or self.expected_external_result.position is not None
+            or self.expected_external_result.liquidity is not None
         ):
             raise ValueError("host decisions are never framework output")
         if self.governance is not None and (
@@ -661,6 +676,14 @@ class FrozenDecisionCase(FrozenContract):
             or self.position.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
         ):
             raise ValueError("position snapshot and frozen access scope must agree")
+        if self.liquidity is not None and (
+            self.access_scope is None
+            or set(self.liquidity.position_snapshot.account_ids)
+            != set(self.access_scope.account_ids)
+            or self.liquidity.position_snapshot.cutoff_at
+            != datetime.fromisoformat(self.knowledge_cutoff)
+        ):
+            raise ValueError("liquidity snapshot and frozen access scope must agree")
         account = self.input.get("account")
         definition_version = definition_version_for_case_contract(
             self.version_bundle.case_contract_version

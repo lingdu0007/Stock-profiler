@@ -41,6 +41,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -352,6 +353,25 @@ class DecisionLedger:
             self._position_history(connection, access_scope),
             account_ids=frozenset(access_scope.account_ids),
             cutoff_at=cutoff_at,
+        )
+
+    def liquidity_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        cutoff_at: datetime,
+    ) -> tuple[LiquidityOutcome, ...]:
+        """Read prior portfolio protection only within the complete frozen result scope."""
+        return tuple(
+            fact.result.liquidity
+            for fact in self._original_event_facts(connection, "liquidity history is unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.liquidity is not None
+            and fact.case.liquidity.portfolio_id == portfolio_id
+            and fact.case.liquidity.position_snapshot.cutoff_at <= cutoff_at
+            and fact.result.liquidity is not None
         )
 
     def _position_history(

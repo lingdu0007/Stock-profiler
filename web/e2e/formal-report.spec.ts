@@ -26,6 +26,7 @@ let temporaryDirectory = "";
 let report: FormalReport;
 let correctionReport: FormalReport;
 let portfolioReport: FormalReport;
+let liquidityReport: FormalReport;
 let shadowReportId = "";
 let sessionToken = "";
 let csrfToken = "";
@@ -44,6 +45,7 @@ test.beforeAll(async () => {
     STOCK_PROFILER_ENVIRONMENT: "test",
     STOCK_PROFILER_REPORT_ACCOUNT_IDS: JSON.stringify([
       "synthetic-account-4017",
+      "synthetic-account-8029",
       "synthetic-account-margin-2001"
     ]),
     STOCK_PROFILER_REPORT_PERMISSIONS: JSON.stringify(["REPORT_READ", "USER_FACT"]),
@@ -147,6 +149,38 @@ test.beforeAll(async () => {
     { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
   );
   portfolioReport = (JSON.parse(portfolioExecution.stdout) as DecisionCaseExecution).report;
+  const liquidityCasePath = join(temporaryDirectory, "synthetic-liquidity-case.json");
+  await execFile(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      [
+        "import json",
+        "import sys",
+        "from pathlib import Path",
+        "sys.path.insert(0, 'tests/integration')",
+        "from test_liquidity_protection import liquidity_payload",
+        "from stock_profiler.bootstrap.settings import load_settings",
+        "payload = liquidity_payload(load_settings(), 'browser-liquidity',",
+        "    portfolio_id='synthetic-browser-liquidity-portfolio',",
+        "    single_account_id='synthetic-account-8029')",
+        "Path(sys.argv[1]).write_text(json.dumps(payload), encoding='utf-8')"
+      ].join("\n"),
+      liquidityCasePath
+    ],
+    {
+      cwd: repositoryRoot,
+      env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "api" }
+    }
+  );
+  const liquidityExecution = await execFile(
+    "uv",
+    ["run", "stock-profiler", "decision-case-run", "--case", liquidityCasePath],
+    { cwd: repositoryRoot, env: { ...environment, STOCK_PROFILER_PROCESS_ROLE: "cli" } }
+  );
+  liquidityReport = (JSON.parse(liquidityExecution.stdout) as DecisionCaseExecution).report;
   const shadow = await execFile(
     "uv",
     [
@@ -295,6 +329,37 @@ test("does not reveal a report when the API returns an unauthenticated response"
   expect((await deniedResponse).status()).toBe(401);
   await expect(page.getByRole("button", { name: "Continue with Passkey" })).toBeVisible();
   await expect(page.getByText("SYNTHETIC_REVIEW_COMPLETE")).not.toBeVisible();
+});
+
+test("projects committed liquidity protection across desktop and mobile", async ({
+  page
+}, testInfo) => {
+  await installAuthenticatedSession(page);
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const received = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/v1/reports/${liquidityReport.report_version_id}`
+    );
+    await page.goto(`${browserOrigin}/reports/${liquidityReport.report_version_id}`);
+    const response = await received;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["cache-control"]).toBe("no-store");
+    expect(await response.json()).toEqual(liquidityReport);
+    const liquidity = page.getByRole("region", { name: "Liquidity protection" });
+    await expect(liquidity).toBeVisible();
+    await expect(liquidity).toContainText("Liquidity restoration required");
+    await expect(liquidity).toContainText("415.90");
+    await expect(liquidity).toContainText("Blocked");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+    ).toBe(true);
+    await expect(
+      page.getByRole("button", { name: /generate|prefill|submit|modify|cancel order/i })
+    ).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath(`liquidity-${width}.png`), fullPage: true });
+    await liquidity.screenshot({ path: testInfo.outputPath(`liquidity-section-${width}.png`) });
+  }
 });
 
 test("retains original and corrected evidence across desktop and mobile views", async ({
