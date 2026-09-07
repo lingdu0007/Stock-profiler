@@ -800,6 +800,8 @@ export interface components {
              * @default []
              */
             processed_flow_ids: string[];
+            /** Processed Stock Events */
+            processed_stock_events: components["schemas"]["FlowLedgerKey"][];
             /** Processed Transfers */
             processed_transfers: components["schemas"]["FlowLedgerKey"][];
             reauthorization?: components["schemas"]["CapitalReauthorization"] | null;

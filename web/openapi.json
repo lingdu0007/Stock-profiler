@@ -1404,6 +1404,13 @@
             "title": "Processed Flow Ids",
             "type": "array"
           },
+          "processed_stock_events": {
+            "items": {
+              "$ref": "#/components/schemas/FlowLedgerKey"
+            },
+            "title": "Processed Stock Events",
+            "type": "array"
+          },
           "processed_transfers": {
             "items": {
               "$ref": "#/components/schemas/FlowLedgerKey"
@@ -1517,7 +1524,8 @@
           "stock_exposure_target_value",
           "exact_units",
           "exact_peak",
-          "processed_transfers"
+          "processed_transfers",
+          "processed_stock_events"
         ],
         "title": "DrawdownState",
         "type": "object"

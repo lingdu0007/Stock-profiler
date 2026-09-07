@@ -380,6 +380,7 @@ def observe(
     hard_gate: bool = False,
     operation: str = "OBSERVE",
     settled: bool = False,
+    extra_ledger_entries: tuple[dict[str, Any], ...] = (),
 ) -> FormalReport:
     snapshot = position_snapshot_command()
     snapshot.update(snapshot_id=f"synthetic-drawdown-position-{identity}", cutoff_at=cutoff)
@@ -440,6 +441,7 @@ def observe(
                 ),
             }
         )
+    account["ledger_entries"].extend(deepcopy(extra_ledger_entries))
     position = run_frozen_decision_case(
         settings, position_case_payload(settings, f"drawdown-{identity}", snapshot)
     )
@@ -676,7 +678,7 @@ def test_preservation_closes_only_after_execution_and_cooling_then_requires_new_
     closed = observe(
         settings,
         command,
-        rebound,
+        denied,
         "close-flat",
         "2042-05-20T17:00:00Z",
         equity="1300",

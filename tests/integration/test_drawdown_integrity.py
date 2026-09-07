@@ -335,3 +335,76 @@ def test_late_flow_proof_resumes_from_last_qualified_accounting_cutoff(
     outcome = result.report.result.drawdown
     assert outcome.disposition == "ACCEPTED", outcome.reasons
     assert outcome.state is not None and outcome.state.unit_nav == 1
+
+
+@pytest.mark.parametrize("pre_flow", [False, True])
+def test_reconciled_foreign_currency_is_not_comparable_capital_evidence(
+    migrated_settings: Settings,
+    pre_flow: bool,
+) -> None:
+    settings = migrated_settings
+    payload = opening_payload(settings)
+    opened = run_frozen_decision_case(settings, payload)
+    assert opened.report is not None
+    snapshot = position_snapshot_command()
+    snapshot["accounts"] = snapshot["accounts"][:1]
+    snapshot["annotations"] = []
+    snapshot.update(
+        snapshot_id="synthetic-other-currency",
+        cutoff_at="2042-05-18T16:00:00Z",
+        valuation_currency="YSP",
+    )
+    snapshot["accounts"][0]["currency"] = "YSP"
+    refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
+    position = run_frozen_decision_case(
+        settings,
+        position_case_payload(settings, "other-currency", snapshot),
+    )
+    assert position.report is not None
+    command = deepcopy(payload["drawdown"])
+    command.update(
+        operation="OBSERVE",
+        previous_decision_id=opened.report.event_id,
+        cutoff_at=snapshot["cutoff_at"],
+    )
+    command["valuation"].update(
+        position_event_id=position.report.event_id,
+        evidence=snapshot["snapshot_evidence"],
+    )
+    if pre_flow:
+        cutoff = "2042-05-19T16:00:00Z"
+        flow = transfer("other-currency-flow", "2042-05-19T15:00:00Z", cutoff)
+        event_id, evidence = cash_snapshot(
+            settings,
+            "other-currency-after-flow",
+            cutoff,
+            equity="1700",
+            transfers=[flow],
+        )
+        command.update(
+            cutoff_at=cutoff,
+            capital_flows=[
+                {
+                    "flow_id": flow["entry_id"],
+                    "kind": "EXTERNAL",
+                    "occurred_at": flow["occurred_at"],
+                    "before_valuation": deepcopy(command["valuation"]),
+                    "ledger_keys": [
+                        {
+                            "account_id": "synthetic-account-4017",
+                            "entry_id": flow["entry_id"],
+                        }
+                    ],
+                }
+            ],
+        )
+        command["valuation"].update(position_event_id=event_id, evidence=evidence)
+    observed = run_frozen_decision_case(
+        settings,
+        drawdown_case(settings, "other-currency", command),
+    )
+    assert observed.report is not None and observed.report.result.drawdown is not None
+    assert observed.report.result.drawdown.disposition == "UNKNOWN"
+    state = observed.report.result.drawdown.state
+    assert state is not None and state.new_exposure_blocked
+    assert state.units == 1300 and state.high_water_nav == 1

@@ -30,10 +30,12 @@ def equity_for(
     valuation: DrawdownValuation,
     position: PositionReconciliationOutcome | None,
     account_ids: tuple[str, ...],
+    currency: str,
 ) -> Fraction:
     if (
         position is None
         or position.disposition != "RECONCILED"
+        or position.snapshot.valuation_currency != currency
         or position.snapshot.total_account_equity is None
         or valuation.liquidation_cost is None
         or set(item.account_id for item in position.snapshot.cash_states) != set(account_ids)
@@ -93,7 +95,12 @@ def adjusted_units(
             transfer_keys(before)
         ) != processed:
             raise ValueError("CAPITAL_FLOW_SEQUENCE_UNKNOWN")
-        pre_equity = equity_for(flow.before_valuation, before, prior.account_ids)
+        pre_equity = equity_for(
+            flow.before_valuation,
+            before,
+            prior.account_ids,
+            position.snapshot.valuation_currency,
+        )
         if pre_equity <= 0 or units <= 0:
             raise ValueError("CAPITAL_FLOW_VALUE_UNKNOWN")
         pre_nav = pre_equity / units

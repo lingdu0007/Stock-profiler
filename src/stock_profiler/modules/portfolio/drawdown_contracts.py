@@ -115,6 +115,7 @@ class DrawdownState(PortfolioContract):
     exact_units: ExactRatio
     exact_peak: ExactRatio
     processed_transfers: tuple[FlowLedgerKey, ...]
+    processed_stock_events: tuple[FlowLedgerKey, ...]
     processed_flow_ids: tuple[str, ...] = ()
     epoch_status: Literal["OPEN", "CLOSED"] = "OPEN"
     closed_at: AwareDatetime | None = None

@@ -10,6 +10,7 @@ from stock_profiler.modules.portfolio.drawdown_contracts import (
     DrawdownOutcome,
     DrawdownState,
     ExactRatio,
+    FlowLedgerKey,
 )
 from stock_profiler.modules.portfolio.drawdown_flows import (
     adjusted_units,
@@ -43,7 +44,7 @@ def adjudicate(
     )
     if capital is None or not business_prerequisite_met:
         return DrawdownOutcome(disposition="DENIED", reasons=("CAPITAL_AUTHORIZATION_REQUIRED",))
-    if command.operation == "OBSERVE" and prior is not None and prior.epoch_status == "OPEN":
+    if prior is None or prior.epoch_status == "OPEN" or command.operation == "REAUTHORIZE":
         capital = next(
             (
                 item.authorization
@@ -89,6 +90,7 @@ def adjudicate(
             or prior.authorization_id == command.authorization_id
             or confirmation is None
             or confirmation.authorization_id != command.authorization_id
+            or capital.authorization_id != command.authorization_id
             or confirmation.previous_epoch_id != prior.epoch_id
             or confirmation.epoch_id != command.epoch_id
             or not prior.cutoff_at < confirmation.confirmed_at <= command.cutoff_at
@@ -111,9 +113,21 @@ def adjudicate(
         )
     ):
         return DrawdownOutcome(disposition="DENIED", reasons=("DRAWDOWN_POLICY_INVALID",))
+    accounting_authorizations = {capital.authorization_id}
+    if prior is not None and command.operation != "REAUTHORIZE":
+        accounting_authorizations.add(prior.authorization_id)
+    currencies = {
+        account.currency
+        for outcome in authorizations
+        if outcome.authorization is not None
+        and outcome.authorization.authorization_id in accounting_authorizations
+        for account in outcome.authorization.proposal.snapshot.accounts
+        if account.account_id in account_ids
+    }
     if (
         position is None
         or position.disposition != "RECONCILED"
+        or currencies != {position.snapshot.valuation_currency}
         or position.snapshot.cutoff_at != command.cutoff_at
         or set(item.account_id for item in position.snapshot.cash_states) != set(account_ids)
         or position.snapshot.total_account_equity is None
@@ -137,12 +151,33 @@ def adjudicate(
             for cash in position.snapshot.cash_states
         )
     )
-    if command.operation in {"CLOSE", "REAUTHORIZE"} and not fully_reconciled_zero:
+    stock_events = tuple(
+        FlowLedgerKey(account_id=entry.account_id, entry_id=entry.entry_id)
+        for entry in position.snapshot.authoritative_ledger
+        if entry.quantity_delta != 0
+    )
+    new_stock_events = (
+        set(stock_events) - set(prior.processed_stock_events) if prior is not None else set()
+    )
+    if command.operation == "REAUTHORIZE" and not fully_reconciled_zero:
         return DrawdownOutcome(
             disposition="DENIED", reasons=("CAPITAL_EXECUTION_RECONCILIATION_REQUIRED",)
         )
-    if command.operation == "CLOSE" and (prior is None or prior.epoch_status == "CLOSED"):
-        return DrawdownOutcome(disposition="DENIED", reasons=("OPEN_CAPITAL_EPOCH_REQUIRED",))
+    if command.operation == "REAUTHORIZE" and new_stock_events:
+        retained = unknown_evidence(
+            prior,
+            command,
+            event_id,
+            "CAPITAL_COOLING_CONTINUITY_REQUIRED",
+        )
+        return DrawdownOutcome(
+            disposition="DENIED",
+            reasons=retained.reasons,
+            state=retained.state,
+        )
+    closure_denied = command.operation == "CLOSE" and (
+        not fully_reconciled_zero or (prior is not None and prior.epoch_status == "CLOSED")
+    )
     if command.operation == "REAUTHORIZE":
         prior = None
     units_fraction = prior.exact_units.fraction if prior is not None else Fraction(equity)
@@ -238,17 +273,29 @@ def adjudicate(
     epoch_status = prior.epoch_status if prior is not None else "OPEN"
     closed_at = prior.closed_at if prior is not None else None
     cooling = 0
-    if command.operation == "CLOSE":
+    if command.operation == "CLOSE" and not closure_denied:
         epoch_status = "CLOSED"
         closed_at = command.cutoff_at
         count = 0
         last_session = None
     elif epoch_status == "CLOSED" and prior is not None:
         count = 0
-        if fully_reconciled_zero and valid_close and session is not None:
+        if (
+            fully_reconciled_zero
+            and valid_close
+            and session is not None
+            and closed_at is not None
+            and session.closed_at.date() > closed_at.astimezone(session.closed_at.tzinfo).date()
+            and not any(
+                entry.quantity_delta != 0
+                and entry.occurred_at.astimezone(session.closed_at.tzinfo).date()
+                >= session.closed_at.date()
+                for entry in position.snapshot.authoritative_ledger
+            )
+        ):
             cooling = (
                 prior.cooling_sessions + 1
-                if prior.last_recovery_session == session.ordinal - 1
+                if prior.last_recovery_session == session.ordinal - 1 and not new_stock_events
                 else 1
             )
             last_session = session.ordinal
@@ -310,6 +357,7 @@ def adjudicate(
         exact_units=ExactRatio.from_fraction(units_fraction),
         exact_peak=ExactRatio.from_fraction(peak_fraction),
         processed_transfers=transfer_keys(position),
+        processed_stock_events=stock_events,
         processed_flow_ids=flow_ids,
         epoch_status=epoch_status,
         closed_at=closed_at,
@@ -318,8 +366,14 @@ def adjudicate(
         reauthorization=command.reauthorization if prior is None else prior.reauthorization,
     )
     return DrawdownOutcome(
-        disposition="ACCEPTED",
-        reasons=("CAPITAL_EPOCH_OPENED" if prior is None else "DRAWDOWN_OBSERVED",),
+        disposition="DENIED" if closure_denied else "ACCEPTED",
+        reasons=(
+            "CAPITAL_EXECUTION_RECONCILIATION_REQUIRED"
+            if closure_denied
+            else "CAPITAL_EPOCH_OPENED"
+            if prior is None
+            else "DRAWDOWN_OBSERVED",
+        ),
         state=state,
     )
 

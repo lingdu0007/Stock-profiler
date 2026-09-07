@@ -58,6 +58,10 @@ linked to the predecessor epoch. The successor records that predecessor; old
 reports and their historical maximum drawdowns remain append-only.
 An observation of an open epoch uses the effective authorized successor budget;
 requesting a predecessor cannot bypass a confirmed tightening.
+Refusing closure does not discard an independently qualified protection breach.
+Cooling counts only complete session dates after closure. The retained stock
+ledger identities detect intervening exposure, including round trips ending at
+zero quantity; reopening cannot reuse a cooling proof invalidated by such trades.
 
 ## Scope
 
