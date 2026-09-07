@@ -367,12 +367,11 @@ def _downside_grid_requalification_reason(
 ) -> str | None:
     previous_budget = current.proposal.risk_budget
     proposed_budget = command.proposal.risk_budget
-    if not proposed_budget.changes_downside_grid(previous_budget):
-        return None
-    evidence = command.confirmation.downside_grid_requalification
-    if evidence is None:
-        return "DOWNSIDE_GRID_REQUALIFICATION_REQUIRED"
-    if proposed_budget.action_policy_version_id == previous_budget.action_policy_version_id:
+    grid_changed = proposed_budget.changes_downside_grid(previous_budget)
+    if (
+        grid_changed
+        and proposed_budget.action_policy_version_id == previous_budget.action_policy_version_id
+    ):
         return "DOWNSIDE_GRID_ACTION_POLICY_VERSION_REQUIRED"
     if any(
         authorization.proposal.risk_budget.action_policy_version_id
@@ -381,6 +380,11 @@ def _downside_grid_requalification_reason(
         for authorization in _portfolio_authorizations(history, command.proposal.portfolio_id)
     ):
         return "DOWNSIDE_GRID_ACTION_POLICY_REDEFINED"
+    if not grid_changed:
+        return None
+    evidence = command.confirmation.downside_grid_requalification
+    if evidence is None:
+        return "DOWNSIDE_GRID_REQUALIFICATION_REQUIRED"
     if (
         evidence.predecessor_authorization_id != current.authorization_id
         or evidence.predecessor_risk_budget_version_id != previous_budget.version_id
