@@ -423,6 +423,27 @@ export interface components {
             /** Version Id */
             version_id: string;
         };
+        /** CapitalReauthorization */
+        CapitalReauthorization: {
+            /** Authorization Id */
+            authorization_id: string;
+            /** Confirmation Id */
+            confirmation_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /** Epoch Id */
+            epoch_id: string;
+            /** Previous Epoch Id */
+            previous_epoch_id: string;
+        };
         /** CashBudget */
         CashBudget: {
             /** Hard Ratio */
@@ -679,6 +700,135 @@ export interface components {
             /** Preservation Ratio */
             preservation_ratio: string;
         };
+        /** DrawdownOutcome */
+        DrawdownOutcome: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ACCEPTED" | "DENIED" | "UNKNOWN";
+            /** Reasons */
+            reasons: string[];
+            state?: components["schemas"]["DrawdownState"] | null;
+        };
+        /** DrawdownPolicy */
+        DrawdownPolicy: {
+            /** Caution Recovery Ratio */
+            caution_recovery_ratio: string;
+            /** Caution Recovery Sessions */
+            caution_recovery_sessions: number;
+            /** Cooling Sessions */
+            cooling_sessions: number;
+            /** Defensive Exposure Ratio */
+            defensive_exposure_ratio: string;
+            /** Defensive Recovery Ratio */
+            defensive_recovery_ratio: string;
+            /** Defensive Recovery Sessions */
+            defensive_recovery_sessions: number;
+            /** Generator Version */
+            generator_version: string;
+            /** Market Calendar Version Id */
+            market_calendar_version_id: string;
+            /** Seed */
+            seed: number;
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: true;
+            /** Version Id */
+            version_id: string;
+        };
+        /** DrawdownState */
+        DrawdownState: {
+            /** Account Ids */
+            account_ids: string[];
+            /** Authorization Id */
+            authorization_id: string;
+            /** Closed At */
+            closed_at?: string | null;
+            /**
+             * Cooling Sessions
+             * @default 0
+             */
+            cooling_sessions: number;
+            /** Current Drawdown */
+            current_drawdown: string | null;
+            /** Current Stock Exposure */
+            current_stock_exposure: string | null;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Decision Id */
+            decision_id: string;
+            /** Epoch Id */
+            epoch_id: string;
+            /**
+             * Epoch Status
+             * @default OPEN
+             * @enum {string}
+             */
+            epoch_status: "OPEN" | "CLOSED";
+            exact_peak: components["schemas"]["ExactRatio"];
+            exact_units: components["schemas"]["ExactRatio"];
+            /** Execution Blocked */
+            execution_blocked: boolean;
+            /** High Water Nav */
+            high_water_nav: string;
+            /** Last Recovery Session */
+            last_recovery_session?: number | null;
+            /** Maximum Drawdown */
+            maximum_drawdown: string;
+            /** Net Liquidation Equity */
+            net_liquidation_equity: string | null;
+            /** New Exposure Blocked */
+            new_exposure_blocked: boolean;
+            policy: components["schemas"]["DrawdownPolicy"];
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Previous Epoch Id */
+            previous_epoch_id?: string | null;
+            /**
+             * Processed Flow Ids
+             * @default []
+             */
+            processed_flow_ids: string[];
+            /** Processed Transfers */
+            processed_transfers: components["schemas"]["FlowLedgerKey"][];
+            reauthorization?: components["schemas"]["CapitalReauthorization"] | null;
+            /**
+             * Recovery Sessions
+             * @default 0
+             */
+            recovery_sessions: number;
+            /** Risk Direction */
+            risk_direction: ("REDUCE" | "EXIT") | null;
+            /**
+             * Risk State
+             * @enum {string}
+             */
+            risk_state: "NORMAL" | "CAUTION" | "DEFENSIVE" | "PRESERVATION";
+            /** Stock Exposure Limit */
+            stock_exposure_limit: string | null;
+            /** Stock Exposure Target Value */
+            stock_exposure_target_value: string | null;
+            thresholds: components["schemas"]["DrawdownBudget"];
+            /** Unit Nav */
+            unit_nav: string | null;
+            /** Units */
+            units: string;
+            valuation: components["schemas"]["DrawdownValuation"];
+        };
+        /** DrawdownValuation */
+        DrawdownValuation: {
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Liquidation Cost */
+            liquidation_cost: string | null;
+            /** Position Event Id */
+            position_event_id: string;
+        };
         /** ErroneousAlertReplay */
         ErroneousAlertReplay: {
             /** Alert Evidence Id */
@@ -797,6 +947,13 @@ export interface components {
              */
             required_until: string;
         };
+        /** ExactRatio */
+        ExactRatio: {
+            /** Denominator */
+            denominator: number;
+            /** Numerator */
+            numerator: number;
+        };
         /** ExcludedAccount */
         ExcludedAccount: {
             /** Account Id */
@@ -815,6 +972,7 @@ export interface components {
          */
         ExternalResult: {
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
+            drawdown?: components["schemas"]["DrawdownOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             /** Key Reasons */
             key_reasons: string[];
@@ -824,6 +982,13 @@ export interface components {
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
             /** Summary */
             summary: string;
+        };
+        /** FlowLedgerKey */
+        FlowLedgerKey: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
         };
         /** FormalCheckIdentity */
         FormalCheckIdentity: {
@@ -1899,7 +2064,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "DRAWDOWN_PROTECTION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**

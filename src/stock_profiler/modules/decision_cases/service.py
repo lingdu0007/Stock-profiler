@@ -47,6 +47,7 @@ from stock_profiler.modules.decision_cases.ports import (
     Transaction,
 )
 from stock_profiler.modules.portfolio.contracts import portfolio_id_for
+from stock_profiler.modules.portfolio.drawdown import adjudicate as adjudicate_drawdown
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
@@ -471,6 +472,7 @@ def _commit_framework_result(
     qualification_result: StageResult | None = None
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
+    drawdown_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -571,6 +573,49 @@ def _commit_framework_result(
                     ),
                     reasons=position.reasons,
                 )
+            if business_result is not None and execution_case.drawdown is not None:
+                assert execution_case.access_scope is not None
+                command = execution_case.drawdown
+                drawdown = adjudicate_drawdown(
+                    command,
+                    event_id=execution_case.decision_event_id,
+                    account_ids=execution_case.access_scope.account_ids,
+                    authorizations=ledger.portfolio_authorization_lineage(
+                        connection, execution_case.access_scope, command.portfolio_id
+                    ),
+                    position=ledger.position_evidence_for_drawdown(
+                        connection,
+                        execution_case.access_scope,
+                        command.valuation.position_event_id,
+                        command.cutoff_at,
+                    ),
+                    history=ledger.drawdown_history(connection, execution_case.access_scope),
+                    before_positions={
+                        flow.before_valuation.position_event_id: (
+                            ledger.position_evidence_for_drawdown(
+                                connection,
+                                execution_case.access_scope,
+                                flow.before_valuation.position_event_id,
+                                command.cutoff_at,
+                            )
+                        )
+                        for flow in command.capital_flows
+                    },
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"drawdown": drawdown})
+                drawdown_result = StageResult(
+                    phase="DRAWDOWN_PROTECTION",
+                    status=(
+                        "SUCCEEDED"
+                        if drawdown.disposition == "ACCEPTED"
+                        else "UNKNOWN"
+                        if drawdown.disposition == "UNKNOWN"
+                        else "REJECTED"
+                    ),
+                    gate_results=(),
+                    reasons=drawdown.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -607,6 +652,13 @@ def _commit_framework_result(
             stage_result=position_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if drawdown_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=drawdown_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -615,6 +667,7 @@ def _commit_framework_result(
         *((qualification_result,) if qualification_result is not None else ()),
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
+        *((drawdown_result,) if drawdown_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,
