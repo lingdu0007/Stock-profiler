@@ -162,7 +162,7 @@ class AccountPositionSnapshot(PositionContract):
     """All authoritative account facts needed for one same-cutoff position view."""
 
     account_id: str = Field(min_length=1)
-    account_type: str = Field(min_length=1)
+    account_type: Literal["SIMULATED_CASH"]
     currency: str = Field(min_length=1)
     snapshot_evidence: PositionEvidence
     account_equity: Decimal | None
@@ -270,6 +270,7 @@ class AccountCashState(PositionContract):
     account_id: str
     account_type: str
     currency: str
+    account_equity: Decimal | None
     ledger_cash: Decimal | None
     trading_cash: Decimal | None
     transferable_cash: Decimal | None
@@ -280,6 +281,18 @@ class AccountCashState(PositionContract):
 
 class AuthoritativeLedgerEntry(PositionLedgerEntry):
     """An append-only ledger entry projected with its source account identity."""
+
+    account_id: str
+
+
+class AccountOpenOrder(OpenOrder):
+    """An unfinished order projected with the account that supplied it."""
+
+    account_id: str
+
+
+class AccountExecutionRestriction(ExecutionRestriction):
+    """An execution restriction projected with the account that supplied it."""
 
     account_id: str
 
@@ -296,6 +309,8 @@ class ReconciledPositionSnapshot(PositionContract):
     action_units: tuple[PositionActionUnit, ...]
     issuer_exposures: tuple[IssuerExposure, ...]
     cash_states: tuple[AccountCashState, ...]
+    unfinished_orders: tuple[AccountOpenOrder, ...]
+    execution_restrictions: tuple[AccountExecutionRestriction, ...]
     authoritative_ledger: tuple[AuthoritativeLedgerEntry, ...]
     user_annotations: tuple[UserPositionAnnotation, ...]
 

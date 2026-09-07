@@ -397,3 +397,82 @@ def test_position_snapshot_requires_its_frozen_scope_and_knowledge_cutoff(
 
     with pytest.raises(ValueError, match="position snapshot and frozen access scope must agree"):
         FrozenDecisionCase.model_validate(cutoff_mismatch)
+
+
+def test_position_snapshot_rejects_non_cash_account_before_creating_a_run(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["account_type"] = "SIMULATED_MARGIN"
+    payload = position_case_payload(migrated_settings, "non-cash", command)
+
+    with pytest.raises(ValueError, match="SIMULATED_CASH"):
+        FrozenDecisionCase.model_validate(payload)
+
+
+def test_position_snapshot_blocks_account_wide_restrictions_and_post_cutoff_facts(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    position = account["positions"][0]
+    position["broker_sellable_quantity"] = "101"
+    position["market_price"] = None
+    account["cash_state"]["evidence"]["expires_at"] = "2042-05-17T15:59:59Z"
+    account["ledger_entries"][0]["occurred_at"] = "2042-05-18T15:00:00Z"
+    account["execution_restrictions"] = [
+        {
+            "restriction_id": "synthetic-account-wide-sell-block",
+            "security_id": None,
+            "kind": "BROKER_SELL_BLOCK",
+            "reason": "Synthetic account-wide broker restriction.",
+            "active": True,
+            "evidence": position_evidence("synthetic-broker-4017-restriction"),
+        }
+    ]
+    command["annotations"][0]["created_at"] = "2042-05-18T15:30:00Z"
+    payload = position_case_payload(migrated_settings, "critical-facts", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+    assert outcome.snapshot.action_units[0].exact_quantity_status == "BLOCKED"
+    assert outcome.snapshot.action_units[1].exact_statistical_action_quantity == Decimal("45")
+    assert outcome.snapshot.cash_states[0].account_equity == Decimal("1000")
+    assert outcome.snapshot.unfinished_orders[0].order_id == "synthetic-open-sell-4017"
+    assert outcome.snapshot.execution_restrictions[0].restriction_id == (
+        "synthetic-account-wide-sell-block"
+    )
+    assert {
+        conflict.code
+        for conflict in outcome.conflicts
+        if conflict.affected_scope.account_id == "synthetic-account-4017"
+    } >= {
+        "BROKER_SELLABLE_QUANTITY_OUT_OF_BOUNDS",
+        "MARKET_PRICE_MISSING",
+        "FACT_EXPIRED",
+        "LEDGER_ENTRY_AFTER_CUTOFF",
+        "ANNOTATION_AFTER_CUTOFF",
+    }
+
+
+def test_position_snapshot_never_publishes_partial_issuer_exposure(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["positions"] = []
+    payload = position_case_payload(migrated_settings, "summary-missing", command)
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is not None
+    outcome = execution.report.result.position
+    assert outcome is not None
+    assert outcome.disposition == "CONFLICTED"
+    assert "BROKER_POSITION_SUMMARY_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert outcome.snapshot.issuer_exposures[0].issuer_id == "FICTIONAL-ORBITAL-MOSAIC"
+    assert outcome.snapshot.issuer_exposures[0].current_market_exposure is None

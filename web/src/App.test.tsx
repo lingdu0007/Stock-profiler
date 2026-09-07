@@ -149,12 +149,50 @@ describe("App", () => {
                 account_id: "synthetic-account-4017",
                 account_type: "SIMULATED_CASH",
                 currency: "XSP",
+                account_equity: "1000",
                 ledger_cash: "100",
                 trading_cash: "95",
                 transferable_cash: "90",
                 frozen_cash: "5",
                 receivable_cash: "10",
                 payable_cash: "0"
+              }
+            ],
+            unfinished_orders: [
+              {
+                account_id: "synthetic-account-4017",
+                order_id: "synthetic-open-sell-4017",
+                security_id: "XQZ-4017",
+                side: "SELL",
+                remaining_quantity: "15",
+                evidence: {
+                  source: "synthetic-broker-4017-order",
+                  business_effective_at: "2042-05-17T15:00:00Z",
+                  source_observed_at: "2042-05-17T15:10:00Z",
+                  locally_acquired_at: "2042-05-17T15:14:00Z",
+                  validated_at: "2042-05-17T15:18:00Z",
+                  cutoff_at: "2042-05-17T16:00:00Z",
+                  expires_at: null
+                }
+              }
+            ],
+            execution_restrictions: [
+              {
+                account_id: "synthetic-account-4017",
+                restriction_id: "synthetic-account-wide-sell-block",
+                security_id: null,
+                kind: "BROKER_SELL_BLOCK",
+                reason: "Synthetic account-wide broker restriction.",
+                active: true,
+                evidence: {
+                  source: "synthetic-broker-4017-restriction",
+                  business_effective_at: "2042-05-17T15:00:00Z",
+                  source_observed_at: "2042-05-17T15:10:00Z",
+                  locally_acquired_at: "2042-05-17T15:14:00Z",
+                  validated_at: "2042-05-17T15:18:00Z",
+                  cutoff_at: "2042-05-17T16:00:00Z",
+                  expires_at: null
+                }
               }
             ],
             authoritative_ledger: [
@@ -229,6 +267,8 @@ describe("App", () => {
     expect(position).toHaveTextContent("BLOCKED");
     expect(position).toHaveTextContent("LEDGER_QUANTITY_MISMATCH");
     expect(position).toHaveTextContent("synthetic-broker-4017-fill");
+    expect(position).toHaveTextContent("synthetic-open-sell-4017");
+    expect(position).toHaveTextContent("synthetic-account-wide-sell-block");
     expect(position).toHaveTextContent("Synthetic user note retains a different claimed quantity.");
   });
 

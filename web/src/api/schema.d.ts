@@ -221,6 +221,8 @@ export interface components {
          * @description Cash decomposition retained with the account that supplied it.
          */
         AccountCashState: {
+            /** Account Equity */
+            account_equity: string | null;
             /** Account Id */
             account_id: string;
             /** Account Type */
@@ -239,6 +241,45 @@ export interface components {
             trading_cash: string | null;
             /** Transferable Cash */
             transferable_cash: string | null;
+        };
+        /**
+         * AccountExecutionRestriction
+         * @description An execution restriction projected with the account that supplied it.
+         */
+        AccountExecutionRestriction: {
+            /** Account Id */
+            account_id: string;
+            /** Active */
+            active: boolean;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string;
+            /** Restriction Id */
+            restriction_id: string;
+            /** Security Id */
+            security_id?: string | null;
+        };
+        /**
+         * AccountOpenOrder
+         * @description An unfinished order projected with the account that supplied it.
+         */
+        AccountOpenOrder: {
+            /** Account Id */
+            account_id: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Order Id */
+            order_id: string;
+            /** Remaining Quantity */
+            remaining_quantity: string | null;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "BUY" | "SELL";
         };
         /** AlertClosure */
         AlertClosure: {
@@ -1491,6 +1532,8 @@ export interface components {
              */
             cutoff_at: string;
             evidence_clock: components["schemas"]["PositionEvidenceClock"];
+            /** Execution Restrictions */
+            execution_restrictions: components["schemas"]["AccountExecutionRestriction"][];
             /** Issuer Exposures */
             issuer_exposures: components["schemas"]["IssuerExposure"][];
             /** Snapshot Id */
@@ -1499,6 +1542,8 @@ export interface components {
             snapshot_source: string | null;
             /** Total Account Equity */
             total_account_equity: string | null;
+            /** Unfinished Orders */
+            unfinished_orders: components["schemas"]["AccountOpenOrder"][];
             /** User Annotations */
             user_annotations: components["schemas"]["UserPositionAnnotation"][];
             /** Valuation Currency */

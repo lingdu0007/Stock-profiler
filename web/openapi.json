@@ -5,6 +5,18 @@
         "additionalProperties": false,
         "description": "Cash decomposition retained with the account that supplied it.",
         "properties": {
+          "account_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Equity"
+          },
           "account_id": {
             "title": "Account Id",
             "type": "string"
@@ -94,6 +106,7 @@
           "account_id",
           "account_type",
           "currency",
+          "account_equity",
           "ledger_cash",
           "trading_cash",
           "transferable_cash",
@@ -102,6 +115,102 @@
           "payable_cash"
         ],
         "title": "AccountCashState",
+        "type": "object"
+      },
+      "AccountExecutionRestriction": {
+        "additionalProperties": false,
+        "description": "An execution restriction projected with the account that supplied it.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "kind": {
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "restriction_id": {
+            "minLength": 1,
+            "title": "Restriction Id",
+            "type": "string"
+          },
+          "security_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Id"
+          }
+        },
+        "required": ["restriction_id", "kind", "reason", "active", "evidence", "account_id"],
+        "title": "AccountExecutionRestriction",
+        "type": "object"
+      },
+      "AccountOpenOrder": {
+        "additionalProperties": false,
+        "description": "An unfinished order projected with the account that supplied it.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "order_id": {
+            "minLength": 1,
+            "title": "Order Id",
+            "type": "string"
+          },
+          "remaining_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Quantity"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "side": {
+            "enum": ["BUY", "SELL"],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id",
+          "security_id",
+          "side",
+          "remaining_quantity",
+          "evidence",
+          "account_id"
+        ],
+        "title": "AccountOpenOrder",
         "type": "object"
       },
       "AlertClosure": {
@@ -3285,6 +3394,13 @@
           "evidence_clock": {
             "$ref": "#/components/schemas/PositionEvidenceClock"
           },
+          "execution_restrictions": {
+            "items": {
+              "$ref": "#/components/schemas/AccountExecutionRestriction"
+            },
+            "title": "Execution Restrictions",
+            "type": "array"
+          },
           "issuer_exposures": {
             "items": {
               "$ref": "#/components/schemas/IssuerExposure"
@@ -3319,6 +3435,13 @@
             ],
             "title": "Total Account Equity"
           },
+          "unfinished_orders": {
+            "items": {
+              "$ref": "#/components/schemas/AccountOpenOrder"
+            },
+            "title": "Unfinished Orders",
+            "type": "array"
+          },
           "user_annotations": {
             "items": {
               "$ref": "#/components/schemas/UserPositionAnnotation"
@@ -3341,6 +3464,8 @@
           "action_units",
           "issuer_exposures",
           "cash_states",
+          "unfinished_orders",
+          "execution_restrictions",
           "authoritative_ledger",
           "user_annotations"
         ],

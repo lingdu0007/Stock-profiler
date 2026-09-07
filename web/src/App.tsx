@@ -502,12 +502,50 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
               label={`Account ${cash.account_id}`}
               value={[
                 `${cash.account_type} | ${cash.currency}`,
+                `equity ${displayValue(cash.account_equity)}`,
                 `ledger ${displayValue(cash.ledger_cash)}`,
                 `trading ${displayValue(cash.trading_cash)}`,
                 `transferable ${displayValue(cash.transferable_cash)}`,
                 `frozen ${displayValue(cash.frozen_cash)}`,
                 `receivable ${displayValue(cash.receivable_cash)}`,
                 `payable ${displayValue(cash.payable_cash)}`
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Unfinished orders">
+        <h3>Unfinished orders</h3>
+        <dl className="record-list">
+          {snapshot.unfinished_orders.map((order) => (
+            <Record
+              key={`${order.account_id}:${order.order_id}`}
+              label={`${order.account_id} ${order.side}`}
+              value={[
+                order.order_id,
+                order.security_id,
+                `remaining ${displayValue(order.remaining_quantity)}`,
+                `source ${displayValue(order.evidence.source)}`
+              ].join(" | ")}
+            />
+          ))}
+        </dl>
+      </section>
+
+      <section className="portfolio-subsection" aria-label="Execution restrictions">
+        <h3>Execution restrictions</h3>
+        <dl className="record-list">
+          {snapshot.execution_restrictions.map((restriction) => (
+            <Record
+              key={`${restriction.account_id}:${restriction.restriction_id}`}
+              label={`${restriction.account_id} ${restriction.kind}`}
+              value={[
+                restriction.restriction_id,
+                displayValue(restriction.security_id),
+                restriction.active ? "ACTIVE" : "INACTIVE",
+                restriction.reason,
+                `source ${displayValue(restriction.evidence.source)}`
               ].join(" | ")}
             />
           ))}
