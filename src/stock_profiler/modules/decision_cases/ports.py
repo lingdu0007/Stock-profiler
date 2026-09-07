@@ -90,7 +90,11 @@ class DecisionLedger(Protocol[Transaction]):
     ) -> tuple[GovernanceOutcome, ...]: ...
 
     def portfolio_authorization_history(
-        self, connection: Transaction, access_scope: ResultAccessScope
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        knowledge_cutoff: str,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...

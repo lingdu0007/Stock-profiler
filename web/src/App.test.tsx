@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import correctionFixture from "../../tests/fixtures/synthetic/frozen_correction_evidence.json";
+import portfolioFixture from "../../tests/fixtures/synthetic/portfolio_authorization.json";
 import { App } from "./App";
 import { syntheticReport as report } from "./test-support/synthetic-report";
 
@@ -53,21 +54,9 @@ describe("App", () => {
           disposition: "PREVIEWED",
           reasons: ["PORTFOLIO_SCOPE_PREVIEWED"],
           preview: {
-            portfolio_id: "synthetic-decision-portfolio-alpha",
-            snapshot_id: "synthetic-portfolio-snapshot-alpha",
-            included_accounts: [
-              {
-                account_id: "synthetic-account-4017",
-                account_type: "SIMULATED_CASH",
-                scope: "FULL_ACCOUNT",
-                captured_at: "2042-05-17T16:00:00Z",
-                cash_fact_id: "synthetic-cash-fact-4017",
-                positions_fact_id: "synthetic-positions-fact-4017",
-                receivables_fact_id: "synthetic-receivables-fact-4017",
-                payables_fact_id: "synthetic-payables-fact-4017",
-                unfinished_trades_fact_id: "synthetic-trades-fact-4017"
-              }
-            ],
+            portfolio_id: portfolioFixture.proposal.portfolio_id,
+            snapshot_id: portfolioFixture.proposal.snapshot.snapshot_id,
+            included_accounts: [portfolioFixture.proposal.snapshot.accounts[0]],
             included_account_ids: ["synthetic-account-4017"],
             excluded_accounts: [
               {
@@ -103,6 +92,8 @@ describe("App", () => {
     expect(authorization).toHaveTextContent("PORTFOLIO_SCOPE_PREVIEWED");
     expect(authorization).toHaveTextContent("synthetic-account-4017");
     expect(authorization).toHaveTextContent("FULL_ACCOUNT");
+    expect(authorization).toHaveTextContent("XSP");
+    expect(authorization).toHaveTextContent("SIMULATED_STATISTICAL_ACTION");
     expect(authorization).toHaveTextContent("synthetic-account-margin-2001");
     expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
   });
@@ -119,48 +110,10 @@ describe("App", () => {
         snapshot_id: "synthetic-portfolio-snapshot-alpha",
         risk_budget_version_id: "synthetic-risk-budget-alpha",
         confirmed_at: "2042-05-17T16:00:00Z",
-        confirmed: true
+        confirmed: true,
+        relaxation_evidence: portfolioFixture.risk_relaxation_evidence
       },
-      proposal: {
-        portfolio_id: "synthetic-decision-portfolio-alpha",
-        snapshot: {
-          snapshot_id: "synthetic-portfolio-snapshot-alpha",
-          cutoff_at: "2042-05-17T16:00:00Z",
-          accounts: [],
-          selected_account_ids: ["synthetic-account-4017"]
-        },
-        risk_budget: {
-          contract_version: "1.0.0",
-          version_id: "synthetic-risk-budget-alpha",
-          synthetic: true,
-          generator_version: "portfolio-authorization/1",
-          seed: 6101,
-          effective_at: "2042-05-17T16:00:00Z",
-          expires_at: "2042-11-17T16:00:00Z",
-          concentration: { target_ratio: "0.13", hard_ratio: "0.19" },
-          stress: { target_ratio: "0.14", hard_ratio: "0.18" },
-          cash: { target_ratio: "0.39", hard_ratio: "0.23" },
-          drawdown: {
-            caution_ratio: "0.11",
-            defensive_ratio: "0.16",
-            preservation_ratio: "0.21"
-          },
-          downside_grid: ["0.04", "0.09"],
-          protection_floor: {
-            new_exposure_blocked: true,
-            retained_directions: ["REDUCE", "EXIT"]
-          }
-        },
-        cash_obligations: [
-          {
-            obligation_id: "synthetic-cash-obligation-alpha",
-            amount: "125.50",
-            purpose: "synthetic-near-term-liquidity",
-            latest_usable_at: "2042-08-17T16:00:00Z",
-            target_account_id: "synthetic-account-4017"
-          }
-        ]
-      }
+      proposal: portfolioFixture.proposal
     };
     const usageReport = {
       ...report,
@@ -204,6 +157,10 @@ describe("App", () => {
     expect(confirmation).toHaveTextContent("synthetic-risk-budget-alpha");
     expect(confirmation).toHaveTextContent("2042-11-17T16:00:00Z");
     expect(confirmation).toHaveTextContent("synthetic-cash-obligation-alpha");
+    expect(confirmation).toHaveTextContent("SIMULATED_STATISTICAL_ACTION");
+    expect(confirmation).toHaveTextContent("synthetic-risk-relaxation-evidence-alpha");
+    expect(confirmation).toHaveTextContent("Normal market sessions");
+    expect(confirmation).toHaveTextContent("20");
   });
 
   it("shows correction lineage supplied by the committed report projection", async () => {

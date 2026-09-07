@@ -589,6 +589,7 @@ class FrozenDecisionCase(FrozenContract):
         scoped = self.version_bundle.case_contract_version in _SCOPED_CASE_CONTRACT_VERSIONS
         governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
         portfolio_governed = self.version_bundle.case_contract_version == "6.0.0"
+        authorization_governed = governed or portfolio_governed
         if governed != (self.governance is not None):
             raise ValueError("governance requires a governed frozen contract")
         if portfolio_governed != (self.portfolio is not None):
@@ -605,7 +606,7 @@ class FrozenDecisionCase(FrozenContract):
             )
         ):
             raise ValueError("extended governance requires the version 5 frozen contract")
-        if governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
+        if authorization_governed and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
             raise ValueError("governed cases require a timezone-aware knowledge cutoff")
         if (
             self.expected_external_result.governance is not None

@@ -24,15 +24,20 @@ nonterminal M-Agent Run is resumed under its original identity, while framework
 states, host validation outcomes, business commits, publication, notifications,
 and corrections retain their own append-only phase records.
 
-Governed D0 cases record qualification in a separate `QUALIFICATION` stage.
-Neither approval nor denial replaces the original business or lifecycle
-outcome. Non-success business prerequisites cannot create authorization;
-their saved negative outcomes remain readable. Evidence must have been
-available by the original frozen knowledge cutoff, even when execution is
-delayed. This also applies to inherited authorization evidence and every
-retained alert. Invalid or timezone-less governed cutoffs are rejected and
-audited before creating a Run. Reading a saved qualification outcome is
-historical replay, not a new grant or activation.
+Governed D0 cases record qualification and portfolio authorization in separate
+stages. Neither approval nor denial replaces the original business or lifecycle
+outcome. Non-success business prerequisites cannot create statistical
+authorization; established deterministic protection remains independently
+readable. Evidence must have been available by the original frozen knowledge
+cutoff, even when execution is delayed. This includes portfolio snapshots,
+user confirmations, risk-relaxation proof, inherited authorization evidence,
+and every retained alert. A synthetic risk-budget relaxation proof retains at
+least twenty distinct normal-market-session evidence identities, must be
+available before the user's renewed confirmation, must cover that confirmation
+instant, and binds the successor's next monthly activation cutoff. Invalid or
+timezone-less governed cutoffs are rejected and audited before creating a Run.
+Reading a saved qualification outcome is historical replay, not a new grant or
+activation.
 
 Governed D0 commands supply an explicit `QualificationPolicy` inside their
 capability version. Its contract version, policy version, original synthetic

@@ -288,6 +288,15 @@ function PortfolioConfirmationEvidence({
         <Record label="Risk budget" value={budget.version_id} />
         <Record label="Effective" value={budget.effective_at} />
         <Record label="Expires" value={budget.expires_at} />
+        {proposal.snapshot.accounts
+          .filter((account) => proposal.snapshot.selected_account_ids.includes(account.account_id))
+          .map((account) => (
+            <Record
+              key={account.account_id}
+              label={`Frozen account ${account.account_id}`}
+              value={formatAccountSnapshot(account)}
+            />
+          ))}
         <Record
           label="Concentration"
           value={`${budget.concentration.target_ratio} target | ${budget.concentration.hard_ratio} hard`}
@@ -309,6 +318,28 @@ function PortfolioConfirmationEvidence({
           label="Protection floor"
           value={budget.protection_floor.retained_directions.join(", ")}
         />
+        {confirmation.relaxation_evidence && (
+          <>
+            <Record
+              label="Risk relaxation evidence"
+              value={confirmation.relaxation_evidence.evidence_id}
+            />
+            <Record
+              label="Normal state through"
+              value={confirmation.relaxation_evidence.normal_through_at}
+            />
+            <Record
+              label="Normal market sessions"
+              value={String(
+                confirmation.relaxation_evidence.normal_market_session_evidence_ids.length
+              )}
+            />
+            <Record
+              label="Monthly activation cutoff"
+              value={confirmation.relaxation_evidence.monthly_selection_cutoff_at}
+            />
+          </>
+        )}
         {proposal.cash_obligations.map((obligation) => (
           <Record
             key={obligation.obligation_id}
@@ -352,8 +383,9 @@ function PortfolioUsageEvidence({ usage }: { usage: PortfolioAuthorizationUsage 
 
 function formatAccountSnapshot(account: PortfolioPreview["included_accounts"][number]): string {
   return [
-    `${account.account_type} | ${account.scope}`,
-    `captured ${account.captured_at}`,
+    `${account.account_type} | ${account.currency} | ${account.scope}`,
+    `permissions ${account.permissions.join(", ")}`,
+    `facts captured ${account.captured_at}`,
     `cash ${account.cash_fact_id}`,
     `positions ${account.positions_fact_id}`,
     `receivables ${account.receivables_fact_id}`,

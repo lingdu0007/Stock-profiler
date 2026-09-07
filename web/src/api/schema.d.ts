@@ -367,8 +367,12 @@ export interface components {
             captured_at: string;
             /** Cash Fact Id */
             cash_fact_id: string;
+            /** Currency */
+            currency: string;
             /** Payables Fact Id */
             payables_fact_id: string;
+            /** Permissions */
+            permissions: string[];
             /** Positions Fact Id */
             positions_fact_id: string;
             /** Receivables Fact Id */
@@ -962,6 +966,7 @@ export interface components {
             confirmed_at: string;
             /** Portfolio Id */
             portfolio_id: string;
+            relaxation_evidence?: components["schemas"]["RiskBudgetRelaxationEvidence"] | null;
             /** Risk Budget Version Id */
             risk_budget_version_id: string;
             /** Snapshot Id */
@@ -1458,6 +1463,40 @@ export interface components {
              * Format: date-time
              */
             valid_until: string;
+        };
+        /**
+         * RiskBudgetRelaxationEvidence
+         * @description Synthetic proof required before a successor can relax a frozen risk budget.
+         */
+        RiskBudgetRelaxationEvidence: {
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Monthly Selection Cutoff At
+             * Format: date-time
+             */
+            monthly_selection_cutoff_at: string;
+            /**
+             * Normal From At
+             * Format: date-time
+             */
+            normal_from_at: string;
+            /** Normal Market Session Evidence Ids */
+            normal_market_session_evidence_ids: string[];
+            /**
+             * Normal Through At
+             * Format: date-time
+             */
+            normal_through_at: string;
+            /** Predecessor Authorization Id */
+            predecessor_authorization_id: string;
+            /** Predecessor Risk Budget Version Id */
+            predecessor_risk_budget_version_id: string;
         };
         /**
          * SafetyCapabilitiesDiagnosticDto

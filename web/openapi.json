@@ -334,10 +334,23 @@
             "title": "Cash Fact Id",
             "type": "string"
           },
+          "currency": {
+            "minLength": 1,
+            "title": "Currency",
+            "type": "string"
+          },
           "payables_fact_id": {
             "minLength": 1,
             "title": "Payables Fact Id",
             "type": "string"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Permissions",
+            "type": "array"
           },
           "positions_fact_id": {
             "minLength": 1,
@@ -363,6 +376,8 @@
         "required": [
           "account_id",
           "account_type",
+          "currency",
+          "permissions",
           "scope",
           "captured_at",
           "cash_fact_id",
@@ -1672,6 +1687,16 @@
             "minLength": 1,
             "title": "Portfolio Id",
             "type": "string"
+          },
+          "relaxation_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskBudgetRelaxationEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "risk_budget_version_id": {
             "minLength": 1,
@@ -3030,6 +3055,68 @@
           "valid_until"
         ],
         "title": "RetainedTaskRelation",
+        "type": "object"
+      },
+      "RiskBudgetRelaxationEvidence": {
+        "additionalProperties": false,
+        "description": "Synthetic proof required before a successor can relax a frozen risk budget.",
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "monthly_selection_cutoff_at": {
+            "format": "date-time",
+            "title": "Monthly Selection Cutoff At",
+            "type": "string"
+          },
+          "normal_from_at": {
+            "format": "date-time",
+            "title": "Normal From At",
+            "type": "string"
+          },
+          "normal_market_session_evidence_ids": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 20,
+            "title": "Normal Market Session Evidence Ids",
+            "type": "array"
+          },
+          "normal_through_at": {
+            "format": "date-time",
+            "title": "Normal Through At",
+            "type": "string"
+          },
+          "predecessor_authorization_id": {
+            "minLength": 1,
+            "title": "Predecessor Authorization Id",
+            "type": "string"
+          },
+          "predecessor_risk_budget_version_id": {
+            "minLength": 1,
+            "title": "Predecessor Risk Budget Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "predecessor_authorization_id",
+          "predecessor_risk_budget_version_id",
+          "normal_from_at",
+          "normal_through_at",
+          "normal_market_session_evidence_ids",
+          "monthly_selection_cutoff_at",
+          "available_at"
+        ],
+        "title": "RiskBudgetRelaxationEvidence",
         "type": "object"
       },
       "SafetyCapabilitiesDiagnosticDto": {

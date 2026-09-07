@@ -126,11 +126,16 @@ class DecisionLedger:
         )
 
     def portfolio_authorization_history(
-        self, connection: Connection, access_scope: ResultAccessScope
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        knowledge_cutoff: str,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]:
-        """Read an owner's visible portfolio lineage across its forward scope revisions."""
+        """Read only one visible lineage whose retained evidence predates the cutoff."""
+        cutoff = datetime.fromisoformat(knowledge_cutoff)
         return tuple(
-            fact.result.portfolio
+            portfolio
             for fact in self._original_event_facts(
                 connection, "portfolio authorization history is unavailable"
             )
@@ -138,7 +143,10 @@ class DecisionLedger:
                 (scope := fact.case.access_scope) is not None
                 and scope.user_id == access_scope.user_id
                 and scope.visibility == access_scope.visibility
-                and fact.result.portfolio is not None
+                and (portfolio := fact.result.portfolio) is not None
+                and (authorization := portfolio.authorization) is not None
+                and authorization.proposal.portfolio_id == portfolio_id
+                and authorization.evidence_available_by(cutoff)
             )
         )
 

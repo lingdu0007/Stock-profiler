@@ -21,6 +21,8 @@ class CompleteAccountSnapshot(PortfolioContract):
 
     account_id: str = Field(min_length=1)
     account_type: str = Field(min_length=1)
+    currency: str = Field(min_length=1)
+    permissions: tuple[str, ...] = Field(min_length=1)
     scope: Literal["FULL_ACCOUNT"]
     captured_at: AwareDatetime
     cash_fact_id: str = Field(min_length=1)
@@ -28,6 +30,12 @@ class CompleteAccountSnapshot(PortfolioContract):
     receivables_fact_id: str = Field(min_length=1)
     payables_fact_id: str = Field(min_length=1)
     unfinished_trades_fact_id: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_permissions(self) -> CompleteAccountSnapshot:
+        if len(set(self.permissions)) != len(self.permissions):
+            raise ValueError("account permissions must be unique")
+        return self
 
 
 class PortfolioSnapshot(PortfolioContract):
@@ -140,6 +148,24 @@ class PersonalRiskBudget(PortfolioContract):
             raise ValueError("downside grid values must be unique")
         return self
 
+    def relaxes(self, previous: PersonalRiskBudget) -> bool:
+        """Conservatively identify a successor that permits more statistical risk."""
+        return (
+            self.concentration.target_ratio > previous.concentration.target_ratio
+            or self.concentration.hard_ratio > previous.concentration.hard_ratio
+            or self.stress.target_ratio > previous.stress.target_ratio
+            or self.stress.hard_ratio > previous.stress.hard_ratio
+            or self.cash.target_ratio < previous.cash.target_ratio
+            or self.cash.hard_ratio < previous.cash.hard_ratio
+            or self.drawdown.caution_ratio > previous.drawdown.caution_ratio
+            or self.drawdown.defensive_ratio > previous.drawdown.defensive_ratio
+            or self.drawdown.preservation_ratio > previous.drawdown.preservation_ratio
+            or self.downside_grid != previous.downside_grid
+            or not set(previous.protection_floor.retained_directions).issubset(
+                self.protection_floor.retained_directions
+            )
+        )
+
 
 class DatedCashObligation(PortfolioContract):
     """A forward-recorded cash requirement that the selected portfolio must preserve."""
@@ -161,8 +187,8 @@ class PortfolioProposal(PortfolioContract):
 
     @model_validator(mode="after")
     def validate_proposal_binding(self) -> PortfolioProposal:
-        if self.risk_budget.effective_at != self.snapshot.cutoff_at:
-            raise ValueError("risk budget effective_at must bind the portfolio cutoff")
+        if self.risk_budget.effective_at < self.snapshot.cutoff_at:
+            raise ValueError("risk budget cannot become effective before the portfolio cutoff")
         if len({item.obligation_id for item in self.cash_obligations}) != len(
             self.cash_obligations
         ):
@@ -171,18 +197,46 @@ class PortfolioProposal(PortfolioContract):
         for obligation in self.cash_obligations:
             if obligation.target_account_id not in selected:
                 raise ValueError("cash obligation must target a selected account")
-            if not (
-                self.risk_budget.effective_at
-                <= obligation.latest_usable_at
-                <= self.risk_budget.expires_at
-            ):
-                raise ValueError("cash obligation must be due during the risk budget period")
         return self
+
+    def evidence_available_by(self, cutoff: datetime) -> bool:
+        """Keep the account snapshot within the frozen information set."""
+        return self.snapshot.cutoff_at <= cutoff
 
 
 class PortfolioPreviewCommand(PortfolioContract):
     operation: Literal["PORTFOLIO_PREVIEW"]
     proposal: PortfolioProposal
+
+
+class RiskBudgetRelaxationEvidence(PortfolioContract):
+    """Synthetic proof required before a successor can relax a frozen risk budget."""
+
+    evidence_id: str = Field(min_length=1)
+    predecessor_authorization_id: str = Field(min_length=1)
+    predecessor_risk_budget_version_id: str = Field(min_length=1)
+    normal_from_at: AwareDatetime
+    normal_through_at: AwareDatetime
+    normal_market_session_evidence_ids: tuple[Annotated[str, Field(min_length=1)], ...] = Field(
+        min_length=20
+    )
+    monthly_selection_cutoff_at: AwareDatetime
+    available_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_normal_window(self) -> RiskBudgetRelaxationEvidence:
+        if not (
+            self.normal_from_at
+            <= self.normal_through_at
+            <= self.available_at
+            <= self.monthly_selection_cutoff_at
+        ):
+            raise ValueError("risk relaxation evidence must preserve its normal-state window")
+        if len(set(self.normal_market_session_evidence_ids)) != len(
+            self.normal_market_session_evidence_ids
+        ):
+            raise ValueError("risk relaxation market-session evidence must be unique")
+        return self
 
 
 class PortfolioConfirmation(PortfolioContract):
@@ -193,6 +247,7 @@ class PortfolioConfirmation(PortfolioContract):
     risk_budget_version_id: str = Field(min_length=1)
     confirmed_at: AwareDatetime
     confirmed: Literal[True]
+    relaxation_evidence: RiskBudgetRelaxationEvidence | None = None
 
 
 class PortfolioConfirmationCommand(PortfolioContract):
@@ -211,6 +266,8 @@ class PortfolioConfirmationCommand(PortfolioContract):
             raise ValueError("confirmation must bind the proposed portfolio snapshot and budget")
         if self.confirmation.confirmed_at > self.proposal.risk_budget.effective_at:
             raise ValueError("confirmation must not postdate the risk budget effective_at")
+        if self.confirmation.confirmed_at < self.proposal.snapshot.cutoff_at:
+            raise ValueError("confirmation must not predate the portfolio cutoff")
         return self
 
 
@@ -251,6 +308,14 @@ class PortfolioAuthorization(PortfolioContract):
     confirmation: PortfolioConfirmation
     previous_authorization_id: str | None = None
     recorded_at: AwareDatetime
+
+    def evidence_available_by(self, cutoff: datetime) -> bool:
+        relaxation = self.confirmation.relaxation_evidence
+        return (
+            self.proposal.evidence_available_by(cutoff)
+            and self.confirmation.confirmed_at <= cutoff
+            and (relaxation is None or relaxation.available_at <= cutoff)
+        )
 
 
 class PortfolioAuthorizationUsage(PortfolioContract):
@@ -306,6 +371,13 @@ def preview_for(proposal: PortfolioProposal) -> PortfolioPreview:
 def confirmation_block_reasons(preview: PortfolioPreview) -> tuple[str, ...]:
     """Reject selected non-cash or unknown accounts without hiding them from preview."""
     return tuple(item.reason for item in preview.blocking_accounts)
+
+
+def portfolio_id_for(command: PortfolioCommand) -> str:
+    """Identify the one portfolio whose immutable lineage a command may inspect."""
+    if isinstance(command, PortfolioUseCommand):
+        return command.portfolio_id
+    return command.proposal.portfolio_id
 
 
 def _exclusion_reason(

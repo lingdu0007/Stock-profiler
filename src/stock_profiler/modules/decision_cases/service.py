@@ -46,6 +46,7 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
+from stock_profiler.modules.portfolio.contracts import portfolio_id_for
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
@@ -509,9 +510,13 @@ def _commit_framework_result(
                     event_id=execution_case.decision_event_id,
                     observed_at=ledger.observed_at(),
                     history=ledger.portfolio_authorization_history(
-                        connection, execution_case.access_scope
+                        connection,
+                        execution_case.access_scope,
+                        portfolio_id_for(execution_case.portfolio),
+                        execution_case.knowledge_cutoff,
                     ),
                     access_account_ids=execution_case.access_scope.account_ids,
+                    knowledge_cutoff=execution_case.knowledge_cutoff,
                     business_prerequisite_met=business_result.status == "SUCCEEDED",
                 )
                 result = result.model_copy(update={"portfolio": portfolio})
