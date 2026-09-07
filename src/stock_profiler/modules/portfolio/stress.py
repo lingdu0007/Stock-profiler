@@ -48,12 +48,19 @@ class StressContribution(PortfolioContract):
     disposal_friction: Decimal
 
 
+class StressRestorationFill(PortfolioContract):
+    account_id: str
+    entry_id: str
+    net_quantity: Decimal = Field(lt=0)
+
+
 class StressObligation(PortfolioContract):
     obligation_id: str
     direction: Literal["REDUCE_TOTAL_STOCK_EXPOSURE"]
     target_stress_ratio: Decimal
     status: Literal["OUTSTANDING", "SATISFIED"]
     triggered_at: AwareDatetime
+    restoration_fills: tuple[StressRestorationFill, ...] = ()
 
 
 class _StressIdentity(TypedDict):
@@ -118,10 +125,22 @@ def assess_stress(
     obligation = prior.obligation if prior is not None else None
     if obligation is not None and obligation.status == "SATISFIED":
         with localcontext(_DECIMAL_CONTEXT):
-            still_confirmed = position.disposition == "RECONCILED" and _has_effective_sale(
+            current_fills = _effective_sales(
                 snapshot.authoritative_ledger,
                 after=obligation.triggered_at,
                 cutoff_at=snapshot.cutoff_at,
+            )
+            current_quantities = {
+                (fill.account_id, fill.entry_id): fill.net_quantity for fill in current_fills
+            }
+            still_confirmed = (
+                position.disposition == "RECONCILED"
+                and bool(obligation.restoration_fills)
+                and all(
+                    current_quantities.get((fill.account_id, fill.entry_id), Decimal(0))
+                    <= fill.net_quantity
+                    for fill in obligation.restoration_fills
+                )
             )
         if not still_confirmed:
             obligation = obligation.model_copy(update={"status": "OUTSTANDING"})
@@ -155,6 +174,16 @@ def assess_stress(
             else None
         ),
     }
+    budget = common["budget"]
+    if (
+        obligation is not None
+        and obligation.status == "OUTSTANDING"
+        and budget is not None
+        and not _LINEAGE_DENIALS.intersection(reasons)
+    ):
+        obligation = obligation.model_copy(
+            update={"target_stress_ratio": min(obligation.target_stress_ratio, budget.target_ratio)}
+        )
     unavailable = PortfolioStressOutcome(
         **common,
         state="UNKNOWN",
@@ -196,13 +225,7 @@ def assess_stress(
                 }
             )
         assert usage is not None
-        budget = usage.authorization_snapshot.proposal.risk_budget.stress
-        if obligation is not None and obligation.status == "OUTSTANDING":
-            obligation = obligation.model_copy(
-                update={
-                    "target_stress_ratio": min(obligation.target_stress_ratio, budget.target_ratio)
-                }
-            )
+        assert budget is not None
         state: Literal["NORMAL", "BUFFER", "HARD_BREACH"] = "NORMAL"
         if loss > budget.hard_ratio * equity:
             state = "HARD_BREACH"
@@ -217,13 +240,15 @@ def assess_stress(
         elif loss > budget.target_ratio * equity:
             state = "BUFFER"
         if obligation is not None and loss <= obligation.target_stress_ratio * equity:
-            confirmed_reduction = _has_effective_sale(
+            confirmed_reduction = _effective_sales(
                 snapshot.authoritative_ledger,
                 after=obligation.triggered_at,
                 cutoff_at=snapshot.cutoff_at,
             )
             if confirmed_reduction and position.disposition == "RECONCILED":
-                obligation = obligation.model_copy(update={"status": "SATISFIED"})
+                obligation = obligation.model_copy(
+                    update={"status": "SATISFIED", "restoration_fills": confirmed_reduction}
+                )
         outstanding = obligation is not None and obligation.status == "OUTSTANDING"
         residual_gap: Decimal | None = None
         if (
@@ -263,31 +288,32 @@ def assess_stress(
         )
 
 
-def _has_effective_sale(
+def _effective_sales(
     entries: tuple[AuthoritativeLedgerEntry, ...],
     *,
     after: datetime,
     cutoff_at: datetime,
-) -> bool:
+) -> tuple[StressRestorationFill, ...]:
     """Count a fill only after applying its visible additive correction lineage."""
     indexed = {(entry.account_id, entry.entry_id): entry for entry in entries}
     quantities: dict[tuple[str, str], Decimal] = {}
     for entry in entries:
         if not ledger_entry_evidence_is_visible(entry, cutoff_at):
-            return False
+            return ()
         root = entry
         visited: set[str] = set()
         while root.corrects_entry_id is not None:
             if root.entry_id in visited:
-                return False
+                return ()
             visited.add(root.entry_id)
             target = indexed.get((root.account_id, root.corrects_entry_id))
             if target is None:
-                return False
+                return ()
             root = target
         key = (root.account_id, root.entry_id)
         quantities[key] = quantities.get(key, Decimal(0)) + entry.quantity_delta
-    return any(
-        quantity < 0 and indexed[key].entry_type == "FILL" and indexed[key].occurred_at > after
+    return tuple(
+        StressRestorationFill(account_id=key[0], entry_id=key[1], net_quantity=quantity)
         for key, quantity in quantities.items()
+        if quantity < 0 and indexed[key].entry_type == "FILL" and indexed[key].occurred_at > after
     )

@@ -4619,6 +4619,14 @@
             "title": "Obligation Id",
             "type": "string"
           },
+          "restoration_fills": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressRestorationFill"
+            },
+            "title": "Restoration Fills",
+            "type": "array"
+          },
           "status": {
             "enum": ["OUTSTANDING", "SATISFIED"],
             "title": "Status",
@@ -4637,6 +4645,27 @@
         },
         "required": ["obligation_id", "direction", "target_stress_ratio", "status", "triggered_at"],
         "title": "StressObligation",
+        "type": "object"
+      },
+      "StressRestorationFill": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "net_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Quantity",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "entry_id", "net_quantity"],
+        "title": "StressRestorationFill",
         "type": "object"
       },
       "TaskUsage": {

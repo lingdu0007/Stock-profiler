@@ -211,8 +211,10 @@ def stress_result(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]
     return cast(dict[str, Any], execution.report.model_dump(mode="json")["result"]["stress"])
 
 
+@pytest.mark.parametrize("partial_reversal", [False, True])
 def test_restoration_survives_unknown_evidence_and_requires_a_reconciled_fill(
     migrated_settings: Settings,
+    partial_reversal: bool,
 ) -> None:
     authorization_id = stress_authorization(migrated_settings)
     first = stress_payload(migrated_settings, authorization_id, "breach")
@@ -261,19 +263,21 @@ def test_restoration_survives_unknown_evidence_and_requires_a_reconciled_fill(
     assert restored["new_exposure_blocked"] is False
     reversed_sale = next_stress_case(sold, "21")
     account = reversed_sale["stress"]["position_snapshot"]["accounts"][0]
-    account["account_equity"] = "767.066"
-    account["cash_state"]["ledger_cash"] = "457.066"
+    account["account_equity"] = "1667.066" if partial_reversal else "767.066"
+    account["cash_state"]["ledger_cash"] = "577.066" if partial_reversal else "457.066"
     account["positions"][0].update(
-        total_quantity="100", reported_cost_basis="900", market_price="3"
+        total_quantity="90" if partial_reversal else "100",
+        reported_cost_basis="810" if partial_reversal else "900",
+        market_price="12" if partial_reversal else "3",
     )
     account["ledger_entries"].append(
         {
             "entry_id": "synthetic-late-reversal",
             "entry_type": "FILL",
             "security_id": "XQZ-4017",
-            "quantity_delta": "50",
-            "cost_basis_delta": "450",
-            "cash_delta": "-600",
+            "quantity_delta": "40" if partial_reversal else "50",
+            "cost_basis_delta": "360" if partial_reversal else "450",
+            "cash_delta": "-480" if partial_reversal else "-600",
             "occurred_at": "2042-05-21T15:00:00Z",
             "corrects_entry_id": "synthetic-restoration-sale",
             "correction_reason": "Synthetic late broker reversal",
@@ -283,7 +287,7 @@ def test_restoration_survives_unknown_evidence_and_requires_a_reconciled_fill(
         }
     )
     reopened = stress_result(migrated_settings, reversed_sale)
-    assert reopened["state"] == "NORMAL"
+    assert reopened["state"] == ("BUFFER" if partial_reversal else "NORMAL")
     assert reopened["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
     assert reopened["obligation"]["status"] == "OUTSTANDING"
     assert reopened["new_exposure_blocked"] is True
@@ -536,8 +540,10 @@ def test_superseded_stress_authorization_cannot_admit_exposure(
     assert "STRESS_AUTHORIZATION_UNAVAILABLE" in result["reasons"]
 
 
+@pytest.mark.parametrize("valuation", ["known", "missing", "nonpositive"])
 def test_retained_obligation_adopts_a_stricter_current_target(
     migrated_settings: Settings,
+    valuation: str,
 ) -> None:
     authorization_id = stress_authorization(migrated_settings)
     first = stress_payload(migrated_settings, authorization_id, "tightened-obligation")
@@ -555,6 +561,12 @@ def test_retained_obligation_adopts_a_stricter_current_target(
     assert authorization is not None
     later = next_stress_case(first, "19")
     later["stress"]["authorization_id"] = authorization.authorization_id
+    account = later["stress"]["position_snapshot"]["accounts"][0]
+    if valuation == "missing":
+        account["positions"][0]["market_price"] = None
+    elif valuation == "nonpositive":
+        account["account_equity"] = "1"
+        account["cash_state"]["payable_cash"] = "1666.066"
     result = stress_result(migrated_settings, later)
     assert result["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
     assert result["obligation"]["target_stress_ratio"] == "0.08"
@@ -605,8 +617,10 @@ def test_stress_policy_must_be_registered_before_user_confirmation(
         FrozenDecisionCase.model_validate(payload)
 
 
+@pytest.mark.parametrize("future_restoration", [False, True])
 def test_valid_relaxation_evidence_cannot_erase_an_unfinished_stress_obligation(
     migrated_settings: Settings,
+    future_restoration: bool,
 ) -> None:
     authorization_id = stress_authorization(migrated_settings, cash_obligations=False)
     payload = stress_payload(migrated_settings, authorization_id, "relaxation-pending")
@@ -614,6 +628,31 @@ def test_valid_relaxation_evidence_cannot_erase_an_unfinished_stress_obligation(
     account["account_equity"] = "1667.066"
     account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
     assert stress_result(migrated_settings, payload)["obligation"]["status"] == "OUTSTANDING"
+    if future_restoration:
+        future = next_stress_case(payload, "18")
+        cutoff = "2042-06-18T16:00:00Z"
+        future["knowledge_cutoff"] = cutoff
+        snapshot = future["stress"]["position_snapshot"]
+        snapshot["cutoff_at"] = cutoff
+        refresh_current_position_evidence(snapshot, cutoff)
+        account = snapshot["accounts"][0]
+        account["positions"][0].update(
+            total_quantity="50", broker_sellable_quantity="30", reported_cost_basis="450"
+        )
+        account["cash_state"]["ledger_cash"] = "1057.066"
+        account["ledger_entries"].append(
+            {
+                "entry_id": "synthetic-future-restoration",
+                "entry_type": "FILL",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "-50",
+                "cost_basis_delta": "-450",
+                "cash_delta": "600",
+                "occurred_at": "2042-06-18T15:00:00Z",
+                "evidence": position_evidence("synthetic-future-restoration", cutoff_at=cutoff),
+            }
+        )
+        assert stress_result(migrated_settings, future)["obligation"]["status"] == "SATISFIED"
     proposal = relaxed_portfolio_proposal()
     for name in ("snapshot", "activation_snapshot"):
         proposal[name]["accounts"] = proposal[name]["accounts"][:1]

@@ -515,15 +515,22 @@ def _risk_budget_relaxation_reason(
         != command.proposal.risk_budget.effective_at
     ):
         return "RISK_BUDGET_RELAXATION_EVIDENCE_INVALID"
-    if _unresolved_cash_obligations(history, command.proposal.portfolio_id) or (
-        stress_history
+    visible_stress = tuple(
+        result
+        for result in stress_history
+        if result.cutoff_at <= min(cutoff, command.confirmation.confirmed_at)
+    )
+    # Later history may veto a relaxation, but never establish earlier restoration.
+    if _unresolved_cash_obligations(history, command.proposal.portfolio_id) or any(
+        records
         and (
-            stress_history[-1].state != "NORMAL"
+            records[-1].state != "NORMAL"
             or (
-                stress_history[-1].obligation is not None
-                and stress_history[-1].obligation.status == "OUTSTANDING"
+                records[-1].obligation is not None
+                and records[-1].obligation.status == "OUTSTANDING"
             )
         )
+        for records in (visible_stress, stress_history)
     ):
         return "RISK_BUDGET_RELAXATION_OBLIGATIONS_UNRESOLVED"
     return None

@@ -2008,6 +2008,11 @@ export interface components {
             /** Obligation Id */
             obligation_id: string;
             /**
+             * Restoration Fills
+             * @default []
+             */
+            restoration_fills: components["schemas"]["StressRestorationFill"][];
+            /**
              * Status
              * @enum {string}
              */
@@ -2019,6 +2024,15 @@ export interface components {
              * Format: date-time
              */
             triggered_at: string;
+        };
+        /** StressRestorationFill */
+        StressRestorationFill: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+            /** Net Quantity */
+            net_quantity: string;
         };
         /** TaskUsage */
         TaskUsage: {
