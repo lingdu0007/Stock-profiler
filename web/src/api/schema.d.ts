@@ -1257,6 +1257,8 @@ export interface components {
             portfolio_id: string;
             /** Reasons */
             reasons: string[];
+            /** Residual Restoration Gap */
+            residual_restoration_gap?: string | null;
             /** Risk Budget Version Id */
             risk_budget_version_id?: string | null;
             /** Snapshot Id */

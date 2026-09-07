@@ -31,6 +31,17 @@ it("renders a retained stress obligation without replacing unknown values with z
         contributions: [],
         new_exposure_blocked: true,
         execution_blocked: true,
+        risk_budget_version_id: "synthetic-risk-budget-alpha",
+        calculation_policy: {
+          contract_version: "1.0.0",
+          version_id: "synthetic-gross-stress-v1",
+          horizon_market_days: 20,
+          shock_ratio: "0.23",
+          disposal_friction_ratio: "0.017",
+          registered_at: "2042-05-16T16:00:00Z"
+        },
+        budget: { target_ratio: "0.14", hard_ratio: "0.18" },
+        residual_restoration_gap: null,
         obligation: {
           obligation_id: "synthetic-stress-obligation",
           direction: "REDUCE_TOTAL_STOCK_EXPOSURE",
@@ -60,4 +71,10 @@ it("renders a retained stress obligation without replacing unknown values with z
   expect(region).toHaveTextContent("2042-05-17T16:00:00Z");
   expect(region).toHaveTextContent("Unknown");
   expect(region).toHaveTextContent("Blocked");
+  expect(region).toHaveTextContent("synthetic-gross-stress-v1");
+  expect(region).toHaveTextContent("synthetic-risk-budget-alpha");
+  expect(region).toHaveTextContent("0.23");
+  expect(region).toHaveTextContent("0.017");
+  expect(region).toHaveTextContent("0.18");
+  expect(region).toHaveTextContent("2042-05-16T16:00:00Z");
 });

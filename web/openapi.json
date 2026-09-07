@@ -2508,6 +2508,18 @@
             "title": "Reasons",
             "type": "array"
           },
+          "residual_restoration_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Residual Restoration Gap"
+          },
           "risk_budget_version_id": {
             "anyOf": [
               {

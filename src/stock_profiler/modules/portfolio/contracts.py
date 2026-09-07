@@ -183,6 +183,15 @@ class PersonalRiskBudget(PortfolioContract):
             or self.drawdown.defensive_ratio > previous.drawdown.defensive_ratio
             or self.drawdown.preservation_ratio > previous.drawdown.preservation_ratio
             or self.relaxes_downside_grid(previous)
+            or (
+                previous.stress_calculation is not None
+                and (
+                    self.stress_calculation is None
+                    or self.stress_calculation.disposal_friction_ratio
+                    < previous.stress_calculation.disposal_friction_ratio
+                    or self.stress_calculation.shock_ratio < previous.stress_calculation.shock_ratio
+                )
+            )
             or not set(previous.protection_floor.retained_directions).issubset(
                 self.protection_floor.retained_directions
             )
@@ -417,6 +426,12 @@ class PortfolioConfirmationCommand(PortfolioContract):
             raise ValueError("confirmation must not postdate the risk budget effective_at")
         if self.confirmation.confirmed_at < self.proposal.snapshot.cutoff_at:
             raise ValueError("confirmation must not predate the portfolio cutoff")
+        if (
+            self.proposal.risk_budget.stress_calculation is not None
+            and self.proposal.risk_budget.stress_calculation.registered_at
+            > self.confirmation.confirmed_at
+        ):
+            raise ValueError("stress policy must predate confirmation")
         if self.previous_authorization_id is not None:
             activation = self.proposal.activation_snapshot
             if activation is None:

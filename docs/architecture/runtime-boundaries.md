@@ -106,6 +106,11 @@ disposal-friction ratio and a simultaneous adverse price shock equal to the
 highest registered downside-grid boundary. No personal thresholds or policy
 fallback are supplied by the engine. Historical policy-free authorizations
 remain readable but cannot establish a known stress result.
+Calculation-policy identities cannot be redefined and registration must precede
+confirmation. New assessments require the current effective authorization;
+expired authorizations retain protection without admitting new exposure.
+Lower friction or a lower stress shock invokes the existing risk-relaxation
+evidence gate, which also refuses an unfinished stress restoration obligation.
 
 Gross stress includes every reconciled stock exposure, independently of its
 origin, sellability, cost basis, or model result. Estimated disposal friction
@@ -115,6 +120,11 @@ original business result. A hard breach records a portfolio-level restoration
 obligation rather than selecting a security for liquidation. Subsequent
 snapshots retain that obligation through missing valuation evidence; a
 reconciled sale and a satisfied target are required to mark it satisfied.
+Additive broker corrections are applied before counting an effective sale;
+a later reversal reopens its retained obligation. Stricter successor targets
+apply to outstanding obligations. A residual restoration gap describes the
+shortfall even after all verified sellable quantities, without creating a
+security allocation or treating hypothetical sales as completed execution.
 Reports expose the saved calculation policy, contribution amounts, cutoff,
 blocking state, and obligation. Report corrections retain the original
 stress decision. The authenticated report view does not recalculate it.

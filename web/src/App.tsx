@@ -235,6 +235,29 @@ function PortfolioStressEvidence({
         <Record label="Authorization" value={stress.authorization_id} />
         <Record label="Snapshot" value={stress.snapshot_id} />
         <Record label="Cutoff" value={stress.cutoff_at} />
+        <Record label="Risk budget version" value={stress.risk_budget_version_id ?? "Unknown"} />
+        <Record
+          label="Calculation policy"
+          value={stress.calculation_policy?.version_id ?? "Unknown"}
+        />
+        <Record
+          label="Market-day horizon"
+          value={stress.calculation_policy?.horizon_market_days.toString() ?? "Unknown"}
+        />
+        <Record
+          label="Adverse price ratio"
+          value={stress.calculation_policy?.shock_ratio ?? "Unknown"}
+        />
+        <Record
+          label="Disposal friction ratio"
+          value={stress.calculation_policy?.disposal_friction_ratio ?? "Unknown"}
+        />
+        <Record
+          label="Policy registered"
+          value={stress.calculation_policy?.registered_at ?? "Unknown"}
+        />
+        <Record label="Budget target ratio" value={stress.budget?.target_ratio ?? "Unknown"} />
+        <Record label="Budget hard ratio" value={stress.budget?.hard_ratio ?? "Unknown"} />
         <Record label="Gross stress loss" value={stress.gross_stress_loss ?? "Unknown"} />
         <Record label="Net liquidation equity" value={stress.net_liquidation_equity ?? "Unknown"} />
         <Record label="Stress ratio" value={stress.stress_ratio ?? "Unknown"} />
@@ -247,6 +270,10 @@ function PortfolioStressEvidence({
           value={stress.execution_blocked ? "Blocked" : "Not assessed as an execution plan"}
         />
         <Record label="Restoration" value={obligation?.status ?? "No obligation"} />
+        <Record
+          label="Residual restoration gap"
+          value={stress.residual_restoration_gap ?? "Unknown"}
+        />
         {obligation && (
           <>
             <Record label="Obligation" value={obligation.obligation_id} />

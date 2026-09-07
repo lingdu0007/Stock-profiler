@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal, Inexact, localcontext
 from typing import Any, cast
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_portfolio_authorization import (
     portfolio_case_payload,
     portfolio_confirmation_command,
     portfolio_proposal,
+    relaxation_evidence,
+    relaxed_portfolio_proposal,
+    scheduled_portfolio_proposal,
 )
 from test_position_state_reconciliation import (
     position_case_payload,
@@ -18,9 +23,12 @@ from test_position_state_reconciliation import (
 )
 from test_scoped_qualification import GovernanceClock
 
+from stock_profiler.adapters.authentication.passkeys import PasskeyAuthenticator
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.entrypoints.http.app import create_app
 from stock_profiler.modules.decision_cases import service
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 
@@ -31,19 +39,13 @@ def stress_authorization(
     shock: str = "0.23",
     friction: str = "0.017",
     retain_excluded: bool = False,
+    cash_obligations: bool = True,
 ) -> str:
-    proposal = portfolio_proposal()
+    proposal = stress_proposal(shock=shock, friction=friction)
     if not retain_excluded:
         proposal["snapshot"]["accounts"] = proposal["snapshot"]["accounts"][:1]
-    proposal["risk_budget"]["downside_grid"] = ["0.04", "0.09", shock]
-    proposal["risk_budget"]["stress_calculation"] = {
-        "contract_version": "1.0.0",
-        "version_id": "synthetic-gross-stress-v1",
-        "horizon_market_days": 20,
-        "shock_ratio": shock,
-        "disposal_friction_ratio": friction,
-        "registered_at": "2042-05-16T16:00:00Z",
-    }
+    if not cash_obligations:
+        proposal["cash_obligations"] = []
     result = run_frozen_decision_case(
         settings,
         portfolio_case_payload(
@@ -56,6 +58,38 @@ def stress_authorization(
     authorization = result.report.result.portfolio.authorization
     assert authorization is not None
     return authorization.authorization_id
+
+
+def stress_proposal(*, shock: str = "0.23", friction: str = "0.017") -> dict[str, Any]:
+    proposal = portfolio_proposal()
+    proposal["risk_budget"]["downside_grid"] = ["0.04", "0.09", shock]
+    proposal["risk_budget"]["stress_calculation"] = {
+        "contract_version": "1.0.0",
+        "version_id": "synthetic-gross-stress-v1",
+        "horizon_market_days": 20,
+        "shock_ratio": shock,
+        "disposal_friction_ratio": friction,
+        "registered_at": "2042-05-16T16:00:00Z",
+    }
+    return proposal
+
+
+def stress_successor(
+    settings: Settings, authorization_id: str, *, friction: str = "0.017"
+) -> dict[str, Any]:
+    proposal = scheduled_portfolio_proposal()
+    for name in ("snapshot", "activation_snapshot"):
+        proposal[name]["accounts"] = proposal[name]["accounts"][:1]
+    original = stress_proposal(friction=friction)["risk_budget"]
+    for name in ("downside_grid", "stress_calculation"):
+        proposal["risk_budget"][name] = original[name]
+    if friction != "0.017":
+        proposal["risk_budget"]["stress_calculation"]["version_id"] = "synthetic-stress-v2"
+    return portfolio_case_payload(
+        settings,
+        "stress-successor",
+        portfolio_confirmation_command(proposal, previous_authorization_id=authorization_id),
+    )
 
 
 def stress_payload(
@@ -111,6 +145,15 @@ def test_normal_stress_is_committed_without_replacing_the_business_result(
     replay = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
     assert replay.report == execution.report
     assert replay.framework_run_id == execution.framework_run_id
+    token, _ = PasskeyAuthenticator(
+        initialize_runtime_storage(migrated_settings).engine, migrated_settings
+    )._create_session("synthetic-stress-report-session")
+    client = TestClient(create_app(migrated_settings), base_url="https://localhost")
+    client.cookies.set(migrated_settings.auth_session_cookie_name, token)
+    response = client.get(f"/api/v1/reports/{execution.report.report_version_id}")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["result"]["stress"] == stress
 
 
 @pytest.mark.parametrize(
@@ -216,6 +259,34 @@ def test_restoration_survives_unknown_evidence_and_requires_a_reconciled_fill(
     assert restored["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
     assert restored["obligation"]["status"] == "SATISFIED"
     assert restored["new_exposure_blocked"] is False
+    reversed_sale = next_stress_case(sold, "21")
+    account = reversed_sale["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "767.066"
+    account["cash_state"]["ledger_cash"] = "457.066"
+    account["positions"][0].update(
+        total_quantity="100", reported_cost_basis="900", market_price="3"
+    )
+    account["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-late-reversal",
+            "entry_type": "FILL",
+            "security_id": "XQZ-4017",
+            "quantity_delta": "50",
+            "cost_basis_delta": "450",
+            "cash_delta": "-600",
+            "occurred_at": "2042-05-21T15:00:00Z",
+            "corrects_entry_id": "synthetic-restoration-sale",
+            "correction_reason": "Synthetic late broker reversal",
+            "evidence": position_evidence(
+                "synthetic-late-reversal", cutoff_at=reversed_sale["knowledge_cutoff"]
+            ),
+        }
+    )
+    reopened = stress_result(migrated_settings, reversed_sale)
+    assert reopened["state"] == "NORMAL"
+    assert reopened["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
+    assert reopened["obligation"]["status"] == "OUTSTANDING"
+    assert reopened["new_exposure_blocked"] is True
 
 
 @pytest.mark.parametrize(
@@ -293,6 +364,9 @@ def test_expired_budget_preserves_stress_but_cannot_admit_new_exposure(
     assert result["state"] == "NORMAL"
     assert result["gross_stress_loss"] == "296.400"
     assert result["new_exposure_blocked"] is True
+    assert result["calculation_policy"]["version_id"] == "synthetic-gross-stress-v1"
+    assert result["risk_budget_version_id"] == "synthetic-risk-budget-alpha"
+    assert result["budget"]["target_ratio"] == "0.14"
 
 
 def test_selected_account_snapshot_does_not_need_to_include_excluded_accounts(
@@ -331,6 +405,9 @@ def test_unknown_position_values_never_become_zero_stress(
     assert result["state"] == "UNKNOWN"
     assert result["gross_stress_loss"] is None
     assert result["new_exposure_blocked"] is True
+    assert result["calculation_policy"]["version_id"] == "synthetic-gross-stress-v1"
+    assert result["risk_budget_version_id"] == "synthetic-risk-budget-alpha"
+    assert result["budget"]["target_ratio"] == "0.14"
 
 
 def test_liquidation_friction_can_exhaust_an_otherwise_positive_equity(
@@ -344,6 +421,10 @@ def test_liquidation_friction_can_exhaust_an_otherwise_positive_equity(
     result = stress_result(migrated_settings, payload)
     assert result["state"] == "UNKNOWN"
     assert "STRESS_NET_EQUITY_NON_POSITIVE" in result["reasons"]
+    assert result["calculation_policy"]["version_id"] == "synthetic-gross-stress-v1"
+    assert result["contributions"][0]["current_exposure"] == "1200"
+    assert result["gross_stress_loss"] == "296.400"
+    assert result["net_liquidation_equity"] == "-19.400"
 
 
 def test_policy_free_authorization_has_no_synthetic_stress_fallback(
@@ -378,3 +459,225 @@ def test_unqualified_diversification_inputs_are_not_part_of_the_stress_contract(
     payload["stress"][credit] = "0.9"
     with pytest.raises(ValidationError, match=credit):
         run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+
+
+def test_a_fully_reversed_sale_cannot_discharge_the_retained_obligation(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    first = stress_payload(migrated_settings, authorization_id, "reversed-sale")
+    account = first["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "1667.066"
+    account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
+    breach = stress_result(migrated_settings, first)
+    corrected = next_stress_case(first, "18")
+    account = corrected["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "767.066"
+    account["positions"][0]["market_price"] = "3"
+    for identity, quantity, cost, cash, correction in [
+        ("synthetic-reversed-sale", "-50", "-450", "600", None),
+        ("synthetic-sale-reversal", "50", "450", "-600", "synthetic-reversed-sale"),
+    ]:
+        account["ledger_entries"].append(
+            {
+                "entry_id": identity,
+                "entry_type": "FILL",
+                "security_id": "XQZ-4017",
+                "quantity_delta": quantity,
+                "cost_basis_delta": cost,
+                "cash_delta": cash,
+                "occurred_at": "2042-05-18T15:00:00Z",
+                "corrects_entry_id": correction,
+                "correction_reason": "Synthetic broker reversal" if correction else None,
+                "evidence": position_evidence(identity, cutoff_at=corrected["knowledge_cutoff"]),
+            }
+        )
+    result = stress_result(migrated_settings, corrected)
+    assert result["state"] == "NORMAL"
+    assert result["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
+    assert result["obligation"]["status"] == "OUTSTANDING"
+    assert result["new_exposure_blocked"] is True
+
+
+def test_lowering_disposal_friction_requires_relaxation_evidence(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    successor = run_frozen_decision_case(
+        migrated_settings,
+        stress_successor(migrated_settings, authorization_id, friction="0"),
+        clock=GovernanceClock("2042-05-18T16:00:00Z"),
+    )
+    assert successor.report is not None and successor.report.result.portfolio is not None
+    assert successor.report.result.portfolio.disposition == "DENIED"
+    assert successor.report.result.portfolio.reasons == (
+        "RISK_BUDGET_RELAXATION_EVIDENCE_REQUIRED",
+    )
+
+
+def test_superseded_stress_authorization_cannot_admit_exposure(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    successor_payload = stress_successor(migrated_settings, authorization_id)
+    successor_payload["portfolio"]["proposal"]["risk_budget"]["stress"] = {
+        "target_ratio": "0.08",
+        "hard_ratio": "0.09",
+    }
+    successor = run_frozen_decision_case(
+        migrated_settings, successor_payload, clock=GovernanceClock("2042-05-18T16:00:00Z")
+    )
+    assert successor.report is not None and successor.report.result.portfolio is not None
+    assert successor.report.result.portfolio.disposition == "APPROVED"
+    stale = next_stress_case(stress_payload(migrated_settings, authorization_id), "19")
+    result = stress_result(migrated_settings, stale)
+    assert result["state"] == "UNKNOWN"
+    assert result["new_exposure_blocked"] is True
+    assert "STRESS_AUTHORIZATION_UNAVAILABLE" in result["reasons"]
+
+
+def test_retained_obligation_adopts_a_stricter_current_target(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    first = stress_payload(migrated_settings, authorization_id, "tightened-obligation")
+    account = first["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "1667.066"
+    account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
+    breach = stress_result(migrated_settings, first)
+    successor_payload = stress_successor(migrated_settings, authorization_id)
+    successor_payload["portfolio"]["proposal"]["risk_budget"]["stress"]["target_ratio"] = "0.08"
+    successor = run_frozen_decision_case(
+        migrated_settings, successor_payload, clock=GovernanceClock("2042-05-18T16:00:00Z")
+    )
+    assert successor.report is not None and successor.report.result.portfolio is not None
+    authorization = successor.report.result.portfolio.authorization
+    assert authorization is not None
+    later = next_stress_case(first, "19")
+    later["stress"]["authorization_id"] = authorization.authorization_id
+    result = stress_result(migrated_settings, later)
+    assert result["obligation"]["obligation_id"] == breach["obligation"]["obligation_id"]
+    assert result["obligation"]["target_stress_ratio"] == "0.08"
+
+
+def test_insufficient_verified_sellability_reports_a_residual_restoration_gap(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    payload = stress_payload(migrated_settings, authorization_id, "partial-sellability")
+    account = payload["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "1667.066"
+    account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
+    account["positions"][0]["broker_sellable_quantity"] = "1"
+    result = stress_result(migrated_settings, payload)
+    assert result["state"] == "HARD_BREACH"
+    assert result["execution_blocked"] is True
+    assert result["residual_restoration_gap"] == "62.90276"
+    assert result["obligation"]["status"] == "OUTSTANDING"
+
+
+def test_stress_policy_identity_cannot_be_redefined_by_a_successor(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    payload = stress_successor(migrated_settings, authorization_id)
+    payload["portfolio"]["proposal"]["risk_budget"]["stress_calculation"][
+        "disposal_friction_ratio"
+    ] = "0.025"
+    executed = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-18T16:00:00Z")
+    )
+    assert executed.report is not None and executed.report.result.portfolio is not None
+    assert executed.report.result.portfolio.reasons == ("STRESS_CALCULATION_POLICY_REDEFINED",)
+    assert executed.report.result.portfolio.disposition == "DENIED"
+
+
+def test_stress_policy_must_be_registered_before_user_confirmation(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings)
+    payload = stress_successor(migrated_settings, authorization_id)
+    payload["portfolio"]["proposal"]["risk_budget"]["stress_calculation"].update(
+        version_id="synthetic-late-policy",
+        registered_at="2042-05-18T15:00:00Z",
+    )
+    with pytest.raises(ValidationError, match="stress policy must predate confirmation"):
+        FrozenDecisionCase.model_validate(payload)
+
+
+def test_valid_relaxation_evidence_cannot_erase_an_unfinished_stress_obligation(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = stress_authorization(migrated_settings, cash_obligations=False)
+    payload = stress_payload(migrated_settings, authorization_id, "relaxation-pending")
+    account = payload["stress"]["position_snapshot"]["accounts"][0]
+    account["account_equity"] = "1667.066"
+    account["cash_state"].update(ledger_cash="457.066", opening_ledger_cash="1259.066")
+    assert stress_result(migrated_settings, payload)["obligation"]["status"] == "OUTSTANDING"
+    proposal = relaxed_portfolio_proposal()
+    for name in ("snapshot", "activation_snapshot"):
+        proposal[name]["accounts"] = proposal[name]["accounts"][:1]
+    original = stress_proposal()["risk_budget"]
+    for name in ("downside_grid", "stress_calculation"):
+        proposal["risk_budget"][name] = original[name]
+    proposal["risk_budget"]["stress"]["target_ratio"] = "0.16"
+    command = portfolio_confirmation_command(proposal, previous_authorization_id=authorization_id)
+    command["confirmation"]["relaxation_evidence"] = relaxation_evidence(authorization_id)
+    executed = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(migrated_settings, "relaxation-pending-successor", command),
+        clock=GovernanceClock("2042-06-17T16:00:00Z"),
+    )
+    assert executed.report is not None and executed.report.result.portfolio is not None
+    assert executed.report.result.portfolio.disposition == "DENIED"
+    assert executed.report.result.portfolio.reasons == (
+        "RISK_BUDGET_RELAXATION_OBLIGATIONS_UNRESOLVED",
+    )
+
+
+def test_full_selected_accounts_are_aggregated_without_issuer_diversification(
+    migrated_settings: Settings,
+) -> None:
+    proposal = stress_proposal()
+    proposal["snapshot"]["accounts"] = proposal["snapshot"]["accounts"][:1]
+    second = deepcopy(proposal["snapshot"]["accounts"][0])
+    second["account_id"] = "synthetic-account-8029"
+    proposal["snapshot"]["accounts"].append(second)
+    proposal["snapshot"]["selected_account_ids"].append(second["account_id"])
+    authorized = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings, "stress-two-accounts", portfolio_confirmation_command(proposal)
+        ),
+        clock=GovernanceClock(),
+    )
+    assert authorized.report is not None and authorized.report.result.portfolio is not None
+    authorization = authorized.report.result.portfolio.authorization
+    assert authorization is not None
+    payload = stress_payload(migrated_settings, authorization.authorization_id, "two-accounts")
+    payload["stress"]["position_snapshot"] = position_snapshot_command()
+    payload["access_scope"]["account_ids"].append(second["account_id"])
+    with localcontext() as context:
+        context.prec = 3
+        context.traps[Inexact] = True
+        result = stress_result(migrated_settings, payload)
+    assert Decimal(result["gross_stress_loss"]) == Decimal("444.6")
+    assert Decimal(result["net_liquidation_equity"]) == Decimal("2079.4")
+    assert len(result["contributions"]) == 2
+    assert result["state"] == "HARD_BREACH"
+    missing = next_stress_case(payload, "18")
+    missing["stress"]["position_snapshot"]["accounts"].pop()
+    denied = stress_result(migrated_settings, missing)
+    assert denied["state"] == "UNKNOWN"
+    assert "STRESS_ACCOUNT_SCOPE_MISMATCH" in denied["reasons"]
+    assert denied["new_exposure_blocked"] is True
+
+
+def test_stress_requires_an_authorized_not_shadow_portfolio(migrated_settings: Settings) -> None:
+    result = stress_result(
+        migrated_settings, stress_payload(migrated_settings, "synthetic-unconfirmed-shadow")
+    )
+    assert result["state"] == "UNKNOWN"
+    assert result["calculation_policy"] is None
+    assert result["obligation"] is None
+    assert "STRESS_AUTHORIZATION_UNAVAILABLE" in result["reasons"]
