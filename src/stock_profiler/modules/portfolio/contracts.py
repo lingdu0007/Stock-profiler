@@ -174,8 +174,11 @@ class PersonalRiskBudget(PortfolioContract):
         return self.downside_grid != previous.downside_grid
 
     def relaxes_downside_grid(self, previous: PersonalRiskBudget) -> bool:
-        """Treat only a wider maximum registered loss boundary as a relaxation."""
-        return self.downside_grid[-1] > previous.downside_grid[-1]
+        """Treat a wider corresponding boundary or maximum boundary as a relaxation."""
+        return self.downside_grid[-1] > previous.downside_grid[-1] or any(
+            current > prior
+            for current, prior in zip(self.downside_grid, previous.downside_grid, strict=False)
+        )
 
 
 class DatedCashObligation(PortfolioContract):

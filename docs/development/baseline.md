@@ -19,7 +19,8 @@ SBOM inputs. Local artifact output is ignored by Git.
 accepts one complete versioned synthetic frozen case through the same host
 acceptance seam as the packaged demonstration case. The local input must pass
 the frozen contract and exact host-provenance checks before it can create a Run
-or report; invalid input is rejected and audited. `--case` is available only
+or report; the CLI forwards its parsed JSON object unchanged to those host
+checks, and invalid input is rejected and audited. `--case` is available only
 for `decision-case-run`. These synthetic case files are local runtime inputs,
 not files to add to Git.
 

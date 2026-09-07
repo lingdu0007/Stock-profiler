@@ -1442,29 +1442,114 @@ def test_adding_a_tighter_downside_grid_boundary_needs_no_relaxation_evidence(
 
 
 @pytest.mark.parametrize(
-    "reused_identity",
+    ("downside_grid", "include_relaxation_evidence", "expected_reason"),
     [
-        "evidence_id",
-        "historical_out_of_sample_evidence_id",
-        "locked_forward_confirmation_id",
+        (["0.08", "0.09"], False, "RISK_BUDGET_RELAXATION_EVIDENCE_REQUIRED"),
+        (["0.09"], True, "RISK_BUDGET_RELAXATION_OBLIGATIONS_UNRESOLVED"),
     ],
 )
-def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revision(
+def test_widened_or_removed_lower_downside_grid_boundary_uses_relaxation_safeguards(
     migrated_settings: Settings,
-    reused_identity: str,
+    downside_grid: list[str],
+    include_relaxation_evidence: bool,
+    expected_reason: str,
 ) -> None:
     original = run_frozen_decision_case(
         migrated_settings,
         portfolio_case_payload(
             migrated_settings,
-            f"grid-requalification-identity-original-{reused_identity}",
+            f"grid-lower-bound-original-{'-'.join(downside_grid)}",
+            portfolio_confirmation_command(portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = unobligated_portfolio_proposal()
+    selection_cutoff = "2042-06-16T15:00:00Z"
+    activation_cutoff = "2042-06-17T16:00:00Z"
+    proposal["snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-lower-{'-'.join(downside_grid)}",
+        cutoff=selection_cutoff,
+    )
+    proposal["activation_snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id=(
+            f"synthetic-portfolio-snapshot-grid-lower-{'-'.join(downside_grid)}-activation"
+        ),
+        cutoff=activation_cutoff,
+    )
+    action_policy_version_id = f"synthetic-action-policy-grid-lower-{'-'.join(downside_grid)}"
+    proposal["risk_budget"].update(
+        version_id=f"synthetic-risk-budget-grid-lower-{'-'.join(downside_grid)}",
+        action_policy_version_id=action_policy_version_id,
+        effective_at=activation_cutoff,
+        expires_at="2042-12-17T16:00:00Z",
+        downside_grid=downside_grid,
+    )
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at=selection_cutoff,
+    )
+    command["confirmation"]["downside_grid_requalification"] = downside_grid_requalification(
+        original.decision_event_id,
+        action_policy_version_id=action_policy_version_id,
+    )
+    if include_relaxation_evidence:
+        command["confirmation"]["relaxation_evidence"] = relaxation_evidence(
+            original.decision_event_id
+        )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"grid-lower-bound-{'-'.join(downside_grid)}",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == (expected_reason,)
+
+
+@pytest.mark.parametrize(
+    ("retained_identity", "submitted_identity"),
+    [
+        ("evidence_id", "evidence_id"),
+        ("evidence_id", "historical_out_of_sample_evidence_id"),
+        ("evidence_id", "locked_forward_confirmation_id"),
+        ("historical_out_of_sample_evidence_id", "evidence_id"),
+        ("historical_out_of_sample_evidence_id", "historical_out_of_sample_evidence_id"),
+        ("historical_out_of_sample_evidence_id", "locked_forward_confirmation_id"),
+        ("locked_forward_confirmation_id", "evidence_id"),
+        ("locked_forward_confirmation_id", "historical_out_of_sample_evidence_id"),
+        ("locked_forward_confirmation_id", "locked_forward_confirmation_id"),
+    ],
+)
+def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revision(
+    migrated_settings: Settings,
+    retained_identity: str,
+    submitted_identity: str,
+) -> None:
+    identity_pair = f"{retained_identity}-as-{submitted_identity}"
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            f"grid-requalification-identity-original-{identity_pair}",
             portfolio_confirmation_command(unobligated_portfolio_proposal()),
         ),
         clock=GovernanceClock(),
     )
     assert original.report is not None
     intermediate_proposal = relaxed_portfolio_proposal()
-    intermediate_policy_id = f"synthetic-action-policy-grid-beta-{reused_identity}"
+    intermediate_policy_id = f"synthetic-action-policy-grid-beta-{identity_pair}"
     intermediate_proposal["risk_budget"].update(
         action_policy_version_id=intermediate_policy_id,
         downside_grid=["0.40", "0.90"],
@@ -1488,7 +1573,7 @@ def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revisi
         migrated_settings,
         portfolio_case_payload(
             migrated_settings,
-            f"grid-requalification-identity-intermediate-{reused_identity}",
+            f"grid-requalification-identity-intermediate-{identity_pair}",
             intermediate_command,
         ),
         clock=GovernanceClock("2042-06-17T16:01:00Z"),
@@ -1507,17 +1592,17 @@ def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revisi
     activation_cutoff = "2042-06-19T16:00:00Z"
     successor_proposal["snapshot"] = snapshot_at(
         successor_proposal["snapshot"],
-        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{reused_identity}",
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{identity_pair}",
         cutoff=selection_cutoff,
     )
     successor_proposal["activation_snapshot"] = snapshot_at(
         successor_proposal["snapshot"],
-        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{reused_identity}-activation",
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-identity-{identity_pair}-activation",
         cutoff=activation_cutoff,
     )
-    successor_policy_id = f"synthetic-action-policy-grid-gamma-{reused_identity}"
+    successor_policy_id = f"synthetic-action-policy-grid-gamma-{identity_pair}"
     successor_proposal["risk_budget"].update(
-        version_id=f"synthetic-risk-budget-grid-gamma-{reused_identity}",
+        version_id=f"synthetic-risk-budget-grid-gamma-{identity_pair}",
         action_policy_version_id=successor_policy_id,
         effective_at=activation_cutoff,
         expires_at="2042-12-19T16:00:00Z",
@@ -1533,19 +1618,22 @@ def test_downside_grid_requalification_evidence_id_cannot_rebind_in_later_revisi
         action_policy_version_id=successor_policy_id,
     )
     successor_evidence.update(
+        evidence_id=f"synthetic-grid-requalification-{successor_policy_id}",
         predecessor_risk_budget_version_id=intermediate_budget_version_id,
+        historical_out_of_sample_evidence_id=f"synthetic-grid-history-{successor_policy_id}",
         historical_completed_at="2042-06-17T16:00:00Z",
+        locked_forward_confirmation_id=f"synthetic-grid-forward-{successor_policy_id}",
         locked_forward_confirmed_at="2042-06-18T14:59:00Z",
         available_at=selection_cutoff,
     )
-    successor_evidence[reused_identity] = getattr(intermediate_evidence, reused_identity)
+    successor_evidence[submitted_identity] = getattr(intermediate_evidence, retained_identity)
     successor_command["confirmation"]["downside_grid_requalification"] = successor_evidence
 
     execution = run_frozen_decision_case(
         migrated_settings,
         portfolio_case_payload(
             migrated_settings,
-            f"grid-requalification-identity-successor-{reused_identity}",
+            f"grid-requalification-identity-successor-{identity_pair}",
             successor_command,
         ),
         clock=GovernanceClock("2042-06-19T16:01:00Z"),

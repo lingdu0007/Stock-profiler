@@ -71,9 +71,7 @@ def main() -> None:
             execution = (
                 run_frozen_decision_case(
                     settings,
-                    FrozenDecisionCase.model_validate_json(args.case.read_text()).model_dump(
-                        mode="json"
-                    ),
+                    json.loads(args.case.read_text()),
                 )
                 if args.case is not None
                 else run_default_frozen_decision_case(settings)

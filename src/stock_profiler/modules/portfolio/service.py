@@ -440,13 +440,17 @@ def _requalification_identity_is_rebound(
     retained: DownsideGridRequalificationEvidence,
     submitted: DownsideGridRequalificationEvidence,
 ) -> bool:
-    identifiers_overlap = (
-        retained.evidence_id == submitted.evidence_id
-        or retained.historical_out_of_sample_evidence_id
-        == submitted.historical_out_of_sample_evidence_id
-        or retained.locked_forward_confirmation_id == submitted.locked_forward_confirmation_id
-    )
-    return identifiers_overlap and retained != submitted
+    retained_identifiers = {
+        retained.evidence_id,
+        retained.historical_out_of_sample_evidence_id,
+        retained.locked_forward_confirmation_id,
+    }
+    submitted_identifiers = {
+        submitted.evidence_id,
+        submitted.historical_out_of_sample_evidence_id,
+        submitted.locked_forward_confirmation_id,
+    }
+    return bool(retained_identifiers.intersection(submitted_identifiers)) and retained != submitted
 
 
 def _risk_budget_relaxation_reason(
