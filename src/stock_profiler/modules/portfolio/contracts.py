@@ -9,6 +9,8 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+
 
 class PortfolioContract(BaseModel):
     """Reject fields outside the versioned portfolio contract."""
@@ -195,6 +197,8 @@ class PortfolioProposal(PortfolioContract):
                 "risk budget effective_at must match the activation portfolio snapshot cutoff"
             )
         if activation is not None:
+            if activation.snapshot_id == self.snapshot.snapshot_id:
+                raise ValueError("activation snapshot must use a distinct snapshot identity")
             if activation.cutoff_at <= self.snapshot.cutoff_at:
                 raise ValueError("activation snapshot must follow the selected portfolio snapshot")
             if activation.account_ids != self.snapshot.account_ids:
@@ -265,25 +269,56 @@ class RiskBudgetRelaxationEvidence(PortfolioContract):
             raise ValueError(
                 "risk relaxation sessions must use one immutable market calendar version"
             )
+        market_calendar = synthetic_market_calendar(sessions[0].market_calendar_version_id)
+        if market_calendar is None:
+            raise ValueError(
+                "risk relaxation sessions must reference a known immutable market calendar"
+            )
         ordinals = tuple(session.market_session_ordinal for session in sessions)
         if ordinals != tuple(range(ordinals[0], ordinals[0] + len(ordinals))):
             raise ValueError("risk relaxation market sessions must be consecutive")
         closed_at = tuple(session.closed_at for session in sessions)
         if any(
-            current <= previous
-            for previous, current in zip(closed_at, closed_at[1:], strict=False)
+            current <= previous for previous, current in zip(closed_at, closed_at[1:], strict=False)
         ):
             raise ValueError(
                 "risk relaxation market sessions must close in strictly increasing order"
             )
-        if (
-            self.normal_from_at != closed_at[0]
-            or self.normal_through_at != closed_at[-1]
-        ):
+        expected_closed_at: list[datetime] = []
+        for ordinal in ordinals:
+            reference = market_calendar.session_for(ordinal)
+            if reference is None:
+                raise ValueError(
+                    "risk relaxation sessions must match the immutable market calendar"
+                )
+            expected_closed_at.append(reference.closed_at)
+        if closed_at != tuple(expected_closed_at):
+            raise ValueError("risk relaxation sessions must match the immutable market calendar")
+        if self.normal_from_at != closed_at[0] or self.normal_through_at != closed_at[-1]:
             raise ValueError(
                 "risk relaxation evidence must bind the first and last normal market sessions"
             )
+        expected_monthly_cutoff = market_calendar.next_monthly_selection_cutoff_after(
+            self.normal_through_at
+        )
+        if (
+            expected_monthly_cutoff is None
+            or self.monthly_selection_cutoff_at != expected_monthly_cutoff
+        ):
+            raise ValueError("risk relaxation evidence must bind the next monthly selection cutoff")
         return self
+
+    def normal_window_is_current_at(self, instant: datetime) -> bool:
+        """Allow post-close confirmation until the next known session has closed."""
+        if instant <= self.normal_through_at:
+            return True
+        market_calendar = synthetic_market_calendar(
+            self.normal_market_sessions[0].market_calendar_version_id
+        )
+        if market_calendar is None:
+            return False
+        next_session = market_calendar.next_session_after(self.normal_through_at)
+        return next_session is not None and instant < next_session.closed_at
 
 
 class PortfolioConfirmation(PortfolioContract):
@@ -403,15 +438,7 @@ def preview_for(proposal: PortfolioProposal) -> PortfolioPreview:
         for account in proposal.snapshot.accounts
         if account.account_id not in selected
     )
-    blocking_accounts = tuple(
-        ExcludedAccount(
-            account_id=account.account_id,
-            account_type=account.account_type,
-            reason=_exclusion_reason(account.account_type),
-        )
-        for account in proposal.snapshot.selected_accounts
-        if account.account_type != "SIMULATED_CASH"
-    )
+    blocking_accounts = _blocking_accounts(proposal.snapshot)
     return PortfolioPreview(
         portfolio_id=proposal.portfolio_id,
         snapshot_id=proposal.snapshot.snapshot_id,
@@ -426,6 +453,14 @@ def preview_for(proposal: PortfolioProposal) -> PortfolioPreview:
 def confirmation_block_reasons(preview: PortfolioPreview) -> tuple[str, ...]:
     """Reject selected non-cash or unknown accounts without hiding them from preview."""
     return tuple(item.reason for item in preview.blocking_accounts)
+
+
+def activation_block_reasons(proposal: PortfolioProposal) -> tuple[str, ...]:
+    """Reject a changed activation account type before freezing a forward version."""
+    activation = proposal.activation_snapshot
+    if activation is None:
+        return ()
+    return tuple(item.reason for item in _blocking_accounts(activation))
 
 
 def portfolio_id_for(command: PortfolioCommand) -> str:
@@ -449,6 +484,18 @@ def _exclusion_reason(
     }:
         return "UNSUPPORTED_ACCOUNT_TYPE"
     return "UNKNOWN_ACCOUNT_TYPE"
+
+
+def _blocking_accounts(snapshot: PortfolioSnapshot) -> tuple[ExcludedAccount, ...]:
+    return tuple(
+        ExcludedAccount(
+            account_id=account.account_id,
+            account_type=account.account_type,
+            reason=_exclusion_reason(account.account_type),
+        )
+        for account in snapshot.selected_accounts
+        if account.account_type != "SIMULATED_CASH"
+    )
 
 
 def _add_calendar_months(value: datetime, months: int) -> datetime:

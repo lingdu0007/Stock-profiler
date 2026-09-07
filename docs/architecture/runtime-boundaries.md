@@ -36,10 +36,10 @@ selected portfolio snapshot shown to the user and a complete activation snapshot
 that follows that confirmation; the latter retains the same complete account
 scope and selection and exactly binds the successor risk budget's effective
 instant. A synthetic risk-budget relaxation proof retains at least twenty
-consecutive normal-market sessions from one immutable calendar version,
+consecutive normal-market sessions from one immutable synthetic calendar map,
 including each session's ordinal and close time. It must be available before the
-user's renewed confirmation, cover that confirmation instant, and bind the
-successor's next monthly activation snapshot and cutoff. Invalid or timezone-less
+user's renewed confirmation, remain current at that confirmation, and bind the
+successor's next calendar-defined monthly activation snapshot and cutoff. Invalid or timezone-less
 governed cutoffs are rejected and audited before creating a Run. Reading a saved
 qualification outcome is historical replay, not a new grant or activation.
 

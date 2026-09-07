@@ -733,6 +733,104 @@ def test_risk_budget_relaxation_requires_one_immutable_market_calendar_version(
         )
 
 
+def test_risk_budget_relaxation_requires_a_known_market_calendar_version(
+    migrated_settings: Settings,
+) -> None:
+    proposal = relaxed_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id="synthetic-predecessor-authorization",
+    )
+    evidence = relaxation_evidence("synthetic-predecessor-authorization")
+    for session in evidence["normal_market_sessions"]:
+        session["market_calendar_version_id"] = "synthetic-market-calendar-v2"
+    command["confirmation"]["relaxation_evidence"] = evidence
+
+    with pytest.raises(ValueError, match="known immutable market calendar"):
+        run_frozen_decision_case(
+            migrated_settings,
+            portfolio_case_payload(
+                migrated_settings,
+                "relaxation-unknown-calendar",
+                command,
+            ),
+            clock=GovernanceClock("2042-06-17T16:01:00Z"),
+        )
+
+
+def test_risk_budget_relaxation_rejects_ordinals_outside_the_calendar(
+    migrated_settings: Settings,
+) -> None:
+    proposal = relaxed_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id="synthetic-predecessor-authorization",
+    )
+    evidence = relaxation_evidence("synthetic-predecessor-authorization")
+    for session in evidence["normal_market_sessions"]:
+        session["market_session_ordinal"] += 100
+    command["confirmation"]["relaxation_evidence"] = evidence
+
+    with pytest.raises(ValueError, match="immutable market calendar"):
+        run_frozen_decision_case(
+            migrated_settings,
+            portfolio_case_payload(
+                migrated_settings,
+                "relaxation-unmapped-market-ordinal",
+                command,
+            ),
+            clock=GovernanceClock("2042-06-17T16:01:00Z"),
+        )
+
+
+def test_risk_budget_relaxation_rejects_a_market_close_outside_the_calendar(
+    migrated_settings: Settings,
+) -> None:
+    proposal = relaxed_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id="synthetic-predecessor-authorization",
+    )
+    evidence = relaxation_evidence("synthetic-predecessor-authorization")
+    evidence["normal_market_sessions"][1]["closed_at"] = "2042-05-20T15:00:01Z"
+    command["confirmation"]["relaxation_evidence"] = evidence
+
+    with pytest.raises(ValueError, match="immutable market calendar"):
+        run_frozen_decision_case(
+            migrated_settings,
+            portfolio_case_payload(
+                migrated_settings,
+                "relaxation-unmapped-market-close",
+                command,
+            ),
+            clock=GovernanceClock("2042-06-17T16:01:00Z"),
+        )
+
+
+def test_risk_budget_relaxation_requires_the_next_calendar_monthly_cutoff(
+    migrated_settings: Settings,
+) -> None:
+    proposal = relaxed_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id="synthetic-predecessor-authorization",
+    )
+    evidence = relaxation_evidence("synthetic-predecessor-authorization")
+    evidence["monthly_selection_cutoff_at"] = "2042-06-18T16:00:00Z"
+    command["confirmation"]["relaxation_evidence"] = evidence
+
+    with pytest.raises(ValueError, match="next monthly selection cutoff"):
+        run_frozen_decision_case(
+            migrated_settings,
+            portfolio_case_payload(
+                migrated_settings,
+                "relaxation-wrong-monthly-cutoff",
+                command,
+            ),
+            clock=GovernanceClock("2042-06-17T16:01:00Z"),
+        )
+
+
 def test_risk_budget_relaxation_requires_reconfirmation_after_normal_evidence(
     migrated_settings: Settings,
 ) -> None:
@@ -795,7 +893,7 @@ def test_risk_budget_relaxation_requires_normal_evidence_through_reconfirmation(
     command = portfolio_confirmation_command(
         proposal,
         previous_authorization_id=original.decision_event_id,
-        confirmed_at="2042-06-16T16:00:00Z",
+        confirmed_at="2042-06-17T15:00:00Z",
     )
     command["confirmation"]["relaxation_evidence"] = relaxation_evidence(original.decision_event_id)
     payload = portfolio_case_payload(
@@ -816,6 +914,44 @@ def test_risk_budget_relaxation_requires_normal_evidence_through_reconfirmation(
     assert outcome is not None
     assert outcome.disposition == "DENIED"
     assert outcome.reasons == ("RISK_BUDGET_RELAXATION_EVIDENCE_INVALID",)
+
+
+def test_risk_budget_relaxation_allows_reconfirmation_after_the_final_normal_close(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "relaxation-post-close-original",
+            portfolio_confirmation_command(unobligated_portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = relaxed_portfolio_proposal()
+    command = portfolio_confirmation_command(
+        proposal,
+        previous_authorization_id=original.decision_event_id,
+        confirmed_at="2042-06-16T15:00:01Z",
+    )
+    command["confirmation"]["relaxation_evidence"] = relaxation_evidence(original.decision_event_id)
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "relaxation-post-close-confirmation",
+            command,
+        ),
+        clock=GovernanceClock("2042-06-17T16:01:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "APPROVED"
+    assert outcome.authorization is not None
 
 
 def test_risk_budget_relaxation_requires_normal_unobligated_monthly_handoff(
@@ -1336,6 +1472,29 @@ def test_forward_activation_snapshot_must_follow_user_confirmation(
         )
 
 
+def test_forward_authorization_requires_distinct_activation_snapshot_identity(
+    migrated_settings: Settings,
+) -> None:
+    proposal = next_portfolio_proposal()
+    activation = proposal["activation_snapshot"]
+    assert isinstance(activation, dict)
+    activation["snapshot_id"] = proposal["snapshot"]["snapshot_id"]
+
+    with pytest.raises(ValueError, match="distinct snapshot identity"):
+        run_frozen_decision_case(
+            migrated_settings,
+            portfolio_case_payload(
+                migrated_settings,
+                "forward-reused-activation-snapshot",
+                portfolio_confirmation_command(
+                    proposal,
+                    previous_authorization_id="synthetic-predecessor-authorization",
+                ),
+            ),
+            clock=GovernanceClock("2042-05-19T16:01:00Z"),
+        )
+
+
 def test_post_confirmation_activation_replaces_the_prior_authorization(
     migrated_settings: Settings,
 ) -> None:
@@ -1486,6 +1645,123 @@ def test_delayed_frozen_case_cannot_fork_a_later_portfolio_lineage(
     assert delayed_outcome is not None
     assert delayed_outcome.disposition == "DENIED"
     assert delayed_outcome.reasons == ("PORTFOLIO_LINEAGE_AFTER_CUTOFF",)
+
+
+def test_delayed_new_exposure_cannot_bypass_an_effective_tightened_successor(
+    migrated_settings: Settings,
+) -> None:
+    original_proposal = portfolio_proposal()
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "stale-use-original",
+            portfolio_confirmation_command(original_proposal),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    successor_proposal = scheduled_portfolio_proposal()
+    successor_proposal["risk_budget"]["concentration"].update(
+        target_ratio="0.12",
+        hard_ratio="0.18",
+    )
+    successor = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "stale-use-tightened-successor",
+            portfolio_confirmation_command(
+                successor_proposal,
+                previous_authorization_id=original.decision_event_id,
+            ),
+        ),
+        clock=GovernanceClock("2042-05-18T16:00:00Z"),
+    )
+    assert successor.report is not None
+    successor_outcome = successor.report.result.portfolio
+    assert successor_outcome is not None
+    assert successor_outcome.disposition == "APPROVED"
+
+    def use(requested_action: str) -> Any:
+        payload = portfolio_case_payload(
+            migrated_settings,
+            f"stale-use-{requested_action.lower()}",
+            {
+                "operation": "PORTFOLIO_USE",
+                "portfolio_id": original_proposal["portfolio_id"],
+                "authorization_id": original.decision_event_id,
+                "requested_action": requested_action,
+            },
+            account_ids=proposal_account_ids(original_proposal),
+        )
+        payload["knowledge_cutoff"] = "2042-05-17T16:00:00Z"
+        return run_frozen_decision_case(
+            migrated_settings,
+            payload,
+            clock=GovernanceClock("2042-05-19T16:01:00Z"),
+        )
+
+    blocked = use("NEW_EXPOSURE")
+    assert blocked.report is not None
+    blocked_outcome = blocked.report.result.portfolio
+    assert blocked_outcome is not None
+    assert blocked_outcome.disposition == "DENIED"
+    assert blocked_outcome.reasons == ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
+    assert blocked_outcome.usage is not None
+    assert (
+        blocked_outcome.usage.authorization_snapshot.authorization_id == original.decision_event_id
+    )
+
+    protected = use("DETERMINISTIC_PROTECTION")
+    assert protected.report is not None
+    protected_outcome = protected.report.result.portfolio
+    assert protected_outcome is not None
+    assert protected_outcome.disposition == "APPROVED"
+    assert protected_outcome.reasons == ("DETERMINISTIC_PROTECTION_RETAINED",)
+
+
+def test_unsupported_activation_account_type_blocks_forward_authorization(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "activation-type-original",
+            portfolio_confirmation_command(portfolio_proposal()),
+        ),
+        clock=GovernanceClock(),
+    )
+    assert original.report is not None
+    proposal = scheduled_portfolio_proposal()
+    activation = proposal["activation_snapshot"]
+    assert isinstance(activation, dict)
+    next(
+        account
+        for account in activation["accounts"]
+        if account["account_id"] == "synthetic-account-4017"
+    )["account_type"] = "SIMULATED_MARGIN"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        portfolio_case_payload(
+            migrated_settings,
+            "activation-type-unsupported",
+            portfolio_confirmation_command(
+                proposal,
+                previous_authorization_id=original.decision_event_id,
+            ),
+        ),
+        clock=GovernanceClock("2042-05-18T16:00:00Z"),
+    )
+
+    assert execution.report is not None
+    outcome = execution.report.result.portfolio
+    assert outcome is not None
+    assert outcome.disposition == "DENIED"
+    assert outcome.reasons == ("UNSUPPORTED_ACCOUNT_TYPE",)
+    assert outcome.authorization is None
 
 
 def test_insufficient_account_scope_cannot_reveal_another_authorization_snapshot(

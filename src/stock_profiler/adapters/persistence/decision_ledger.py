@@ -151,7 +151,7 @@ class DecisionLedger:
         access_scope: ResultAccessScope,
         portfolio_id: str,
     ) -> tuple[PortfolioAuthorizationOutcome, ...]:
-        """Read a trusted host-only lineage for stale-write rejection, never projection."""
+        """Read a trusted host-only lineage for stale revision/use rejection, never projection."""
         return tuple(
             portfolio
             for fact in self._original_event_facts(

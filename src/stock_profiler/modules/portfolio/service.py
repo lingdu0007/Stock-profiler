@@ -12,6 +12,7 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioPreviewCommand,
     PortfolioProposal,
     PortfolioUseCommand,
+    activation_block_reasons,
     confirmation_block_reasons,
     preview_for,
 )
@@ -38,6 +39,7 @@ def adjudicate(
             command,
             now=now,
             history=history,
+            lineage_history=lineage_history,
             access_account_ids=access_account_ids,
             business_prerequisite_met=business_prerequisite_met,
         )
@@ -67,7 +69,14 @@ def adjudicate(
             reasons=("BUSINESS_PREREQUISITE_NOT_MET",),
             preview=preview,
         )
-    reasons = confirmation_block_reasons(preview)
+    reasons = tuple(
+        dict.fromkeys(
+            (
+                *confirmation_block_reasons(preview),
+                *activation_block_reasons(command.proposal),
+            )
+        )
+    )
     current, history_reason = _current_authorization(
         lineage_history,
         command.proposal.portfolio_id,
@@ -134,6 +143,7 @@ def _adjudicate_use(
     *,
     now: datetime,
     history: tuple[PortfolioAuthorizationOutcome, ...],
+    lineage_history: tuple[PortfolioAuthorizationOutcome, ...],
     access_account_ids: tuple[str, ...],
     business_prerequisite_met: bool,
 ) -> PortfolioAuthorizationOutcome:
@@ -165,29 +175,47 @@ def _adjudicate_use(
         allowed = True
         reasons = ("DETERMINISTIC_PROTECTION_RETAINED",)
     else:
-        _, history_reason = _current_authorization(history, command.portfolio_id)
-        if history_reason is not None:
+        lineage_active, lineage_active_reason = _active_authorization(
+            lineage_history,
+            command.portfolio_id,
+            now,
+        )
+        if lineage_active_reason is not None:
             return PortfolioAuthorizationOutcome(
                 disposition="DENIED",
-                reasons=(history_reason,),
+                reasons=(lineage_active_reason,),
                 preview=preview,
             )
-        active, active_reason = _active_authorization(history, command.portfolio_id, now)
-        if active_reason is not None:
-            return PortfolioAuthorizationOutcome(
-                disposition="DENIED",
-                reasons=(active_reason,),
-                preview=preview,
-            )
-        if active is None or active.authorization_id != authorization.authorization_id:
+        if (
+            lineage_active is not None
+            and lineage_active.authorization_id != authorization.authorization_id
+        ):
             allowed = False
             reasons = ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
-        elif now >= authorization.proposal.risk_budget.expires_at:
-            allowed = False
-            reasons = ("RISK_BUDGET_EXPIRED",)
         else:
-            allowed = True
-            reasons = ("NEW_EXPOSURE_AUTHORIZED",)
+            _, history_reason = _current_authorization(history, command.portfolio_id)
+            if history_reason is not None:
+                return PortfolioAuthorizationOutcome(
+                    disposition="DENIED",
+                    reasons=(history_reason,),
+                    preview=preview,
+                )
+            active, active_reason = _active_authorization(history, command.portfolio_id, now)
+            if active_reason is not None:
+                return PortfolioAuthorizationOutcome(
+                    disposition="DENIED",
+                    reasons=(active_reason,),
+                    preview=preview,
+                )
+            if active is None or active.authorization_id != authorization.authorization_id:
+                allowed = False
+                reasons = ("CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",)
+            elif now >= authorization.proposal.risk_budget.expires_at:
+                allowed = False
+                reasons = ("RISK_BUDGET_EXPIRED",)
+            else:
+                allowed = True
+                reasons = ("NEW_EXPOSURE_AUTHORIZED",)
     return PortfolioAuthorizationOutcome(
         disposition="APPROVED" if allowed else "DENIED",
         reasons=reasons,
@@ -306,12 +334,12 @@ def _risk_budget_relaxation_reason(
         or evidence.predecessor_risk_budget_version_id != current.proposal.risk_budget.version_id
         or evidence.normal_from_at < current.proposal.risk_budget.effective_at
         or evidence.normal_through_at > current.proposal.risk_budget.expires_at
-        or evidence.normal_through_at != command.confirmation.confirmed_at
+        or evidence.normal_through_at > command.confirmation.confirmed_at
+        or not evidence.normal_window_is_current_at(command.confirmation.confirmed_at)
         or evidence.available_at > command.confirmation.confirmed_at
         or evidence.available_at > cutoff
         or command.proposal.activation_snapshot is None
-        or evidence.monthly_selection_cutoff_at
-        != command.proposal.activation_snapshot.cutoff_at
+        or evidence.monthly_selection_cutoff_at != command.proposal.activation_snapshot.cutoff_at
         or command.proposal.activation_snapshot.cutoff_at
         != command.proposal.risk_budget.effective_at
     ):

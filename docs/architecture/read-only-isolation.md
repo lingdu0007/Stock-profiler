@@ -36,9 +36,10 @@ positive evidence selects only the same saved owner, visibility, portfolio
 identity, and evidence available by the requesting case's frozen knowledge
 cutoff. A separate full same-owner, same-visibility, same-portfolio lineage
 read is permitted only inside the serialized host transaction as a negative
-stale-write guard: it can reject a delayed forward authorization that would
-fork a later lineage, but cannot positively authorize, preload, return, or
-project a later authorization or its account data. Before a portfolio use
+stale revision/use guard: it can reject a delayed forward authorization that
+would fork a later lineage, or a new-exposure request against an effective
+successor, but cannot positively authorize, preload, return, or project a
+later authorization or its account data. Before a portfolio use
 result can return a snapshot, preview, or unfinished obligation, the requesting
 frozen scope must cover every account represented by that returned data. Browser
 and model callers never receive either ledger lookup itself.
