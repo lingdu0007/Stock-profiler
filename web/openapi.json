@@ -1,6 +1,109 @@
 {
   "components": {
     "schemas": {
+      "AccountCashState": {
+        "additionalProperties": false,
+        "description": "Cash decomposition retained with the account that supplied it.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "frozen_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Cash"
+          },
+          "ledger_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ledger Cash"
+          },
+          "payable_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payable Cash"
+          },
+          "receivable_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receivable Cash"
+          },
+          "trading_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trading Cash"
+          },
+          "transferable_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transferable Cash"
+          }
+        },
+        "required": [
+          "account_id",
+          "account_type",
+          "currency",
+          "ledger_cash",
+          "trading_cash",
+          "transferable_cash",
+          "frozen_cash",
+          "receivable_cash",
+          "payable_cash"
+        ],
+        "title": "AccountCashState",
+        "type": "object"
+      },
       "AlertClosure": {
         "additionalProperties": false,
         "properties": {
@@ -120,6 +223,73 @@
         },
         "required": ["csrf_token"],
         "title": "AuthenticationVerificationDto",
+        "type": "object"
+      },
+      "AuthoritativeLedgerEntry": {
+        "additionalProperties": false,
+        "description": "An append-only ledger entry projected with its source account identity.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "cash_delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cash Delta",
+            "type": "string"
+          },
+          "cost_basis_delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Basis Delta",
+            "type": "string"
+          },
+          "entry_id": {
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "entry_type": {
+            "enum": ["FILL", "FEE", "TRANSFER_IN", "TRANSFER_OUT", "CORPORATE_ACTION"],
+            "title": "Entry Type",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "quantity_delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Delta",
+            "type": "string"
+          },
+          "security_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Id"
+          }
+        },
+        "required": [
+          "entry_id",
+          "entry_type",
+          "security_id",
+          "quantity_delta",
+          "cost_basis_delta",
+          "cash_delta",
+          "occurred_at",
+          "evidence",
+          "account_id"
+        ],
+        "title": "AuthoritativeLedgerEntry",
         "type": "object"
       },
       "BasisSubstitutionCheck": {
@@ -1044,6 +1214,16 @@
               }
             ]
           },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionReconciliationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -1422,6 +1602,43 @@
         },
         "required": ["disposition", "reasons"],
         "title": "GovernanceOutcome",
+        "type": "object"
+      },
+      "IssuerExposure": {
+        "additionalProperties": false,
+        "description": "Current issuer exposure aggregates market value only after account facts stay separate.",
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "current_market_exposure": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Market Exposure"
+          },
+          "issuer_id": {
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "valuation_currency": {
+            "title": "Valuation Currency",
+            "type": "string"
+          }
+        },
+        "required": ["issuer_id", "valuation_currency", "account_ids", "current_market_exposure"],
+        "title": "IssuerExposure",
         "type": "object"
       },
       "LegalTaskNode": {
@@ -1977,6 +2194,403 @@
         },
         "required": ["snapshot_id", "cutoff_at", "accounts", "selected_account_ids"],
         "title": "PortfolioSnapshot",
+        "type": "object"
+      },
+      "PositionActionUnit": {
+        "additionalProperties": false,
+        "description": "One account-local action quantity, never an issuer-level order instruction.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "broker_sellable_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Sellable Quantity"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "exact_quantity_status": {
+            "enum": ["AVAILABLE", "BLOCKED"],
+            "title": "Exact Quantity Status",
+            "type": "string"
+          },
+          "exact_statistical_action_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Statistical Action Quantity"
+          },
+          "frozen_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Quantity"
+          },
+          "issuer_id": {
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "open_sell_order_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Sell Order Quantity"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "restricted_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restricted Quantity"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "total_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Quantity"
+          },
+          "unsettled_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsettled Quantity"
+          }
+        },
+        "required": [
+          "account_id",
+          "account_type",
+          "currency",
+          "issuer_id",
+          "security_id",
+          "total_quantity",
+          "broker_sellable_quantity",
+          "unsettled_quantity",
+          "frozen_quantity",
+          "restricted_quantity",
+          "open_sell_order_quantity",
+          "exact_statistical_action_quantity",
+          "exact_quantity_status",
+          "reasons"
+        ],
+        "title": "PositionActionUnit",
+        "type": "object"
+      },
+      "PositionAffectedScope": {
+        "additionalProperties": false,
+        "description": "The account/security scope for a conflict and its statistical consequence.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "security_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Id"
+          }
+        },
+        "required": ["fields"],
+        "title": "PositionAffectedScope",
+        "type": "object"
+      },
+      "PositionEvidence": {
+        "additionalProperties": false,
+        "description": "Source provenance remains explicit even when an incomplete fact is retained.",
+        "properties": {
+          "business_effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Effective At"
+          },
+          "cutoff_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "locally_acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locally Acquired At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Observed At"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": [
+          "source",
+          "business_effective_at",
+          "source_observed_at",
+          "locally_acquired_at",
+          "validated_at",
+          "cutoff_at"
+        ],
+        "title": "PositionEvidence",
+        "type": "object"
+      },
+      "PositionEvidenceClock": {
+        "additionalProperties": false,
+        "description": "The source clock retained with a displayed position-state snapshot.",
+        "properties": {
+          "business_effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Effective At"
+          },
+          "locally_acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locally Acquired At"
+          },
+          "source_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Observed At"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": [
+          "business_effective_at",
+          "source_observed_at",
+          "locally_acquired_at",
+          "validated_at"
+        ],
+        "title": "PositionEvidenceClock",
+        "type": "object"
+      },
+      "PositionFactConflict": {
+        "additionalProperties": false,
+        "description": "An unreconciled source fact; it never selects one conflicting value.",
+        "properties": {
+          "affected_scope": {
+            "$ref": "#/components/schemas/PositionAffectedScope"
+          },
+          "blocks_exact_statistical_quantity": {
+            "title": "Blocks Exact Statistical Quantity",
+            "type": "boolean"
+          },
+          "code": {
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "conflict_id": {
+            "minLength": 1,
+            "title": "Conflict Id",
+            "type": "string"
+          }
+        },
+        "required": ["conflict_id", "code", "affected_scope", "blocks_exact_statistical_quantity"],
+        "title": "PositionFactConflict",
+        "type": "object"
+      },
+      "PositionReconciliationOutcome": {
+        "additionalProperties": false,
+        "description": "The host-owned result appended after a valid frozen framework output.",
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/PositionFactConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "disposition": {
+            "enum": ["RECONCILED", "CONFLICTED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/ReconciledPositionSnapshot"
+          }
+        },
+        "required": ["disposition", "reasons", "snapshot", "conflicts"],
+        "title": "PositionReconciliationOutcome",
         "type": "object"
       },
       "QualificationEvidence": {
@@ -2636,6 +3250,101 @@
         },
         "required": ["credential_id"],
         "title": "ReauthenticationVerificationDto",
+        "type": "object"
+      },
+      "ReconciledPositionSnapshot": {
+        "additionalProperties": false,
+        "description": "A read-only, same-cutoff result derived from broker facts and their ledgers.",
+        "properties": {
+          "action_units": {
+            "items": {
+              "$ref": "#/components/schemas/PositionActionUnit"
+            },
+            "title": "Action Units",
+            "type": "array"
+          },
+          "authoritative_ledger": {
+            "items": {
+              "$ref": "#/components/schemas/AuthoritativeLedgerEntry"
+            },
+            "title": "Authoritative Ledger",
+            "type": "array"
+          },
+          "cash_states": {
+            "items": {
+              "$ref": "#/components/schemas/AccountCashState"
+            },
+            "title": "Cash States",
+            "type": "array"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "evidence_clock": {
+            "$ref": "#/components/schemas/PositionEvidenceClock"
+          },
+          "issuer_exposures": {
+            "items": {
+              "$ref": "#/components/schemas/IssuerExposure"
+            },
+            "title": "Issuer Exposures",
+            "type": "array"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "snapshot_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Source"
+          },
+          "total_account_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Account Equity"
+          },
+          "user_annotations": {
+            "items": {
+              "$ref": "#/components/schemas/UserPositionAnnotation"
+            },
+            "title": "User Annotations",
+            "type": "array"
+          },
+          "valuation_currency": {
+            "title": "Valuation Currency",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "cutoff_at",
+          "valuation_currency",
+          "snapshot_source",
+          "evidence_clock",
+          "total_account_equity",
+          "action_units",
+          "issuer_exposures",
+          "cash_states",
+          "authoritative_ledger",
+          "user_annotations"
+        ],
+        "title": "ReconciledPositionSnapshot",
         "type": "object"
       },
       "RecordedAlertReplay": {
@@ -3298,6 +4007,7 @@
               "BUSINESS_DECISION",
               "QUALIFICATION",
               "PORTFOLIO_AUTHORIZATION",
+              "POSITION_RECONCILIATION",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -3521,6 +4231,64 @@
         },
         "required": ["kind", "idempotency_key"],
         "title": "UserFactRequest",
+        "type": "object"
+      },
+      "UserPositionAnnotation": {
+        "additionalProperties": false,
+        "description": "A user-supplied note retained separately from broker-authoritative records.",
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "annotation_id": {
+            "minLength": 1,
+            "title": "Annotation Id",
+            "type": "string"
+          },
+          "claimed_cost_basis": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed Cost Basis"
+          },
+          "claimed_total_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed Total Quantity"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "note": {
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["annotation_id", "account_id", "security_id", "note", "created_at"],
+        "title": "UserPositionAnnotation",
         "type": "object"
       },
       "VersionActivation": {
