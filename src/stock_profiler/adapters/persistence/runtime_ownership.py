@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from stock_profiler.bootstrap.settings import Settings
 
 METADATA = MetaData()
-APPLICATION_SCHEMA_REVISION = "0006_result_access_audit"
+APPLICATION_SCHEMA_REVISION = "0007_decision_event_sequence"
 HEARTBEAT_MAX_AGE = timedelta(seconds=90)
 HeartbeatStatus = Literal["missing", "ready", "stale"]
 HEARTBEATS = Table(

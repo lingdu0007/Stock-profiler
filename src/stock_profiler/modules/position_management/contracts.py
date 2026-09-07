@@ -103,8 +103,8 @@ class PositionEvidence(PositionContract):
 class CashState(PositionContract):
     """Broker cash facts remain decomposed instead of being collapsed into a balance."""
 
-    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS"]
-    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
+    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS", "UNKNOWN"]
+    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER", "UNKNOWN"]
     opening_ledger_cash: Decimal | None
     opening_ledger_cash_evidence: PositionEvidence
     ledger_cash: Decimal | None
@@ -169,7 +169,34 @@ class PositionLedgerEntry(PositionContract):
     cash_delta: Decimal
     occurred_at: AwareDatetime
     corrects_entry_id: str | None = None
+    correction_reason: str | None = None
     evidence: PositionEvidence
+
+    @model_validator(mode="after")
+    def validate_correction_reason(self) -> PositionLedgerEntry:
+        if self.corrects_entry_id is None and self.correction_reason is not None:
+            raise ValueError("correction_reason requires corrects_entry_id")
+        if self.corrects_entry_id is not None and (
+            self.correction_reason is None or not self.correction_reason.strip()
+        ):
+            raise ValueError("correction_reason is required when corrects_entry_id is present")
+        return self
+
+
+def ledger_entry_evidence_is_visible(
+    entry: PositionLedgerEntry,
+    cutoff_at: datetime,
+) -> bool:
+    """Return whether one ledger fact's own evidence is available by a cutoff."""
+    return (
+        entry.occurred_at <= cutoff_at
+        and not entry.evidence.problem_codes(
+            cutoff_at,
+            require_current_completeness=False,
+        )
+        and entry.evidence.source_observed_at is not None
+        and entry.evidence.source_observed_at >= entry.occurred_at
+    )
 
 
 class ExecutionRestriction(PositionContract):
@@ -318,8 +345,8 @@ class AccountCashState(PositionContract):
     account_evidence: PositionEvidence
     account_equity: Decimal | None
     account_equity_evidence: PositionEvidence
-    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS"]
-    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER"]
+    cash_availability_semantics: Literal["BROKER_FINAL_CASH_LAYERS", "UNKNOWN"]
+    ledger_cash_semantics: Literal["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER", "UNKNOWN"]
     opening_ledger_cash: Decimal | None
     opening_ledger_cash_evidence: PositionEvidence
     ledger_cash: Decimal | None

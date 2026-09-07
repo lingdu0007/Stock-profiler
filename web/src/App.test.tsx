@@ -110,6 +110,10 @@ describe("App", () => {
       complete_through_at: "2042-05-17T16:00:00Z",
       expires_at: null
     };
+    const openingCashEvidence = {
+      ...positionEvidence,
+      source: "synthetic-broker-4017-opening-cash"
+    };
     const positionReport = {
       ...report,
       result: {
@@ -170,7 +174,7 @@ describe("App", () => {
                 account_equity_evidence: positionEvidence,
                 ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
                 opening_ledger_cash: "902",
-                opening_ledger_cash_evidence: positionEvidence,
+                opening_ledger_cash_evidence: openingCashEvidence,
                 ledger_cash: "100",
                 trading_cash: "95",
                 transferable_cash: "90",
@@ -227,6 +231,8 @@ describe("App", () => {
                 cost_basis_delta: "890",
                 cash_delta: "-890",
                 occurred_at: "2042-05-16T15:00:00Z",
+                corrects_entry_id: "synthetic-prior-ledger-entry",
+                correction_reason: "Synthetic broker fee correction.",
                 evidence: {
                   source: "synthetic-broker-4017-fill",
                   business_effective_at: "2042-05-17T15:00:00Z",
@@ -295,6 +301,10 @@ describe("App", () => {
     expect(position).toHaveTextContent("synthetic-open-sell-4017");
     expect(position).toHaveTextContent("synthetic-account-wide-sell-block");
     expect(position).toHaveTextContent("Synthetic user note retains a different claimed quantity.");
+    expect(position).toHaveTextContent("opening ledger evidence");
+    expect(position).toHaveTextContent("synthetic-broker-4017-opening-cash");
+    expect(position).toHaveTextContent("corrects synthetic-prior-ledger-entry");
+    expect(position).toHaveTextContent("correction reason Synthetic broker fee correction.");
   });
 
   it("renders the confirmation and budget snapshot retained by a portfolio use", async () => {

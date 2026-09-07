@@ -231,9 +231,9 @@ export interface components {
             account_type: string;
             /**
              * Cash Availability Semantics
-             * @constant
+             * @enum {string}
              */
-            cash_availability_semantics: "BROKER_FINAL_CASH_LAYERS";
+            cash_availability_semantics: "BROKER_FINAL_CASH_LAYERS" | "UNKNOWN";
             cash_state_evidence: components["schemas"]["PositionEvidence"];
             /** Currency */
             currency: string;
@@ -243,9 +243,9 @@ export interface components {
             ledger_cash: string | null;
             /**
              * Ledger Cash Semantics
-             * @constant
+             * @enum {string}
              */
-            ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER";
+            ledger_cash_semantics: "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER" | "UNKNOWN";
             /** Opening Ledger Cash */
             opening_ledger_cash: string | null;
             opening_ledger_cash_evidence: components["schemas"]["PositionEvidence"];
@@ -366,6 +366,8 @@ export interface components {
             account_id: string;
             /** Cash Delta */
             cash_delta: string;
+            /** Correction Reason */
+            correction_reason?: string | null;
             /** Corrects Entry Id */
             corrects_entry_id?: string | null;
             /** Cost Basis Delta */

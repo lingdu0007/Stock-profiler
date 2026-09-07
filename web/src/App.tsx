@@ -526,6 +526,9 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 `payable ${displayValue(cash.payable_cash)}`,
                 `account evidence ${formatPositionEvidence(cash.account_evidence)}`,
                 `equity evidence ${formatPositionEvidence(cash.account_equity_evidence)}`,
+                `opening ledger evidence ${formatPositionEvidence(
+                  cash.opening_ledger_cash_evidence
+                )}`,
                 `cash evidence ${formatPositionEvidence(cash.cash_state_evidence)}`
               ].join(" | ")}
             />
@@ -586,6 +589,8 @@ function PositionSnapshotEvidence({ position }: { position: PositionReconciliati
                 `cost ${entry.cost_basis_delta}`,
                 `cash ${entry.cash_delta}`,
                 `occurred ${entry.occurred_at}`,
+                `corrects ${displayValue(entry.corrects_entry_id)}`,
+                `correction reason ${displayValue(entry.correction_reason)}`,
                 formatPositionEvidence(entry.evidence)
               ].join(" | ")}
             />

@@ -553,6 +553,11 @@ def _commit_framework_result(
                         execution_case.access_scope,
                         execution_case.position.cutoff_at,
                     ),
+                    prior_cash_states=ledger.position_cash_history(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.position.cutoff_at,
+                    ),
                 )
                 result = result.model_copy(update={"position": position})
                 position_result = StageResult(

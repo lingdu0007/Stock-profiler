@@ -32,7 +32,7 @@
             "type": "string"
           },
           "cash_availability_semantics": {
-            "const": "BROKER_FINAL_CASH_LAYERS",
+            "enum": ["BROKER_FINAL_CASH_LAYERS", "UNKNOWN"],
             "title": "Cash Availability Semantics",
             "type": "string"
           },
@@ -68,7 +68,7 @@
             "title": "Ledger Cash"
           },
           "ledger_cash_semantics": {
-            "const": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+            "enum": ["OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER", "UNKNOWN"],
             "title": "Ledger Cash Semantics",
             "type": "string"
           },
@@ -406,6 +406,17 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Cash Delta",
             "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
           },
           "corrects_entry_id": {
             "anyOf": [

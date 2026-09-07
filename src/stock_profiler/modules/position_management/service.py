@@ -23,9 +23,11 @@ from stock_profiler.modules.position_management.contracts import (
     PositionAffectedScope,
     PositionEvidence,
     PositionFactConflict,
+    PositionLedgerEntry,
     PositionReconciliationOutcome,
     PositionSnapshotCommand,
     ReconciledPositionSnapshot,
+    ledger_entry_evidence_is_visible,
 )
 
 _RECONCILIATION_DECIMAL_CONTEXT = Context(prec=34, rounding=ROUND_HALF_EVEN)
@@ -51,15 +53,17 @@ def reconcile(
     command: PositionSnapshotCommand,
     *,
     prior_ledger: tuple[AuthoritativeLedgerEntry, ...] = (),
+    prior_cash_states: tuple[AccountCashState, ...] = (),
 ) -> PositionReconciliationOutcome:
     """Evaluate a frozen snapshot under the host's fixed decimal contract."""
     with localcontext(_RECONCILIATION_DECIMAL_CONTEXT):
-        return _reconcile(command, prior_ledger)
+        return _reconcile(command, prior_ledger, prior_cash_states)
 
 
 def _reconcile(
     command: PositionSnapshotCommand,
     prior_ledger: tuple[AuthoritativeLedgerEntry, ...],
+    prior_cash_states: tuple[AccountCashState, ...],
 ) -> PositionReconciliationOutcome:
     """Retain conflicts and expose exact quantities only from complete broker facts."""
     conflicts: list[PositionFactConflict] = []
@@ -79,21 +83,20 @@ def _reconcile(
         blocks_current_valuation: bool = False,
     ) -> None:
         key = (account_id, security_id, code, fields)
-        if key in conflict_keys:
-            return
-        conflict_keys.add(key)
-        conflicts.append(
-            PositionFactConflict(
-                conflict_id=_conflict_id(account_id, security_id, code, fields),
-                code=code,
-                affected_scope=PositionAffectedScope(
-                    account_id=account_id,
-                    security_id=security_id,
-                    fields=fields,
-                ),
-                blocks_exact_statistical_quantity=blocks_exact_statistical_quantity,
+        if key not in conflict_keys:
+            conflict_keys.add(key)
+            conflicts.append(
+                PositionFactConflict(
+                    conflict_id=_conflict_id(account_id, security_id, code, fields),
+                    code=code,
+                    affected_scope=PositionAffectedScope(
+                        account_id=account_id,
+                        security_id=security_id,
+                        fields=fields,
+                    ),
+                    blocks_exact_statistical_quantity=blocks_exact_statistical_quantity,
+                )
             )
-        )
         if blocks_exact_statistical_quantity:
             _append_unique(blocking[(account_id, security_id)], code)
             if portfolio_dependency:
@@ -101,16 +104,18 @@ def _reconcile(
         if blocks_current_valuation:
             _append_unique(valuation[(account_id, security_id)], code)
 
-    _record_evidence(
-        command.snapshot_evidence,
-        command.cutoff_at,
-        record,
-        account_id=None,
-        security_id=None,
-        fields=("snapshot_evidence",),
-        blocks=True,
-        current=True,
-        portfolio=True,
+    has_incomplete_account_manifest = bool(
+        _record_evidence(
+            command.snapshot_evidence,
+            command.cutoff_at,
+            record,
+            account_id=None,
+            security_id=None,
+            fields=("snapshot_evidence",),
+            blocks=True,
+            current=True,
+            portfolio=True,
+        )
     )
 
     equities: list[Decimal | None] = []
@@ -127,11 +132,17 @@ def _reconcile(
     prior_entries: dict[tuple[str, str], AuthoritativeLedgerEntry] = {}
     for entry in prior_ledger:
         prior_entries.setdefault((entry.account_id, entry.entry_id), entry)
+    prior_cash_by_account: dict[str, AccountCashState] = {}
+    for cash_state in prior_cash_states:
+        prior_cash_by_account.setdefault(cash_state.account_id, cash_state)
 
     for account in command.accounts:
         cash = account.cash_state
         equities.append(account.account_equity)
-        _record_account_problems(account, command.cutoff_at, record)
+        has_incomplete_account_manifest = (
+            _record_account_problems(account, command.cutoff_at, record)
+            or has_incomplete_account_manifest
+        )
         cash_states.append(
             AccountCashState(
                 account_id=account.account_id,
@@ -161,15 +172,44 @@ def _reconcile(
             AccountExecutionRestriction(account_id=account.account_id, **restriction.model_dump())
             for restriction in account.execution_restrictions
         )
-        _record_ledger_history_conflicts(account, prior_entries, record)
+        _record_opening_ledger_cash_history_conflicts(
+            account,
+            prior_cash_by_account.get(account.account_id),
+            record,
+        )
+        unresolved_correction_security_ids = _record_ledger_history_conflicts(
+            account,
+            prior_entries,
+            command.cutoff_at,
+            record,
+        )
 
-        ledger_by_security, ledger_cash_delta = _reconstruct_ledger(
+        (
+            ledger_by_security,
+            ledger_cash_delta,
+            unresolved_ledger_security_ids,
+        ) = _reconstruct_ledger(
             account,
             command.cutoff_at,
             record,
             ledger_output,
+            unresolved_security_ids=unresolved_correction_security_ids,
         )
-        sell_orders, buy_reserves = _reconcile_orders(account, command.cutoff_at, record)
+        for security_id in sorted(unresolved_correction_security_ids):
+            record(
+                account_id=account.account_id,
+                security_id=security_id,
+                code="LEDGER_CORRECTION_LINEAGE_UNRESOLVED",
+                fields=("ledger_entries.corrects_entry_id", "ledger_entries.evidence"),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+                blocks_current_valuation=True,
+            )
+        sell_orders, buy_reserves, sell_order_security_ids = _reconcile_orders(
+            account,
+            command.cutoff_at,
+            record,
+        )
         _record_buy_reserve(account, buy_reserves, record)
         for restriction in account.execution_restrictions:
             evidence_codes = _record_evidence(
@@ -206,12 +246,13 @@ def _reconcile(
                 for security_id, (quantity, cost) in ledger_by_security.items()
                 if quantity != 0 or cost != 0
             }
-            | set(sell_orders)
+            | sell_order_security_ids
             | {
                 restriction.security_id
                 for restriction in account.execution_restrictions
                 if restriction.active and restriction.security_id is not None
             }
+            | unresolved_ledger_security_ids
         )
         for security_id in sorted(summary_required - position_security_ids):
             record(
@@ -235,6 +276,7 @@ def _reconcile(
                 code="SECURITY_ISSUER_IDENTITY_CONFLICT",
                 fields=("positions.security_id", "positions.issuer_id"),
                 blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
                 blocks_current_valuation=True,
             )
             conflicting_security_ids.add(security_id)
@@ -255,11 +297,28 @@ def _reconcile(
         blocking,
         portfolio_blocking,
     )
+    has_unresolved_holding_coverage = any(
+        conflict.code
+        in {
+            "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS",
+            "LEDGER_ENTRY_SECURITY_ID_MISSING",
+            "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS",
+            "LEDGER_CORRECTION_SELF_REFERENCE",
+            "LEDGER_CORRECTION_TARGET_MISSING",
+            "LEDGER_CORRECTION_CYCLE",
+            "LEDGER_CORRECTION_EVIDENCE_PRECEDES_TARGET",
+        }
+        for conflict in conflicts
+    )
     issuer_exposures = _project_exposures(
         position_rows,
         command.valuation_currency,
         valuation,
-        missing_summary_security_ids,
+        (
+            bool(missing_summary_security_ids)
+            or has_incomplete_account_manifest
+            or has_unresolved_holding_coverage
+        ),
         conflicting_security_ids,
     )
     snapshot = ReconciledPositionSnapshot(
@@ -269,7 +328,9 @@ def _reconcile(
         snapshot_source=command.snapshot_evidence.source,
         evidence_clock=command.snapshot_evidence.clock,
         snapshot_evidence=command.snapshot_evidence,
-        total_account_equity=_sum_if_complete(tuple(equities)),
+        total_account_equity=(
+            _sum_if_complete(tuple(equities)) if not portfolio_blocking else None
+        ),
         action_units=action_units,
         issuer_exposures=issuer_exposures,
         cash_states=tuple(cash_states),
@@ -297,9 +358,27 @@ def _record_account_problems(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
     record: ConflictRecorder,
-) -> None:
+) -> bool:
     cash = account.cash_state
-    _record_evidence(
+    if cash.cash_availability_semantics == "UNKNOWN":
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="CASH_AVAILABILITY_SEMANTICS_UNKNOWN",
+            fields=("cash_state.cash_availability_semantics",),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
+    if cash.ledger_cash_semantics == "UNKNOWN":
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="LEDGER_CASH_SEMANTICS_UNKNOWN",
+            fields=("cash_state.ledger_cash_semantics",),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
+    snapshot_evidence_codes = _record_evidence(
         account.snapshot_evidence,
         cutoff_at,
         record,
@@ -371,22 +450,48 @@ def _record_account_problems(
         current=True,
         portfolio=True,
     )
+    return bool(snapshot_evidence_codes)
 
 
 def _record_ledger_history_conflicts(
     account: AccountPositionSnapshot,
     prior_entries: dict[tuple[str, str], AuthoritativeLedgerEntry],
+    cutoff_at: datetime,
     record: ConflictRecorder,
-) -> None:
+) -> set[str]:
     current_entry_ids = {entry.entry_id for entry in account.ledger_entries}
-    correction_targets = {
-        entry_id: entry.corrects_entry_id
+    current_entries_by_id: dict[str, list[PositionLedgerEntry]] = defaultdict(list)
+    for entry in account.ledger_entries:
+        current_entries_by_id[entry.entry_id].append(entry)
+    entries_by_id: dict[
+        str,
+        tuple[AuthoritativeLedgerEntry | PositionLedgerEntry, ...],
+    ] = {
+        entry_id: (entry,)
         for (prior_account_id, entry_id), entry in prior_entries.items()
-        if prior_account_id == account.account_id
+        if (prior_account_id == account.account_id and entry_id not in current_entries_by_id)
     }
-    correction_targets.update(
-        {entry.entry_id: entry.corrects_entry_id for entry in account.ledger_entries}
+    entries_by_id.update(
+        {entry_id: tuple(entries) for entry_id, entries in current_entries_by_id.items()}
     )
+    correction_targets = {
+        entry_id: entries[0].corrects_entry_id
+        for entry_id, entries in entries_by_id.items()
+        if len(entries) == 1
+    }
+    unresolved_correction_security_ids = {
+        entry.security_id
+        for entry in account.ledger_entries
+        if (
+            entry.security_id is not None
+            and entry.corrects_entry_id is not None
+            and _correction_lineage_is_invalid(
+                entry,
+                entries_by_id,
+                cutoff_at,
+            )
+        )
+    }
     for (prior_account_id, prior_entry_id), historical_entry in prior_entries.items():
         if prior_account_id == account.account_id and prior_entry_id not in current_entry_ids:
             record(
@@ -428,29 +533,81 @@ def _record_ledger_history_conflicts(
                     portfolio_dependency=True,
                     blocks_current_valuation=entry.security_id is not None,
                 )
-            elif (
-                entry.corrects_entry_id not in current_entry_ids
-                and (account.account_id, entry.corrects_entry_id) not in prior_entries
-            ):
-                record(
-                    account_id=account.account_id,
-                    security_id=entry.security_id,
-                    code="LEDGER_CORRECTION_TARGET_MISSING",
-                    fields=("ledger_entries.corrects_entry_id",),
-                    blocks_exact_statistical_quantity=True,
-                    portfolio_dependency=True,
-                    blocks_current_valuation=entry.security_id is not None,
-                )
-            elif _has_correction_cycle(entry.entry_id, correction_targets):
-                record(
-                    account_id=account.account_id,
-                    security_id=entry.security_id,
-                    code="LEDGER_CORRECTION_CYCLE",
-                    fields=("ledger_entries.corrects_entry_id",),
-                    blocks_exact_statistical_quantity=True,
-                    portfolio_dependency=True,
-                    blocks_current_valuation=entry.security_id is not None,
-                )
+            else:
+                target_entries = entries_by_id.get(entry.corrects_entry_id, ())
+                if not target_entries:
+                    record(
+                        account_id=account.account_id,
+                        security_id=entry.security_id,
+                        code="LEDGER_CORRECTION_TARGET_MISSING",
+                        fields=("ledger_entries.corrects_entry_id",),
+                        blocks_exact_statistical_quantity=True,
+                        portfolio_dependency=True,
+                        blocks_current_valuation=entry.security_id is not None,
+                    )
+                elif len(target_entries) != 1:
+                    record(
+                        account_id=account.account_id,
+                        security_id=entry.security_id,
+                        code="LEDGER_CORRECTION_TARGET_AMBIGUOUS",
+                        fields=(
+                            "ledger_entries.entry_id",
+                            "ledger_entries.corrects_entry_id",
+                        ),
+                        blocks_exact_statistical_quantity=True,
+                        portfolio_dependency=True,
+                        blocks_current_valuation=entry.security_id is not None,
+                    )
+                elif _has_correction_cycle(entry.entry_id, correction_targets):
+                    record(
+                        account_id=account.account_id,
+                        security_id=entry.security_id,
+                        code="LEDGER_CORRECTION_CYCLE",
+                        fields=("ledger_entries.corrects_entry_id",),
+                        blocks_exact_statistical_quantity=True,
+                        portfolio_dependency=True,
+                        blocks_current_valuation=entry.security_id is not None,
+                    )
+                else:
+                    target = target_entries[0]
+                    if (
+                        entry.evidence.source_observed_at is None
+                        or entry.evidence.source_observed_at < target.occurred_at
+                    ):
+                        security_id = entry.security_id or target.security_id
+                        record(
+                            account_id=account.account_id,
+                            security_id=security_id,
+                            code="LEDGER_CORRECTION_EVIDENCE_PRECEDES_TARGET",
+                            fields=(
+                                "ledger_entries.corrects_entry_id",
+                                "ledger_entries.evidence.source_observed_at",
+                                "ledger_entries.occurred_at",
+                            ),
+                            blocks_exact_statistical_quantity=True,
+                            portfolio_dependency=True,
+                            blocks_current_valuation=security_id is not None,
+                        )
+    return unresolved_correction_security_ids
+
+
+def _record_opening_ledger_cash_history_conflicts(
+    account: AccountPositionSnapshot,
+    prior_cash_state: AccountCashState | None,
+    record: ConflictRecorder,
+) -> None:
+    if (
+        prior_cash_state is not None
+        and prior_cash_state.opening_ledger_cash != account.cash_state.opening_ledger_cash
+    ):
+        record(
+            account_id=account.account_id,
+            security_id=None,
+            code="OPENING_LEDGER_CASH_MUTATED_ACROSS_SNAPSHOTS",
+            fields=("cash_state.opening_ledger_cash",),
+            blocks_exact_statistical_quantity=True,
+            portfolio_dependency=True,
+        )
 
 
 def _has_correction_cycle(
@@ -467,30 +624,78 @@ def _has_correction_cycle(
     return False
 
 
+def _correction_lineage_is_invalid(
+    entry: AuthoritativeLedgerEntry | PositionLedgerEntry,
+    entries_by_id: dict[
+        str,
+        tuple[AuthoritativeLedgerEntry | PositionLedgerEntry, ...],
+    ],
+    cutoff_at: datetime,
+    lineage: frozenset[str] = frozenset(),
+) -> bool:
+    if (
+        entry.entry_id in lineage
+        or len(entries_by_id.get(entry.entry_id, ())) != 1
+        or not ledger_entry_evidence_is_visible(entry, cutoff_at)
+    ):
+        return True
+    target_id = entry.corrects_entry_id
+    if target_id is None:
+        return False
+    if target_id == entry.entry_id:
+        return True
+    target_entries = entries_by_id.get(target_id, ())
+    if len(target_entries) != 1:
+        return True
+    target = target_entries[0]
+    observed_at = entry.evidence.source_observed_at
+    assert observed_at is not None
+    if observed_at < target.occurred_at:
+        return True
+    return _correction_lineage_is_invalid(
+        target,
+        entries_by_id,
+        cutoff_at,
+        lineage | {entry.entry_id},
+    )
+
+
 def _reconstruct_ledger(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
     record: ConflictRecorder,
     output: list[AuthoritativeLedgerEntry],
-) -> tuple[dict[str, tuple[Decimal, Decimal]], Decimal | None]:
+    *,
+    unresolved_security_ids: set[str],
+) -> tuple[dict[str, tuple[Decimal, Decimal]], Decimal | None, set[str]]:
     entries_by_security: dict[str, list[tuple[Decimal, Decimal]]] = defaultdict(list)
     cash_deltas: list[Decimal] = []
     cash_complete = True
-    seen_ids: set[str] = set()
+    unresolved_security_ids = set(unresolved_security_ids)
+    entries_by_id: dict[str, list[PositionLedgerEntry]] = defaultdict(list)
     for entry in account.ledger_entries:
-        output.append(AuthoritativeLedgerEntry(account_id=account.account_id, **entry.model_dump()))
-        if entry.entry_id in seen_ids:
+        entries_by_id[entry.entry_id].append(entry)
+    for duplicate_entries in entries_by_id.values():
+        if len(duplicate_entries) < 2:
+            continue
+        for security_id in sorted(
+            {entry.security_id for entry in duplicate_entries},
+            key=lambda value: (value is not None, value or ""),
+        ):
             record(
                 account_id=account.account_id,
-                security_id=entry.security_id,
+                security_id=security_id,
                 code="LEDGER_ENTRY_ID_DUPLICATED",
                 fields=("ledger_entries.entry_id",),
                 blocks_exact_statistical_quantity=True,
                 portfolio_dependency=True,
-                blocks_current_valuation=entry.security_id is not None,
+                blocks_current_valuation=security_id is not None,
             )
-            cash_complete = False
-        seen_ids.add(entry.entry_id)
+            if security_id is not None:
+                unresolved_security_ids.add(security_id)
+        cash_complete = False
+    for entry in account.ledger_entries:
+        output.append(AuthoritativeLedgerEntry(account_id=account.account_id, **entry.model_dump()))
         if entry.occurred_at > cutoff_at:
             record(
                 account_id=account.account_id,
@@ -502,6 +707,8 @@ def _reconstruct_ledger(
                 blocks_current_valuation=entry.security_id is not None,
             )
             cash_complete = False
+            if entry.security_id is not None:
+                unresolved_security_ids.add(entry.security_id)
             continue
         evidence_codes = _record_evidence(
             entry.evidence,
@@ -517,6 +724,8 @@ def _reconstruct_ledger(
         )
         if evidence_codes:
             cash_complete = False
+            if entry.security_id is not None:
+                unresolved_security_ids.add(entry.security_id)
         if (
             entry.evidence.source_observed_at is not None
             and entry.evidence.source_observed_at < entry.occurred_at
@@ -534,6 +743,27 @@ def _reconstruct_ledger(
                 blocks_current_valuation=entry.security_id is not None,
             )
             cash_complete = False
+            if entry.security_id is not None:
+                unresolved_security_ids.add(entry.security_id)
+        if entry.security_id is None and (
+            entry.entry_type in {"FILL", "CORPORATE_ACTION"}
+            or entry.quantity_delta != 0
+            or entry.cost_basis_delta != 0
+        ):
+            record(
+                account_id=account.account_id,
+                security_id=None,
+                code="LEDGER_ENTRY_SECURITY_ID_MISSING",
+                fields=(
+                    "ledger_entries.entry_type",
+                    "ledger_entries.security_id",
+                    "ledger_entries.quantity_delta",
+                    "ledger_entries.cost_basis_delta",
+                ),
+                blocks_exact_statistical_quantity=True,
+                portfolio_dependency=True,
+            )
+            cash_complete = False
         cash_deltas.append(entry.cash_delta)
         if entry.security_id is not None:
             entries_by_security[entry.security_id].append(
@@ -548,6 +778,7 @@ def _reconstruct_ledger(
             for security_id, entries in entries_by_security.items()
         },
         sum(cash_deltas, Decimal("0")) if cash_complete else None,
+        unresolved_security_ids,
     )
 
 
@@ -555,10 +786,13 @@ def _reconcile_orders(
     account: AccountPositionSnapshot,
     cutoff_at: datetime,
     record: ConflictRecorder,
-) -> tuple[dict[str, Decimal | None], Decimal | None]:
+) -> tuple[dict[str, Decimal | None], Decimal | None, set[str]]:
     sell_quantities: dict[str, list[Decimal | None]] = defaultdict(list)
     buy_reserves: list[Decimal | None] = []
     orders_by_id: dict[str, OpenOrder] = {}
+    sell_order_security_ids = {
+        order.security_id for order in account.open_orders if order.side == "SELL"
+    }
     for order in account.open_orders:
         prior_order = orders_by_id.get(order.order_id)
         if prior_order is not None:
@@ -648,6 +882,7 @@ def _reconcile_orders(
             for security_id, values in sell_quantities.items()
         },
         _sum_if_complete(tuple(buy_reserves)),
+        sell_order_security_ids,
     )
 
 
@@ -1067,7 +1302,7 @@ def _project_exposures(
     rows: list[tuple[AccountPositionSnapshot, BrokerPositionFact]],
     currency: str,
     valuation: dict[tuple[str | None, str | None], list[str]],
-    missing_summary_security_ids: set[str],
+    has_missing_position_summary: bool,
     conflicting_security_ids: set[str],
 ) -> tuple[IssuerExposure, ...]:
     issuer_rows: dict[str, list[tuple[str, BrokerPositionFact]]] = defaultdict(list)
@@ -1075,8 +1310,8 @@ def _project_exposures(
     for account, position in rows:
         issuer_rows[position.issuer_id].append((account.account_id, position))
         if (
-            position.security_id in conflicting_security_ids
-            or position.security_id in missing_summary_security_ids
+            has_missing_position_summary
+            or position.security_id in conflicting_security_ids
             or _scoped_reasons(valuation, account.account_id, position.security_id)
         ):
             invalid_issuers.add(position.issuer_id)

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from stock_profiler.bootstrap.decision_cases import get_formal_report, run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
@@ -18,6 +19,7 @@ from stock_profiler.modules.decision_cases.domain import (
     load_frozen_decision_case,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
+from stock_profiler.modules.position_management import history as position_history
 from stock_profiler.modules.position_management.contracts import PositionSnapshotCommand
 from stock_profiler.modules.position_management.service import reconcile
 
@@ -678,7 +680,8 @@ def test_position_snapshot_rejects_impossible_quantities_and_negative_valuations
 def test_position_snapshot_rejects_conflicting_security_issuer_identity(
     migrated_settings: Settings,
 ) -> None:
-    command = position_snapshot_command()
+    command = position_snapshot_with_later_security("ORBITAL-SECONDARY-4017")
+    command["accounts"][0]["positions"][-1]["issuer_id"] = "FICTIONAL-ORBITAL-MOSAIC"
     command["accounts"][1]["positions"][0]["issuer_id"] = "FICTIONAL-CONFLICTING-ISSUER"
     payload = position_case_payload(migrated_settings, "issuer-identity-conflict", command)
 
@@ -699,6 +702,14 @@ def test_position_snapshot_rejects_conflicting_security_issuer_identity(
         unit.exact_statistical_action_quantity is None
         and "SECURITY_ISSUER_IDENTITY_CONFLICT" in unit.reasons
         for unit in outcome.snapshot.action_units
+    )
+    assert (
+        next(
+            unit
+            for unit in outcome.snapshot.action_units
+            if unit.security_id == "ORBITAL-SECONDARY-4017"
+        ).exact_statistical_action_quantity
+        is None
     )
 
 
@@ -878,6 +889,755 @@ def test_position_snapshot_rejects_mutated_historical_ledger_entry(
     assert restored.report.result.position.disposition == "RECONCILED"
 
 
+def test_position_snapshot_preserves_independent_ledger_history_beside_duplicate_entries(
+    migrated_settings: Settings,
+) -> None:
+    duplicate = position_snapshot_command()
+    duplicate["accounts"][0]["ledger_entries"].append(
+        deepcopy(duplicate["accounts"][0]["ledger_entries"][2])
+    )
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "duplicate-cash-entry-with-independent-ledger-fact",
+            duplicate,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert "LEDGER_ENTRY_ID_DUPLICATED" in {
+        conflict.code for conflict in first.report.result.position.conflicts
+    }
+
+    mutated = position_snapshot_command()
+    mutated["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    mutated["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "mutated-ledger-after-unrelated-duplicate",
+            mutated,
+        ),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_preserves_canonical_ledger_variants_for_each_cutoff(
+    migrated_settings: Settings,
+) -> None:
+    def snapshot_at(cutoff_at: str) -> dict[str, Any]:
+        command = position_snapshot_command()
+        command["snapshot_id"] = f"synthetic-position-snapshot-{cutoff_at.partition('T')[0]}"
+        command["cutoff_at"] = cutoff_at
+        refresh_current_position_evidence(command, cutoff_at)
+        for account in command["accounts"]:
+            for entry in account["ledger_entries"]:
+                entry["evidence"] = position_evidence(
+                    entry["evidence"]["source"],
+                    cutoff_at=cutoff_at,
+                )
+        return command
+
+    for cutoff_at in (
+        "2042-05-20T16:00:00Z",
+        "2042-05-18T16:00:00Z",
+        "2042-05-17T16:00:00Z",
+    ):
+        execution = run_frozen_decision_case(
+            migrated_settings,
+            position_case_payload(
+                migrated_settings,
+                f"canonical-ledger-variant-{cutoff_at.partition('T')[0]}",
+                snapshot_at(cutoff_at),
+            ),
+        )
+        assert execution.report is not None
+        assert execution.report.result.position is not None
+        assert execution.report.result.position.disposition == "RECONCILED"
+
+    replacement = snapshot_at("2042-05-17T16:00:00Z")
+    replacement["accounts"][0]["ledger_entries"] = [
+        entry
+        for entry in replacement["accounts"][0]["ledger_entries"]
+        if entry["entry_id"] != "synthetic-fill-4017-xqz"
+    ]
+    rejected = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "canonical-ledger-variant-rejected-may17-replacement",
+            replacement,
+        ),
+    )
+    assert rejected.report is not None
+    assert rejected.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in rejected.report.result.position.conflicts
+    }
+
+    later = snapshot_at("2042-05-19T16:00:00Z")
+    for account in later["accounts"]:
+        for entry in account["ledger_entries"]:
+            entry["evidence"] = position_evidence(
+                entry["evidence"]["source"],
+                cutoff_at="2042-05-18T16:00:00Z",
+            )
+    replay = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "canonical-ledger-variant-may19-replay",
+            later,
+        ),
+    )
+
+    assert replay.report is not None
+    assert replay.report.result.position is not None
+    assert replay.report.result.position.disposition == "RECONCILED"
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" not in {
+        conflict.code for conflict in replay.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_rejects_additions_after_an_intermediate_cutoff_mutation(
+    migrated_settings: Settings,
+) -> None:
+    def snapshot_at(cutoff_at: str) -> dict[str, Any]:
+        command = position_snapshot_command()
+        command["snapshot_id"] = f"synthetic-position-snapshot-{cutoff_at.partition('T')[0]}"
+        command["cutoff_at"] = cutoff_at
+        refresh_current_position_evidence(command, cutoff_at)
+        for account in command["accounts"]:
+            for entry in account["ledger_entries"]:
+                entry["evidence"] = position_evidence(
+                    entry["evidence"]["source"],
+                    cutoff_at=cutoff_at,
+                )
+        return command
+
+    for cutoff_at in ("2042-05-20T16:00:00Z", "2042-05-18T16:00:00Z"):
+        execution = run_frozen_decision_case(
+            migrated_settings,
+            position_case_payload(
+                migrated_settings,
+                f"intermediate-ledger-variant-{cutoff_at.partition('T')[0]}",
+                snapshot_at(cutoff_at),
+            ),
+        )
+        assert execution.report is not None
+        assert execution.report.result.position is not None
+        assert execution.report.result.position.disposition == "RECONCILED"
+
+    rejected_command = snapshot_at("2042-05-18T16:00:00Z")
+    rejected_command["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    rejected_command["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    rejected_command["accounts"][0]["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-rejected-intermediate-addition",
+            "entry_type": "TRANSFER_IN",
+            "security_id": None,
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "evidence": position_evidence(
+                "synthetic-rejected-intermediate-addition",
+                cutoff_at="2042-05-18T16:00:00Z",
+            ),
+        }
+    )
+    rejected = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "intermediate-ledger-rejected-mutation",
+            rejected_command,
+        ),
+    )
+    assert rejected.report is not None
+    assert rejected.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in rejected.report.result.position.conflicts
+    }
+
+    replay_command = snapshot_at("2042-05-21T16:00:00Z")
+    for account in replay_command["accounts"]:
+        for entry in account["ledger_entries"]:
+            entry["evidence"] = position_evidence(
+                entry["evidence"]["source"],
+                cutoff_at="2042-05-20T16:00:00Z",
+            )
+    replay = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "intermediate-ledger-may21-replay",
+            replay_command,
+        ),
+    )
+
+    assert replay.report is not None
+    assert replay.report.result.position is not None
+    assert replay.report.result.position.disposition == "RECONCILED"
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" not in {
+        conflict.code for conflict in replay.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_preserves_earlier_ledger_evidence_from_a_later_snapshot(
+    migrated_settings: Settings,
+) -> None:
+    later = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "later-snapshot-first",
+            position_snapshot_with_later_security("FUTURE-ONLY-4017"),
+        ),
+    )
+    assert later.report is not None
+    assert later.report.result.position is not None
+    assert later.report.result.position.disposition == "RECONCILED"
+
+    backdated_mutation = position_snapshot_command()
+    backdated_mutation["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    backdated_mutation["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    earlier = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "earlier-snapshot-mutated",
+            backdated_mutation,
+        ),
+    )
+
+    assert earlier.report is not None
+    assert earlier.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in earlier.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_detects_backdated_ledger_mutation_after_future_fact(
+    migrated_settings: Settings,
+) -> None:
+    future_command = position_snapshot_with_later_security("FUTURE-INVISIBLE-LEDGER-4017")
+    for account in future_command["accounts"]:
+        for entry in account["ledger_entries"]:
+            entry["evidence"] = position_evidence(
+                entry["evidence"]["source"],
+                cutoff_at=future_command["cutoff_at"],
+            )
+    future = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-before-backdated-ledger-original",
+            future_command,
+        ),
+    )
+    assert future.report is not None
+
+    original = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-ledger-original-after-future",
+            position_snapshot_command(),
+        ),
+    )
+    assert original.report is not None
+    assert original.report.result.position is not None
+    assert original.report.result.position.disposition == "RECONCILED"
+
+    mutated = position_snapshot_command()
+    mutated["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    mutated["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    replay = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-ledger-mutation-after-future",
+            mutated,
+        ),
+    )
+
+    assert replay.report is not None
+    assert replay.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in replay.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_does_not_preserve_rejected_ledger_replacements(
+    migrated_settings: Settings,
+) -> None:
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "ledger-replacement-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert first.report is not None
+
+    replacement = position_snapshot_command()
+    replacement["accounts"][0]["ledger_entries"][0]["entry_id"] = (
+        "synthetic-unlinked-fill-replacement"
+    )
+    conflicted = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "ledger-replacement-conflicted",
+            replacement,
+        ),
+    )
+    assert conflicted.report is not None
+    assert conflicted.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in conflicted.report.result.position.conflicts
+    }
+
+    restored = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "ledger-replacement-restored",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert restored.report is not None
+    assert restored.report.result.position is not None
+    assert restored.report.result.position.disposition == "RECONCILED"
+
+
+def test_position_snapshot_does_not_preserve_future_rejected_ledger_replacements(
+    migrated_settings: Settings,
+) -> None:
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-ledger-replacement-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert first.report is not None
+
+    replacement = position_snapshot_command()
+    replacement["snapshot_id"] = "synthetic-position-snapshot-future-replacement"
+    replacement["cutoff_at"] = "2042-05-18T16:00:00Z"
+    refresh_current_position_evidence(replacement, replacement["cutoff_at"])
+    replacement_entry = replacement["accounts"][0]["ledger_entries"][0]
+    replacement_entry["entry_id"] = "synthetic-future-unlinked-fill-replacement"
+    replacement_entry["evidence"] = position_evidence("synthetic-broker-4017-fill")
+    conflicted = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-ledger-replacement-conflicted",
+            replacement,
+        ),
+    )
+    assert conflicted.report is not None
+    assert conflicted.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in conflicted.report.result.position.conflicts
+    }
+
+    replayed = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-ledger-replacement-replayed-original",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert replayed.report is not None
+    assert replayed.report.result.position is not None
+    assert replayed.report.result.position.disposition == "RECONCILED"
+
+
+def test_position_snapshot_does_not_admit_rejected_backdated_entries_at_earlier_cutoff(
+    migrated_settings: Settings,
+) -> None:
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-canonical-ledger-original",
+            position_snapshot_with_later_security("RETIRED-MAY18-4017"),
+        ),
+    )
+    assert first.report is not None
+
+    rejected = position_snapshot_with_later_security("BACKDATED-MAY17-4017")
+    backdated_entry = rejected["accounts"][0]["ledger_entries"][-1]
+    backdated_entry["occurred_at"] = "2042-05-17T15:00:00Z"
+    backdated_entry["evidence"] = position_evidence("synthetic-broker-4017-backdated-may17-fill")
+    conflicted = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-canonical-ledger-rejected-backdated",
+            rejected,
+        ),
+    )
+    assert conflicted.report is not None
+    assert conflicted.report.result.position is not None
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in conflicted.report.result.position.conflicts
+    }
+
+    replayed = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-canonical-ledger-replayed-original",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert replayed.report is not None
+    assert replayed.report.result.position is not None
+    assert replayed.report.result.position.disposition == "RECONCILED"
+
+
+def test_position_snapshot_preserves_valid_backdated_additions_after_future_snapshot(
+    migrated_settings: Settings,
+) -> None:
+    future = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-before-backdated-addition",
+            position_snapshot_with_later_security("FUTURE-TRANSFER-4017"),
+        ),
+    )
+    assert future.report is not None
+
+    backdated = position_snapshot_command()
+    account = backdated["accounts"][0]
+    account["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-backdated-transfer-in",
+            "entry_type": "TRANSFER_IN",
+            "security_id": None,
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "10",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "evidence": position_evidence("synthetic-backdated-transfer-in"),
+        }
+    )
+    account["cash_state"]["ledger_cash"] = "110"
+    account["cash_state"]["trading_cash"] = "105"
+    account["cash_state"]["transferable_cash"] = "100"
+    account["account_equity"] = "1320"
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-addition-original",
+            backdated,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert first.report.result.position.disposition == "RECONCILED"
+
+    mutated = position_snapshot_command()
+    account = mutated["accounts"][0]
+    account["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-backdated-transfer-in",
+            "entry_type": "TRANSFER_IN",
+            "security_id": None,
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "11",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "evidence": position_evidence("synthetic-backdated-transfer-in"),
+        }
+    )
+    account["cash_state"]["ledger_cash"] = "111"
+    account["cash_state"]["trading_cash"] = "106"
+    account["cash_state"]["transferable_cash"] = "101"
+    account["account_equity"] = "1321"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-addition-mutated",
+            mutated,
+        ),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_retains_valid_ledger_history_from_unrelated_conflicted_snapshot(
+    migrated_settings: Settings,
+) -> None:
+    unrelated_conflict = position_snapshot_command()
+    unrelated_conflict["accounts"][1]["positions"][0]["broker_sellable_quantity"] = None
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "unrelated-conflicted-ledger-history",
+            unrelated_conflict,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert first.report.result.position.disposition == "CONFLICTED"
+
+    mutated = position_snapshot_command()
+    mutated["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    mutated["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "valid-ledger-after-unrelated-conflict",
+            mutated,
+        ),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_retains_valid_ledger_entry_beside_invalid_same_security_entry(
+    migrated_settings: Settings,
+) -> None:
+    first_command = position_snapshot_command()
+    first_command["accounts"][0]["ledger_entries"][1]["evidence"]["source"] = None
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "invalid-fee-valid-fill-ledger-history",
+            first_command,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert first.report.result.position.disposition == "CONFLICTED"
+
+    mutated = position_snapshot_command()
+    mutated["accounts"][0]["ledger_entries"][0]["cost_basis_delta"] = "900"
+    mutated["accounts"][0]["positions"][0]["reported_cost_basis"] = "910"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "mutated-fill-after-invalid-fee",
+            mutated,
+        ),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_rejects_mutated_opening_cash_baseline(
+    migrated_settings: Settings,
+) -> None:
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "opening-cash-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert first.report is not None
+
+    changed = position_snapshot_command()
+    account = changed["accounts"][0]
+    account["cash_state"]["opening_ledger_cash"] = "1902"
+    account["cash_state"]["ledger_cash"] = "1100"
+    account["cash_state"]["trading_cash"] = "1095"
+    account["cash_state"]["transferable_cash"] = "1090"
+    account["account_equity"] = "2310"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "opening-cash-mutated", changed),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    outcome = second.report.result.position
+    assert "OPENING_LEDGER_CASH_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_detects_backdated_opening_cash_mutation_after_future_fact(
+    migrated_settings: Settings,
+) -> None:
+    future = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-before-backdated-opening-cash-original",
+            position_snapshot_with_later_security("FUTURE-INVISIBLE-CASH-4017"),
+        ),
+    )
+    assert future.report is not None
+
+    original = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-opening-cash-original-after-future",
+            position_snapshot_command(),
+        ),
+    )
+    assert original.report is not None
+    assert original.report.result.position is not None
+    assert original.report.result.position.disposition == "RECONCILED"
+
+    mutated = position_snapshot_command()
+    account = mutated["accounts"][0]
+    account["cash_state"]["opening_ledger_cash"] = "1902"
+    account["cash_state"]["ledger_cash"] = "1100"
+    account["cash_state"]["trading_cash"] = "1095"
+    account["cash_state"]["transferable_cash"] = "1090"
+    account["account_equity"] = "2310"
+    replay = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "backdated-opening-cash-mutation-after-future",
+            mutated,
+        ),
+    )
+
+    assert replay.report is not None
+    assert replay.report.result.position is not None
+    assert "OPENING_LEDGER_CASH_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in replay.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_does_not_promote_rejected_backdated_opening_cash(
+    migrated_settings: Settings,
+) -> None:
+    future = position_snapshot_with_later_security("FUTURE-CASH-4017")
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-opening-cash-original",
+            future,
+        ),
+    )
+    assert first.report is not None
+
+    replacement = position_snapshot_with_later_security("FUTURE-CASH-4017")
+    account = replacement["accounts"][0]
+    cash = account["cash_state"]
+    cash["opening_ledger_cash"] = "1902"
+    cash["opening_ledger_cash_evidence"] = position_evidence("synthetic-broker-4017-opening-cash")
+    cash["ledger_cash"] = "1100"
+    cash["trading_cash"] = "1095"
+    cash["transferable_cash"] = "1090"
+    account["account_equity"] = "2310"
+    rejected = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-opening-cash-rejected-replacement",
+            replacement,
+        ),
+    )
+    assert rejected.report is not None
+    assert rejected.report.result.position is not None
+    assert "OPENING_LEDGER_CASH_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in rejected.report.result.position.conflicts
+    }
+
+    replayed = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "future-opening-cash-replayed-original",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert replayed.report is not None
+    assert replayed.report.result.position is not None
+    assert replayed.report.result.position.disposition == "RECONCILED"
+
+
+def test_position_snapshot_retains_opening_cash_baseline_beside_incomplete_cash_layers(
+    migrated_settings: Settings,
+) -> None:
+    first_command = position_snapshot_command()
+    first_command["accounts"][0]["cash_state"]["trading_cash"] = None
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "incomplete-layer-opening-cash-original",
+            first_command,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert first.report.result.position.disposition == "CONFLICTED"
+
+    changed = position_snapshot_command()
+    account = changed["accounts"][0]
+    account["cash_state"]["opening_ledger_cash"] = "1902"
+    account["cash_state"]["ledger_cash"] = "1100"
+    account["cash_state"]["trading_cash"] = "1095"
+    account["cash_state"]["transferable_cash"] = "1090"
+    account["account_equity"] = "2310"
+    second = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "incomplete-layer-opening-cash-mutated",
+            changed,
+        ),
+    )
+
+    assert second.report is not None
+    assert second.report.result.position is not None
+    assert "OPENING_LEDGER_CASH_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
 def test_position_snapshot_retains_closed_ledger_history_without_missing_summary_conflict(
     migrated_settings: Settings,
 ) -> None:
@@ -982,6 +1742,7 @@ def test_position_snapshot_accepts_append_only_historical_ledger_correction(
             "cash_delta": "0",
             "occurred_at": "2042-05-16T15:00:04Z",
             "corrects_entry_id": "synthetic-fee-4017-xqz",
+            "correction_reason": "Broker fee correction.",
             "evidence": position_evidence("synthetic-broker-4017-fee-correction"),
         }
     )
@@ -997,6 +1758,59 @@ def test_position_snapshot_accepts_append_only_historical_ledger_correction(
         second.report.result.position.snapshot.authoritative_ledger[-3].corrects_entry_id
         == "synthetic-fee-4017-xqz"
     )
+    assert (
+        second.report.result.position.snapshot.authoritative_ledger[-3].correction_reason
+        == "Broker fee correction."
+    )
+
+
+def test_position_snapshot_requires_a_reason_for_each_ledger_correction() -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-correction-without-reason",
+            "entry_type": "FEE",
+            "security_id": "XQZ-4017",
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "corrects_entry_id": "synthetic-fee-4017-xqz",
+            "evidence": position_evidence("synthetic-correction-without-reason"),
+        }
+    )
+
+    with pytest.raises(ValidationError, match="correction_reason"):
+        PositionSnapshotCommand.model_validate(command)
+
+
+def test_position_history_preindexes_ledger_validity_per_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = PositionSnapshotCommand.model_validate(position_snapshot_command())
+    outcome = reconcile(command)
+    visible_call_count = 0
+    original_visibility_check = position_history.ledger_entry_evidence_is_visible
+
+    def counted_visibility_check(*args: Any, **kwargs: Any) -> bool:
+        nonlocal visible_call_count
+        visible_call_count += 1
+        return original_visibility_check(*args, **kwargs)
+
+    monkeypatch.setattr(
+        position_history,
+        "ledger_entry_evidence_is_visible",
+        counted_visibility_check,
+    )
+
+    history = position_history.authoritative_ledger_history(
+        (outcome,) * 100,
+        account_ids=frozenset(command.account_ids),
+        cutoff_at=command.cutoff_at,
+    )
+
+    assert history == outcome.snapshot.authoritative_ledger
+    assert visible_call_count == len(outcome.snapshot.authoritative_ledger) * 100
 
 
 def test_position_snapshot_rejects_removed_historical_ledger_entry(
@@ -1021,6 +1835,94 @@ def test_position_snapshot_rejects_removed_historical_ledger_entry(
     assert second.report.result.position is not None
     assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
         conflict.code for conflict in second.report.result.position.conflicts
+    }
+
+
+def test_position_snapshot_never_projects_partial_exposure_after_historical_holding_removal(
+    migrated_settings: Settings,
+) -> None:
+    original = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "historical-holding-removal-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert original.report is not None
+
+    removed = position_snapshot_command()
+    account = removed["accounts"][0]
+    account["positions"] = []
+    account["open_orders"] = []
+    account["ledger_entries"] = [
+        entry for entry in account["ledger_entries"] if entry["security_id"] is None
+    ]
+    account["account_equity"] = "110"
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "historical-holding-removal",
+            removed,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_ENTRY_REMOVED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_never_splits_issuer_exposure_after_historical_security_mutation(
+    migrated_settings: Settings,
+) -> None:
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "historical-security-mutation-original",
+            position_snapshot_command(),
+        ),
+    )
+    assert first.report is not None
+
+    changed = position_snapshot_command()
+    account = changed["accounts"][0]
+    replacement_security_id = "REPLACEMENT-SECURITY-4017"
+    replacement_issuer_id = "FICTIONAL-REPLACEMENT-ISSUER"
+    account["positions"][0]["security_id"] = replacement_security_id
+    account["positions"][0]["issuer_id"] = replacement_issuer_id
+    account["open_orders"][0]["security_id"] = replacement_security_id
+    for entry in account["ledger_entries"][:2]:
+        entry["security_id"] = replacement_security_id
+    changed["annotations"][0]["security_id"] = replacement_security_id
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "historical-security-mutation",
+            changed,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_ENTRY_MUTATED_ACROSS_SNAPSHOTS" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert {
+        exposure.issuer_id: exposure.current_market_exposure
+        for exposure in outcome.snapshot.issuer_exposures
+    } == {
+        "FICTIONAL-ORBITAL-MOSAIC": None,
+        "FICTIONAL-REPLACEMENT-ISSUER": None,
     }
 
 
@@ -1243,6 +2145,60 @@ def test_position_snapshot_blocks_all_quantities_for_missing_position_summary(
     )
 
 
+def test_position_snapshot_never_projects_partial_issuer_exposure_across_missing_security_codes(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_with_later_security("ORBITAL-UNSUMMARIZED-4017")
+    command["accounts"][0]["positions"][-1]["issuer_id"] = "FICTIONAL-ORBITAL-MOSAIC"
+    command["accounts"][0]["positions"].pop()
+    command["accounts"][0]["account_equity"] = "1300"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "issuer-missing-code-summary", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "BROKER_POSITION_SUMMARY_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_never_projects_exposure_after_an_incomplete_account_manifest(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["snapshot_evidence"]["complete_through_at"] = "2042-05-17T15:59:59Z"
+    account["positions"] = []
+    account["open_orders"] = []
+    account["ledger_entries"] = []
+    account["cash_state"]["opening_ledger_cash"] = "100"
+    account["cash_state"]["ledger_cash"] = "100"
+    account["cash_state"]["trading_cash"] = "95"
+    account["cash_state"]["transferable_cash"] = "90"
+    account["cash_state"]["frozen_cash"] = "5"
+    account["account_equity"] = "110"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "incomplete-account-manifest", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "FACT_COMPLETENESS_WATERMARK_INSUFFICIENT" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
 def test_position_snapshot_rejects_duplicate_broker_order_identity(
     migrated_settings: Settings,
 ) -> None:
@@ -1262,6 +2218,164 @@ def test_position_snapshot_rejects_duplicate_broker_order_identity(
     outcome = execution.report.result.position
     assert "OPEN_ORDER_ID_DUPLICATED" in {conflict.code for conflict in outcome.conflicts}
     assert outcome.snapshot.action_units[0].exact_statistical_action_quantity is None
+
+
+@pytest.mark.parametrize("known_order_first", [False, True])
+def test_position_snapshot_requires_summary_for_every_duplicate_sell_order_security(
+    migrated_settings: Settings,
+    known_order_first: bool,
+) -> None:
+    command = position_snapshot_command()
+    known_order = deepcopy(command["accounts"][0]["open_orders"][0])
+    known_order.update(
+        {
+            "side": "SELL",
+            "remaining_quantity": "15",
+            "reserved_cash": None,
+            "reserved_cash_semantics": "NOT_APPLICABLE",
+        }
+    )
+    missing_order = deepcopy(known_order)
+    missing_order["security_id"] = "MISSING-DUPLICATE-SELL-4017"
+    command["accounts"][0]["open_orders"] = (
+        [known_order, missing_order] if known_order_first else [missing_order, known_order]
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            f"duplicate-sell-order-summary-{known_order_first}",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert {
+        "OPEN_ORDER_ID_DUPLICATED",
+        "BROKER_POSITION_SUMMARY_MISSING",
+    } <= {conflict.code for conflict in outcome.conflicts}
+    assert outcome.snapshot.total_account_equity is None
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+@pytest.mark.parametrize("duplicate_entry_first", [False, True])
+def test_position_snapshot_blocks_issuer_exposure_for_every_duplicate_ledger_identity(
+    migrated_settings: Settings,
+    duplicate_entry_first: bool,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["positions"].append(
+        {
+            "position_id": "synthetic-position-4017-duplicate-secondary",
+            "origin": "EXTERNAL",
+            "lifecycle_id": "synthetic-lifecycle-4017-duplicate-secondary",
+            "issuer_id": "FICTIONAL-DUPLICATE-SECONDARY",
+            "security_id": "DUPLICATE-SECONDARY-4017",
+            "total_quantity": "1",
+            "broker_sellable_quantity": "1",
+            "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+            "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+            "unsettled_quantity": "0",
+            "frozen_quantity": "0",
+            "restricted_quantity": "0",
+            "open_sell_order_quantity": "0",
+            "reported_cost_basis": "10",
+            "market_price": "10",
+            "evidence": position_evidence("synthetic-broker-4017-duplicate-secondary"),
+        }
+    )
+    duplicate_entry = {
+        "entry_id": "synthetic-fill-4017-xqz",
+        "entry_type": "FILL",
+        "security_id": "DUPLICATE-SECONDARY-4017",
+        "quantity_delta": "1",
+        "cost_basis_delta": "10",
+        "cash_delta": "-10",
+        "occurred_at": "2042-05-16T15:00:04Z",
+        "evidence": position_evidence("synthetic-broker-4017-duplicate-secondary-fill"),
+    }
+    if duplicate_entry_first:
+        account["ledger_entries"].insert(0, duplicate_entry)
+    else:
+        account["ledger_entries"].append(duplicate_entry)
+    cash = account["cash_state"]
+    cash["ledger_cash"] = "90"
+    cash["trading_cash"] = "85"
+    cash["transferable_cash"] = "80"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            f"duplicate-ledger-identity-{duplicate_entry_first}",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_ENTRY_ID_DUPLICATED" in {conflict.code for conflict in outcome.conflicts}
+    assert {
+        exposure.issuer_id: exposure.current_market_exposure
+        for exposure in outcome.snapshot.issuer_exposures
+    } == {
+        "FICTIONAL-DUPLICATE-SECONDARY": None,
+        "FICTIONAL-ORBITAL-MOSAIC": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "duplicate_sides",
+    [
+        ("SELL", "SELL", "BUY"),
+        ("SELL", "BUY", "SELL"),
+    ],
+)
+def test_position_snapshot_applies_duplicate_order_portfolio_blocking_independent_of_row_order(
+    migrated_settings: Settings,
+    duplicate_sides: tuple[str, str, str],
+) -> None:
+    command = position_snapshot_command()
+    original = command["accounts"][0]["open_orders"][0]
+    command["accounts"][0]["open_orders"] = [
+        {
+            **original,
+            "side": side,
+            "remaining_quantity": "15" if side == "SELL" else "1",
+            "reserved_cash": None if side == "SELL" else "0",
+            "reserved_cash_semantics": (
+                "NOT_APPLICABLE" if side == "SELL" else "BROKER_FINAL_RESERVED_CASH"
+            ),
+        }
+        for side in duplicate_sides
+    ]
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            f"duplicate-order-{'-'.join(duplicate_sides).lower()}",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "OPEN_ORDER_ID_DUPLICATED" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
 
 
 @pytest.mark.parametrize(
@@ -1296,6 +2410,7 @@ def test_position_snapshot_rejects_invalid_ledger_correction_lineage(
             "cash_delta": "0",
             "occurred_at": "2042-05-16T15:00:04Z",
             "corrects_entry_id": target,
+            "correction_reason": "Synthetic lineage validation.",
             "evidence": position_evidence(f"synthetic-broker-{entry_id}"),
         }
         for entry_id, target in zip(entry_ids, targets, strict=True)
@@ -1311,6 +2426,66 @@ def test_position_snapshot_rejects_invalid_ledger_correction_lineage(
     assert expected_code in {
         conflict.code for conflict in execution.report.result.position.conflicts
     }
+
+
+def test_position_snapshot_does_not_preserve_correction_with_invalid_ancestor(
+    migrated_settings: Settings,
+) -> None:
+    invalid_lineage = position_snapshot_command()
+    invalid_lineage["accounts"][0]["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-invalid-correction-ancestor",
+                "entry_type": "CORPORATE_ACTION",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "corrects_entry_id": "synthetic-correction-target-not-present",
+                "correction_reason": "Synthetic unresolved correction.",
+                "evidence": position_evidence("synthetic-invalid-correction-ancestor"),
+            },
+            {
+                "entry_id": "synthetic-invalid-correction-descendant",
+                "entry_type": "CORPORATE_ACTION",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:05Z",
+                "corrects_entry_id": "synthetic-invalid-correction-ancestor",
+                "correction_reason": "Synthetic descendant correction.",
+                "evidence": position_evidence("synthetic-invalid-correction-descendant"),
+            },
+        ]
+    )
+    first = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "invalid-correction-ancestor",
+            invalid_lineage,
+        ),
+    )
+    assert first.report is not None
+    assert first.report.result.position is not None
+    assert "LEDGER_CORRECTION_TARGET_MISSING" in {
+        conflict.code for conflict in first.report.result.position.conflicts
+    }
+
+    replayed = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "invalid-correction-ancestor-replayed-original",
+            position_snapshot_command(),
+        ),
+    )
+
+    assert replayed.report is not None
+    assert replayed.report.result.position is not None
+    assert replayed.report.result.position.disposition == "RECONCILED"
 
 
 def test_position_snapshot_rejects_ledger_evidence_before_its_fill(
@@ -1330,6 +2505,453 @@ def test_position_snapshot_rejects_ledger_evidence_before_its_fill(
     assert execution.report.result.position is not None
     outcome = execution.report.result.position
     assert "LEDGER_ENTRY_EVIDENCE_PRECEDES_OCCURRENCE" in {
+        conflict.code for conflict in outcome.conflicts
+    }
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_rejects_security_bearing_ledger_entry_without_security_identity(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-unidentified-fill-4017",
+            "entry_type": "FILL",
+            "security_id": None,
+            "quantity_delta": "123",
+            "cost_basis_delta": "456",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "evidence": position_evidence("synthetic-broker-unidentified-fill"),
+        }
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "unidentified-ledger-fill", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_ENTRY_SECURITY_ID_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+@pytest.mark.parametrize("invalid_closure", ["evidence", "duplicate_identity"])
+def test_position_snapshot_requires_a_summary_for_unverified_closed_ledger_security(
+    migrated_settings: Settings,
+    invalid_closure: str,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    entry_id = f"synthetic-unverified-closed-{invalid_closure}"
+    opening_entry: dict[str, Any] = {
+        "entry_id": entry_id,
+        "entry_type": "FILL",
+        "security_id": "UNVERIFIED-CLOSED-4017",
+        "quantity_delta": "1",
+        "cost_basis_delta": "10",
+        "cash_delta": "-10",
+        "occurred_at": "2042-05-16T15:00:04Z",
+        "evidence": position_evidence("synthetic-unverified-closed-opening"),
+    }
+    closing_entry: dict[str, Any] = {
+        "entry_id": (
+            entry_id
+            if invalid_closure == "duplicate_identity"
+            else "synthetic-unverified-closed-evidence"
+        ),
+        "entry_type": "FILL",
+        "security_id": "UNVERIFIED-CLOSED-4017",
+        "quantity_delta": "-1",
+        "cost_basis_delta": "-10",
+        "cash_delta": "10",
+        "occurred_at": "2042-05-16T15:00:05Z",
+        "evidence": position_evidence("synthetic-unverified-closed-closing"),
+    }
+    if invalid_closure == "evidence":
+        closing_entry["evidence"]["source"] = None
+    account["ledger_entries"].extend((opening_entry, closing_entry))
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            f"unverified-closed-ledger-{invalid_closure}",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "BROKER_POSITION_SUMMARY_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_requires_a_summary_for_invalid_closing_correction(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-invalid-correction-opening",
+                "entry_type": "FILL",
+                "security_id": "INVALID-CORRECTION-CLOSED-4017",
+                "quantity_delta": "1",
+                "cost_basis_delta": "10",
+                "cash_delta": "-10",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "evidence": position_evidence("synthetic-invalid-correction-opening"),
+            },
+            {
+                "entry_id": "synthetic-invalid-correction-closing",
+                "entry_type": "FILL",
+                "security_id": "INVALID-CORRECTION-CLOSED-4017",
+                "quantity_delta": "-1",
+                "cost_basis_delta": "-10",
+                "cash_delta": "10",
+                "occurred_at": "2042-05-16T15:00:05Z",
+                "corrects_entry_id": "synthetic-correction-target-not-present",
+                "correction_reason": "Synthetic unresolved correction.",
+                "evidence": position_evidence("synthetic-invalid-correction-closing"),
+            },
+        ]
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "invalid-correction-closed-ledger",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert {
+        "LEDGER_CORRECTION_TARGET_MISSING",
+        "BROKER_POSITION_SUMMARY_MISSING",
+    } <= {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_requires_a_summary_for_a_correction_with_invalid_cash_ancestor(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-invalid-cash-ancestor",
+                "entry_type": "FEE",
+                "security_id": None,
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "evidence": {
+                    **position_evidence("synthetic-invalid-cash-ancestor"),
+                    "source": None,
+                },
+            },
+            {
+                "entry_id": "synthetic-unresolved-correction-opening",
+                "entry_type": "FILL",
+                "security_id": "UNRESOLVED-CORRECTION-4017",
+                "quantity_delta": "1",
+                "cost_basis_delta": "10",
+                "cash_delta": "-10",
+                "occurred_at": "2042-05-16T15:00:05Z",
+                "evidence": position_evidence("synthetic-unresolved-correction-opening"),
+            },
+            {
+                "entry_id": "synthetic-unresolved-correction-closing",
+                "entry_type": "FILL",
+                "security_id": "UNRESOLVED-CORRECTION-4017",
+                "quantity_delta": "-1",
+                "cost_basis_delta": "-10",
+                "cash_delta": "10",
+                "occurred_at": "2042-05-16T15:00:06Z",
+                "corrects_entry_id": "synthetic-invalid-cash-ancestor",
+                "correction_reason": "Synthetic ancestor correction.",
+                "evidence": position_evidence("synthetic-unresolved-correction-closing"),
+            },
+        ]
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "unresolved-correction-invalid-cash-ancestor",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert {
+        "SOURCE_MISSING",
+        "BROKER_POSITION_SUMMARY_MISSING",
+    } <= {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_hides_exposure_for_a_correction_with_invalid_cash_ancestor(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-invalid-cash-ancestor-with-summary",
+                "entry_type": "FEE",
+                "security_id": None,
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "evidence": {
+                    **position_evidence("synthetic-invalid-cash-ancestor-with-summary"),
+                    "source": None,
+                },
+            },
+            {
+                "entry_id": "synthetic-unresolved-correction-with-summary",
+                "entry_type": "FILL",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "-50",
+                "cost_basis_delta": "-450",
+                "cash_delta": "450",
+                "occurred_at": "2042-05-16T15:00:05Z",
+                "corrects_entry_id": "synthetic-invalid-cash-ancestor-with-summary",
+                "correction_reason": "Synthetic ancestor correction.",
+                "evidence": position_evidence("synthetic-unresolved-correction-with-summary"),
+            },
+        ]
+    )
+    position = account["positions"][0]
+    position["total_quantity"] = "50"
+    position["broker_sellable_quantity"] = "35"
+    position["reported_cost_basis"] = "450"
+    account["cash_state"]["ledger_cash"] = "550"
+    account["cash_state"]["trading_cash"] = "545"
+    account["cash_state"]["transferable_cash"] = "540"
+    account["account_equity"] = "1160"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "unresolved-correction-invalid-cash-ancestor-with-summary",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "SOURCE_MISSING" in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+def test_position_snapshot_requires_a_summary_for_a_correction_with_ambiguous_cash_ancestor(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["ledger_entries"].extend(
+        [
+            {
+                "entry_id": "synthetic-ambiguous-cash-ancestor",
+                "entry_type": "FEE",
+                "security_id": None,
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:04Z",
+                "evidence": position_evidence("synthetic-ambiguous-cash-ancestor-a"),
+            },
+            {
+                "entry_id": "synthetic-ambiguous-cash-ancestor",
+                "entry_type": "FEE",
+                "security_id": None,
+                "quantity_delta": "0",
+                "cost_basis_delta": "0",
+                "cash_delta": "0",
+                "occurred_at": "2042-05-16T15:00:05Z",
+                "evidence": position_evidence("synthetic-ambiguous-cash-ancestor-b"),
+            },
+            {
+                "entry_id": "synthetic-ambiguous-correction-opening",
+                "entry_type": "FILL",
+                "security_id": "AMBIGUOUS-CORRECTION-4017",
+                "quantity_delta": "1",
+                "cost_basis_delta": "10",
+                "cash_delta": "-10",
+                "occurred_at": "2042-05-16T15:00:06Z",
+                "evidence": position_evidence("synthetic-ambiguous-correction-opening"),
+            },
+            {
+                "entry_id": "synthetic-ambiguous-correction-closing",
+                "entry_type": "FILL",
+                "security_id": "AMBIGUOUS-CORRECTION-4017",
+                "quantity_delta": "-1",
+                "cost_basis_delta": "-10",
+                "cash_delta": "10",
+                "occurred_at": "2042-05-16T15:00:07Z",
+                "corrects_entry_id": "synthetic-ambiguous-cash-ancestor",
+                "correction_reason": "Synthetic ambiguous correction.",
+                "evidence": position_evidence("synthetic-ambiguous-correction-closing"),
+            },
+        ]
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            "unresolved-correction-ambiguous-cash-ancestor",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert {
+        "LEDGER_ENTRY_ID_DUPLICATED",
+        "BROKER_POSITION_SUMMARY_MISSING",
+    } <= {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        exposure.current_market_exposure is None for exposure in outcome.snapshot.issuer_exposures
+    )
+
+
+@pytest.mark.parametrize(
+    ("account_equity", "evidence_update", "expected_code"),
+    [
+        ("999999", {}, "ACCOUNT_EQUITY_MISMATCH"),
+        (None, {}, "ACCOUNT_EQUITY_MISSING"),
+        (
+            "1310",
+            {"source_observed_at": "2042-05-17T14:59:00Z"},
+            "EVIDENCE_CLOCK_INVALID",
+        ),
+    ],
+)
+def test_position_snapshot_does_not_publish_total_equity_from_an_unqualified_account(
+    migrated_settings: Settings,
+    account_equity: str | None,
+    evidence_update: dict[str, str],
+    expected_code: str,
+) -> None:
+    command = position_snapshot_command()
+    account = command["accounts"][0]
+    account["account_equity"] = account_equity
+    account["account_equity_evidence"].update(evidence_update)
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(
+            migrated_settings,
+            f"unqualified-account-equity-{expected_code.lower()}",
+            command,
+        ),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert expected_code in {conflict.code for conflict in outcome.conflicts}
+    assert outcome.snapshot.total_account_equity is None
+
+
+@pytest.mark.parametrize(
+    ("field", "expected_code"),
+    [
+        ("cash_availability_semantics", "CASH_AVAILABILITY_SEMANTICS_UNKNOWN"),
+        ("ledger_cash_semantics", "LEDGER_CASH_SEMANTICS_UNKNOWN"),
+    ],
+)
+def test_position_snapshot_retains_unknown_cash_semantics_as_conflicts(
+    migrated_settings: Settings,
+    field: str,
+    expected_code: str,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["cash_state"][field] = "UNKNOWN"
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, f"unknown-{field}", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert expected_code in {conflict.code for conflict in outcome.conflicts}
+    assert all(
+        unit.exact_statistical_action_quantity is None for unit in outcome.snapshot.action_units
+    )
+
+
+def test_position_snapshot_rejects_correction_evidence_before_its_target(
+    migrated_settings: Settings,
+) -> None:
+    command = position_snapshot_command()
+    command["accounts"][0]["ledger_entries"].append(
+        {
+            "entry_id": "synthetic-causally-impossible-fee-correction",
+            "entry_type": "FEE",
+            "security_id": "XQZ-4017",
+            "quantity_delta": "0",
+            "cost_basis_delta": "0",
+            "cash_delta": "0",
+            "occurred_at": "2042-05-16T15:00:04Z",
+            "corrects_entry_id": "synthetic-fee-4017-xqz",
+            "correction_reason": "Synthetic causal validation.",
+            "evidence": position_evidence(
+                "synthetic-broker-causally-impossible-fee-correction",
+                cutoff_at="2042-05-15T16:00:00Z",
+            ),
+        }
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "causally-impossible-correction", command),
+    )
+
+    assert execution.report is not None
+    assert execution.report.result.position is not None
+    outcome = execution.report.result.position
+    assert "LEDGER_CORRECTION_EVIDENCE_PRECEDES_TARGET" in {
         conflict.code for conflict in outcome.conflicts
     }
     assert all(

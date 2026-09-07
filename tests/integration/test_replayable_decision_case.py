@@ -2989,7 +2989,7 @@ def test_correction_migration_preflights_legacy_payloads_before_replacing_event_
             row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
         }
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_result_access_audit"
+            "0007_decision_event_sequence"
         )
 
     load_settings.cache_clear()
@@ -3371,9 +3371,69 @@ def test_correction_migration_retries_after_notification_table_creation_is_inter
     command.upgrade(config, "head")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_result_access_audit"
+            "0007_decision_event_sequence"
         )
 
+    load_settings.cache_clear()
+
+
+def test_event_sequence_downgrade_retries_after_copy_is_interrupted(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STOCK_PROFILER_PROCESS_ROLE", "migrate")
+    load_settings.cache_clear()
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(config, "head")
+
+    original_execute: Any = op.execute
+    interrupted = False
+
+    def copy_events_then_interrupt(sql: str, *args: Any, **kwargs: Any) -> Any:
+        nonlocal interrupted
+        result = original_execute(sql, *args, **kwargs)
+        if "INSERT INTO decision_events_without_event_sequence" in sql and not interrupted:
+            interrupted = True
+            raise RuntimeError("synthetic interruption after event table copy")
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(op, "execute", copy_events_then_interrupt)
+        with pytest.raises(RuntimeError, match="after event table copy"):
+            command.downgrade(config, "0006_result_access_audit")
+
+    engine = create_engine(settings.app_database_url)
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0007_decision_event_sequence"
+        )
+        assert "event_sequence" in {
+            row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
+        }
+        assert "ux_decision_events_event_sequence" not in {
+            row["name"]
+            for row in connection.execute(text("PRAGMA index_list('decision_events')")).mappings()
+        }
+        assert (
+            connection.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'decision_events_without_event_sequence'"
+                )
+            ).scalar_one_or_none()
+            == "decision_events_without_event_sequence"
+        )
+
+    command.downgrade(config, "0006_result_access_audit")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0006_result_access_audit"
+        )
+        assert "event_sequence" not in {
+            row.name for row in connection.execute(text("PRAGMA table_info(decision_events)"))
+        }
+
+    command.upgrade(config, "head")
     load_settings.cache_clear()
 
 
