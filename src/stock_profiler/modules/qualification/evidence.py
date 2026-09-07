@@ -96,53 +96,35 @@ def evidence_basis_is_valid(evidence: QualificationEvidence) -> bool:
 
 
 def evidence_basis_digest(basis: EvidenceBasis) -> str:
-    payload = json.dumps(
-        basis.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return sha256(payload).hexdigest()
+    return _canonical_json_digest(basis.model_dump(mode="json"))
 
 
 def capability_version_digest(version: CapabilityVersion) -> str:
-    payload = json.dumps(
-        version.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return sha256(payload).hexdigest()
+    return _canonical_json_digest(version.model_dump(mode="json"))
 
 
 def qualification_evidence_digest(evidence: QualificationEvidence) -> str:
-    payload = json.dumps(
-        evidence.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return sha256(payload).hexdigest()
+    return _canonical_json_digest(evidence.model_dump(mode="json"))
 
 
 def alert_replay_result_digest(replay: ErroneousAlertReplay) -> str:
-    payload = json.dumps(
+    return _canonical_json_digest(
         replay.model_dump(
             mode="json",
             exclude={"original_information", "replay_result_digest"},
-        ),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return sha256(payload).hexdigest()
+        )
+    )
 
 
 def requalification_registration_digest(
     registration: RequalificationPopulationRegistration,
 ) -> str:
-    payload = json.dumps(
-        registration.model_dump(mode="json", exclude={"digest"}),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return sha256(payload).hexdigest()
+    return _canonical_json_digest(registration.model_dump(mode="json", exclude={"digest"}))
+
+
+def _canonical_json_digest(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return sha256(encoded).hexdigest()
 
 
 def _month_end_after(endpoint: datetime, months: int) -> datetime:

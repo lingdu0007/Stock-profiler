@@ -901,12 +901,52 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert changed_sequence_outcome.disposition == "DENIED"
     assert changed_sequence_outcome.reasons == ("REQUALIFICATION_PROOF_INVALID",)
 
+    disposition_command = qualification_command(
+        migrated_settings,
+        action="RECORD_FORMAL_NODE",
+        previous=revoked.decision_event_id,
+    )
+    disposition_command["evidence"].update(
+        kind="FORMAL_NODE_NOT_EXECUTED",
+        evidence_id="synthetic-requalification-missed-node",
+        evaluation_end="2042-05-30T00:00:00Z",
+        available_at="2042-05-31T08:00:00Z",
+        expires_at="2043-03-01T00:00:00Z",
+        formal_check={
+            **original_check,
+            "scheduled_at": planned[1],
+        },
+    )
+    disposition = execute(
+        migrated_settings,
+        "complete-requalification-missed-node",
+        disposition_command,
+        observed_at="2042-05-31T10:00:00Z",
+        knowledge_cutoff="2042-05-31T09:00:00Z",
+    )
+    assert disposition.report is not None
+    disposition_outcome = disposition.report.result.governance
+    assert disposition_outcome is not None
+    assert disposition_outcome.disposition == "APPROVED"
+    assert disposition_outcome.qualification is not None
+    assert disposition_outcome.qualification.status == "REVOKED"
+
+    command["previous_decision_id"] = disposition.decision_event_id
+    command["evidence"].update(
+        evaluation_end="2042-06-29T00:00:00Z",
+        available_at="2042-06-30T08:00:00Z",
+        formal_check={
+            **original_check,
+            "index": 2,
+            "scheduled_at": planned[2],
+        },
+    )
     completed = execute(
         migrated_settings,
         "complete-requalification-approved",
         command,
-        observed_at="2042-05-31T10:00:00Z",
-        knowledge_cutoff="2042-05-31T09:00:00Z",
+        observed_at="2042-06-30T10:00:00Z",
+        knowledge_cutoff="2042-06-30T09:00:00Z",
     )
     assert completed.report is not None
     completed_outcome = completed.report.result.governance
@@ -916,11 +956,14 @@ def test_requalification_requires_complete_populations_and_original_sequence(
     assert completed_record is not None
     assert completed_record.status == "VALID"
     assert completed_record.authorization_id == completed.decision_event_id
-    assert completed_record.previous_decision_id == revoked.decision_event_id
+    assert completed_record.previous_decision_id == disposition.decision_event_id
     assert completed_record.formal_evidence is not None
     assert completed_record.formal_evidence.formal_check is not None
     assert completed_record.formal_evidence.formal_check.index == 2
-    assert completed_record.formal_node_dispositions[-1].status == "EXECUTED_PASS"
+    assert [item.status for item in completed_record.formal_node_dispositions[-2:]] == [
+        "NOT_EXECUTED",
+        "EXECUTED_PASS",
+    ]
     assert len(completed_record.alert_closures) == 1
     assert completed_record.outstanding_alerts == ()
     assert revoked.report is not None

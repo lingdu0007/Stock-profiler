@@ -137,7 +137,11 @@ def adjudicate(
             or historical_registration is None
             or forward_registration is None
             or registered is None
-            or registered.previous_qualification_decision_id != previous.decision_id
+            or not _registered_requalification_matches_current_lineage(
+                registered,
+                previous,
+                history,
+            )
             or registered.evidence.available_at > cutoff
             or registered.application
             != RequalificationApplication(
@@ -1111,6 +1115,42 @@ def _registered_requalification_application(
     if len(registrations) > 1:
         raise ValueError("requalification history has duplicate applications")
     return registrations[0] if registrations else None
+
+
+def _registered_requalification_matches_current_lineage(
+    registration: RegisteredRequalificationApplication,
+    current: QualificationRecord,
+    history: tuple[GovernanceOutcome, ...],
+) -> bool:
+    records = {
+        outcome.qualification.decision_id: outcome.qualification
+        for outcome in history
+        if outcome.qualification is not None
+    }
+    anchor = records.get(registration.previous_qualification_decision_id)
+    if (
+        anchor is None
+        or anchor.status != "REVOKED"
+        or current.status != "REVOKED"
+        or not anchor.scope.same_scope_as(current.scope)
+        or anchor.version != current.version
+        or anchor.authorization_id != current.authorization_id
+        or anchor.authorization_evidence != current.authorization_evidence
+        or anchor.authorization_terminated_at != current.authorization_terminated_at
+        or anchor.requalification != current.requalification
+    ):
+        return False
+    decision_id = current.decision_id
+    visited: set[str] = set()
+    while decision_id != anchor.decision_id:
+        if decision_id in visited:
+            return False
+        visited.add(decision_id)
+        record = records.get(decision_id)
+        if record is None or record.previous_decision_id is None:
+            return False
+        decision_id = record.previous_decision_id
+    return True
 
 
 def _recorded_alert_replay(
