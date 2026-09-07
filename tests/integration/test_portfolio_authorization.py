@@ -1321,14 +1321,27 @@ def test_downside_grid_requalification_must_precede_user_confirmation(
     assert outcome.reasons == ("DOWNSIDE_GRID_REQUALIFICATION_INVALID",)
 
 
-def test_tightened_downside_grid_activates_without_relaxation_evidence(
+@pytest.mark.parametrize(
+    ("case_suffix", "downside_grid"),
+    [
+        pytest.param("tightening", ["0.03", "0.08"], id="tightening"),
+        pytest.param(
+            "tightening-inserted",
+            ["0.03", "0.04", "0.09"],
+            id="inserting-a-tighter-boundary",
+        ),
+    ],
+)
+def test_tightened_or_inserted_downside_grid_activates_without_relaxation_evidence(
     migrated_settings: Settings,
+    case_suffix: str,
+    downside_grid: list[str],
 ) -> None:
     original = run_frozen_decision_case(
         migrated_settings,
         portfolio_case_payload(
             migrated_settings,
-            "grid-tightening-original",
+            f"grid-{case_suffix}-original",
             portfolio_confirmation_command(unobligated_portfolio_proposal()),
         ),
         clock=GovernanceClock(),
@@ -1339,21 +1352,21 @@ def test_tightened_downside_grid_activates_without_relaxation_evidence(
     activation_cutoff = "2042-06-17T16:00:00Z"
     proposal["snapshot"] = snapshot_at(
         proposal["snapshot"],
-        snapshot_id="synthetic-portfolio-snapshot-grid-tight",
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-{case_suffix}",
         cutoff=selection_cutoff,
     )
     proposal["activation_snapshot"] = snapshot_at(
         proposal["snapshot"],
-        snapshot_id="synthetic-portfolio-snapshot-grid-tight-activation",
+        snapshot_id=f"synthetic-portfolio-snapshot-grid-{case_suffix}-activation",
         cutoff=activation_cutoff,
     )
-    action_policy_version_id = "synthetic-action-policy-grid-tight"
+    action_policy_version_id = f"synthetic-action-policy-grid-{case_suffix}"
     proposal["risk_budget"].update(
-        version_id="synthetic-risk-budget-grid-tight",
+        version_id=f"synthetic-risk-budget-grid-{case_suffix}",
         action_policy_version_id=action_policy_version_id,
         effective_at=activation_cutoff,
         expires_at="2042-12-17T16:00:00Z",
-        downside_grid=["0.03", "0.08"],
+        downside_grid=downside_grid,
     )
     command = portfolio_confirmation_command(
         proposal,
@@ -1369,67 +1382,7 @@ def test_tightened_downside_grid_activates_without_relaxation_evidence(
         migrated_settings,
         portfolio_case_payload(
             migrated_settings,
-            "grid-tightening",
-            command,
-        ),
-        clock=GovernanceClock("2042-06-17T16:01:00Z"),
-    )
-
-    assert execution.report is not None
-    outcome = execution.report.result.portfolio
-    assert outcome is not None
-    assert outcome.disposition == "APPROVED"
-
-
-def test_adding_a_tighter_downside_grid_boundary_needs_no_relaxation_evidence(
-    migrated_settings: Settings,
-) -> None:
-    original = run_frozen_decision_case(
-        migrated_settings,
-        portfolio_case_payload(
-            migrated_settings,
-            "grid-tightening-inserted-original",
-            portfolio_confirmation_command(unobligated_portfolio_proposal()),
-        ),
-        clock=GovernanceClock(),
-    )
-    assert original.report is not None
-    proposal = unobligated_portfolio_proposal()
-    selection_cutoff = "2042-06-16T15:00:00Z"
-    activation_cutoff = "2042-06-17T16:00:00Z"
-    proposal["snapshot"] = snapshot_at(
-        proposal["snapshot"],
-        snapshot_id="synthetic-portfolio-snapshot-grid-tight-inserted",
-        cutoff=selection_cutoff,
-    )
-    proposal["activation_snapshot"] = snapshot_at(
-        proposal["snapshot"],
-        snapshot_id="synthetic-portfolio-snapshot-grid-tight-inserted-activation",
-        cutoff=activation_cutoff,
-    )
-    action_policy_version_id = "synthetic-action-policy-grid-tight-inserted"
-    proposal["risk_budget"].update(
-        version_id="synthetic-risk-budget-grid-tight-inserted",
-        action_policy_version_id=action_policy_version_id,
-        effective_at=activation_cutoff,
-        expires_at="2042-12-17T16:00:00Z",
-        downside_grid=["0.03", "0.04", "0.09"],
-    )
-    command = portfolio_confirmation_command(
-        proposal,
-        previous_authorization_id=original.decision_event_id,
-        confirmed_at=selection_cutoff,
-    )
-    command["confirmation"]["downside_grid_requalification"] = downside_grid_requalification(
-        original.decision_event_id,
-        action_policy_version_id=action_policy_version_id,
-    )
-
-    execution = run_frozen_decision_case(
-        migrated_settings,
-        portfolio_case_payload(
-            migrated_settings,
-            "grid-tightening-inserted",
+            f"grid-{case_suffix}",
             command,
         ),
         clock=GovernanceClock("2042-06-17T16:01:00Z"),

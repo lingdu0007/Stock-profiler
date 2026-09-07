@@ -109,14 +109,36 @@ def test_cli_rejects_a_versioned_case_for_a_command_other_than_run(
         main()
 
 
-def test_cli_rejects_a_recovery_marked_case_before_creating_any_result(
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    [
+        pytest.param(
+            "recovery_framework_run_id",
+            "synthetic-original-run",
+            id="recovery-marked",
+        ),
+        pytest.param(
+            "host_application_version",
+            "synthetic-uninstalled-version",
+            id="incorrect-host-application-version",
+        ),
+    ],
+)
+def test_cli_rejects_an_invalid_host_case_before_creating_any_result(
     migrated_settings: Settings,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    invalid_field: str,
+    invalid_value: str,
 ) -> None:
     case_payload = load_frozen_decision_case(migrated_settings).model_dump(mode="json")
-    case_payload["recovery_framework_run_id"] = "synthetic-original-run"
-    case_path = tmp_path / "synthetic-recovery-marked-case.json"
+    if invalid_field == "host_application_version":
+        version_bundle = case_payload["version_bundle"]
+        assert isinstance(version_bundle, dict)
+        version_bundle[invalid_field] = invalid_value
+    else:
+        case_payload[invalid_field] = invalid_value
+    case_path = tmp_path / f"synthetic-{invalid_field}-case.json"
     case_path.write_text(json.dumps(case_payload), encoding="utf-8")
     monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
     monkeypatch.setattr(
