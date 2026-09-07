@@ -44,6 +44,69 @@ describe("App", () => {
     );
   });
 
+  it("renders the frozen portfolio authorization evidence from the committed report", async () => {
+    const portfolioReport = {
+      ...report,
+      result: {
+        ...report.result,
+        portfolio: {
+          disposition: "PREVIEWED",
+          reasons: ["PORTFOLIO_SCOPE_PREVIEWED"],
+          preview: {
+            portfolio_id: "synthetic-decision-portfolio-alpha",
+            snapshot_id: "synthetic-portfolio-snapshot-alpha",
+            included_accounts: [
+              {
+                account_id: "synthetic-account-4017",
+                account_type: "SIMULATED_CASH",
+                scope: "FULL_ACCOUNT",
+                captured_at: "2042-05-17T16:00:00Z",
+                cash_fact_id: "synthetic-cash-fact-4017",
+                positions_fact_id: "synthetic-positions-fact-4017",
+                receivables_fact_id: "synthetic-receivables-fact-4017",
+                payables_fact_id: "synthetic-payables-fact-4017",
+                unfinished_trades_fact_id: "synthetic-trades-fact-4017"
+              }
+            ],
+            included_account_ids: ["synthetic-account-4017"],
+            excluded_accounts: [
+              {
+                account_id: "synthetic-account-margin-2001",
+                account_type: "SIMULATED_MARGIN",
+                reason: "UNSUPPORTED_ACCOUNT_TYPE"
+              }
+            ],
+            blocking_account_ids: [],
+            blocking_accounts: []
+          },
+          authorization: null,
+          usage: null
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${portfolioReport.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(portfolioReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const authorization = await screen.findByRole("region", {
+      name: "Portfolio authorization"
+    });
+    expect(authorization).toHaveTextContent("PORTFOLIO_SCOPE_PREVIEWED");
+    expect(authorization).toHaveTextContent("synthetic-account-4017");
+    expect(authorization).toHaveTextContent("FULL_ACCOUNT");
+    expect(authorization).toHaveTextContent("synthetic-account-margin-2001");
+    expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
+  });
+
   it("shows correction lineage supplied by the committed report projection", async () => {
     const correctedReport = {
       ...report,

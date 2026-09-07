@@ -18,6 +18,7 @@ from stock_profiler.modules.decision_cases.domain import (
     ResultAccessScope,
     StageResult,
 )
+from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 Transaction = TypeVar("Transaction")
@@ -87,6 +88,10 @@ class DecisionLedger(Protocol[Transaction]):
     def governance_history(
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[GovernanceOutcome, ...]: ...
+
+    def portfolio_authorization_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 

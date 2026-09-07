@@ -302,6 +302,13 @@ export interface components {
             /** Version Id */
             version_id: string;
         };
+        /** CashBudget */
+        CashBudget: {
+            /** Hard Ratio */
+            hard_ratio: string;
+            /** Target Ratio */
+            target_ratio: string;
+        };
         /** CertifiedBasisSubstitution */
         CertifiedBasisSubstitution: {
             /** Checks */
@@ -345,6 +352,36 @@ export interface components {
             };
         };
         /**
+         * CompleteAccountSnapshot
+         * @description One whole account at the portfolio cutoff, never a virtual allocation slice.
+         */
+        CompleteAccountSnapshot: {
+            /** Account Id */
+            account_id: string;
+            /** Account Type */
+            account_type: string;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /** Cash Fact Id */
+            cash_fact_id: string;
+            /** Payables Fact Id */
+            payables_fact_id: string;
+            /** Positions Fact Id */
+            positions_fact_id: string;
+            /** Receivables Fact Id */
+            receivables_fact_id: string;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "FULL_ACCOUNT";
+            /** Unfinished Trades Fact Id */
+            unfinished_trades_fact_id: string;
+        };
+        /**
          * CorrectionEvidence
          * @description New authoritative synthetic facts, distinct from the original Run's evidence.
          */
@@ -382,6 +419,25 @@ export interface components {
             };
         };
         /**
+         * DatedCashObligation
+         * @description A forward-recorded cash requirement that the selected portfolio must preserve.
+         */
+        DatedCashObligation: {
+            /** Amount */
+            amount: string;
+            /**
+             * Latest Usable At
+             * Format: date-time
+             */
+            latest_usable_at: string;
+            /** Obligation Id */
+            obligation_id: string;
+            /** Purpose */
+            purpose: string;
+            /** Target Account Id */
+            target_account_id: string;
+        };
+        /**
          * DecisionCaseVersionBundle
          * @description The complete implementation version set that participates in replay.
          */
@@ -415,6 +471,19 @@ export interface components {
             /** Routing Policy Version */
             routing_policy_version: string;
         };
+        /**
+         * DeterministicProtectionFloor
+         * @description The actions retained when an authorization can no longer admit new exposure.
+         */
+        DeterministicProtectionFloor: {
+            /**
+             * New Exposure Blocked
+             * @constant
+             */
+            new_exposure_blocked: true;
+            /** Retained Directions */
+            retained_directions: ("REDUCE" | "EXIT")[];
+        };
         /** DiagnosticObservation */
         DiagnosticObservation: {
             evidence: components["schemas"]["QualificationEvidence"];
@@ -442,6 +511,15 @@ export interface components {
             planned_nodes: string[];
             /** Rule Version */
             rule_version: string;
+        };
+        /** DrawdownBudget */
+        DrawdownBudget: {
+            /** Caution Ratio */
+            caution_ratio: string;
+            /** Defensive Ratio */
+            defensive_ratio: string;
+            /** Preservation Ratio */
+            preservation_ratio: string;
         };
         /** ErroneousAlertReplay */
         ErroneousAlertReplay: {
@@ -561,6 +639,18 @@ export interface components {
              */
             required_until: string;
         };
+        /** ExcludedAccount */
+        ExcludedAccount: {
+            /** Account Id */
+            account_id: string;
+            /** Account Type */
+            account_type: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "NOT_SELECTED" | "UNSUPPORTED_ACCOUNT_TYPE" | "UNKNOWN_ACCOUNT_TYPE";
+        };
         /**
          * ExternalResult
          * @description The user-visible result expected from this original synthetic fixture.
@@ -572,6 +662,7 @@ export interface components {
             key_reasons: string[];
             /** Outcome Code */
             outcome_code: string;
+            portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             /** Summary */
             summary: string;
         };
@@ -758,12 +849,177 @@ export interface components {
             detail: "request is not permitted";
         };
         /**
+         * PersonalRiskBudget
+         * @description The explicit synthetic risk configuration bound to exactly six calendar months.
+         */
+        PersonalRiskBudget: {
+            cash: components["schemas"]["CashBudget"];
+            concentration: components["schemas"]["TwoThresholdBudget"];
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Downside Grid */
+            downside_grid: string[];
+            drawdown: components["schemas"]["DrawdownBudget"];
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generator Version */
+            generator_version: string;
+            protection_floor: components["schemas"]["DeterministicProtectionFloor"];
+            /** Seed */
+            seed: number;
+            stress: components["schemas"]["TwoThresholdBudget"];
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: true;
+            /** Version Id */
+            version_id: string;
+        };
+        /**
          * PolicyBinding
          * @description Frozen scoped policy input, independent of whether authority was obtained.
          */
         PolicyBinding: {
             scope: components["schemas"]["QualificationScope"];
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /**
+         * PortfolioAuthorization
+         * @description The append-only risk-budget authorization retained by a formal report.
+         */
+        PortfolioAuthorization: {
+            /** Authorization Id */
+            authorization_id: string;
+            confirmation: components["schemas"]["PortfolioConfirmation"];
+            /** Previous Authorization Id */
+            previous_authorization_id?: string | null;
+            proposal: components["schemas"]["PortfolioProposal"];
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+        };
+        /** PortfolioAuthorizationOutcome */
+        PortfolioAuthorizationOutcome: {
+            authorization?: components["schemas"]["PortfolioAuthorization"] | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "PREVIEWED" | "APPROVED" | "DENIED";
+            preview?: components["schemas"]["PortfolioPreview"] | null;
+            /** Reasons */
+            reasons: string[];
+            usage?: components["schemas"]["PortfolioAuthorizationUsage"] | null;
+        };
+        /** PortfolioAuthorizationUsage */
+        PortfolioAuthorizationUsage: {
+            /** Allowed */
+            allowed: boolean;
+            authorization_snapshot: components["schemas"]["PortfolioAuthorization"];
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Requested Action
+             * @enum {string}
+             */
+            requested_action: "NEW_EXPOSURE" | "DETERMINISTIC_PROTECTION";
+            retained_protection_floor: components["schemas"]["DeterministicProtectionFloor"];
+            /** Unfinished Cash Obligations */
+            unfinished_cash_obligations: components["schemas"]["DatedCashObligation"][];
+        };
+        /** PortfolioConfirmation */
+        PortfolioConfirmation: {
+            /** Confirmation Id */
+            confirmation_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Risk Budget Version Id */
+            risk_budget_version_id: string;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** User Id */
+            user_id: string;
+        };
+        /** PortfolioPreview */
+        PortfolioPreview: {
+            /** Blocking Account Ids */
+            blocking_account_ids: string[];
+            /**
+             * Blocking Accounts
+             * @default []
+             */
+            blocking_accounts: components["schemas"]["ExcludedAccount"][];
+            /** Excluded Accounts */
+            excluded_accounts: components["schemas"]["ExcludedAccount"][];
+            /** Included Account Ids */
+            included_account_ids: string[];
+            /** Included Accounts */
+            included_accounts: components["schemas"]["CompleteAccountSnapshot"][];
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Snapshot Id */
+            snapshot_id: string;
+        };
+        /**
+         * PortfolioProposal
+         * @description The complete selection and policy snapshot shown before a user confirmation.
+         */
+        PortfolioProposal: {
+            /**
+             * Cash Obligations
+             * @default []
+             */
+            cash_obligations: components["schemas"]["DatedCashObligation"][];
+            /** Portfolio Id */
+            portfolio_id: string;
+            risk_budget: components["schemas"]["PersonalRiskBudget"];
+            snapshot: components["schemas"]["PortfolioSnapshot"];
+        };
+        /**
+         * PortfolioSnapshot
+         * @description The common-cutoff universe from which full accounts can be selected.
+         */
+        PortfolioSnapshot: {
+            /** Accounts */
+            accounts: components["schemas"]["CompleteAccountSnapshot"][];
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Selected Account Ids */
+            selected_account_ids: string[];
+            /** Snapshot Id */
+            snapshot_id: string;
         };
         /** QualificationEvidence */
         QualificationEvidence: {
@@ -1234,7 +1490,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**
@@ -1256,6 +1512,13 @@ export interface components {
             /** Reasons */
             reasons: string[];
             task_snapshot: components["schemas"]["FrozenTask"];
+        };
+        /** TwoThresholdBudget */
+        TwoThresholdBudget: {
+            /** Hard Ratio */
+            hard_ratio: string;
+            /** Target Ratio */
+            target_ratio: string;
         };
         /** UserFact */
         UserFact: {

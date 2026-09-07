@@ -40,6 +40,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
 METADATA = MetaData()
@@ -134,6 +135,34 @@ class DecisionLedger:
                 and fact.result.governance is not None
             ):
                 history.append(fact.result.governance)
+        return tuple(history)
+
+    def portfolio_authorization_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[PortfolioAuthorizationOutcome, ...]:
+        """Read an owner's visible portfolio lineage across its forward scope revisions."""
+        event_ids = (
+            connection.execute(
+                select(DECISION_EVENTS.c.decision_event_id).where(
+                    DECISION_EVENTS.c.corrects_event_id.is_(None)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        history = []
+        for event_id in event_ids:
+            fact = self.get_decision_event(event_id, connection)
+            if fact is None:
+                raise DecisionEventCommitError("portfolio authorization history is unavailable")
+            scope = fact.case.access_scope
+            if (
+                scope is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and fact.result.portfolio is not None
+            ):
+                history.append(fact.result.portfolio)
         return tuple(history)
 
     @contextmanager
