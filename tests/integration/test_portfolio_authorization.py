@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from test_scoped_qualification import GovernanceClock
@@ -196,14 +196,17 @@ def proposal_account_ids(proposal: dict[str, Any]) -> list[str]:
 
 
 def result_family(name: str) -> dict[str, Any]:
-    return json.loads(
-        (
-            Path(__file__).parents[1]
-            / "fixtures"
-            / "synthetic"
-            / "result-families"
-            / f"{name}.json"
-        ).read_text(encoding="utf-8")
+    return cast(
+        dict[str, Any],
+        json.loads(
+            (
+                Path(__file__).parents[1]
+                / "fixtures"
+                / "synthetic"
+                / "result-families"
+                / f"{name}.json"
+            ).read_text(encoding="utf-8")
+        ),
     )
 
 
