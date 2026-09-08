@@ -104,7 +104,9 @@ class DecisionLedger(Protocol[Transaction]):
         self,
         connection: Transaction,
         access_scope: ResultAccessScope,
-        report_ids: tuple[str, ...],
+        portfolio_id: str,
+        recorded_from: datetime,
+        recorded_until: datetime,
     ) -> tuple[UserFact, ...]: ...
 
     def monitoring_inputs_unchanged(

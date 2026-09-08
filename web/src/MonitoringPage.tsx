@@ -73,10 +73,33 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MonitoringActions({ report }: { report: FormalReport }) {
+function MonitoringView({ reportId }: { reportId: string }) {
   const client = useQueryClient();
   const { pathname } = useLocation();
-  const viewed = useRef(new Set<string>());
+  const keys = useRef(new Map<string, string>());
+  const mutation = useMutation({
+    mutationFn: (id: string) =>
+      appendUserFact(id, { kind: "VIEWED", idempotency_key: keys.current.get(id)! }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["monitoring"] })
+  });
+  const record = mutation.mutate;
+  useEffect(() => {
+    if (!pathname.startsWith("/reports/") || keys.current.has(reportId)) return;
+    keys.current.set(reportId, crypto.randomUUID());
+    record(reportId);
+  }, [pathname, reportId, record]);
+  if (mutation.isError) {
+    return (
+      <p role="alert">
+        View not recorded. <button onClick={() => record(reportId)}>Retry recording view</button>
+      </p>
+    );
+  }
+  return mutation.isSuccess ? <p role="status">VIEWED recorded.</p> : null;
+}
+
+function MonitoringActions({ report }: { report: FormalReport }) {
+  const client = useQueryClient();
   const [choice, setChoice] = useState<NonNullable<UserFactRequest["choice"]>>("DEFER");
   const [declaration, setDeclaration] =
     useState<NonNullable<UserFactRequest["declaration"]>>("PREPARING");
@@ -90,12 +113,6 @@ function MonitoringActions({ report }: { report: FormalReport }) {
     },
     onSuccess: () => void client.invalidateQueries({ queryKey: ["monitoring"] })
   });
-  const record = mutation.mutate;
-  useEffect(() => {
-    if (!pathname.startsWith("/reports/") || viewed.current.has(report.report_version_id)) return;
-    viewed.current.add(report.report_version_id);
-    record({ kind: "VIEWED" });
-  }, [pathname, report.report_version_id, record]);
   const monitoring = report.result.monitoring;
   const canConfirm =
     monitoring?.disposition === "ASSESSED" &&
@@ -181,6 +198,7 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
   return (
     <section className="report-section monitoring-evidence" aria-label="Monitoring assessment">
       <h2>{outcome.kind.replaceAll("_", " ")}</h2>
+      <MonitoringView reportId={report.report_version_id} />
       <p>{outcome.disposition}</p>
       {outcome.reasons.length > 0 && <p className="error-message">{outcome.reasons.join(", ")}</p>}
       <dl className="record-list">

@@ -187,22 +187,29 @@ class DecisionLedger:
         self,
         connection: Connection,
         access_scope: ResultAccessScope,
-        report_ids: tuple[str, ...],
+        portfolio_id: str,
+        recorded_from: datetime,
+        recorded_until: datetime,
     ) -> tuple[UserFact, ...]:
         covered = tuple(
             identity
-            for identity in report_ids
+            for identity in self.monitoring_report_ids(connection)
             if (report := self.get_formal_report(identity, connection)) is not None
             and report.access_scope is not None
             and access_scope.same_scope_as(report.access_scope)
+            and report.result.monitoring is not None
+            and report.result.monitoring.portfolio_id == portfolio_id
         )
         return tuple(
-            UserFact.model_validate_json(payload)
+            fact
             for payload in connection.execute(
                 select(USER_FACTS.c.fact_payload)
                 .where(USER_FACTS.c.report_version_id.in_(covered))
                 .order_by(USER_FACTS.c.sequence)
             ).scalars()
+            if recorded_from
+            <= datetime.fromisoformat((fact := UserFact.model_validate_json(payload)).recorded_at)
+            <= recorded_until
         )
 
     def monitoring_inputs_unchanged(

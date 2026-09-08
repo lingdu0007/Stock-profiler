@@ -270,6 +270,23 @@ def assess_monitoring(
                             else item.priority,
                             "quantity_status": "UNKNOWN",
                             "plan": None,
+                            "source_event_id": plan_source.event_id
+                            if any(
+                                target.security_id in affected for target in item.required_targets
+                            )
+                            else item.source_event_id,
+                            "obligation_ids": tuple(
+                                sorted(
+                                    set(item.obligation_ids).union(
+                                        identity
+                                        for target in item.required_targets
+                                        if target.security_id in owned_targets
+                                        for identity in owned_targets[
+                                            target.security_id
+                                        ].source_obligation_ids
+                                    )
+                                )
+                            ),
                             "required_targets": tuple(
                                 owned_targets.get(target.security_id, target)
                                 for target in item.required_targets
@@ -341,12 +358,23 @@ def assess_monitoring(
             if (report := ledger.get_formal_report_for_event(prior.decision_event_id, connection))
             is not None
         )
+        interaction_cutoff = ledger.observed_at()
+        user_facts = ledger.monitoring_user_facts(
+            connection,
+            scope,
+            command.portfolio_id,
+            datetime.combine(dates[0], datetime.min.time(), ZoneInfo("Asia/Shanghai")),
+            datetime.fromisoformat(interaction_cutoff),
+        )
+        references = tuple(
+            dict.fromkeys((*references, *(fact.report_version_id for fact in user_facts)))
+        )
         return monitoring.model_copy(
             update={
                 "kind": command.kind,
                 "source_report_ids": references,
-                "user_facts": ledger.monitoring_user_facts(connection, scope, references),
-                "interaction_cutoff_at": ledger.observed_at(),
+                "user_facts": user_facts,
+                "interaction_cutoff_at": interaction_cutoff,
                 "operations_dates": dates,
                 "missing_daily_dates": tuple(day for day in dates if day not in covered),
                 "notifications": tuple(
@@ -419,18 +447,20 @@ def assess_monitoring(
                     }
                 )
         attempts = route_synthetic_notifications(monitoring, request, ledger.observed_at())
+        pending_due: list[datetime] = []
+        attempted_cases = {attempt.case_id for attempt in attempts}
+        if request.quiet_until is not None and any(
+            item.case_id not in attempted_cases for item in monitoring.cases
+        ):
+            pending_due.append(request.quiet_until)
+        if any(attempt.result != "ACCEPTED" for attempt in attempts):
+            pending_due.append(datetime.fromisoformat(ledger.observed_at()))
         return monitoring.model_copy(
             update={
                 "kind": command.kind,
                 "source_report_ids": (source.report_version_id,),
                 "notifications": attempts,
-                "notification_due_at": (
-                    request.quiet_until
-                    if not attempts
-                    else datetime.fromisoformat(ledger.observed_at())
-                    if any(attempt.result != "ACCEPTED" for attempt in attempts)
-                    else None
-                ),
+                "notification_due_at": min(pending_due, default=None),
             }
         )
     fact = ledger.get_original_decision_event(source.business_object_id, connection)
@@ -500,36 +530,64 @@ def assess_monitoring(
     ):
         return blocked.model_copy(update={"reasons": ("MONITORING_TARGET_WEAKENING_REJECTED",)})
     if obligations:
+        assigned: set[str] = set()
+        for previous in sorted(
+            retained.values(),
+            key=lambda item: (item.priority != "P0", item.first_established_at, item.case_id),
+        ):
+            identities = tuple(
+                identity for identity in previous.obligation_ids if identity not in assigned
+            )
+            assigned.update(identities)
+            if not identities:
+                del retained[previous.case_id]
+                continue
+            current_ids = set(identities).intersection(obligations)
+            if not current_ids:
+                retained[previous.case_id] = previous.model_copy(
+                    update={"obligation_ids": identities}
+                )
+                continue
+            complete = set(identities).issubset(obligations)
+            retained[previous.case_id] = previous.model_copy(
+                update={
+                    "obligation_ids": identities,
+                    "source_event_id": source.event_id,
+                    "plan": plan if complete else None,
+                    "required_targets": tuple(
+                        target
+                        for target in plan.targets
+                        if set(target.source_obligation_ids).intersection(current_ids)
+                    )
+                    if complete
+                    else previous.required_targets,
+                    "quantity_status": "VERIFIED" if complete else "UNKNOWN",
+                    "last_reviewed_at": case.knowledge_cutoff
+                    if complete
+                    else previous.last_reviewed_at,
+                    "priority": "P0" if protective_priority or previous.priority == "P0" else "P1",
+                }
+            )
+        new_obligations = tuple(identity for identity in obligations if identity not in assigned)
         identity = sha256(
-            f"{scope.model_dump_json()}\n{command.portfolio_id}\n{obligations}".encode()
+            f"{scope.model_dump_json()}\n{command.portfolio_id}\n{new_obligations}".encode()
         ).hexdigest()
-        previous = next(
-            (
-                item
-                for item in retained.values()
-                if set(item.obligation_ids).intersection(obligations)
-            ),
-            None,
-        )
         current = MonitoringCase(
             case_id=f"monitoring-case-{identity}",
             source_event_id=source.event_id,
-            obligation_ids=obligations,
+            obligation_ids=new_obligations,
             priority="P0" if protective_priority else "P1",
             plan=plan,
-            required_targets=plan.targets,
+            required_targets=tuple(
+                target
+                for target in plan.targets
+                if set(target.source_obligation_ids).intersection(new_obligations)
+            ),
             first_established_at=case.knowledge_cutoff,
             last_reviewed_at=case.knowledge_cutoff,
         )
-        if previous is not None:
-            current = current.model_copy(
-                update={
-                    "case_id": previous.case_id,
-                    "first_established_at": previous.first_established_at,
-                    "priority": "P0" if "P0" in {current.priority, previous.priority} else "P1",
-                }
-            )
-        retained[current.case_id] = current
+        if new_obligations:
+            retained[current.case_id] = current
         cases = tuple(retained.values())
     return MonitoringOutcome(
         portfolio_id=command.portfolio_id,

@@ -12,7 +12,7 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
 });
 
-it("keeps current obligations visible across overview, inbox and immutable archive", async () => {
+it.each([true, false])("records complete report views with obligations=%s", async (hasCases) => {
   const item = {
     case_id: "synthetic-monitoring-case",
     source_event_id: "synthetic-plan-event",
@@ -32,7 +32,7 @@ it("keeps current obligations visible across overview, inbox and immutable archi
         kind: "DAILY_CLOSE",
         disposition: "BLOCKED",
         reasons: ["MONITORING_EVIDENCE_INCOMPLETE"],
-        cases: [item],
+        cases: hasCases ? [item] : [],
         action_units: [],
         freshness: null,
         notifications: [],
@@ -69,7 +69,7 @@ it("keeps current obligations visible across overview, inbox and immutable archi
             : {
                 reports: [report],
                 current_report_ids: [report.report_version_id],
-                inbox: [item],
+                inbox: hasCases ? [item] : [],
                 user_facts: []
               }
         ),
@@ -80,12 +80,18 @@ it("keeps current obligations visible across overview, inbox and immutable archi
   window.history.pushState({}, "", "/monitoring");
   render(<App />);
   expect(await screen.findByText("MONITORING_EVIDENCE_INCOMPLETE")).toBeVisible();
-  expect(screen.getByText("Quantity unknown")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Acknowledge risk" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Record execution declaration" })).toBeVisible();
+  if (hasCases) {
+    expect(screen.getByText("Quantity unknown")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Acknowledge risk" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Record execution declaration" })).toBeVisible();
+  } else {
+    expect(screen.queryByRole("button", { name: "Acknowledge risk" })).not.toBeInTheDocument();
+  }
   expect(screen.queryByRole("button", { name: "Record plan choice" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
-  expect(await screen.findByText("Deterministic obligation persists")).toBeVisible();
+  if (hasCases) {
+    expect(await screen.findByText("Deterministic obligation persists")).toBeVisible();
+  }
   fireEvent.click(screen.getByRole("link", { name: "Archive" }));
   expect(await screen.findByRole("link", { name: report.report_version_id })).toBeVisible();
   expect(screen.queryByRole("button", { name: /close obligation/i })).not.toBeInTheDocument();
