@@ -129,21 +129,23 @@ def assess_monitoring(
         protective = any(
             event.kind in {"TERMINATION", "CAPITAL_PROTECTION"} for event in command.events
         )
-        if protective:
+        if protective or any(item.status != "VALIDATED" for item in _evidence_status(command)):
             affected = {
                 security
                 for event in command.events
-                if event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
+                if not protective or event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
                 for security in event.security_ids
             }
             plan_source = source
             if source.result.monitoring is not None:
-                source_cases = source.result.monitoring.cases
-                if len(source_cases) != 1:
+                source_ids = {
+                    item.source_event_id
+                    for item in source.result.monitoring.cases
+                    if any(target.security_id in affected for target in item.required_targets)
+                }
+                if len(source_ids) != 1:
                     return blocked
-                resolved = ledger.get_formal_report_for_event(
-                    source_cases[0].source_event_id, connection
-                )
+                resolved = ledger.get_formal_report_for_event(next(iter(source_ids)), connection)
                 if resolved is None:
                     return blocked
                 plan_source = resolved
@@ -166,12 +168,20 @@ def assess_monitoring(
                 target.security_id: target
                 for target in owned_plan.targets
                 if target.security_id in affected
-                and target.direction == "EXIT"
-                and target.target_quantity == 0
+                and (not protective or target.direction == "EXIT" and target.target_quantity == 0)
             }
             if set(owned_targets) != affected:
                 return blocked.model_copy(
                     update={"reasons": ("MONITORING_PROTECTION_TARGET_UNAVAILABLE",)}
+                )
+            if any(
+                target.target_quantity < owned_targets[target.security_id].target_quantity
+                for item in retained.values()
+                for target in item.required_targets
+                if target.security_id in owned_targets
+            ):
+                return blocked.model_copy(
+                    update={"reasons": ("MONITORING_TARGET_WEAKENING_REJECTED",)}
                 )
             calendar = command.calendar
             if calendar is None or calendar.evidence.problem_codes(
@@ -193,7 +203,7 @@ def assess_monitoring(
                     sorted(
                         {
                             identity
-                            for target in owned_plan.targets
+                            for target in owned_targets.values()
                             for identity in target.source_obligation_ids
                         }
                     )
@@ -205,9 +215,9 @@ def assess_monitoring(
                     case_id=f"monitoring-case-{identity}",
                     source_event_id=plan_source.event_id,
                     obligation_ids=obligations,
-                    priority="P0",
+                    priority="P0" if protective else "P1",
                     plan=None,
-                    required_targets=owned_plan.targets,
+                    required_targets=tuple(owned_targets.values()),
                     quantity_status="UNKNOWN",
                     first_established_at=case.knowledge_cutoff,
                     last_reviewed_at=case.knowledge_cutoff,
@@ -247,7 +257,7 @@ def assess_monitoring(
                         case_id=f"monitoring-case-{identity}",
                         source_event_id=plan_source.event_id,
                         obligation_ids=target.source_obligation_ids,
-                        priority="P0",
+                        priority="P0" if protective else "P1",
                         plan=None,
                         required_targets=(target,),
                         quantity_status="UNKNOWN",
@@ -259,12 +269,17 @@ def assess_monitoring(
                 portfolio_id=command.portfolio_id,
                 kind=command.kind,
                 disposition="ASSESSED",
-                reasons=("MONITORING_PROTECTION_QUANTITY_UNAVAILABLE",),
+                reasons=(
+                    "MONITORING_PROTECTION_QUANTITY_UNAVAILABLE"
+                    if protective
+                    else "MONITORING_RISK_QUANTITY_UNAVAILABLE",
+                ),
                 cases=tuple(
                     item.model_copy(
                         update={
                             "priority": "P0"
-                            if any(
+                            if protective
+                            and any(
                                 target.security_id in affected for target in item.required_targets
                             )
                             else item.priority,
@@ -338,14 +353,25 @@ def assess_monitoring(
             and as_of.day != monthrange(as_of.year, as_of.month)[1]
         ):
             return blocked.model_copy(update={"reasons": ("MONITORING_OPERATIONS_WINDOW_INVALID",)})
+        interaction_cutoff = ledger.observed_at()
+        window_start = datetime.combine(dates[0], datetime.min.time(), ZoneInfo("Asia/Shanghai"))
+        recorded_until = datetime.fromisoformat(interaction_cutoff)
         window_history = tuple(
             prior
             for prior in history
             if prior.case.monitoring is not None
             and prior.case.monitoring.kind != "OPERATIONS"
-            and dates[0]
-            <= prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-            <= as_of
+            and (
+                dates[0]
+                <= prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+                <= as_of
+                or prior.case.monitoring.kind == "NOTIFICATION_RUN"
+                and prior.result.monitoring is not None
+                and any(
+                    window_start <= datetime.fromisoformat(attempt.attempted_at) <= recorded_until
+                    for attempt in prior.result.monitoring.notifications
+                )
+            )
         )
         covered = {
             prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
@@ -358,13 +384,12 @@ def assess_monitoring(
             if (report := ledger.get_formal_report_for_event(prior.decision_event_id, connection))
             is not None
         )
-        interaction_cutoff = ledger.observed_at()
         user_facts = ledger.monitoring_user_facts(
             connection,
             scope,
             command.portfolio_id,
-            datetime.combine(dates[0], datetime.min.time(), ZoneInfo("Asia/Shanghai")),
-            datetime.fromisoformat(interaction_cutoff),
+            window_start,
+            recorded_until,
         )
         references = tuple(
             dict.fromkeys((*references, *(fact.report_version_id for fact in user_facts)))
@@ -381,7 +406,11 @@ def assess_monitoring(
                     attempt
                     for prior in window_history
                     if prior.result.monitoring is not None
+                    and prior.result.monitoring.kind == "NOTIFICATION_RUN"
                     for attempt in prior.result.monitoring.notifications
+                    if window_start
+                    <= datetime.fromisoformat(attempt.attempted_at)
+                    <= recorded_until
                 ),
             }
         )
@@ -514,12 +543,12 @@ def assess_monitoring(
         if capital_report is not None and capital_report.result.drawdown is not None
         else None
     )
-    protective_priority = (
-        capital_state is not None and capital_state.risk_state == "PRESERVATION"
-    ) or any(
-        target.priority == "P0" and target.qualified and target.target_id in obligations
+    capital_protection = capital_state is not None and capital_state.risk_state == "PRESERVATION"
+    protective_obligations = {
+        target.target_id
         for target in fact.case.execution_plan.established_targets
-    )
+        if target.priority == "P0" and target.qualified
+    }
     cases: tuple[MonitoringCase, ...] = tuple(retained.values())
     if any(
         target.target_quantity < candidate.target_quantity
@@ -565,7 +594,11 @@ def assess_monitoring(
                     "last_reviewed_at": case.knowledge_cutoff
                     if complete
                     else previous.last_reviewed_at,
-                    "priority": "P0" if protective_priority or previous.priority == "P0" else "P1",
+                    "priority": "P0"
+                    if capital_protection
+                    or protective_obligations.intersection(identities)
+                    or previous.priority == "P0"
+                    else "P1",
                 }
             )
         new_obligations = tuple(identity for identity in obligations if identity not in assigned)
@@ -576,7 +609,9 @@ def assess_monitoring(
             case_id=f"monitoring-case-{identity}",
             source_event_id=source.event_id,
             obligation_ids=new_obligations,
-            priority="P0" if protective_priority else "P1",
+            priority="P0"
+            if capital_protection or protective_obligations.intersection(new_obligations)
+            else "P1",
             plan=plan,
             required_targets=tuple(
                 target

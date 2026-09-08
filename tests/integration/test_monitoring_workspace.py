@@ -336,6 +336,35 @@ def test_initial_authoritative_termination_creates_a_zero_target_case(
     )
 
 
+def test_first_authoritative_risk_breach_preserves_owned_direction_without_complete_costs(
+    migrated_settings: Settings,
+) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    payload["monitoring"].update(
+        kind="EVENT_REASSESS",
+        evidence_families=[],
+        events=[
+            {
+                "event_id": "synthetic-first-risk-breach",
+                "kind": "RISK_BREACH",
+                "security_ids": ["XQZ-4017"],
+                "authority": "RISK_POLICY",
+                "evidence": position_evidence("synthetic-risk-policy"),
+            }
+        ],
+    )
+    report = committed(migrated_settings, payload)
+    assert report.result.monitoring is not None
+    outcome = report.result.monitoring
+    assert outcome.disposition == "ASSESSED"
+    assert len(outcome.cases) == 1
+    assert outcome.cases[0].priority == "P1"
+    assert outcome.cases[0].required_targets[0].direction == "REDUCE"
+    assert outcome.cases[0].quantity_status == "UNKNOWN"
+    assert outcome.cases[0].plan is None
+    assert outcome.action_units == ()
+
+
 @pytest.mark.parametrize("new_security", [True, False])
 def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
     migrated_settings: Settings,
@@ -347,6 +376,9 @@ def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
     from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
     from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
     from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
+    from stock_profiler.modules.position_management.execution_contracts import (
+        EstablishedQuantityTarget,
+    )
 
     payload = ready_monitoring_payload(migrated_settings)
     original = committed(migrated_settings, payload)
@@ -400,6 +432,34 @@ def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
             FrozenDecisionCase.model_validate(payload), saved_reports, connection
         )
         assert owner.case.execution_plan is not None
+        owner = owner.model_copy(
+            update={
+                "case": owner.case.model_copy(
+                    update={
+                        "execution_plan": owner.case.execution_plan.model_copy(
+                            update={
+                                "established_targets": (
+                                    EstablishedQuantityTarget.model_validate(
+                                        {
+                                            "target_id": "synthetic-new-owned-obligation",
+                                            "security_id": new_target.security_id,
+                                            "target_quantity": "0",
+                                            "direction": "EXIT",
+                                            "qualified": True,
+                                            "priority": "P0",
+                                            "policy_version": "synthetic-exit-v1",
+                                            "evidence": position_evidence("synthetic-exit"),
+                                        }
+                                    ),
+                                )
+                            }
+                        )
+                    }
+                )
+            }
+        )
+        saved_reports.get_original_decision_event.return_value = owner
+        assert owner.case.execution_plan is not None
         position_id = owner.case.execution_plan.concentration_event_id
         position_source = ledger.get_formal_report_for_event(position_id, connection)
         assert position_source is not None
@@ -422,6 +482,27 @@ def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
         following = assess_monitoring(
             FrozenDecisionCase.model_validate(payload), saved_reports, connection
         )
+        multi_source = original.model_copy(
+            update={"result": original.result.model_copy(update={"monitoring": following})}
+        )
+        saved_reports.get_formal_report_for_event.side_effect = lambda identity, _: (
+            multi_source if identity == original.event_id else source
+        )
+        payload["monitoring"].update(
+            source_event_id=original.event_id,
+            events=[
+                {
+                    "event_id": "synthetic-following-termination",
+                    "kind": "TERMINATION",
+                    "authority": "EXCHANGE",
+                    "security_ids": [new_target.security_id],
+                    "evidence": position_evidence("synthetic-exchange"),
+                }
+            ],
+        )
+        repeated = assess_monitoring(
+            FrozenDecisionCase.model_validate(payload), saved_reports, connection
+        )
     assert outcome.disposition == "ASSESSED"
     targets = {
         target.security_id: target for item in outcome.cases for target in item.required_targets
@@ -442,6 +523,17 @@ def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
         == 1
     )
     assert {item.case_id for item in following.cases} == {item.case_id for item in outcome.cases}
+    if new_security:
+        assert (
+            next(
+                item.priority
+                for item in following.cases
+                if "synthetic-new-owned-obligation" not in item.obligation_ids
+            )
+            == "P1"
+        )
+    assert repeated.disposition == "ASSESSED"
+    assert {item.case_id for item in repeated.cases} == {item.case_id for item in outcome.cases}
 
 
 def test_termination_cannot_invent_an_exit_from_a_saved_reduction(
@@ -809,6 +901,23 @@ def test_operations_freezes_recent_interactions_with_reports_older_than_the_wind
         UserFactRequest(kind="ACKNOWLEDGED", idempotency_key="synthetic-old-report-current-ack"),
     )
     assert fact is not None
+    notification_payload = deepcopy(payload)
+    notification_payload["monitoring"].update(
+        kind="NOTIFICATION_RUN",
+        source_event_id=original.event_id,
+        notification={
+            "identity": "synthetic-recent-notification-old-evidence",
+            "routing_version": "synthetic-routing-v1",
+            "quiet_until": None,
+            "immediate_result": "ACCEPTED",
+            "persistent_result": "ACCEPTED",
+        },
+    )
+    notification = run_frozen_decision_case(
+        migrated_settings, notification_payload, clock=clock
+    ).report
+    assert notification is not None and notification.result.monitoring is not None
+    assert notification.result.monitoring.notifications
     payload["knowledge_cutoff"] = "2042-06-30T08:00:00Z"
     payload["monitoring"].update(
         kind="OPERATIONS",
@@ -824,6 +933,8 @@ def test_operations_freezes_recent_interactions_with_reports_older_than_the_wind
     assert audit is not None and audit.result.monitoring is not None
     assert audit.result.monitoring.user_facts == (fact,)
     assert original.report_version_id in audit.result.monitoring.source_report_ids
+    assert audit.result.monitoring.notifications == notification.result.monitoring.notifications
+    assert notification.report_version_id in audit.result.monitoring.source_report_ids
 
 
 def test_confirmation_requires_a_current_plan_but_never_discharges_the_obligation(
