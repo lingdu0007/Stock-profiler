@@ -559,6 +559,51 @@
         "title": "CapabilityVersion",
         "type": "object"
       },
+      "CapitalReauthorization": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization_id": {
+            "minLength": 1,
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "confirmation_id": {
+            "minLength": 1,
+            "title": "Confirmation Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "format": "date-time",
+            "title": "Confirmed At",
+            "type": "string"
+          },
+          "epoch_id": {
+            "minLength": 1,
+            "title": "Epoch Id",
+            "type": "string"
+          },
+          "previous_epoch_id": {
+            "minLength": 1,
+            "title": "Previous Epoch Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_id",
+          "authorization_id",
+          "previous_epoch_id",
+          "epoch_id",
+          "confirmed_at",
+          "confirmed"
+        ],
+        "title": "CapitalReauthorization",
+        "type": "object"
+      },
       "CashBudget": {
         "additionalProperties": false,
         "properties": {
@@ -1103,6 +1148,427 @@
         "title": "DrawdownBudget",
         "type": "object"
       },
+      "DrawdownOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": ["ACCEPTED", "DENIED", "UNKNOWN"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrawdownState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "DrawdownOutcome",
+        "type": "object"
+      },
+      "DrawdownPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "caution_recovery_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Caution Recovery Ratio",
+            "type": "string"
+          },
+          "caution_recovery_sessions": {
+            "exclusiveMinimum": 0.0,
+            "title": "Caution Recovery Sessions",
+            "type": "integer"
+          },
+          "cooling_sessions": {
+            "exclusiveMinimum": 0.0,
+            "title": "Cooling Sessions",
+            "type": "integer"
+          },
+          "defensive_exposure_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Defensive Exposure Ratio",
+            "type": "string"
+          },
+          "defensive_recovery_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Defensive Recovery Ratio",
+            "type": "string"
+          },
+          "defensive_recovery_sessions": {
+            "exclusiveMinimum": 0.0,
+            "title": "Defensive Recovery Sessions",
+            "type": "integer"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "market_calendar_version_id": {
+            "minLength": 1,
+            "title": "Market Calendar Version Id",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "synthetic",
+          "generator_version",
+          "seed",
+          "version_id",
+          "defensive_exposure_ratio",
+          "caution_recovery_ratio",
+          "defensive_recovery_ratio",
+          "caution_recovery_sessions",
+          "defensive_recovery_sessions",
+          "cooling_sessions",
+          "market_calendar_version_id"
+        ],
+        "title": "DrawdownPolicy",
+        "type": "object"
+      },
+      "DrawdownState": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "accounting_cutoff_at": {
+            "format": "date-time",
+            "title": "Accounting Cutoff At",
+            "type": "string"
+          },
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "cooling_sessions": {
+            "default": 0,
+            "title": "Cooling Sessions",
+            "type": "integer"
+          },
+          "current_drawdown": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Drawdown"
+          },
+          "current_stock_exposure": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Stock Exposure"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "epoch_id": {
+            "title": "Epoch Id",
+            "type": "string"
+          },
+          "epoch_status": {
+            "default": "OPEN",
+            "enum": ["OPEN", "CLOSED"],
+            "title": "Epoch Status",
+            "type": "string"
+          },
+          "exact_peak": {
+            "$ref": "#/components/schemas/ExactRatio"
+          },
+          "exact_units": {
+            "$ref": "#/components/schemas/ExactRatio"
+          },
+          "execution_blocked": {
+            "title": "Execution Blocked",
+            "type": "boolean"
+          },
+          "high_water_nav": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "High Water Nav",
+            "type": "string"
+          },
+          "last_observed_session": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed Session"
+          },
+          "last_recovery_session": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Recovery Session"
+          },
+          "maximum_drawdown": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Drawdown",
+            "type": "string"
+          },
+          "net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation Equity"
+          },
+          "new_exposure_blocked": {
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/DrawdownPolicy"
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "previous_epoch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Epoch Id"
+          },
+          "processed_flow_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Processed Flow Ids",
+            "type": "array"
+          },
+          "processed_stock_events": {
+            "items": {
+              "$ref": "#/components/schemas/FlowLedgerKey"
+            },
+            "title": "Processed Stock Events",
+            "type": "array"
+          },
+          "processed_transfers": {
+            "items": {
+              "$ref": "#/components/schemas/FlowLedgerKey"
+            },
+            "title": "Processed Transfers",
+            "type": "array"
+          },
+          "reauthorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapitalReauthorization"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recovery_sessions": {
+            "default": 0,
+            "title": "Recovery Sessions",
+            "type": "integer"
+          },
+          "risk_direction": {
+            "anyOf": [
+              {
+                "enum": ["REDUCE", "EXIT"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Direction"
+          },
+          "risk_state": {
+            "enum": ["NORMAL", "CAUTION", "DEFENSIVE", "PRESERVATION"],
+            "title": "Risk State",
+            "type": "string"
+          },
+          "stock_exposure_limit": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Exposure Limit"
+          },
+          "stock_exposure_target_value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Exposure Target Value"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/DrawdownBudget"
+          },
+          "unit_nav": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Nav"
+          },
+          "units": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Units",
+            "type": "string"
+          },
+          "valuation": {
+            "$ref": "#/components/schemas/DrawdownValuation"
+          }
+        },
+        "required": [
+          "decision_id",
+          "epoch_id",
+          "portfolio_id",
+          "authorization_id",
+          "account_ids",
+          "cutoff_at",
+          "accounting_cutoff_at",
+          "policy",
+          "thresholds",
+          "net_liquidation_equity",
+          "units",
+          "unit_nav",
+          "high_water_nav",
+          "maximum_drawdown",
+          "current_drawdown",
+          "risk_state",
+          "new_exposure_blocked",
+          "valuation",
+          "current_stock_exposure",
+          "stock_exposure_limit",
+          "risk_direction",
+          "execution_blocked",
+          "stock_exposure_target_value",
+          "exact_units",
+          "exact_peak",
+          "processed_transfers",
+          "processed_stock_events"
+        ],
+        "title": "DrawdownState",
+        "type": "object"
+      },
+      "DrawdownValuation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "liquidation_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liquidation Cost"
+          },
+          "position_event_id": {
+            "minLength": 1,
+            "title": "Position Event Id",
+            "type": "string"
+          }
+        },
+        "required": ["position_event_id", "liquidation_cost", "evidence"],
+        "title": "DrawdownValuation",
+        "type": "object"
+      },
       "ErroneousAlertReplay": {
         "additionalProperties": false,
         "properties": {
@@ -1339,6 +1805,23 @@
         "title": "EvidenceDependencyWindow",
         "type": "object"
       },
+      "ExactRatio": {
+        "additionalProperties": false,
+        "properties": {
+          "denominator": {
+            "exclusiveMinimum": 0.0,
+            "title": "Denominator",
+            "type": "integer"
+          },
+          "numerator": {
+            "title": "Numerator",
+            "type": "integer"
+          }
+        },
+        "required": ["numerator", "denominator"],
+        "title": "ExactRatio",
+        "type": "object"
+      },
       "ExcludedAccount": {
         "additionalProperties": false,
         "properties": {
@@ -1368,6 +1851,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CorrectionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "drawdown": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrawdownOutcome"
               },
               {
                 "type": "null"
@@ -1442,6 +1935,24 @@
         },
         "required": ["outcome_code", "summary", "key_reasons"],
         "title": "ExternalResult",
+        "type": "object"
+      },
+      "FlowLedgerKey": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "entry_id": {
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "entry_id"],
+        "title": "FlowLedgerKey",
         "type": "object"
       },
       "FormalCheckIdentity": {
@@ -4920,6 +5431,7 @@
               "QUALIFICATION",
               "PORTFOLIO_AUTHORIZATION",
               "POSITION_RECONCILIATION",
+              "DRAWDOWN_PROTECTION",
               "LIQUIDITY_PROTECTION",
               "PORTFOLIO_STRESS",
               "ADJUDICATION_LIFECYCLE",

@@ -153,6 +153,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
       {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
       {report.result.liquidity && <LiquidityEvidence liquidity={report.result.liquidity} />}
       {position && <PositionSnapshotEvidence position={position} />}
+      {report.result.drawdown && <CapitalProtectionEvidence drawdown={report.result.drawdown} />}
       {stress && <PortfolioStressEvidence stress={stress} />}
 
       <section className="report-section" aria-label="Decision stages">
@@ -220,6 +221,66 @@ type PortfolioPreview = NonNullable<PortfolioAuthorizationOutcome["preview"]>;
 type PortfolioAuthorization = NonNullable<PortfolioAuthorizationOutcome["authorization"]>;
 type PortfolioAuthorizationUsage = NonNullable<PortfolioAuthorizationOutcome["usage"]>;
 type PositionReconciliationOutcome = NonNullable<FormalReport["result"]["position"]>;
+
+function CapitalProtectionEvidence({
+  drawdown
+}: {
+  drawdown: NonNullable<FormalReport["result"]["drawdown"]>;
+}) {
+  const state = drawdown.state;
+  return (
+    <section className="report-section" aria-label="Capital protection">
+      <h2>Capital protection</h2>
+      <dl className="record-list">
+        <Record label="Disposition" value={drawdown.disposition} />
+        <Record label="Reasons" value={drawdown.reasons.join(", ")} />
+        {state && (
+          <>
+            <Record label="Capital epoch" value={state.epoch_id} />
+            <Record label="Epoch status" value={state.epoch_status} />
+            <Record label="Authorization" value={state.authorization_id} />
+            <Record label="Protection policy" value={state.policy.version_id} />
+            <Record label="Position evidence" value={state.valuation.position_event_id} />
+            <Record label="Capital cutoff" value={state.cutoff_at} />
+            <Record label="Risk state" value={state.risk_state} />
+            <Record
+              label="New exposure"
+              value={state.new_exposure_blocked ? "Blocked" : "Not blocked"}
+            />
+            <Record
+              label="Net liquidation equity"
+              value={state.net_liquidation_equity ?? "Unknown"}
+            />
+            <Record label="Capital units" value={state.units} />
+            <Record label="Unit NAV" value={state.unit_nav ?? "Unknown"} />
+            <Record label="High-water NAV" value={state.high_water_nav} />
+            <Record label="Current drawdown ratio" value={state.current_drawdown ?? "Unknown"} />
+            <Record label="Historical maximum drawdown ratio" value={state.maximum_drawdown} />
+            <Record
+              label="Current stock exposure"
+              value={state.current_stock_exposure ?? "Unknown"}
+            />
+            <Record
+              label="Stock exposure limit ratio"
+              value={state.stock_exposure_limit ?? "None"}
+            />
+            <Record
+              label="Stock target value"
+              value={state.stock_exposure_target_value ?? "Unknown"}
+            />
+            <Record label="Risk direction" value={state.risk_direction ?? "None"} />
+            <Record label="Execution" value={state.execution_blocked ? "Blocked" : "Not blocked"} />
+            <Record label="Recovery sessions" value={String(state.recovery_sessions)} />
+            <Record label="Cooling sessions" value={String(state.cooling_sessions)} />
+            {state.previous_epoch_id && (
+              <Record label="Previous epoch" value={state.previous_epoch_id} />
+            )}
+          </>
+        )}
+      </dl>
+    </section>
+  );
+}
 
 function PortfolioStressEvidence({
   stress
