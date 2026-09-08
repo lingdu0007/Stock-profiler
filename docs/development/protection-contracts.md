@@ -15,7 +15,7 @@ uv run --locked --python 3.11 python scripts/protection_matrix.py --catalog
 make protection-contracts CONTRACT_OUTPUT=/tmp/protection-contract-result.json
 ```
 
-The output must be a new file outside the source repository. Keep generated
+The output must be a new file outside any Git worktree. Keep generated
 results outside Git; do not commit test logs, databases, or execution artifacts.
 An existing result is never overwritten. A failed run either leaves no artifact
 (preflight failure) or writes a `FAILED` artifact. Only a zero exit status and
@@ -28,6 +28,9 @@ skips, unexpected failures, collection errors and mismatched repeated inventorie
 all fail the run. The journey cases additionally compare complete saved report
 projections across two independently reconstructed application/framework stores,
 including replay, monitoring, independent user facts, notifications and audit.
+Allocation cases also rebuild waterfall, partial sellability, dated funding,
+preservation, earliest-window routing, equal-cost routing and conservative-bound
+results. The required Backend CI check runs the same matrix.
 
 ## Coverage
 
@@ -52,6 +55,11 @@ Passing counts are a coverage check, not a substitute for the assertions within
 these contracts. The catalog is versioned source, not a claim about real accounts
 or a statistical measurement.
 
+The catalog also pins a SHA-256 digest of the sorted JUnit identities, serialized
+as compact JSON (`classname::name`). Renaming, adding or deleting a case requires
+an explicit reviewed inventory update; simply retaining one passing test in each
+directory cannot satisfy the frozen matrix.
+
 ## Gate-removal self-checks
 
 After both baselines pass, the runner mutates actual source guards in separate
@@ -60,7 +68,8 @@ named function; a changed or missing guard makes the run fail closed. The mutate
 test inventory must match the corresponding passing baseline inventory.
 
 Removing concentration, stress, cash restoration, capital preservation, user
-scope, account scope or notification fallback must cause the designated contract
+scope, account scope, budget expiry, shadow publication, rounding confirmation,
+restoration waterfall or notification fallback must cause the designated contract
 assertion to fail. A surviving mutation is a failed artifact. A syntax error,
 fixture error, missing import, skipped test or unrelated failure does not count
 as detecting a removed protection. The original source and installed framework

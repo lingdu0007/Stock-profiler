@@ -202,3 +202,128 @@ def test_frozen_protection_journey_rebuilds_without_releasing_risk(
             }
         )
     assert snapshots[0] == snapshots[1]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "waterfall",
+        "partial",
+        "dated",
+        "late",
+        "preservation",
+        "preservation-missing",
+        "earlier",
+        "equal",
+        "conservative",
+    ],
+)
+def test_frozen_execution_allocations_rebuild_and_replay_exactly(
+    migrated_settings: Settings, tmp_path: Path, scenario: str
+) -> None:
+    reports: list[dict[str, Any]] = []
+    for repetition in range(2):
+        settings = migrated_settings.model_copy(
+            update={
+                "app_database_url": f"sqlite:///{tmp_path / f'allocation-{repetition}.sqlite3'}",
+                "m_agent_run_store_path": tmp_path / f"allocation-host-{repetition}.sqlite3",
+            }
+        )
+        configuration = Config("alembic.ini")
+        configuration.set_main_option("sqlalchemy.url", settings.app_database_url)
+        command.upgrade(configuration, "head")
+        payload = risk_handoff_payload(
+            settings,
+            multi=scenario in {"waterfall", "partial"},
+            partial=scenario == "partial",
+            dated=scenario in {"dated", "late"},
+            capital_state="PRESERVATION" if scenario.startswith("preservation") else None,
+        )
+        routes = execution_routes()
+        if scenario in {"waterfall", "partial"}:
+            routes = []
+            for index in range(5):
+                for route in execution_routes():
+                    route["security_id"] = f"XQZ-PLAN-{index}"
+                    route["cost_curve"].update(commission_ratio="0", minimum_commission="0")
+                    routes.append(route)
+        elif scenario == "dated":
+            routes[0]["cost_curve"].update(commission_ratio="0", minimum_commission="0")
+        elif scenario == "late":
+            for route in routes:
+                route["transferable_at"] = "2042-05-21T16:00:00Z"
+        elif scenario.startswith("preservation"):
+            for route in routes:
+                route["rules_evidence"] = position_evidence(
+                    "synthetic-current-rules", cutoff_at=payload["knowledge_cutoff"]
+                )
+                route["cost_curve"]["evidence"] = position_evidence(
+                    "synthetic-current-cost", cutoff_at=payload["knowledge_cutoff"]
+                )
+            if scenario == "preservation-missing":
+                payload["execution_plan"]["stress_event_id"] = "synthetic-missing-stress"
+        elif scenario == "earlier":
+            routes[1]["first_sellable_at"] = routes[1]["transferable_at"]
+        elif scenario == "equal":
+            routes[1]["cost_curve"] = deepcopy(routes[0]["cost_curve"])
+            for route in routes:
+                route["cost_curve"]["minimum_commission"] = "0"
+        elif scenario == "conservative":
+            for route in routes:
+                bound = deepcopy(route["cost_curve"])
+                bound.update(
+                    version_id="synthetic-cost-bound",
+                    commission_ratio="0.02",
+                    minimum_commission="0",
+                )
+                route["conservative_cost_curve"] = bound
+                route["cost_curve"] = None
+        payload["execution_plan"]["routes"] = routes
+        execution = run_frozen_decision_case(settings, payload, clock=GovernanceClock())
+        report = execution.report
+        assert report is not None and report.result.execution_plan is not None
+        plan = report.result.execution_plan
+        assert plan.new_exposure_blocked and not plan.risk_restored
+        assert plan.disposition == (
+            "BLOCKED" if scenario in {"partial", "late", "preservation-missing"} else "PLANNED"
+        )
+        if scenario in {"waterfall", "partial"}:
+            assert len(plan.targets) == 5
+            assert plan.initial_target_sale_value == Decimal(
+                "2000" if scenario == "partial" else "3500"
+            )
+            assert sum((leg.gross_proceeds for leg in plan.legs), Decimal(0)) == Decimal(
+                "2000" if scenario == "partial" else "4000"
+            )
+            assert plan.projected_stress_gap == Decimal("440" if scenario == "partial" else "0")
+            assert plan.projected_cash_gap == Decimal("1900" if scenario == "partial" else "0")
+        elif scenario == "late":
+            assert plan.projected_cash_gap == Decimal("500")
+        elif scenario.startswith("preservation"):
+            assert plan.targets[0].target_quantity == 0
+            assert plan.targets[0].direction == "EXIT"
+            assert len(plan.legs) == (0 if scenario == "preservation-missing" else 2)
+        else:
+            expected = {
+                "dated": ("10", "60"),
+                "earlier": ("70",),
+                "equal": ("30", "40"),
+                "conservative": ("30", "40"),
+            }[scenario]
+            assert tuple(leg.quantity for leg in plan.legs) == tuple(map(Decimal, expected))
+            assert plan.legs[0].account_id == "synthetic-account-4017"
+            if scenario == "conservative":
+                assert plan.cost_routing_basis == "CONSERVATIVE_BOUND_PROPORTIONAL"
+                assert sum((leg.disposal_cost for leg in plan.legs), Decimal(0)) == Decimal("14")
+        assert run_frozen_decision_case(settings, payload, clock=GovernanceClock()) == execution
+        assert (
+            replay_default_frozen_decision_case(
+                settings,
+                payload["business_identity"],
+                clock=GovernanceClock(),
+                recovery_case=FrozenDecisionCase.model_validate(payload),
+            )
+            == execution
+        )
+        reports.append(report.model_dump(mode="json"))
+    assert reports[0] == reports[1]

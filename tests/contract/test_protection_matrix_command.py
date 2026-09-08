@@ -127,6 +127,28 @@ def test_matrix_cannot_certify_a_different_source_identity(tmp_path: Path) -> No
     assert not output.exists()
 
 
+def test_matrix_refuses_artifacts_inside_any_git_worktree(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/protection_matrix.py"),
+            "--source",
+            head,
+            "--output",
+            str(tmp_path / "nested" / "result.json"),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "outside any Git worktree" in result.stderr
+    assert not (tmp_path / "nested").exists()
+
+
 def test_gate_mutation_requires_one_exact_guard_and_leaves_other_code_intact(
     tmp_path: Path,
 ) -> None:
@@ -164,3 +186,22 @@ def test_matrix_coverage_cannot_lose_a_required_surface() -> None:
                 "isolation": ["tests/security"],
             },
         )
+
+
+def test_mutation_can_remove_a_unique_guard_in_a_result_projection(tmp_path: Path) -> None:
+    module: dict[str, Any] = runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))
+    target = tmp_path / "projection.py"
+    target.write_text(
+        'def project(sold, held, cap):\n    return {"reconfirm": sold == held and cap > 0}\n',
+        encoding="utf-8",
+    )
+    module["mutate_guard"](target, "project", "sold == held and cap > 0", "False")
+    scope: dict[str, Any] = {}
+    exec(compile(target.read_text(encoding="utf-8"), str(target), "exec"), scope)
+    assert scope["project"](100, 100, 30) == {"reconfirm": False}
+
+
+def test_frozen_inventory_rejects_deleted_or_renamed_contracts() -> None:
+    module: dict[str, Any] = runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))
+    with pytest.raises(ValueError, match="frozen inventory"):
+        module["verify_inventory"]({"tests.integration.test_report::test_saved_result": "passed"})

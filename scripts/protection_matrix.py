@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import NamedTuple
 from xml.etree import ElementTree
 
+FROZEN_INVENTORY_SHA256 = "467db1978747187839156f9daa2951572c4442123f53bbec80d1ce9688ca15ae"
+
 GROUPS = {
     "account_scope": ["tests/integration/test_portfolio_authorization.py"],
     "position_facts": ["tests/integration/test_position_state_reconciliation.py"],
@@ -107,6 +109,37 @@ MUTATIONS = {
         "tests/integration/test_monitoring_workspace.py"
         "::test_notification_fallback_preserves_action_and_minimizes_external_content",
     ),
+    "budget_expiry": GuardMutation(
+        "src/stock_profiler/modules/portfolio/service.py",
+        "_adjudicate_use",
+        "now >= authorization.proposal.risk_budget.expires_at",
+        "False",
+        "tests/integration/test_portfolio_authorization.py"
+        "::test_expired_authorization_blocks_new_exposure_but_retains_protection_and_obligations",
+    ),
+    "shadow_publication": GuardMutation(
+        "src/stock_profiler/adapters/persistence/decision_ledger.py",
+        "publish_report",
+        'fact.case.access_scope is not None and fact.case.access_scope.visibility == "SHADOW"',
+        "False",
+        "tests/security/test_shadow_boundary.py::test_direct_persistence_cannot_publish_shadow_content",
+    ),
+    "rounding_confirmation": GuardMutation(
+        "src/stock_profiler/modules/position_management/execution_routing.py",
+        "route_targets",
+        "total == current and target.target_quantity > 0",
+        "False",
+        "tests/integration/test_execution_plans.py"
+        "::test_strict_targets_windows_and_legal_units_preserve_action_meaning",
+    ),
+    "restoration_waterfall": GuardMutation(
+        "src/stock_profiler/modules/position_management/execution_waterfall.py",
+        "conjoin_portfolio_targets",
+        "restored(initial)",
+        "True",
+        "tests/integration/test_execution_plans.py"
+        "::test_waterfall_credits_existing_targets_before_proportional_remaining_sales",
+    ),
 }
 
 # -I prevents a caller's PYTHONPATH from replacing the isolated source under test.
@@ -130,11 +163,18 @@ def mutate_guard(path: Path, function: str, condition: str, replacement: str) ->
         for definition in ast.walk(tree)
         if isinstance(definition, ast.FunctionDef) and definition.name == function
         for node in ast.walk(definition)
-        if isinstance(node, ast.If | ast.IfExp) and ast.dump(node.test) == expected
+        if isinstance(node, ast.expr) and ast.dump(node) == expected
     ]
     if len(matches) != 1:
         raise ValueError("Mutation must match exactly one frozen guard")
-    matches[0].test = ast.parse(replacement, mode="eval").body
+
+    class ReplaceGuard(ast.NodeTransformer):
+        def generic_visit(self, node: ast.AST) -> ast.AST:
+            if node is matches[0]:
+                return ast.copy_location(ast.parse(replacement, mode="eval").body, node)
+            return super().generic_visit(node)
+
+    tree = ReplaceGuard().visit(tree)
     ast.fix_missing_locations(tree)
     compile(tree, str(path), "exec")
     path.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
@@ -188,9 +228,18 @@ def catalog() -> dict[str, object]:
         "activation_authorized": False,
         "required_repetitions": 2,
         "failure_tolerance": 0,
+        "inventory_sha256": FROZEN_INVENTORY_SHA256,
         "groups": GROUPS,
         "mutations": {name: mutation._asdict() for name, mutation in MUTATIONS.items()},
     }
+
+
+def verify_inventory(outcomes: dict[str, str]) -> None:
+    digest = hashlib.sha256(
+        json.dumps(sorted(outcomes), separators=(",", ":")).encode()
+    ).hexdigest()
+    if digest != FROZEN_INVENTORY_SHA256:
+        raise ValueError("Contract results do not match the frozen inventory")
 
 
 def verify_coverage(outcomes: dict[str, str], groups: dict[str, list[str]]) -> dict[str, int]:
@@ -265,6 +314,18 @@ def run_matrix(root: Path, source: str, output: Path) -> int:
     output = output.resolve()
     if output.is_relative_to(root) or output.exists():
         raise ValueError("Output must be a new file outside the source repository")
+    ancestor = output.parent
+    while not ancestor.exists():
+        ancestor = ancestor.parent
+    repository = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=ancestor,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if repository.returncode == 0 and repository.stdout.strip() == "true":
+        raise ValueError("Output must be outside any Git worktree")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip():
         raise ValueError("Matrix requires a clean, committed source")
     if not __debug__ or sys.flags.optimize:
@@ -297,6 +358,7 @@ def run_matrix(root: Path, source: str, output: Path) -> int:
                 unpack_source(archive, isolated)
                 print(f"Baseline {repetition + 1}/2", file=sys.stderr, flush=True)
                 baseline.append(run_tests(isolated, workspace / f"baseline-{repetition}", paths))
+                verify_inventory(baseline[-1])
                 artifact["group_counts"] = verify_coverage(baseline[-1], GROUPS)
             if baseline[0] != baseline[1]:
                 raise ValueError("Repeated contract inventories or results differ")
