@@ -140,6 +140,7 @@ class DecisionLedger:
             and (concentration := fact.result.concentration) is not None
             and concentration.portfolio_id == portfolio_id
             and "CONCENTRATION_SNAPSHOT_OUT_OF_ORDER" not in concentration.reasons
+            and "CONCENTRATION_HISTORY_SCOPE_UNRESOLVED" not in concentration.reasons
         ]
         lineage.sort(key=lambda item: item[1].cutoff_at)
         latest = {

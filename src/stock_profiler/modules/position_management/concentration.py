@@ -1,6 +1,7 @@
 """Concentration uses reconciled current value, never cost or pending sales."""
 
 import json
+from datetime import datetime
 from decimal import ROUND_FLOOR, Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
@@ -27,10 +28,16 @@ def assess_concentration(
     *,
     history: ConcentrationHistory | None = None,
     authorization_lineage: tuple[PortfolioAuthorizationOutcome, ...] = (),
+    authorization_history: tuple[PortfolioAuthorizationOutcome, ...] = (),
 ) -> ConcentrationOutcome:
     with localcontext(Context(prec=34)):
         return _assess(
-            command, portfolio, position, history or ConcentrationHistory(), authorization_lineage
+            command,
+            portfolio,
+            position,
+            history or ConcentrationHistory(),
+            authorization_lineage,
+            authorization_history,
         )
 
 
@@ -40,6 +47,7 @@ def _assess(
     position: PositionReconciliationOutcome,
     history: ConcentrationHistory,
     authorization_lineage: tuple[PortfolioAuthorizationOutcome, ...],
+    authorization_history: tuple[PortfolioAuthorizationOutcome, ...],
 ) -> ConcentrationOutcome:
     snapshot = position.snapshot
     usage = portfolio.usage
@@ -74,6 +82,7 @@ def _assess(
     if any(issuer.issuer_id not in closed_issuers for issuer in missing_issuers):
         reasons.append("CONCENTRATION_ISSUER_LINEAGE_UNRESOLVED")
     pending_bases: dict[str, tuple[ConcentrationQuantityBasis, ...]] = {}
+    admission_cutoffs = _account_admission_cutoffs(command, portfolio, authorization_history)
     for issuer in prior_issuers.values():
         if issuer.direction != "REDUCE":
             continue
@@ -85,9 +94,16 @@ def _assess(
             and set(usage.authorization_snapshot.proposal.snapshot.selected_account_ids)
             == set(command.position_snapshot.account_ids)
         ):
-            basis = _extend_quantity_basis(command, position, issuer.targets, basis)
+            basis = _extend_quantity_basis(
+                command, position, issuer.targets, basis, admission_cutoffs=admission_cutoffs
+            )
         pending_bases[issuer.issuer_id] = basis
-        if not _quantities_explained_by_fills(position, basis):
+        complete_basis = {
+            (account_id, target.security_id)
+            for account_id in command.position_snapshot.account_ids
+            for target in issuer.targets
+        }.issubset({(item.account_id, item.security_id) for item in basis})
+        if not complete_basis or not _quantities_explained_by_fills(position, basis):
             reasons.append("CONCENTRATION_EXECUTION_LINEAGE_UNRESOLVED")
         current_codes = {
             unit.security_id for unit in snapshot.action_units if unit.issuer_id == issuer.issuer_id
@@ -438,6 +454,8 @@ def _extend_quantity_basis(
     position: PositionReconciliationOutcome,
     targets: tuple[ConcentrationTarget, ...],
     prior: tuple[ConcentrationQuantityBasis, ...],
+    *,
+    admission_cutoffs: dict[str, datetime] | None = None,
 ) -> tuple[ConcentrationQuantityBasis, ...]:
     if position.snapshot.total_account_equity is None:
         return prior
@@ -454,12 +472,65 @@ def _extend_quantity_basis(
             )
             if any(quantity is None for quantity in quantities):
                 return prior
+            cutoff = position.snapshot.cutoff_at
+            quantity = sum(
+                (quantity for quantity in quantities if quantity is not None), Decimal(0)
+            )
+            if admission_cutoffs is not None:
+                if account_id not in admission_cutoffs:
+                    return prior
+                cutoff = admission_cutoffs[account_id]
+                quantity = sum(
+                    (
+                        entry.quantity_delta
+                        for entry in position.snapshot.authoritative_ledger
+                        if entry.account_id == account_id
+                        and entry.security_id == target.security_id
+                        and entry.occurred_at <= cutoff
+                    ),
+                    Decimal(0),
+                )
             basis[key] = ConcentrationQuantityBasis(
                 account_id=account_id,
                 security_id=target.security_id,
-                quantity=sum(
-                    (quantity for quantity in quantities if quantity is not None), Decimal(0)
-                ),
-                cutoff_at=position.snapshot.cutoff_at,
+                quantity=quantity,
+                cutoff_at=cutoff,
             )
     return tuple(basis.values())
+
+
+def _account_admission_cutoffs(
+    command: ConcentrationCommand,
+    portfolio: PortfolioAuthorizationOutcome,
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> dict[str, datetime]:
+    if portfolio.usage is None or not portfolio.usage.allowed:
+        return {}
+    current = portfolio.usage.authorization_snapshot
+    eligible = {
+        item.authorization.authorization_id: item.authorization
+        for item in history
+        if item.authorization is not None
+        and item.authorization.proposal.portfolio_id == command.authorization.portfolio_id
+        and item.authorization.evidence_available_by(command.position_snapshot.cutoff_at)
+        and item.authorization.proposal.risk_budget.effective_at
+        <= command.position_snapshot.cutoff_at
+    }
+    chain = [current]
+    seen = {current.authorization_id}
+    while current.previous_authorization_id is not None:
+        previous = eligible.get(current.previous_authorization_id)
+        if previous is None or previous.authorization_id in seen:
+            return {}
+        seen.add(previous.authorization_id)
+        chain.append(previous)
+        current = previous
+    admissions: dict[str, datetime] = {}
+    for authorization in reversed(chain):
+        selected = set(authorization.proposal.snapshot.selected_account_ids)
+        admissions = {
+            account: cutoff for account, cutoff in admissions.items() if account in selected
+        }
+        for account in selected.intersection(command.position_snapshot.account_ids):
+            admissions.setdefault(account, authorization.proposal.risk_budget.effective_at)
+    return admissions

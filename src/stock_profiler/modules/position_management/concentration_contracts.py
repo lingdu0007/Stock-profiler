@@ -86,7 +86,7 @@ class ConcentrationOutcome(PositionContract):
 
 @dataclass(frozen=True)
 class ConcentrationHistory:
-    """Chronological non-stale visible facts plus a detail-free negative scope guard."""
+    """Chronological scope-valid original facts plus a detail-free negative scope guard."""
 
     outcomes: tuple[ConcentrationOutcome, ...] = ()
     uncovered_obligation: bool = False

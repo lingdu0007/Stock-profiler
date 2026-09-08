@@ -46,7 +46,10 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
-from stock_profiler.modules.portfolio.contracts import portfolio_id_for
+from stock_profiler.modules.portfolio.contracts import (
+    PortfolioAuthorizationOutcome,
+    portfolio_id_for,
+)
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
@@ -515,18 +518,20 @@ def _commit_framework_result(
                 if execution_case.concentration is not None
                 else execution_case.portfolio
             )
+            portfolio_history: tuple[PortfolioAuthorizationOutcome, ...] = ()
             if business_result is not None and portfolio_command is not None:
                 assert execution_case.access_scope is not None
+                portfolio_history = ledger.portfolio_authorization_history(
+                    connection,
+                    execution_case.access_scope,
+                    portfolio_id_for(portfolio_command),
+                    execution_case.knowledge_cutoff,
+                )
                 portfolio = adjudicate_portfolio(
                     portfolio_command,
                     event_id=execution_case.decision_event_id,
                     observed_at=ledger.observed_at(),
-                    history=ledger.portfolio_authorization_history(
-                        connection,
-                        execution_case.access_scope,
-                        portfolio_id_for(portfolio_command),
-                        execution_case.knowledge_cutoff,
-                    ),
+                    history=portfolio_history,
                     lineage_history=ledger.portfolio_authorization_lineage(
                         connection,
                         execution_case.access_scope,
@@ -591,6 +596,7 @@ def _commit_framework_result(
                     execution_case.concentration,
                     result.portfolio,
                     result.position,
+                    authorization_history=portfolio_history,
                     history=ledger.concentration_history(
                         connection,
                         execution_case.access_scope,

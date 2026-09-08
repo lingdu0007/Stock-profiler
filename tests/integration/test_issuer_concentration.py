@@ -532,11 +532,40 @@ def test_late_old_snapshot_cannot_replace_newer_obligation_history(
     assert issuer.direction == "REDUCE"
 
 
-@pytest.mark.parametrize("pre_admission_sale", [False, True])
+def transfer_to_admitted_account(payload: dict[str, Any]) -> None:
+    accounts = payload["concentration"]["position_snapshot"]["accounts"]
+    transferred_position = deepcopy(accounts[0]["positions"][0])
+    transferred_position["position_id"] = "synthetic-admitted-transfer-position"
+    transferred_position["lifecycle_id"] = "synthetic-admitted-transfer-lifecycle"
+    accounts[2]["positions"] = [transferred_position]
+    accounts[2]["account_equity"] = "11000"
+    accounts[0]["positions"][0].update(
+        total_quantity="0", broker_sellable_quantity="0", reported_cost_basis="0"
+    )
+    accounts[0]["account_equity"] = "8000"
+    for index, quantity, cost in ((0, "-100", "-900"), (2, "100", "900")):
+        accounts[index]["ledger_entries"].append(
+            {
+                "entry_id": f"synthetic-admitted-transfer-{index}",
+                "entry_type": "TRANSFER_OUT" if index == 0 else "TRANSFER_IN",
+                "security_id": "XQZ-4017",
+                "quantity_delta": quantity,
+                "cost_basis_delta": cost,
+                "cash_delta": "0",
+                "occurred_at": payload["knowledge_cutoff"].replace("16:00:00", "15:00:00"),
+                "evidence": position_evidence(
+                    "synthetic-admitted-transfer", cutoff_at=payload["knowledge_cutoff"]
+                ),
+            }
+        )
+
+
+@pytest.mark.parametrize("admission_scenario", ["empty", "prior-sale", "transfer"])
 def test_authorized_account_addition_cannot_reset_an_unexecuted_obligation(
     migrated_settings: Settings,
-    pre_admission_sale: bool,
+    admission_scenario: str,
 ) -> None:
+    pre_admission_sale = admission_scenario == "prior-sale"
     authorization_id = concentration_authorization(migrated_settings)
     payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
     initial = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
@@ -650,6 +679,8 @@ def test_authorized_account_addition_cannot_reset_an_unexecuted_obligation(
             ),
         )
         first_account["ledger_entries"].append(transferred)
+    if admission_scenario == "transfer":
+        transfer_to_admitted_account(later)
     execution = run_frozen_decision_case(
         migrated_settings, later, clock=GovernanceClock("2042-05-20T17:00:00+00:00")
     )
@@ -666,31 +697,8 @@ def test_authorized_account_addition_cannot_reset_an_unexecuted_obligation(
     assert issuer.targets[0].target_quantity == Decimal("130")
     if not pre_admission_sale:
         moved = later_concentration_payload(later, "21")
-        accounts = moved["concentration"]["position_snapshot"]["accounts"]
-        transferred_position = deepcopy(accounts[0]["positions"][0])
-        transferred_position["position_id"] = "synthetic-admitted-transfer-position"
-        transferred_position["lifecycle_id"] = "synthetic-admitted-transfer-lifecycle"
-        accounts[2]["positions"] = [transferred_position]
-        accounts[2]["account_equity"] = "11000"
-        accounts[0]["positions"][0].update(
-            total_quantity="0", broker_sellable_quantity="0", reported_cost_basis="0"
-        )
-        accounts[0]["account_equity"] = "8000"
-        for index, quantity, cost in ((0, "-100", "-900"), (2, "100", "900")):
-            accounts[index]["ledger_entries"].append(
-                {
-                    "entry_id": f"synthetic-admitted-transfer-{index}",
-                    "entry_type": "TRANSFER_OUT" if index == 0 else "TRANSFER_IN",
-                    "security_id": "XQZ-4017",
-                    "quantity_delta": quantity,
-                    "cost_basis_delta": cost,
-                    "cash_delta": "0",
-                    "occurred_at": "2042-05-21T15:00:00Z",
-                    "evidence": position_evidence(
-                        "synthetic-admitted-transfer", cutoff_at=moved["knowledge_cutoff"]
-                    ),
-                }
-            )
+        if admission_scenario == "empty":
+            transfer_to_admitted_account(moved)
         transfer_result = run_frozen_decision_case(
             migrated_settings, moved, clock=GovernanceClock("2042-05-21T17:00:00+00:00")
         )
@@ -1004,3 +1012,129 @@ def test_transfers_do_not_discharge_obligation_when_security_rows_remain(
     assert issuer.new_exposure_blocked is True
     assert issuer.targets[0].target_quantity == 130
     assert issuer.execution_blocked is True
+
+
+def authorize_changed_scope(
+    settings: Settings,
+    previous_id: str,
+    proposal: dict[str, Any],
+    account_ids: list[str],
+    selected_day: str,
+    effective_day: str,
+) -> str:
+    proposal = deepcopy(proposal)
+    proposal["snapshot"]["accounts"] = [
+        account
+        for account in proposal["snapshot"]["accounts"]
+        if account["account_id"] in account_ids
+    ]
+    proposal["snapshot"]["selected_account_ids"] = account_ids
+    identity = f"synthetic-scope-change-{effective_day}"
+    proposal["snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id=f"{identity}-selection",
+        cutoff=f"2042-05-{selected_day}T16:00:00Z",
+    )
+    proposal["activation_snapshot"] = snapshot_at(
+        proposal["snapshot"],
+        snapshot_id=f"{identity}-activation",
+        cutoff=f"2042-05-{effective_day}T16:00:00Z",
+    )
+    proposal["risk_budget"].update(
+        version_id=identity,
+        effective_at=f"2042-05-{effective_day}T16:00:00Z",
+        expires_at=f"2042-11-{effective_day}T16:00:00Z",
+    )
+    execution = run_frozen_decision_case(
+        settings,
+        portfolio_case_payload(
+            settings,
+            identity,
+            portfolio_confirmation_command(
+                proposal,
+                previous_authorization_id=previous_id,
+                confirmed_at=f"2042-05-{selected_day}T17:00:00Z",
+            ),
+        ),
+        clock=GovernanceClock(f"2042-05-{effective_day}T17:00:00+00:00"),
+    )
+    assert execution.report is not None and execution.report.result.portfolio is not None
+    authorization = execution.report.result.portfolio.authorization
+    assert authorization is not None
+    return authorization.authorization_id
+
+
+def test_scope_denial_cannot_erase_a_previously_admitted_account_baseline(
+    migrated_settings: Settings,
+) -> None:
+    authorization_id = concentration_authorization(migrated_settings)
+    payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
+    initial = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    assert initial.report is not None and initial.report.result.portfolio is not None
+    usage = initial.report.result.portfolio.usage
+    assert usage is not None
+    proposal = usage.authorization_snapshot.proposal.model_dump(mode="json")
+    third = deepcopy(proposal["snapshot"]["accounts"][1])
+    third["account_id"] = "synthetic-account-9031"
+    proposal["snapshot"]["accounts"].append(third)
+    full_scope = ["synthetic-account-4017", "synthetic-account-8029", "synthetic-account-9031"]
+    expanded_id = authorize_changed_scope(
+        migrated_settings, authorization_id, proposal, full_scope, "18", "19"
+    )
+    expanded = later_concentration_payload(payload, "20")
+    expanded["access_scope"]["account_ids"] = full_scope
+    command = expanded["concentration"]
+    command["authorization"]["authorization_id"] = expanded_id
+    account = deepcopy(command["position_snapshot"]["accounts"][1])
+    account["account_id"] = third["account_id"]
+    command["position_snapshot"]["accounts"].append(account)
+    cost = deepcopy(command["liquidation_costs"][1])
+    cost["account_id"] = third["account_id"]
+    command["liquidation_costs"].append(cost)
+    admitted = run_frozen_decision_case(
+        migrated_settings, expanded, clock=GovernanceClock("2042-05-20T17:00:00+00:00")
+    )
+    assert admitted.report is not None and admitted.report.result.concentration is not None
+    origin = admitted.report.result.concentration.issuers[0]
+    original_basis = next(
+        item for item in origin.obligation_quantity_basis if item.account_id == third["account_id"]
+    )
+    assert original_basis.quantity == 100
+    narrowed_id = authorize_changed_scope(
+        migrated_settings, expanded_id, proposal, full_scope[:2], "21", "22"
+    )
+    narrowed = later_concentration_payload(payload, "23")
+    narrowed["concentration"]["authorization"]["authorization_id"] = narrowed_id
+    denied = run_frozen_decision_case(
+        migrated_settings, narrowed, clock=GovernanceClock("2042-05-23T17:00:00+00:00")
+    )
+    assert denied.report is not None and denied.report.result.concentration is not None
+    assert denied.report.result.concentration.disposition == "BLOCKED"
+    assert third["account_id"] not in {
+        item.account_id
+        for item in denied.report.result.concentration.issuers[0].obligation_quantity_basis
+    }
+    restored_id = authorize_changed_scope(
+        migrated_settings, narrowed_id, proposal, full_scope, "24", "25"
+    )
+    restored = later_concentration_payload(expanded, "26")
+    restored["concentration"]["authorization"]["authorization_id"] = restored_id
+    record_synthetic_sale(restored, "100", "third-transfer", account_index=2)
+    third_account = restored["concentration"]["position_snapshot"]["accounts"][2]
+    third_account["ledger_entries"][-1].update(entry_type="TRANSFER_OUT", cash_delta="0")
+    third_account["account_equity"] = "0"
+    for field in ("ledger_cash", "trading_cash", "transferable_cash"):
+        third_account["cash_state"][field] = "0"
+    resumed = run_frozen_decision_case(
+        migrated_settings, restored, clock=GovernanceClock("2042-05-26T17:00:00+00:00")
+    )
+    assert resumed.report is not None and resumed.report.result.concentration is not None
+    basis = resumed.report.result.concentration.issuers[0].obligation_quantity_basis
+    assert next(item for item in basis if item.account_id == third["account_id"]) == original_basis
+    later = later_concentration_payload(restored, "27")
+    record_synthetic_sale(later, "70", "partial-after-scope-denial")
+    final = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-27T17:00:00+00:00")
+    )
+    assert final.report is not None and final.report.result.concentration is not None
+    assert final.report.result.concentration.issuers[0].direction == "REDUCE"
