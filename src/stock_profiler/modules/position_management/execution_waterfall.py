@@ -140,7 +140,7 @@ def conjoin_portfolio_targets(
             "new_exposure_blocked": initial.new_exposure_blocked
             or stress.new_exposure_blocked
             or liquidity.new_exposure_blocked
-            or bool(drawdown.risk_direction),
+            or drawdown.new_exposure_blocked,
             "targets": tuple(
                 target.model_copy(
                     update={

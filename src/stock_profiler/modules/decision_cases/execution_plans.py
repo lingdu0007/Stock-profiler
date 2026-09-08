@@ -232,6 +232,12 @@ def adjudicate_execution_plan(
             )
             for security in sorted(quantities)
         )
-        return conjoin_portfolio_targets(
+        plan = conjoin_portfolio_targets(
             command, snapshot, targets, stress, liquidity, state, liquidity_fact.case.liquidity
+        )
+        return plan.model_copy(
+            update={
+                "new_exposure_blocked": plan.new_exposure_blocked
+                or any(issuer.new_exposure_blocked for issuer in concentration.issuers),
+            }
         )

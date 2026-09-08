@@ -12,6 +12,7 @@ from test_position_state_reconciliation import (
     position_case_payload,
     position_evidence,
     position_snapshot_command,
+    refresh_current_position_evidence,
 )
 from test_scoped_qualification import GovernanceClock
 
@@ -79,6 +80,8 @@ def risk_handoff_payload(
     partial: bool = False,
     dated: bool = False,
     normal: bool = False,
+    buffer: bool = False,
+    capital_state: str | None = None,
     split: bool = False,
 ) -> dict[str, Any]:
     authorization_payload = concentration_authorization_payload(settings)
@@ -86,6 +89,11 @@ def risk_handoff_payload(
         authorization_payload["portfolio"]["proposal"]["risk_budget"]["concentration"] = {
             "target_ratio": "0.30",
             "hard_ratio": "0.40",
+        }
+    if buffer:
+        authorization_payload["portfolio"]["proposal"]["risk_budget"]["concentration"] = {
+            "target_ratio": "0.13",
+            "hard_ratio": "0.21",
         }
     if dated:
         authorization_payload["portfolio"]["proposal"]["cash_obligations"] = [
@@ -108,6 +116,18 @@ def risk_handoff_payload(
         settings, authorization.event_id, quantity="100", identity="plan-concentration"
     )
     snapshot = concentration["concentration"]["position_snapshot"]
+    opening_position = None
+    if capital_state is not None:
+        opening_position = committed(
+            settings, position_case_payload(settings, "plan-opening-position", deepcopy(snapshot))
+        )
+        snapshot["cutoff_at"] = "2042-05-18T16:00:00Z"
+        refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
+        concentration["knowledge_cutoff"] = snapshot["cutoff_at"]
+        for cost in concentration["concentration"]["liquidation_costs"]:
+            cost["evidence"] = position_evidence(
+                "synthetic-current-cost", cutoff_at=snapshot["cutoff_at"]
+            )
     if split:
         for account in snapshot["accounts"]:
             account["ledger_entries"][0]["quantity_delta"] = "50"
@@ -233,11 +253,15 @@ def risk_handoff_payload(
                 "authorization_id": authorization.event_id,
                 "epoch_id": "synthetic-plan-capital",
                 "previous_decision_id": None,
-                "cutoff_at": snapshot["cutoff_at"],
+                "cutoff_at": "2042-05-17T16:00:00Z" if opening_position else snapshot["cutoff_at"],
                 "valuation": {
-                    "position_event_id": position_report.event_id,
+                    "position_event_id": opening_position.event_id
+                    if opening_position
+                    else position_report.event_id,
                     "liquidation_cost": "0",
-                    "evidence": snapshot["snapshot_evidence"],
+                    "evidence": position_evidence("synthetic-capital-opening")
+                    if opening_position
+                    else snapshot["snapshot_evidence"],
                 },
                 "policy": {
                     "synthetic": True,
@@ -258,9 +282,46 @@ def risk_handoff_payload(
     )
     assert capital.result.drawdown is not None
     assert capital.result.drawdown.disposition == "ACCEPTED"
+    if capital_state is not None:
+        assert capital.result.drawdown.state is not None
+        capital = committed(
+            settings,
+            drawdown_case(
+                settings,
+                "plan-capital-observation",
+                {
+                    "operation": "OBSERVE",
+                    "contract_version": "1.0.0",
+                    "portfolio_id": "synthetic-decision-portfolio-alpha",
+                    "authorization_id": authorization.event_id,
+                    "epoch_id": "synthetic-plan-capital",
+                    "previous_decision_id": capital.event_id,
+                    "cutoff_at": snapshot["cutoff_at"],
+                    "policy": capital.result.drawdown.state.policy.model_dump(mode="json"),
+                    "valuation": {
+                        "position_event_id": position_report.event_id,
+                        "liquidation_cost": {"CAUTION": "1200", "PRESERVATION": "2200"}[
+                            capital_state
+                        ],
+                        "evidence": snapshot["snapshot_evidence"],
+                    },
+                },
+                account_ids=[account["account_id"] for account in snapshot["accounts"]],
+            ),
+        )
+        assert (
+            capital.result.drawdown is not None
+            and capital.result.drawdown.disposition == "ACCEPTED"
+        )
+        assert (
+            capital.result.drawdown.state is not None
+            and capital.result.drawdown.state.risk_state == capital_state
+        )
     refs["drawdown"] = capital.event_id
     payload = execution_payload(settings)
+    payload["knowledge_cutoff"] = snapshot["cutoff_at"]
     payload["execution_plan"].update(
+        cutoff_at=snapshot["cutoff_at"],
         authorization_id=authorization.event_id,
         **{f"{name}_event_id": event_id for name, event_id in refs.items()},
     )
@@ -413,6 +474,47 @@ def test_normal_no_action_does_not_invent_an_exposure_prohibition(
     assert not plan.new_exposure_blocked
     assert plan.legs == ()
     assert not plan.requires_confirmation
+
+
+@pytest.mark.parametrize("gate", ["concentration-buffer", "capital-caution"])
+def test_non_selling_risk_gate_keeps_the_exposure_prohibition(
+    migrated_settings: Settings, gate: str
+) -> None:
+    payload = risk_handoff_payload(
+        migrated_settings,
+        normal=gate == "capital-caution",
+        buffer=gate == "concentration-buffer",
+        capital_state="CAUTION" if gate == "capital-caution" else None,
+    )
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "PLANNED"
+    assert plan.new_exposure_blocked
+    assert plan.legs == () and not plan.requires_confirmation
+
+
+@pytest.mark.parametrize("missing_stress", [False, True])
+def test_capital_preservation_zero_survives_conjunction_and_missing_handoffs(
+    migrated_settings: Settings,
+    missing_stress: bool,
+) -> None:
+    payload = risk_handoff_payload(migrated_settings, capital_state="PRESERVATION")
+    routes = execution_routes()
+    for route in routes:
+        route["rules_evidence"] = position_evidence(
+            "synthetic-current-rules", cutoff_at=payload["knowledge_cutoff"]
+        )
+        route["cost_curve"]["evidence"] = position_evidence(
+            "synthetic-current-cost", cutoff_at=payload["knowledge_cutoff"]
+        )
+    payload["execution_plan"]["routes"] = routes
+    if missing_stress:
+        payload["execution_plan"]["stress_event_id"] = "synthetic-missing-stress"
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None
+    assert plan.targets[0].target_quantity == 0 and plan.targets[0].direction == "EXIT"
+    assert plan.new_exposure_blocked and not plan.risk_restored
+    assert plan.disposition == ("BLOCKED" if missing_stress else "PLANNED")
+    assert len(plan.legs) == (0 if missing_stress else 2)
 
 
 def test_waterfall_preserves_a_separate_rounding_induced_full_sale(
