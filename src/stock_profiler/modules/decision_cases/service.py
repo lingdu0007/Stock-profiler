@@ -33,6 +33,7 @@ from stock_profiler.modules.decision_cases.domain import (
     host_validation_result,
     is_committable_host_outcome,
 )
+from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping,
@@ -483,6 +484,7 @@ def _commit_framework_result(
     drawdown_result: StageResult | None = None
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
+    execution_plan_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -801,6 +803,15 @@ def _commit_framework_result(
                     ),
                     reasons=concentration.reasons,
                 )
+            if business_result is not None and execution_case.execution_plan is not None:
+                plan = adjudicate_execution_plan(execution_case, ledger, connection)
+                result = result.model_copy(update={"execution_plan": plan})
+                execution_plan_result = StageResult(
+                    phase="EXECUTION_PLAN",
+                    status="REJECTED" if plan.disposition == "BLOCKED" else "SUCCEEDED",
+                    gate_results=(),
+                    reasons=plan.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -865,6 +876,13 @@ def _commit_framework_result(
             stage_result=stress_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if execution_plan_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=execution_plan_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -877,6 +895,7 @@ def _commit_framework_result(
         *((drawdown_result,) if drawdown_result is not None else ()),
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
+        *((execution_plan_result,) if execution_plan_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

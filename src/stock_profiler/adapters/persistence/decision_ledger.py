@@ -125,6 +125,29 @@ class DecisionLedger:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
 
+    def execution_plan_history(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "execution history is unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.execution_plan is not None
+            and fact.case.execution_plan.portfolio_id == portfolio_id
+            and fact.result.execution_plan is not None
+            and fact.result.execution_plan.targets
+            and not set(fact.result.execution_plan.reasons).intersection(
+                {
+                    "EXECUTION_HISTORY_SCOPE_INCOMPLETE",
+                    "EXECUTION_SNAPSHOT_NOT_FORWARD",
+                    "RISK_HANDOFF_IDENTITY_MISMATCH",
+                    "TARGET_SCOPE_INVALID",
+                }
+            )
+        )
+
     def concentration_history(
         self,
         connection: Connection,

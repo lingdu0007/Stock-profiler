@@ -1204,6 +1204,98 @@
         "title": "DiagnosticPlan",
         "type": "object"
       },
+      "DisposalCostCurve": {
+        "additionalProperties": false,
+        "properties": {
+          "commission_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission Ratio",
+            "type": "string"
+          },
+          "dividend_lots": {
+            "items": {
+              "$ref": "#/components/schemas/DisposalDividendLot"
+            },
+            "title": "Dividend Lots",
+            "type": "array"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "market_impact_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Market Impact Ratio",
+            "type": "string"
+          },
+          "minimum_commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Commission",
+            "type": "string"
+          },
+          "settlement_fee_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Settlement Fee Ratio",
+            "type": "string"
+          },
+          "slippage_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Slippage Ratio",
+            "type": "string"
+          },
+          "tax_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tax Ratio",
+            "type": "string"
+          },
+          "trading_fee_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Trading Fee Ratio",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "commission_ratio",
+          "minimum_commission",
+          "trading_fee_ratio",
+          "settlement_fee_ratio",
+          "tax_ratio",
+          "slippage_ratio",
+          "market_impact_ratio",
+          "dividend_lots",
+          "evidence"
+        ],
+        "title": "DisposalCostCurve",
+        "type": "object"
+      },
+      "DisposalDividendLot": {
+        "additionalProperties": false,
+        "properties": {
+          "lot_id": {
+            "minLength": 1,
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "tax_per_share": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tax Per Share",
+            "type": "string"
+          }
+        },
+        "required": ["lot_id", "quantity", "tax_per_share"],
+        "title": "DisposalDividendLot",
+        "type": "object"
+      },
       "DownsideGridRequalificationEvidence": {
         "additionalProperties": false,
         "description": "Immutable historical and locked-forward proof for a changed downside grid.",
@@ -1986,6 +2078,315 @@
         "title": "ExcludedAccount",
         "type": "object"
       },
+      "ExecutionLeg": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "disposal_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Cost",
+            "type": "string"
+          },
+          "gross_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Proceeds",
+            "type": "string"
+          },
+          "net_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Proceeds",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "route": {
+            "$ref": "#/components/schemas/ExecutionRoute"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "quantity",
+          "gross_proceeds",
+          "disposal_cost",
+          "net_proceeds",
+          "route"
+        ],
+        "title": "ExecutionLeg",
+        "type": "object"
+      },
+      "ExecutionPlanOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_routing_basis": {
+            "anyOf": [
+              {
+                "enum": ["VERIFIED_FULL_COST", "CONSERVATIVE_BOUND_PROPORTIONAL"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Routing Basis"
+          },
+          "disposition": {
+            "enum": ["BLOCKED", "PLANNED", "RECONFIRMATION_REQUIRED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "initial_target_sale_value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Target Sale Value"
+          },
+          "legs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionLeg"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "new_exposure_blocked": {
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "projected_cash_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projected Cash Gap"
+          },
+          "projected_exposure_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projected Exposure Gap"
+          },
+          "projected_stress_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projected Stress Gap"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "requires_confirmation": {
+            "default": false,
+            "title": "Requires Confirmation",
+            "type": "boolean"
+          },
+          "risk_restored": {
+            "const": false,
+            "default": false,
+            "title": "Risk Restored",
+            "type": "boolean"
+          },
+          "targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionTarget"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": ["disposition", "reasons", "new_exposure_blocked"],
+        "title": "ExecutionPlanOutcome",
+        "type": "object"
+      },
+      "ExecutionRoute": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "allow_full_odd_lot": {
+            "title": "Allow Full Odd Lot",
+            "type": "boolean"
+          },
+          "conservative_cost_curve": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisposalCostCurve"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_curve": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisposalCostCurve"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "first_sellable_at": {
+            "format": "date-time",
+            "title": "First Sellable At",
+            "type": "string"
+          },
+          "minimum_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Quantity",
+            "type": "string"
+          },
+          "quantity_increment": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Increment",
+            "type": "string"
+          },
+          "rules_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "transferable_at": {
+            "format": "date-time",
+            "title": "Transferable At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "minimum_quantity",
+          "quantity_increment",
+          "allow_full_odd_lot",
+          "first_sellable_at",
+          "transferable_at",
+          "rules_evidence",
+          "cost_curve"
+        ],
+        "title": "ExecutionRoute",
+        "type": "object"
+      },
+      "ExecutionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "enum": ["HOLD", "REDUCE", "EXIT"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "remaining_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Gap"
+          },
+          "remaining_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Quantity"
+          },
+          "required_sale_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Sale Quantity"
+          },
+          "rounding_induced_full_sale": {
+            "default": false,
+            "title": "Rounding Induced Full Sale",
+            "type": "boolean"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_obligation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Obligation Ids",
+            "type": "array"
+          },
+          "target_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "target_quantity",
+          "required_sale_quantity",
+          "source_obligation_ids",
+          "direction"
+        ],
+        "title": "ExecutionTarget",
+        "type": "object"
+      },
       "ExternalResult": {
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
@@ -2014,6 +2415,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DrawdownOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionPlanOutcome"
               },
               {
                 "type": "null"
@@ -5731,6 +6142,7 @@
               "DRAWDOWN_PROTECTION",
               "LIQUIDITY_PROTECTION",
               "PORTFOLIO_STRESS",
+              "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
