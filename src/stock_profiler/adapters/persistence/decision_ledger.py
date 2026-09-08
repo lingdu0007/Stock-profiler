@@ -41,6 +41,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 from stock_profiler.modules.position_management.concentration_contracts import ConcentrationHistory
@@ -370,6 +371,38 @@ class DecisionLedger:
             ):
                 self.ensure_business_object(connection, case)
             return business_object_id
+
+    def drawdown_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DrawdownOutcome, ...]:
+        """Owner history supplies a negative guard against a replacement capital epoch."""
+        return tuple(
+            outcome
+            for fact in self._original_event_facts(connection, "drawdown history is unavailable")
+            if (scope := fact.case.access_scope) is not None
+            and scope.user_id == access_scope.user_id
+            and scope.visibility == access_scope.visibility
+            and (outcome := fact.result.drawdown) is not None
+        )
+
+    def position_evidence_for_drawdown(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        event_id: str,
+        cutoff_at: datetime,
+    ) -> PositionReconciliationOutcome | None:
+        fact = self.get_decision_event(event_id, connection)
+        if (
+            fact is None
+            or fact.corrects_event_id is not None
+            or fact.case.access_scope is None
+            or not fact.case.access_scope.same_scope_as(access_scope)
+            or fact.result.position is None
+            or fact.result.position.snapshot.cutoff_at > cutoff_at
+        ):
+            return None
+        return fact.result.position
 
     def position_ledger_history(
         self,

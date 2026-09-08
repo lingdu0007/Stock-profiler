@@ -51,6 +51,7 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioUseCommand,
     portfolio_id_for,
 )
+from stock_profiler.modules.portfolio.drawdown import adjudicate as adjudicate_drawdown
 from stock_profiler.modules.portfolio.liquidity import assess_liquidity
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.portfolio.stress import assess_stress
@@ -171,25 +172,22 @@ def correct_default_frozen_decision_case(
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
-            correction_result = ExternalResult(
-                outcome_code="SYNTHETIC_CORRECTION_RECORDED",
-                summary=(
-                    "Synthetic D0 correction recorded without replacing "
-                    "the original decision event."
-                ),
-                key_reasons=(
-                    "The original completion statement is corrected to an incomplete checklist.",
-                    "The original evidence cutoff and formal report remain available.",
-                ),
-                correction_evidence=CorrectionEvidence.model_validate(
-                    load_frozen_correction_payload()
-                ),
-                governance=original_event.result.governance,
-                portfolio=original_event.result.portfolio,
-                position=original_event.result.position,
-                concentration=original_event.result.concentration,
-                liquidity=original_event.result.liquidity,
-                stress=original_event.result.stress,
+            correction_result = original_event.result.model_copy(
+                update={
+                    "outcome_code": "SYNTHETIC_CORRECTION_RECORDED",
+                    "summary": (
+                        "Synthetic D0 correction recorded without replacing "
+                        "the original decision event."
+                    ),
+                    "key_reasons": (
+                        "The original completion statement is corrected "
+                        "to an incomplete checklist.",
+                        "The original evidence cutoff and formal report remain available.",
+                    ),
+                    "correction_evidence": CorrectionEvidence.model_validate(
+                        load_frozen_correction_payload()
+                    ),
+                }
             )
             correction_stages = (
                 StageResult(
@@ -482,6 +480,7 @@ def _commit_framework_result(
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
     concentration_result: StageResult | None = None
+    drawdown_result: StageResult | None = None
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
     if framework.output is None:
@@ -601,6 +600,49 @@ def _commit_framework_result(
                         ),
                     ),
                     reasons=position.reasons,
+                )
+            if business_result is not None and execution_case.drawdown is not None:
+                assert execution_case.access_scope is not None
+                drawdown_command = execution_case.drawdown
+                drawdown = adjudicate_drawdown(
+                    drawdown_command,
+                    event_id=execution_case.decision_event_id,
+                    account_ids=execution_case.access_scope.account_ids,
+                    authorizations=ledger.portfolio_authorization_lineage(
+                        connection, execution_case.access_scope, drawdown_command.portfolio_id
+                    ),
+                    position=ledger.position_evidence_for_drawdown(
+                        connection,
+                        execution_case.access_scope,
+                        drawdown_command.valuation.position_event_id,
+                        drawdown_command.cutoff_at,
+                    ),
+                    history=ledger.drawdown_history(connection, execution_case.access_scope),
+                    before_positions={
+                        flow.before_valuation.position_event_id: (
+                            ledger.position_evidence_for_drawdown(
+                                connection,
+                                execution_case.access_scope,
+                                flow.before_valuation.position_event_id,
+                                drawdown_command.cutoff_at,
+                            )
+                        )
+                        for flow in drawdown_command.capital_flows
+                    },
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"drawdown": drawdown})
+                drawdown_result = StageResult(
+                    phase="DRAWDOWN_PROTECTION",
+                    status=(
+                        "SUCCEEDED"
+                        if drawdown.disposition == "ACCEPTED"
+                        else "UNKNOWN"
+                        if drawdown.disposition == "UNKNOWN"
+                        else "REJECTED"
+                    ),
+                    gate_results=(),
+                    reasons=drawdown.reasons,
                 )
             if business_result is not None and execution_case.stress is not None:
                 stress_command = execution_case.stress
@@ -802,6 +844,13 @@ def _commit_framework_result(
             stage_result=concentration_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if drawdown_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=drawdown_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     if liquidity_result is not None:
         ledger.record_stage_result(
             connection,
@@ -825,6 +874,7 @@ def _commit_framework_result(
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
         *((concentration_result,) if concentration_result is not None else ()),
+        *((drawdown_result,) if drawdown_result is not None else ()),
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
     )

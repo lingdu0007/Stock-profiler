@@ -20,12 +20,14 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
+from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 from stock_profiler.modules.position_management.concentration_contracts import ConcentrationHistory
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
+    PositionReconciliationOutcome,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 
@@ -131,6 +133,18 @@ class DecisionLedger(Protocol[Transaction]):
         access_scope: ResultAccessScope,
         cutoff_at: datetime,
     ) -> tuple[AuthoritativeLedgerEntry, ...]: ...
+
+    def drawdown_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[DrawdownOutcome, ...]: ...
+
+    def position_evidence_for_drawdown(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        event_id: str,
+        cutoff_at: datetime,
+    ) -> PositionReconciliationOutcome | None: ...
 
     def portfolio_stress_history(
         self,

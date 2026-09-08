@@ -121,7 +121,7 @@ def concentration_payload(
     return payload
 
 
-@pytest.mark.parametrize("other_version", ["8.0.0", "8.2.0"])
+@pytest.mark.parametrize("other_version", ["8.0.0", "8.2.0", "drawdown.1.0.0"])
 def test_concentration_contract_does_not_redefine_released_risk_versions(
     migrated_settings: Settings,
     other_version: str,
@@ -133,7 +133,7 @@ def test_concentration_contract_does_not_redefine_released_risk_versions(
         host_contract_version=other_version,
         report_projection_contract_version=other_version,
     )
-    with pytest.raises(ValidationError, match="concentration requires the version 8.1"):
+    with pytest.raises(ValidationError, match="requires .*frozen contract"):
         FrozenDecisionCase.model_validate(payload)
 
 

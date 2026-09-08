@@ -29,6 +29,7 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioConfirmationCommand,
     PortfolioUseCommand,
 )
+from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownCommand, DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityCommand, LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressCommand, PortfolioStressOutcome
 from stock_profiler.modules.position_management.concentration_contracts import (
@@ -52,7 +53,7 @@ FROZEN_AGENT_DEFINITION_VERSION = "1.0.0"
 FROZEN_OUTPUT_CONTRACT_VERSION = "1.0.0"
 FROZEN_REPORT_PROJECTION_CONTRACT_VERSION = "2.0.0"
 _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
-    {"3.0.0", "4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0", "8.1.0", "8.2.0"}
+    {"3.0.0", "4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0", "8.1.0", "8.2.0", "drawdown.1.0.0"}
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
     {"1.0.0", FROZEN_REPORT_PROJECTION_CONTRACT_VERSION, *_SCOPED_CASE_CONTRACT_VERSIONS}
@@ -66,6 +67,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("5.0.0", "5.0.0"),
         ("6.0.0", "6.0.0"),
         ("7.0.0", "7.0.0"),
+        ("drawdown.1.0.0", "drawdown.1.0.0"),
         ("8.0.0", "8.0.0"),
         ("8.1.0", "8.1.0"),
         ("8.2.0", "8.2.0"),
@@ -167,6 +169,7 @@ class ExternalResult(FrozenContract):
     concentration: ConcentrationOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    drawdown: DrawdownOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     liquidity: LiquidityOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     stress: PortfolioStressOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -207,6 +210,7 @@ StagePhase = Literal[
     "PORTFOLIO_AUTHORIZATION",
     "POSITION_RECONCILIATION",
     "ISSUER_CONCENTRATION",
+    "DRAWDOWN_PROTECTION",
     "LIQUIDITY_PROTECTION",
     "PORTFOLIO_STRESS",
     "ADJUDICATION_LIFECYCLE",
@@ -263,6 +267,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "PORTFOLIO_AUTHORIZATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "POSITION_RECONCILIATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "ISSUER_CONCENTRATION": frozenset({"SUCCEEDED", "REJECTED"}),
+    "DRAWDOWN_PROTECTION": frozenset({"SUCCEEDED", "REJECTED", "UNKNOWN"}),
     "LIQUIDITY_PROTECTION": frozenset({"SUCCEEDED", "REJECTED"}),
     "PORTFOLIO_STRESS": frozenset({"SUCCEEDED", "REJECTED"}),
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
@@ -622,6 +627,7 @@ class FrozenDecisionCase(FrozenContract):
     concentration: ConcentrationCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    drawdown: DrawdownCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     liquidity: LiquidityCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     stress: PortfolioStressCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -635,6 +641,13 @@ class FrozenDecisionCase(FrozenContract):
         portfolio_governed = self.version_bundle.case_contract_version == "6.0.0"
         position_governed = self.version_bundle.case_contract_version == "7.0.0"
         concentration_governed = self.version_bundle.case_contract_version == "8.1.0"
+        drawdown_governed = self.version_bundle.case_contract_version == "drawdown.1.0.0"
+        if drawdown_governed != (self.drawdown is not None):
+            raise ValueError("drawdown requires its own frozen contract")
+        if self.drawdown is not None and (
+            self.drawdown.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+        ):
+            raise ValueError("drawdown and frozen cutoff must agree")
         liquidity_governed = self.version_bundle.case_contract_version == "8.2.0"
         stress_governed = self.version_bundle.case_contract_version == "8.0.0"
         host_command_case = (
@@ -644,6 +657,7 @@ class FrozenDecisionCase(FrozenContract):
             or concentration_governed
             or liquidity_governed
             or stress_governed
+            or drawdown_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -667,6 +681,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.concentration,
                     self.liquidity,
                     self.stress,
+                    self.drawdown,
                 )
             )
             > 1
@@ -689,6 +704,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.portfolio is not None
             or self.expected_external_result.position is not None
             or self.expected_external_result.concentration is not None
+            or self.expected_external_result.drawdown is not None
             or self.expected_external_result.liquidity is not None
             or self.expected_external_result.stress is not None
         ):
