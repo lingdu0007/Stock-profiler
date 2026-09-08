@@ -607,10 +607,14 @@ def test_multiple_obligations_cannot_reuse_the_same_transferable_cash(
     )
 
 
-@pytest.mark.parametrize("funding_evidence_complete", [True, False])
+@pytest.mark.parametrize(
+    ("funding_evidence_complete", "repair_fee"),
+    [(True, "0"), (False, "0"), (False, "5"), (False, "20")],
+)
 def test_restoration_release_requires_confirmed_cash_and_complete_funding_evidence(
     migrated_settings: Settings,
     funding_evidence_complete: bool,
+    repair_fee: str,
 ) -> None:
     payload = liquidity_payload(migrated_settings, "restoration-release")
     set_liquidity_cash(payload, "200")
@@ -661,9 +665,45 @@ def test_restoration_release_requires_confirmed_cash_and_complete_funding_eviden
         recovered["business_identity"] += ":funding-evidence-restored"
         recovered["case_id"] += "-funding-evidence-restored"
         recovered["liquidity"]["sale_terms"][0]["evidence"] = snapshot["snapshot_evidence"]
+        if Decimal(repair_fee) > 0:
+            recovered["knowledge_cutoff"] = "2042-05-19T16:00:00Z"
+            recovered_snapshot = recovered["liquidity"]["position_snapshot"]
+            recovered_snapshot["cutoff_at"] = recovered["knowledge_cutoff"]
+            refresh_current_position_evidence(recovered_snapshot, recovered["knowledge_cutoff"])
+            recovered_account = recovered_snapshot["accounts"][0]
+            cash_after_fee = str(Decimal("400") - Decimal(repair_fee))
+            recovered_account["account_equity"] = str(Decimal("1000") - Decimal(repair_fee))
+            recovered_account["cash_state"].update(
+                ledger_cash=cash_after_fee,
+                trading_cash=cash_after_fee,
+                transferable_cash=cash_after_fee,
+            )
+            recovered_account["ledger_entries"].append(
+                {
+                    "entry_id": "synthetic-restoration-account-fee",
+                    "entry_type": "FEE",
+                    "security_id": None,
+                    "quantity_delta": "0",
+                    "cost_basis_delta": "0",
+                    "cash_delta": str(-Decimal(repair_fee)),
+                    "occurred_at": "2042-05-19T15:00:00Z",
+                    "evidence": deepcopy(recovered_snapshot["snapshot_evidence"]),
+                }
+            )
+            recovered["liquidity"]["sale_terms"][0].update(
+                transferable_at=recovered["knowledge_cutoff"],
+                evidence=recovered_snapshot["snapshot_evidence"],
+            )
         execution = run_frozen_decision_case(migrated_settings, recovered, clock=GovernanceClock())
         assert execution.report is not None
         recovered_outcome = execution.report.result.liquidity
         assert recovered_outcome is not None
-        assert recovered_outcome.disposition == "AVAILABLE"
-        assert recovered_outcome.remediation_id is None
+        if repair_fee == "20":
+            assert recovered_outcome.disposition == "REMEDIATION_REQUIRED"
+            assert recovered_outcome.remediation_id == first.decision_event_id
+            assert recovered_outcome.remediation_shortfall == Decimal("2.20")
+            assert recovered_outcome.restoration_cash_confirmed is False
+        else:
+            assert recovered_outcome.disposition == "AVAILABLE"
+            assert recovered_outcome.remediation_id is None
+        assert recovered_outcome.qualified_cash == Decimal("400") - Decimal(repair_fee)

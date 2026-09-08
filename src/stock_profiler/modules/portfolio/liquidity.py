@@ -314,7 +314,7 @@ def _restoration_confirmed(
     progress = _last_cash_assessment(history, remediation_id)
     if progress is None or progress.qualified_cash is None:
         return False
-    if progress.restoration_cash_confirmed and qualified_cash >= progress.qualified_cash:
+    if progress.restoration_cash_confirmed:
         return True
     previous_receipts = {item.receipt_id for item in progress.settled_coverage}
     if any(item.receipt_id not in previous_receipts for item in coverage):
