@@ -119,6 +119,17 @@ class DeterministicProtectionFloor(PortfolioContract):
         return self
 
 
+class StressCalculationPolicy(PortfolioContract):
+    """Explicit conservative gross-stress inputs, never an engine default."""
+
+    contract_version: Literal["1.0.0"]
+    version_id: str = Field(min_length=1)
+    horizon_market_days: Literal[20]
+    shock_ratio: Decimal = Field(gt=0, lt=1)
+    disposal_friction_ratio: Decimal = Field(ge=0, lt=1)
+    registered_at: AwareDatetime
+
+
 class PersonalRiskBudget(PortfolioContract):
     """The explicit synthetic risk configuration bound to exactly six calendar months."""
 
@@ -136,6 +147,9 @@ class PersonalRiskBudget(PortfolioContract):
     drawdown: DrawdownBudget
     downside_grid: tuple[Decimal, ...] = Field(min_length=1)
     protection_floor: DeterministicProtectionFloor
+    stress_calculation: StressCalculationPolicy | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_duration_and_grid(self) -> PersonalRiskBudget:
@@ -149,6 +163,11 @@ class PersonalRiskBudget(PortfolioContract):
             raise ValueError("downside grid values must be ordered")
         if len(set(self.downside_grid)) != len(self.downside_grid):
             raise ValueError("downside grid values must be unique")
+        if self.stress_calculation is not None and (
+            self.stress_calculation.shock_ratio != self.downside_grid[-1]
+            or self.stress_calculation.registered_at > self.effective_at
+        ):
+            raise ValueError("stress policy must predate activation and use the highest grid")
         return self
 
     def relaxes(self, previous: PersonalRiskBudget) -> bool:
@@ -164,6 +183,15 @@ class PersonalRiskBudget(PortfolioContract):
             or self.drawdown.defensive_ratio > previous.drawdown.defensive_ratio
             or self.drawdown.preservation_ratio > previous.drawdown.preservation_ratio
             or self.relaxes_downside_grid(previous)
+            or (
+                previous.stress_calculation is not None
+                and (
+                    self.stress_calculation is None
+                    or self.stress_calculation.disposal_friction_ratio
+                    < previous.stress_calculation.disposal_friction_ratio
+                    or self.stress_calculation.shock_ratio < previous.stress_calculation.shock_ratio
+                )
+            )
             or not set(previous.protection_floor.retained_directions).issubset(
                 self.protection_floor.retained_directions
             )
@@ -398,6 +426,12 @@ class PortfolioConfirmationCommand(PortfolioContract):
             raise ValueError("confirmation must not postdate the risk budget effective_at")
         if self.confirmation.confirmed_at < self.proposal.snapshot.cutoff_at:
             raise ValueError("confirmation must not predate the portfolio cutoff")
+        if (
+            self.proposal.risk_budget.stress_calculation is not None
+            and self.proposal.risk_budget.stress_calculation.registered_at
+            > self.confirmation.confirmed_at
+        ):
+            raise ValueError("stress policy must predate confirmation")
         if self.previous_authorization_id is not None:
             activation = self.proposal.activation_snapshot
             if activation is None:
