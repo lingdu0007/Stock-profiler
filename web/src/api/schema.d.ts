@@ -1556,6 +1556,11 @@ export interface components {
             required_targets: components["schemas"]["ExecutionTarget"][];
             /** Source Event Id */
             source_event_id: string;
+            /**
+             * Source Event Ids
+             * @default []
+             */
+            source_event_ids: string[];
         };
         /** MonitoringEvidenceStatus */
         MonitoringEvidenceStatus: {

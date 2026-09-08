@@ -18,6 +18,7 @@ from stock_profiler.modules.delivery.monitoring_contracts import (
 )
 from stock_profiler.modules.delivery.monitoring_notifications import route_synthetic_notifications
 from stock_profiler.modules.position_management.contracts import PositionEvidence
+from stock_profiler.modules.position_management.execution_contracts import ExecutionTarget
 
 _EVENT_AUTHORITIES = {
     "ACCOUNT_STATE": "BROKER",
@@ -71,6 +72,17 @@ def _freshness(
         calendar_evidence=calendar.evidence,
         evidence_families=_evidence_status(command),
     )
+
+
+def _target_sources(item: MonitoringCase, sources: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    identities = {
+        identity
+        for target in item.required_targets
+        for identity in sources.get(
+            target.security_id, item.source_event_ids or (item.source_event_id,)
+        )
+    }
+    return tuple(sorted(identities)) or (item.source_event_id,)
 
 
 def assess_monitoring(
@@ -130,47 +142,82 @@ def assess_monitoring(
             event.kind in {"TERMINATION", "CAPITAL_PROTECTION"} for event in command.events
         )
         if protective or any(item.status != "VALIDATED" for item in _evidence_status(command)):
-            affected = {
+            affected = {security for event in command.events for security in event.security_ids}
+            protective_securities = {
                 security
                 for event in command.events
-                if not protective or event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
+                if event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
                 for security in event.security_ids
             }
-            plan_source = source
+            source_ids = {source.event_id}
             if source.result.monitoring is not None:
                 source_ids = {
-                    item.source_event_id
+                    identity
                     for item in source.result.monitoring.cases
                     if any(target.security_id in affected for target in item.required_targets)
+                    for identity in item.source_event_ids or (item.source_event_id,)
                 }
-                if len(source_ids) != 1:
-                    return blocked
-                resolved = ledger.get_formal_report_for_event(next(iter(source_ids)), connection)
-                if resolved is None:
-                    return blocked
-                plan_source = resolved
-            owned_plan = plan_source.result.execution_plan
-            owned_fact = ledger.get_original_decision_event(
-                plan_source.business_object_id, connection
-            )
-            if (
-                not affected
-                or owned_plan is None
-                or owned_fact is None
-                or owned_fact.case.execution_plan is None
-                or owned_fact.case.execution_plan.portfolio_id != command.portfolio_id
-                or plan_source.access_scope is None
-                or not scope.same_scope_as(plan_source.access_scope)
-                or ledger.get_correction_event(plan_source.event_id, connection) is not None
-            ):
+            if not affected or not source_ids:
                 return blocked
-            owned_targets = {
-                target.security_id: target
-                for target in owned_plan.targets
-                if target.security_id in affected
-                and (not protective or target.direction == "EXIT" and target.target_quantity == 0)
-            }
+            owned_targets: dict[str, ExecutionTarget] = {}
+            target_sources: dict[str, tuple[str, ...]] = {}
+            source_reports = {source.report_version_id}
+            for source_id in sorted(source_ids):
+                plan_source = ledger.get_formal_report_for_event(source_id, connection)
+                if plan_source is None:
+                    return blocked
+                owned_plan = plan_source.result.execution_plan
+                owned_fact = ledger.get_original_decision_event(
+                    plan_source.business_object_id, connection
+                )
+                if (
+                    owned_plan is None
+                    or owned_fact is None
+                    or owned_fact.case.execution_plan is None
+                    or owned_fact.case.execution_plan.portfolio_id != command.portfolio_id
+                    or plan_source.access_scope is None
+                    or not scope.same_scope_as(plan_source.access_scope)
+                    or datetime.fromisoformat(plan_source.knowledge_cutoff) > command.cutoff_at
+                    or ledger.get_correction_event(plan_source.event_id, connection) is not None
+                ):
+                    return blocked
+                source_reports.add(plan_source.report_version_id)
+                for target in owned_plan.targets:
+                    if (
+                        target.security_id not in affected
+                        or target.direction not in {"REDUCE", "EXIT"}
+                        or not target.source_obligation_ids
+                    ):
+                        continue
+                    previous_target = owned_targets.get(target.security_id)
+                    if previous_target is not None:
+                        strongest = min(
+                            (previous_target, target), key=lambda item: item.target_quantity
+                        )
+                        target = strongest.model_copy(
+                            update={
+                                "source_obligation_ids": tuple(
+                                    sorted(
+                                        set(previous_target.source_obligation_ids).union(
+                                            target.source_obligation_ids
+                                        )
+                                    )
+                                )
+                            }
+                        )
+                    owned_targets[target.security_id] = target
+                    target_sources[target.security_id] = tuple(
+                        sorted({*target_sources.get(target.security_id, ()), plan_source.event_id})
+                    )
             if set(owned_targets) != affected:
+                return blocked.model_copy(
+                    update={"reasons": ("MONITORING_PROTECTION_TARGET_UNAVAILABLE",)}
+                )
+            if any(
+                owned_targets[security].direction != "EXIT"
+                or owned_targets[security].target_quantity != 0
+                for security in protective_securities
+            ):
                 return blocked.model_copy(
                     update={"reasons": ("MONITORING_PROTECTION_TARGET_UNAVAILABLE",)}
                 )
@@ -188,41 +235,6 @@ def assess_monitoring(
                 command.cutoff_at, require_current_completeness=False
             ):
                 return blocked.model_copy(update={"reasons": ("MONITORING_CALENDAR_UNAVAILABLE",)})
-            if not retained:
-                source_fact = ledger.get_original_decision_event(
-                    plan_source.business_object_id, connection
-                )
-                if (
-                    not owned_plan.targets
-                    or source_fact is None
-                    or source_fact.case.execution_plan is None
-                    or source_fact.case.execution_plan.portfolio_id != command.portfolio_id
-                ):
-                    return blocked
-                obligations = tuple(
-                    sorted(
-                        {
-                            identity
-                            for target in owned_targets.values()
-                            for identity in target.source_obligation_ids
-                        }
-                    )
-                )
-                identity = sha256(
-                    f"{scope.model_dump_json()}\n{command.portfolio_id}\n{obligations}".encode()
-                ).hexdigest()
-                initial = MonitoringCase(
-                    case_id=f"monitoring-case-{identity}",
-                    source_event_id=plan_source.event_id,
-                    obligation_ids=obligations,
-                    priority="P0" if protective else "P1",
-                    plan=None,
-                    required_targets=tuple(owned_targets.values()),
-                    quantity_status="UNKNOWN",
-                    first_established_at=case.knowledge_cutoff,
-                    last_reviewed_at=case.knowledge_cutoff,
-                )
-                retained[initial.case_id] = initial
             covered_securities = {
                 target.security_id for item in retained.values() for target in item.required_targets
             }
@@ -245,7 +257,9 @@ def assess_monitoring(
                                     set((*matching.obligation_ids, *target.source_obligation_ids))
                                 )
                             ),
-                            "source_event_id": plan_source.event_id,
+                            "source_event_id": target_sources[security][0],
+                            "source_event_ids": matching.source_event_ids
+                            or (matching.source_event_id,),
                         }
                     )
                 else:
@@ -255,9 +269,10 @@ def assess_monitoring(
                     ).hexdigest()
                     added = MonitoringCase(
                         case_id=f"monitoring-case-{identity}",
-                        source_event_id=plan_source.event_id,
+                        source_event_id=target_sources[security][0],
+                        source_event_ids=target_sources[security],
                         obligation_ids=target.source_obligation_ids,
-                        priority="P0" if protective else "P1",
+                        priority="P0" if security in protective_securities else "P1",
                         plan=None,
                         required_targets=(target,),
                         quantity_status="UNKNOWN",
@@ -278,18 +293,15 @@ def assess_monitoring(
                     item.model_copy(
                         update={
                             "priority": "P0"
-                            if protective
-                            and any(
-                                target.security_id in affected for target in item.required_targets
+                            if any(
+                                target.security_id in protective_securities
+                                for target in item.required_targets
                             )
                             else item.priority,
                             "quantity_status": "UNKNOWN",
                             "plan": None,
-                            "source_event_id": plan_source.event_id
-                            if any(
-                                target.security_id in affected for target in item.required_targets
-                            )
-                            else item.source_event_id,
+                            "source_event_id": _target_sources(item, target_sources)[0],
+                            "source_event_ids": _target_sources(item, target_sources),
                             "obligation_ids": tuple(
                                 sorted(
                                     set(item.obligation_ids).union(
@@ -311,7 +323,7 @@ def assess_monitoring(
                     )
                     for item in retained.values()
                 ),
-                source_report_ids=(source.report_version_id,),
+                source_report_ids=tuple(sorted(source_reports)),
                 freshness=_freshness(command, ledger.observed_at()),
             )
     if command.kind in {"LIFECYCLE", "OPERATIONS"}:
@@ -582,6 +594,9 @@ def assess_monitoring(
                 update={
                     "obligation_ids": identities,
                     "source_event_id": source.event_id,
+                    "source_event_ids": (source.event_id,)
+                    if complete
+                    else previous.source_event_ids,
                     "plan": plan if complete else None,
                     "required_targets": tuple(
                         target

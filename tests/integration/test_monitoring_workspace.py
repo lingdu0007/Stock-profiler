@@ -60,8 +60,9 @@ def ready_monitoring_payload(
     settings: Settings,
     *,
     protective_target: bool = False,
+    normal: bool = False,
 ) -> dict[str, Any]:
-    plan_payload = risk_handoff_payload(settings)
+    plan_payload = risk_handoff_payload(settings, normal=normal)
     plan_payload["execution_plan"]["routes"] = execution_routes()
     if protective_target:
         plan_payload["execution_plan"]["established_targets"] = [
@@ -336,19 +337,21 @@ def test_initial_authoritative_termination_creates_a_zero_target_case(
     )
 
 
+@pytest.mark.parametrize("normal", [False, True])
 def test_first_authoritative_risk_breach_preserves_owned_direction_without_complete_costs(
     migrated_settings: Settings,
+    normal: bool,
 ) -> None:
-    payload = ready_monitoring_payload(migrated_settings)
+    payload = ready_monitoring_payload(migrated_settings, normal=normal)
     payload["monitoring"].update(
         kind="EVENT_REASSESS",
         evidence_families=[],
         events=[
             {
                 "event_id": "synthetic-first-risk-breach",
-                "kind": "RISK_BREACH",
+                "kind": "ACCOUNT_STATE" if normal else "RISK_BREACH",
                 "security_ids": ["XQZ-4017"],
-                "authority": "RISK_POLICY",
+                "authority": "BROKER" if normal else "RISK_POLICY",
                 "evidence": position_evidence("synthetic-risk-policy"),
             }
         ],
@@ -356,6 +359,9 @@ def test_first_authoritative_risk_breach_preserves_owned_direction_without_compl
     report = committed(migrated_settings, payload)
     assert report.result.monitoring is not None
     outcome = report.result.monitoring
+    if normal:
+        assert outcome.cases == ()
+        return
     assert outcome.disposition == "ASSESSED"
     assert len(outcome.cases) == 1
     assert outcome.cases[0].priority == "P1"
@@ -363,6 +369,125 @@ def test_first_authoritative_risk_breach_preserves_owned_direction_without_compl
     assert outcome.cases[0].quantity_status == "UNKNOWN"
     assert outcome.cases[0].plan is None
     assert outcome.action_units == ()
+
+
+def test_first_mixed_events_preserve_both_saved_targets_with_independent_priority(
+    migrated_settings: Settings,
+) -> None:
+    from decimal import Decimal
+    from unittest.mock import Mock
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+    from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
+
+    payload = ready_monitoring_payload(migrated_settings)
+    ledger = DecisionLedger.from_settings(migrated_settings, clock=GovernanceClock())
+    with ledger.serialize_case_execution() as connection:
+        source = ledger.get_formal_report_for_event(
+            payload["monitoring"]["source_event_id"], connection
+        )
+        assert source is not None and source.result.execution_plan is not None
+        owner = ledger.get_original_decision_event(source.business_object_id, connection)
+        first = source.result.execution_plan.targets[0].model_copy(
+            update={"target_quantity": Decimal(50), "source_obligation_ids": ("synthetic-risk-A",)}
+        )
+        second = first.model_copy(
+            update={
+                "security_id": "XQZ-B",
+                "direction": "EXIT",
+                "target_quantity": Decimal(0),
+                "source_obligation_ids": ("synthetic-protection-B",),
+            }
+        )
+        source = source.model_copy(
+            update={
+                "result": source.result.model_copy(
+                    update={
+                        "execution_plan": source.result.execution_plan.model_copy(
+                            update={"targets": (first, second)}
+                        )
+                    }
+                )
+            }
+        )
+        saved = Mock(spec=ledger)
+        saved.monitoring_history.return_value = ()
+        saved.get_formal_report_for_event.return_value = source
+        saved.get_original_decision_event.return_value = owner
+        saved.get_correction_event.return_value = None
+        saved.observed_at.return_value = "2042-05-17T16:01:00Z"
+        payload["monitoring"].update(
+            kind="EVENT_REASSESS",
+            events=[
+                {
+                    "event_id": "synthetic-risk-A",
+                    "kind": "RISK_BREACH",
+                    "security_ids": [first.security_id],
+                    "authority": "RISK_POLICY",
+                    "evidence": position_evidence("synthetic-policy"),
+                },
+                {
+                    "event_id": "synthetic-protection-B",
+                    "kind": "TERMINATION",
+                    "security_ids": [second.security_id],
+                    "authority": "EXCHANGE",
+                    "evidence": position_evidence("synthetic-exchange"),
+                },
+            ],
+        )
+        outcome = assess_monitoring(FrozenDecisionCase.model_validate(payload), saved, connection)
+        split_sources = {}
+        split_cases = []
+        for item in outcome.cases:
+            identity = f"synthetic-plan-{item.required_targets[0].security_id}"
+            split_cases.append(
+                item.model_copy(
+                    update={"source_event_id": identity, "source_event_ids": (identity,)}
+                )
+            )
+            assert source.result.execution_plan is not None
+            split_sources[identity] = source.model_copy(
+                update={
+                    "event_id": identity,
+                    "result": source.result.model_copy(
+                        update={
+                            "execution_plan": source.result.execution_plan.model_copy(
+                                update={"targets": item.required_targets}
+                            )
+                        }
+                    ),
+                }
+            )
+        monitoring_source = source.model_copy(
+            update={
+                "event_id": "synthetic-multiple-owned-lineages",
+                "result": source.result.model_copy(
+                    update={
+                        "execution_plan": None,
+                        "monitoring": outcome.model_copy(update={"cases": tuple(split_cases)}),
+                    }
+                ),
+            }
+        )
+        split_sources[monitoring_source.event_id] = monitoring_source
+        saved.get_formal_report_for_event.side_effect = lambda identity, _: split_sources.get(
+            identity
+        )
+        payload["monitoring"]["source_event_id"] = monitoring_source.event_id
+        repeated = assess_monitoring(FrozenDecisionCase.model_validate(payload), saved, connection)
+    assert outcome.disposition == "ASSESSED"
+    assert {
+        (target.security_id, item.priority, target.target_quantity)
+        for item in outcome.cases
+        for target in item.required_targets
+    } == {(first.security_id, "P1", Decimal(50)), ("XQZ-B", "P0", Decimal(0))}
+    assert repeated.disposition == "ASSESSED"
+    assert {
+        (target.security_id, item.priority, target.target_quantity)
+        for item in repeated.cases
+        for target in item.required_targets
+    } == {(first.security_id, "P1", Decimal(50)), ("XQZ-B", "P0", Decimal(0))}
 
 
 @pytest.mark.parametrize("new_security", [True, False])

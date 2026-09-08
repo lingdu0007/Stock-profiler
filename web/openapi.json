@@ -3494,6 +3494,14 @@
           "source_event_id": {
             "title": "Source Event Id",
             "type": "string"
+          },
+          "source_event_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Event Ids",
+            "type": "array"
           }
         },
         "required": [

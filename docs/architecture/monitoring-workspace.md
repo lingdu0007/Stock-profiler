@@ -27,6 +27,10 @@ Market/security, company events, broker accounts, costs/rules and
 qualification/version evidence carry individual provenance and clocks.
 Incomplete evidence cannot manufacture an exact quantity. Protective events
 can preserve an exit target while quantity verification is unavailable.
+Minimum-evidence risk events require an existing REDUCE or EXIT obligation;
+missing evidence cannot turn a normal HOLD target into risk remediation.
+Concurrent events preserve each affected target and its own priority. Cases
+retain all contributing saved plan identities when targets span multiple sources.
 Protective priority comes from saved target provenance or capital-preservation
 state, never merely from a zero quantity. Opening a complete assessment version
 automatically records viewing without acknowledging or confirming it.

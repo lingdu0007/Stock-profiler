@@ -107,6 +107,7 @@ class MonitoringCalendar(MonitoringContract):
 class MonitoringCase(MonitoringContract):
     case_id: str
     source_event_id: str
+    source_event_ids: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     obligation_ids: tuple[str, ...]
     priority: Literal["P0", "P1"]
     plan: ExecutionPlanOutcome | None
