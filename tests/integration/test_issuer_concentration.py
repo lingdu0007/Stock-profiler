@@ -121,15 +121,17 @@ def concentration_payload(
     return payload
 
 
-def test_concentration_contract_does_not_redefine_released_stress_version(
+@pytest.mark.parametrize("other_version", ["8.0.0", "8.2.0"])
+def test_concentration_contract_does_not_redefine_released_risk_versions(
     migrated_settings: Settings,
+    other_version: str,
 ) -> None:
     payload = concentration_payload(migrated_settings, "synthetic-authorization")
     assert FrozenDecisionCase.model_validate(payload).concentration is not None
     payload["version_bundle"].update(
-        case_contract_version="8.0.0",
-        host_contract_version="8.0.0",
-        report_projection_contract_version="8.0.0",
+        case_contract_version=other_version,
+        host_contract_version=other_version,
+        report_projection_contract_version=other_version,
     )
     with pytest.raises(ValidationError, match="concentration requires the version 8.1"):
         FrozenDecisionCase.model_validate(payload)

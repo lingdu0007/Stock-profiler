@@ -55,8 +55,8 @@ jobs:
       - run: corepack pnpm@10.17.1 --dir web type-check
       - run: corepack pnpm@10.17.1 --dir web exec playwright install --with-deps chromium
       - run: corepack pnpm@10.17.1 --dir web test
-      - run: corepack pnpm@10.17.1 --dir web test:e2e
       - run: uv sync --locked --extra dev --python 3.11
+      - run: corepack pnpm@10.17.1 --dir web test:e2e
       - run: uv run python scripts/export_openapi.py web/openapi.json
       - run: corepack pnpm@10.17.1 --dir web generate-client
       - run: git diff --exit-code -- web/openapi.json web/src/api/schema.d.ts
