@@ -193,16 +193,18 @@ def adjudicate(
             interval_drawdown = accounting.interval_drawdown
         except ValueError as error:
             return unknown_evidence(prior, command, event_id, str(error))
-    nav_fraction = Fraction(equity) / units_fraction
-    peak_fraction = max(peak_fraction, nav_fraction)
-    drawdown_fraction = 1 - nav_fraction / peak_fraction
-    interval_drawdown = max(interval_drawdown, drawdown_fraction)
+    nav_fraction = Fraction(equity) / units_fraction if units_fraction else None
+    if nav_fraction is not None:
+        peak_fraction = max(peak_fraction, nav_fraction)
+    drawdown_fraction = 1 - nav_fraction / peak_fraction if nav_fraction is not None else None
+    if drawdown_fraction is not None:
+        interval_drawdown = max(interval_drawdown, drawdown_fraction)
     with localcontext() as context:
         context.prec = 50
         units = decimal_value(units_fraction)
-        nav = decimal_value(nav_fraction)
+        nav = decimal_value(nav_fraction) if nav_fraction is not None else None
         peak = decimal_value(peak_fraction)
-        drawdown = decimal_value(drawdown_fraction)
+        drawdown = decimal_value(drawdown_fraction) if drawdown_fraction is not None else None
         maximum = max(
             prior.maximum_drawdown if prior is not None else Decimal(0),
             decimal_value(interval_drawdown),
@@ -231,18 +233,35 @@ def adjudicate(
     )
     next_session = calendar.next_session_after(session.closed_at) if calendar and session else None
     recovery_gate = command.other_risk_gate
-    valid_close = (
+    observed_close = (
         session is not None
         and position.snapshot.evidence_clock.business_effective_at == session.closed_at
         and session.closed_at <= command.cutoff_at
         and (next_session is None or command.cutoff_at < next_session.closed_at)
-        and recovery_gate is not None
+    )
+    gate_clear = (
+        recovery_gate is not None
         and not recovery_gate.hard_gate_active
         and not recovery_gate.evidence.problem_codes(
             command.cutoff_at, require_current_completeness=True
         )
     )
-    if prior is not None and risk == prior.risk_state and valid_close and session is not None:
+    last_observed = prior.last_observed_session if prior is not None else None
+    new_close = (
+        observed_close
+        and session is not None
+        and (last_observed is None or session.ordinal > last_observed)
+    )
+    if observed_close and session is not None:
+        last_observed = max(last_observed or session.ordinal, session.ordinal)
+    invalid_period = command.market_session_ordinal is not None and not observed_close
+    if (
+        prior is not None
+        and risk == prior.risk_state
+        and gate_clear
+        and not invalid_period
+        and drawdown_fraction is not None
+    ):
         eligible = (
             risk == "CAUTION"
             and interval_drawdown < budget.drawdown.caution_ratio
@@ -255,21 +274,20 @@ def adjudicate(
             <= Fraction(equity) * Fraction(command.policy.defensive_exposure_ratio)
         )
         if eligible:
-            count = (
-                prior.recovery_sessions + 1
-                if prior.last_recovery_session == session.ordinal - 1
-                else 1
-            )
-            last_session = session.ordinal
-            required = (
-                command.policy.caution_recovery_sessions
-                if risk == "CAUTION"
-                else command.policy.defensive_recovery_sessions
-            )
-            if count >= required:
-                risk = "NORMAL" if risk == "CAUTION" else "CAUTION"
-                count = 0
-                last_session = None
+            count = prior.recovery_sessions
+            last_session = prior.last_recovery_session
+            if new_close and session is not None:
+                count = count + 1 if last_session == session.ordinal - 1 else 1
+                last_session = session.ordinal
+                required = (
+                    command.policy.caution_recovery_sessions
+                    if risk == "CAUTION"
+                    else command.policy.defensive_recovery_sessions
+                )
+                if count >= required:
+                    risk = "NORMAL" if risk == "CAUTION" else "CAUTION"
+                    count = 0
+                    last_session = None
     epoch_status = prior.epoch_status if prior is not None else "OPEN"
     closed_at = prior.closed_at if prior is not None else None
     cooling = 0
@@ -280,9 +298,13 @@ def adjudicate(
         last_session = None
     elif epoch_status == "CLOSED" and prior is not None:
         count = 0
+        if fully_reconciled_zero and gate_clear and not new_stock_events and not invalid_period:
+            cooling = prior.cooling_sessions
+            last_session = prior.last_recovery_session
         if (
             fully_reconciled_zero
-            and valid_close
+            and gate_clear
+            and new_close
             and session is not None
             and closed_at is not None
             and session.closed_at.date() > closed_at.astimezone(session.closed_at.tzinfo).date()
@@ -344,7 +366,10 @@ def adjudicate(
         current_drawdown=drawdown,
         risk_state=risk,
         new_exposure_blocked=(
-            risk != "NORMAL" or epoch_status == "CLOSED" or command.cutoff_at >= budget.expires_at
+            risk != "NORMAL"
+            or epoch_status == "CLOSED"
+            or command.cutoff_at >= budget.expires_at
+            or nav_fraction is None
         ),
         valuation=command.valuation,
         current_stock_exposure=exposure,
@@ -354,6 +379,7 @@ def adjudicate(
         stock_exposure_target_value=target,
         recovery_sessions=count,
         last_recovery_session=last_session,
+        last_observed_session=last_observed,
         exact_units=ExactRatio.from_fraction(units_fraction),
         exact_peak=ExactRatio.from_fraction(peak_fraction),
         processed_transfers=transfer_keys(position),
@@ -370,6 +396,8 @@ def adjudicate(
         reasons=(
             "CAPITAL_EXECUTION_RECONCILIATION_REQUIRED"
             if closure_denied
+            else "CAPITAL_UNITS_REDEEMED"
+            if units_fraction == 0
             else "CAPITAL_EPOCH_OPENED"
             if prior is None
             else "DRAWDOWN_OBSERVED",

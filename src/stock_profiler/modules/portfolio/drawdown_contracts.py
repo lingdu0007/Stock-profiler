@@ -112,6 +112,7 @@ class DrawdownState(PortfolioContract):
     stock_exposure_target_value: Decimal | None
     recovery_sessions: int = 0
     last_recovery_session: int | None = None
+    last_observed_session: int | None = None
     exact_units: ExactRatio
     exact_peak: ExactRatio
     processed_transfers: tuple[FlowLedgerKey, ...]

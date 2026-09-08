@@ -1,6 +1,7 @@
 """Exact unit accounting for complete, broker-bound capital flows."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Context, Decimal, localcontext
 from fractions import Fraction
 
@@ -31,6 +32,7 @@ def equity_for(
     position: PositionReconciliationOutcome | None,
     account_ids: tuple[str, ...],
     currency: str,
+    flow_at: datetime,
 ) -> Fraction:
     if (
         position is None
@@ -44,6 +46,16 @@ def equity_for(
         )
     ):
         raise ValueError("DRAWDOWN_EVIDENCE_UNKNOWN")
+    evidence = (
+        valuation.evidence,
+        position.snapshot.snapshot_evidence,
+        *(unit.position_evidence for unit in position.snapshot.action_units if unit.total_quantity),
+        *(account.account_evidence for account in position.snapshot.cash_states),
+        *(account.account_equity_evidence for account in position.snapshot.cash_states),
+        *(account.cash_state_evidence for account in position.snapshot.cash_states),
+    )
+    if any(item.expires_at is not None and item.expires_at < flow_at for item in evidence):
+        raise ValueError("CAPITAL_FLOW_VALUATION_EXPIRED")
     return Fraction(position.snapshot.total_account_equity) - Fraction(valuation.liquidation_cost)
 
 
@@ -100,6 +112,7 @@ def adjusted_units(
             before,
             prior.account_ids,
             position.snapshot.valuation_currency,
+            flow.occurred_at,
         )
         if pre_equity <= 0 or units <= 0:
             raise ValueError("CAPITAL_FLOW_VALUE_UNKNOWN")
@@ -134,8 +147,8 @@ def adjusted_units(
                 raise ValueError("INTERNAL_TRANSFER_UNRECONCILED")
         else:
             units += amount / pre_nav
-        if units <= 0:
-            raise ValueError("CAPITAL_UNITS_EXHAUSTED")
+        if units < 0:
+            raise ValueError("CAPITAL_UNITS_NEGATIVE")
         processed.update(flow.ledger_keys)
         preceding_flow_at = flow.occurred_at
     return UnitAccounting(units, peak, (*prior.processed_flow_ids, *ids), interval_drawdown)

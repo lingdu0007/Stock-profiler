@@ -255,3 +255,76 @@ def test_intervening_roundtrip_prevents_reusing_completed_cooling_for_reauthoriz
     assert denied.result.drawdown.state is not None
     assert denied.result.drawdown.state.epoch_id == command["epoch_id"]
     assert denied.result.drawdown.state.cooling_sessions == 0
+
+
+def test_full_redemption_retains_closed_epoch_and_can_continue_zero_stock_cooling(
+    migrated_settings: Settings,
+) -> None:
+    settings = migrated_settings
+    command, closed = closed_epoch(settings)
+    assert closed.result.drawdown is not None and closed.result.drawdown.state is not None
+    previous = closed.result.drawdown.state
+    withdrawal = {
+        "entry_id": "synthetic-full-capital-redemption",
+        "entry_type": "TRANSFER_OUT",
+        "security_id": None,
+        "quantity_delta": "0",
+        "cost_basis_delta": "0",
+        "cash_delta": "-1300",
+        "occurred_at": "2042-05-21T15:00:00Z",
+        "evidence": position_evidence(
+            "synthetic-full-capital-redemption",
+            cutoff_at="2042-05-21T16:00:00Z",
+        ),
+    }
+    command["capital_flows"] = [
+        {
+            "flow_id": withdrawal["entry_id"],
+            "kind": "EXTERNAL",
+            "occurred_at": withdrawal["occurred_at"],
+            "before_valuation": previous.valuation.model_dump(mode="json"),
+            "ledger_keys": [
+                {
+                    "account_id": "synthetic-account-4017",
+                    "entry_id": withdrawal["entry_id"],
+                }
+            ],
+        }
+    ]
+    redeemed = observe(
+        settings,
+        command,
+        closed,
+        "full-capital-redemption",
+        "2042-05-21T16:00:00Z",
+        equity="0",
+        quantity=0,
+        settled=True,
+        session=6102,
+        extra_ledger_entries=(withdrawal,),
+    )
+    assert redeemed.result.drawdown is not None and redeemed.result.drawdown.state is not None
+    state = redeemed.result.drawdown.state
+    assert state.units == 0
+    assert state.unit_nav is None
+    assert state.current_drawdown is None
+    assert state.high_water_nav == previous.high_water_nav
+    assert state.maximum_drawdown == previous.maximum_drawdown
+    assert state.risk_state == "PRESERVATION" and state.epoch_status == "CLOSED"
+    assert state.cooling_sessions == 1 and state.new_exposure_blocked
+    command["capital_flows"] = []
+    later = observe(
+        settings,
+        command,
+        redeemed,
+        "after-full-redemption",
+        "2042-05-22T16:00:00Z",
+        equity="0",
+        quantity=0,
+        settled=True,
+        session=6103,
+        extra_ledger_entries=(withdrawal,),
+    )
+    assert later.result.drawdown is not None and later.result.drawdown.state is not None
+    assert later.result.drawdown.state.units == 0
+    assert later.result.drawdown.state.cooling_sessions == 2

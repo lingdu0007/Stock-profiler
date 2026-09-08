@@ -406,6 +406,10 @@ def observe(
                 ),
             }
         )
+    extra_cash = sum((Decimal(entry["cash_delta"]) for entry in extra_ledger_entries), Decimal(0))
+    cash += extra_cash
+    for field in ("ledger_cash", "trading_cash", "transferable_cash"):
+        account["cash_state"][field] = str(Decimal(account["cash_state"][field]) + extra_cash)
     account["account_equity"] = str(Decimal(equity) + 10)
     holding = account["positions"][0]
     holding["market_price"] = str((Decimal(equity) - cash) / quantity) if quantity else "12"

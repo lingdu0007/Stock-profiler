@@ -108,6 +108,7 @@ def cash_snapshot(
     *,
     equity: str,
     transfers: list[dict[str, Any]],
+    equity_expiry: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     snapshot = position_snapshot_command()
     snapshot.update(snapshot_id=f"synthetic-{identity}", cutoff_at=cutoff)
@@ -115,6 +116,7 @@ def cash_snapshot(
     snapshot["annotations"] = []
     refresh_current_position_evidence(snapshot, cutoff)
     account = snapshot["accounts"][0]
+    account["account_equity_evidence"]["expires_at"] = equity_expiry
     delta = sum((Decimal(item["cash_delta"]) for item in transfers), Decimal(0))
     account["account_equity"] = str(Decimal(equity) + 10)
     account["positions"][0]["market_price"] = str((Decimal(equity) - 100 - delta) / 100)

@@ -1346,6 +1346,17 @@
             "title": "High Water Nav",
             "type": "string"
           },
+          "last_observed_session": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed Session"
+          },
           "last_recovery_session": {
             "anyOf": [
               {

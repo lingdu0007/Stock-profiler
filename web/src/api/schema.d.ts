@@ -782,6 +782,8 @@ export interface components {
             execution_blocked: boolean;
             /** High Water Nav */
             high_water_nav: string;
+            /** Last Observed Session */
+            last_observed_session?: number | null;
             /** Last Recovery Session */
             last_recovery_session?: number | null;
             /** Maximum Drawdown */

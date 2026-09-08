@@ -30,6 +30,8 @@ units and the epoch high-water mark are saved alongside decimal report values.
 External cash and asset flows issue or cancel units at the qualified pre-flow
 NAV. Each flow must cover new committed transfer ledger entries exactly once.
 Each pre-flow valuation must include all earlier flows in the interval.
+Its declared valuation and underlying material-fact expirations are checked at
+the flow time, not just at the earlier snapshot cutoff.
 Asset flows also require qualified contemporaneous asset prices. Internal
 transfers must reconcile across accounts to zero value and do not change units.
 Pre-flow qualified peaks and troughs participate in risk history.
@@ -46,6 +48,9 @@ Recovery needs complete consecutive frozen market-close evidence, a clear
 other-risk gate and, for defensive recovery, actual stock exposure within the
 ceiling. A downgrade starts the next state's count afresh. Missing sessions and
 unknown or adverse evidence reset the count. Recovery does not buy back stocks.
+Benign observations preserve already accumulated close evidence. A retained
+session identity prevents duplicate closes from advancing counts or being reused
+across recovery levels.
 `synthetic-capital-calendar-v1` is a finite fictional sequence, not a real
 exchange calendar; unknown session identities do not count.
 
@@ -62,6 +67,10 @@ Refusing closure does not discard an independently qualified protection breach.
 Cooling counts only complete session dates after closure. The retained stock
 ledger identities detect intervening exposure, including round trips ending at
 zero quantity; reopening cannot reuse a cooling proof invalidated by such trades.
+Full redemption records zero units without fabricating a unit NAV or drawdown
+ratio. The epoch peak, historical maximum and protection remain retained, new
+exposure stays blocked, and a reconciled zero-stock closed epoch can continue
+cooling before a fresh capital authorization.
 
 ## Scope
 
