@@ -60,6 +60,11 @@ The host tightens existing caps only when their remaining market value would
 still exceed the current target. Reconciled closing fills can discharge an
 obligation even when the account no longer includes zero-quantity position
 rows; a transfer or an unproven security-code lineage cannot do so.
+Each obligation retains account-local quantity baselines and their snapshot
+cutoffs. Newly covered accounts contribute their holdings at the first
+authoritative snapshot in the obligation's scope; only subsequent fills in
+those accounts count toward execution. Earlier sales of separate holdings
+cannot explain a decrease in the original portfolio's outstanding obligation.
 
 Missing evidence, incompatible prices for the same security, nonpositive net
 equity and unavailable quantity-basis conversion fail closed. Quantity-changing

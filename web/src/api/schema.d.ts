@@ -534,6 +534,20 @@ export interface components {
             /** Valuation Currency */
             valuation_currency: string;
         };
+        /** ConcentrationQuantityBasis */
+        ConcentrationQuantityBasis: {
+            /** Account Id */
+            account_id: string;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Quantity */
+            quantity: string;
+            /** Security Id */
+            security_id: string;
+        };
         /** ConcentrationTarget */
         ConcentrationTarget: {
             /** Required Reduction Quantity */
@@ -1015,6 +1029,11 @@ export interface components {
             new_exposure_blocked: boolean;
             /** Obligation Id */
             obligation_id: string | null;
+            /**
+             * Obligation Quantity Basis
+             * @default []
+             */
+            obligation_quantity_basis: components["schemas"]["ConcentrationQuantityBasis"][];
             /** Obligation Risk Budget Version Id */
             obligation_risk_budget_version_id?: string | null;
             /** Obligation Started At */

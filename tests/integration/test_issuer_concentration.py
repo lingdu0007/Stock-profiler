@@ -532,8 +532,10 @@ def test_late_old_snapshot_cannot_replace_newer_obligation_history(
     assert issuer.direction == "REDUCE"
 
 
+@pytest.mark.parametrize("pre_admission_sale", [False, True])
 def test_authorized_account_addition_cannot_reset_an_unexecuted_obligation(
     migrated_settings: Settings,
+    pre_admission_sale: bool,
 ) -> None:
     authorization_id = concentration_authorization(migrated_settings)
     payload = concentration_payload(migrated_settings, authorization_id, quantity="100")
@@ -614,18 +616,96 @@ def test_authorized_account_addition_cannot_reset_an_unexecuted_obligation(
             "evidence": deepcopy(account["account_equity_evidence"]),
         }
     )
+    if pre_admission_sale:
+        bought = deepcopy(command["position_snapshot"]["accounts"][1]["ledger_entries"][0])
+        bought["entry_id"] = "synthetic-pre-admission-buy"
+        sold = deepcopy(bought)
+        sold.update(
+            entry_id="synthetic-pre-admission-sale",
+            quantity_delta="-100",
+            cost_basis_delta="-900",
+            cash_delta="1000",
+            occurred_at="2042-05-18T15:00:00Z",
+            evidence=position_evidence(
+                "synthetic-pre-admission-sale", cutoff_at="2042-05-18T16:00:00Z"
+            ),
+        )
+        account["ledger_entries"] = [bought, sold]
+        account["cash_state"]["opening_ledger_cash"] = "9900"
+        first_account = command["position_snapshot"]["accounts"][0]
+        first_account["positions"][0].update(
+            total_quantity="0", broker_sellable_quantity="0", reported_cost_basis="0"
+        )
+        first_account["account_equity"] = "8000"
+        transferred = deepcopy(first_account["ledger_entries"][0])
+        transferred.update(
+            entry_id="synthetic-post-admission-transfer",
+            entry_type="TRANSFER_OUT",
+            quantity_delta="-100",
+            cost_basis_delta="-900",
+            cash_delta="0",
+            occurred_at="2042-05-20T15:00:00Z",
+            evidence=position_evidence(
+                "synthetic-post-admission-transfer", cutoff_at=later["knowledge_cutoff"]
+            ),
+        )
+        first_account["ledger_entries"].append(transferred)
     execution = run_frozen_decision_case(
         migrated_settings, later, clock=GovernanceClock("2042-05-20T17:00:00+00:00")
     )
     assert execution.report is not None and execution.report.result.concentration is not None
     outcome = execution.report.result.concentration
-    assert outcome.disposition == "ASSESSED"
-    assert outcome.portfolio_net_liquidation_equity == Decimal("20000")
+    if not pre_admission_sale:
+        assert outcome.disposition == "ASSESSED"
+        assert outcome.portfolio_net_liquidation_equity == Decimal("20000")
     issuer = outcome.issuers[0]
-    assert issuer.position_weight == Decimal("0.1")
+    if not pre_admission_sale:
+        assert issuer.position_weight == Decimal("0.1")
     assert issuer.direction == "REDUCE"
     assert issuer.obligation_id == original.obligation_id
     assert issuer.targets[0].target_quantity == Decimal("130")
+    if not pre_admission_sale:
+        moved = later_concentration_payload(later, "21")
+        accounts = moved["concentration"]["position_snapshot"]["accounts"]
+        transferred_position = deepcopy(accounts[0]["positions"][0])
+        transferred_position["position_id"] = "synthetic-admitted-transfer-position"
+        transferred_position["lifecycle_id"] = "synthetic-admitted-transfer-lifecycle"
+        accounts[2]["positions"] = [transferred_position]
+        accounts[2]["account_equity"] = "11000"
+        accounts[0]["positions"][0].update(
+            total_quantity="0", broker_sellable_quantity="0", reported_cost_basis="0"
+        )
+        accounts[0]["account_equity"] = "8000"
+        for index, quantity, cost in ((0, "-100", "-900"), (2, "100", "900")):
+            accounts[index]["ledger_entries"].append(
+                {
+                    "entry_id": f"synthetic-admitted-transfer-{index}",
+                    "entry_type": "TRANSFER_OUT" if index == 0 else "TRANSFER_IN",
+                    "security_id": "XQZ-4017",
+                    "quantity_delta": quantity,
+                    "cost_basis_delta": cost,
+                    "cash_delta": "0",
+                    "occurred_at": "2042-05-21T15:00:00Z",
+                    "evidence": position_evidence(
+                        "synthetic-admitted-transfer", cutoff_at=moved["knowledge_cutoff"]
+                    ),
+                }
+            )
+        transfer_result = run_frozen_decision_case(
+            migrated_settings, moved, clock=GovernanceClock("2042-05-21T17:00:00+00:00")
+        )
+        assert transfer_result.report is not None
+        assert transfer_result.report.result.concentration is not None
+        assert transfer_result.report.result.concentration.issuers[0].exposure_gap == 700
+        sold_after_admission = later_concentration_payload(moved, "22")
+        record_synthetic_sale(sold_after_admission, "70", "admitted-sale", account_index=2)
+        completed = run_frozen_decision_case(
+            migrated_settings,
+            sold_after_admission,
+            clock=GovernanceClock("2042-05-22T17:00:00+00:00"),
+        )
+        assert completed.report is not None and completed.report.result.concentration is not None
+        assert completed.report.result.concentration.issuers[0].state == "RESOLVED"
 
 
 def test_quantity_changing_corporate_action_cannot_complete_a_sale_obligation(

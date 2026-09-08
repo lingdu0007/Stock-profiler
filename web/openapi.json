@@ -838,6 +838,32 @@
         "title": "ConcentrationOutcome",
         "type": "object"
       },
+      "ConcentrationQuantityBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "security_id", "quantity", "cutoff_at"],
+        "title": "ConcentrationQuantityBasis",
+        "type": "object"
+      },
       "ConcentrationTarget": {
         "additionalProperties": false,
         "properties": {
@@ -1983,6 +2009,14 @@
               }
             ],
             "title": "Obligation Id"
+          },
+          "obligation_quantity_basis": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ConcentrationQuantityBasis"
+            },
+            "title": "Obligation Quantity Basis",
+            "type": "array"
           },
           "obligation_risk_budget_version_id": {
             "anyOf": [

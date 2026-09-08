@@ -47,6 +47,13 @@ class ConcentrationTarget(PositionContract):
     required_reduction_quantity: Decimal | None
 
 
+class ConcentrationQuantityBasis(PositionContract):
+    account_id: str
+    security_id: str
+    quantity: Decimal
+    cutoff_at: AwareDatetime
+
+
 class IssuerConcentration(PositionContract):
     issuer_id: str
     current_market_exposure: Decimal | None
@@ -58,6 +65,7 @@ class IssuerConcentration(PositionContract):
     obligation_started_at: AwareDatetime | None = None
     obligation_risk_budget_version_id: str | None = None
     obligation_thresholds: TwoThresholdBudget | None = None
+    obligation_quantity_basis: tuple[ConcentrationQuantityBasis, ...] = ()
     targets: tuple[ConcentrationTarget, ...]
     exposure_gap: Decimal | None
     execution_blocked: bool

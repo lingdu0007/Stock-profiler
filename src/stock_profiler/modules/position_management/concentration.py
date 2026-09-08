@@ -10,6 +10,7 @@ from stock_profiler.modules.position_management.concentration_contracts import (
     ConcentrationCommand,
     ConcentrationHistory,
     ConcentrationOutcome,
+    ConcentrationQuantityBasis,
     ConcentrationTarget,
     IssuerConcentration,
 )
@@ -72,16 +73,21 @@ def _assess(
     }
     if any(issuer.issuer_id not in closed_issuers for issuer in missing_issuers):
         reasons.append("CONCENTRATION_ISSUER_LINEAGE_UNRESOLVED")
+    pending_bases: dict[str, tuple[ConcentrationQuantityBasis, ...]] = {}
     for issuer in prior_issuers.values():
         if issuer.direction != "REDUCE":
             continue
-        origin = next(
-            saved
-            for item in ordered_history
-            for saved in item.issuers
-            if saved.obligation_id == issuer.obligation_id
-        )
-        if not _quantities_explained_by_fills(position, origin):
+        basis = issuer.obligation_quantity_basis
+        if (
+            basis
+            and usage is not None
+            and usage.allowed
+            and set(usage.authorization_snapshot.proposal.snapshot.selected_account_ids)
+            == set(command.position_snapshot.account_ids)
+        ):
+            basis = _extend_quantity_basis(command, position, issuer.targets, basis)
+        pending_bases[issuer.issuer_id] = basis
+        if not _quantities_explained_by_fills(position, basis):
             reasons.append("CONCENTRATION_EXECUTION_LINEAGE_UNRESOLVED")
         current_codes = {
             unit.security_id for unit in snapshot.action_units if unit.issuer_id == issuer.issuer_id
@@ -271,6 +277,13 @@ def _assess(
                     if obligation_id is not None and budget
                     else None
                 ),
+                obligation_quantity_basis=(
+                    pending_bases.get(exposure.issuer_id, ())
+                    if pending
+                    else _extend_quantity_basis(command, position, tuple(targets), ())
+                    if obligation_id is not None
+                    else ()
+                ),
                 targets=tuple(targets),
                 exposure_gap=gap,
                 execution_blocked=blocked,
@@ -288,6 +301,7 @@ def _assess(
                     "position_weight": Decimal(0) if closed else None,
                     "exposure_gap": Decimal(0) if closed else None,
                     "execution_blocked": not closed,
+                    "obligation_quantity_basis": pending_bases.get(issuer.issuer_id, ()),
                     "targets": tuple(
                         target.model_copy(
                             update={"required_reduction_quantity": Decimal(0) if closed else None}
@@ -386,32 +400,66 @@ def _closed_by_fills(
 
 
 def _quantities_explained_by_fills(
-    position: PositionReconciliationOutcome, origin: IssuerConcentration
+    position: PositionReconciliationOutcome, basis: tuple[ConcentrationQuantityBasis, ...]
 ) -> bool:
-    if origin.obligation_started_at is None:
+    if not basis:
         return False
-    for target in origin.targets:
+    for security_id in {item.security_id for item in basis}:
         quantities = tuple(
             unit.total_quantity
             for unit in position.snapshot.action_units
-            if unit.security_id == target.security_id
+            if unit.security_id == security_id
         )
-        if target.required_reduction_quantity is None or any(
-            quantity is None for quantity in quantities
-        ):
+        if any(quantity is None for quantity in quantities):
             return False
         current = sum((quantity for quantity in quantities if quantity is not None), Decimal(0))
-        fills = sum(
-            (
-                entry.quantity_delta
-                for entry in position.snapshot.authoritative_ledger
-                if entry.security_id == target.security_id
-                and entry.entry_type == "FILL"
-                and origin.obligation_started_at < entry.occurred_at <= position.snapshot.cutoff_at
-            ),
-            Decimal(0),
-        )
-        original_quantity = target.target_quantity + target.required_reduction_quantity
-        if current < original_quantity + fills:
+        expected = Decimal(0)
+        for item in basis:
+            if item.security_id != security_id:
+                continue
+            expected += item.quantity + sum(
+                (
+                    entry.quantity_delta
+                    for entry in position.snapshot.authoritative_ledger
+                    if entry.account_id == item.account_id
+                    and entry.security_id == security_id
+                    and entry.entry_type == "FILL"
+                    and item.cutoff_at < entry.occurred_at <= position.snapshot.cutoff_at
+                ),
+                Decimal(0),
+            )
+        if current < expected:
             return False
     return True
+
+
+def _extend_quantity_basis(
+    command: ConcentrationCommand,
+    position: PositionReconciliationOutcome,
+    targets: tuple[ConcentrationTarget, ...],
+    prior: tuple[ConcentrationQuantityBasis, ...],
+) -> tuple[ConcentrationQuantityBasis, ...]:
+    if position.snapshot.total_account_equity is None:
+        return prior
+    basis = {(item.account_id, item.security_id): item for item in prior}
+    for account_id in sorted(command.position_snapshot.account_ids):
+        for target in targets:
+            key = (account_id, target.security_id)
+            if key in basis:
+                continue
+            quantities = tuple(
+                unit.total_quantity
+                for unit in position.snapshot.action_units
+                if unit.account_id == account_id and unit.security_id == target.security_id
+            )
+            if any(quantity is None for quantity in quantities):
+                return prior
+            basis[key] = ConcentrationQuantityBasis(
+                account_id=account_id,
+                security_id=target.security_id,
+                quantity=sum(
+                    (quantity for quantity in quantities if quantity is not None), Decimal(0)
+                ),
+                cutoff_at=position.snapshot.cutoff_at,
+            )
+    return tuple(basis.values())
