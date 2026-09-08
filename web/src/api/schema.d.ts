@@ -177,6 +177,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/monitoring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Monitoring Workspace */
+        get: operations["monitoring_workspace_api_v1_monitoring_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reports/{report_version_id}": {
         parameters: {
             query?: never;
@@ -1180,6 +1197,7 @@ export interface components {
             /** Key Reasons */
             key_reasons: string[];
             liquidity?: components["schemas"]["LiquidityOutcome"] | null;
+            monitoring?: components["schemas"]["MonitoringOutcome"] | null;
             /** Outcome Code */
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
@@ -1507,6 +1525,136 @@ export interface components {
              * Format: date-time
              */
             transferable_at: string;
+        };
+        /** MonitoringCase */
+        MonitoringCase: {
+            /** Case Id */
+            case_id: string;
+            /** First Established At */
+            first_established_at: string;
+            /** Last Reviewed At */
+            last_reviewed_at: string;
+            /** Obligation Ids */
+            obligation_ids: string[];
+            plan: components["schemas"]["ExecutionPlanOutcome"] | null;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "P0" | "P1";
+            /**
+             * Quantity Status
+             * @default VERIFIED
+             * @enum {string}
+             */
+            quantity_status: "VERIFIED" | "UNKNOWN";
+            /** Source Event Id */
+            source_event_id: string;
+        };
+        /** MonitoringFreshness */
+        MonitoringFreshness: {
+            /** Account Evidence */
+            account_evidence: components["schemas"]["PositionEvidence"][];
+            /** Assessed At */
+            assessed_at: string;
+            calendar_evidence: components["schemas"]["PositionEvidence"];
+            /** Event Evidence */
+            event_evidence: components["schemas"]["PositionEvidence"][];
+            /**
+             * Evidence Cutoff
+             * Format: date-time
+             */
+            evidence_cutoff: string;
+            /**
+             * Market Status
+             * @enum {string}
+             */
+            market_status: "CLOSED" | "WAITING_WINDOW" | "OPEN";
+            /** Next Window End */
+            next_window_end: string | null;
+            /** Next Window Start */
+            next_window_start: string | null;
+        };
+        /** MonitoringNotification */
+        MonitoringNotification: {
+            /** Attempted At */
+            attempted_at: string;
+            /** Body */
+            body: string;
+            /** Case Id */
+            case_id: string;
+            /** Delivered */
+            delivered?: null;
+            /** Notification Id */
+            notification_id: string;
+            /**
+             * Result
+             * @enum {string}
+             */
+            result: "ACCEPTED" | "REJECTED" | "UNKNOWN" | "TIMEOUT";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "IMMEDIATE" | "PERSISTENT";
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * Synthetic
+             * @default true
+             * @constant
+             */
+            synthetic: true;
+        };
+        /** MonitoringOutcome */
+        MonitoringOutcome: {
+            /**
+             * Action Units
+             * @default []
+             */
+            action_units: components["schemas"]["PositionActionUnit"][];
+            /**
+             * Cases
+             * @default []
+             */
+            cases: components["schemas"]["MonitoringCase"][];
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ASSESSED" | "BLOCKED";
+            freshness?: components["schemas"]["MonitoringFreshness"] | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "DAILY_CLOSE" | "EVENT_REASSESS" | "NOTIFICATION_RUN" | "LIFECYCLE" | "OPERATIONS";
+            /**
+             * Notifications
+             * @default []
+             */
+            notifications: components["schemas"]["MonitoringNotification"][];
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Reasons */
+            reasons: string[];
+            reconciliation?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            /**
+             * Source Report Ids
+             * @default []
+             */
+            source_report_ids: string[];
+        };
+        /** MonitoringWorkspace */
+        MonitoringWorkspace: {
+            /** Current Report Ids */
+            current_report_ids: string[];
+            /** Inbox */
+            inbox: components["schemas"]["MonitoringCase"][];
+            /** Reports */
+            reports: components["schemas"]["FormalReport"][];
+            /** User Facts */
+            user_facts: components["schemas"]["UserFact"][];
         };
         /**
          * NormalMarketSessionEvidence
@@ -3117,6 +3265,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionDiagnosticDto"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
+        };
+    };
+    monitoring_workspace_api_v1_monitoring_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringWorkspace"];
                 };
             };
             /** @description Unprocessable Entity */

@@ -19,6 +19,26 @@ const client = createClient<paths>({
 
 export type FormalReport = components["schemas"]["FormalReport"];
 export type VersionBundle = components["schemas"]["VersionDiagnosticDto"];
+export type MonitoringWorkspace = components["schemas"]["MonitoringWorkspace"];
+export type UserFactRequest = components["schemas"]["UserFactRequest"];
+
+export async function fetchMonitoringWorkspace(): Promise<MonitoringWorkspace> {
+  const { data, response } = await client.GET("/api/v1/monitoring");
+  if (!data) throw new ApiResponseError(response.status);
+  return data;
+}
+
+export async function appendUserFact(reportId: string, request: UserFactRequest) {
+  const { data, response } = await client.POST("/api/v1/reports/{report_version_id}/facts", {
+    params: {
+      path: { report_version_id: reportId },
+      header: { "X-CSRF-Token": csrfToken(), origin: window.location.origin }
+    },
+    body: request
+  });
+  if (!data) throw new ApiResponseError(response.status);
+  return data;
+}
 
 export class ApiResponseError extends Error {
   constructor(readonly status: number) {

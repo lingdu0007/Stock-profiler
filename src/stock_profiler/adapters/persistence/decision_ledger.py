@@ -148,6 +148,36 @@ class DecisionLedger:
             )
         )
 
+    def monitoring_history(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "monitoring history is unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.monitoring is not None
+            and fact.case.monitoring.portfolio_id == portfolio_id
+            and fact.result.monitoring is not None
+        )
+
+    def monitoring_report_ids(self, connection: Connection) -> tuple[str, ...]:
+        """Internal projection inventory; ResultDelivery applies the principal boundary."""
+        return tuple(
+            report.report_version_id
+            for report_id in connection.execute(
+                select(FORMAL_REPORTS.c.report_version_id)
+                .join(
+                    DECISION_EVENTS,
+                    FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+                )
+                .order_by(DECISION_EVENTS.c.event_sequence)
+            ).scalars()
+            if (report := self.get_formal_report(report_id, connection)) is not None
+            and report.result.monitoring is not None
+        )
+
     def concentration_history(
         self,
         connection: Connection,
