@@ -26,7 +26,9 @@ def project_workspace(
             if previous is not None and (
                 datetime.fromisoformat(report.knowledge_cutoff)
                 < datetime.fromisoformat(previous.knowledge_cutoff)
-                or report.access_scope != previous.access_scope
+                or report.access_scope is None
+                or previous.access_scope is None
+                or not report.access_scope.same_scope_as(previous.access_scope)
                 or "MONITORING_HISTORY_SCOPE_INCOMPLETE" in monitoring.reasons
                 or "MONITORING_SNAPSHOT_NOT_FORWARD" in monitoring.reasons
                 or (

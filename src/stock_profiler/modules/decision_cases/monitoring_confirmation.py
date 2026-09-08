@@ -24,6 +24,15 @@ def confirmation_permitted(
         or ledger.get_correction_event(report.event_id, connection) is not None
     ):
         return False
+    now = datetime.fromisoformat(ledger.observed_at())
+    if any(
+        family.status != "VALIDATED"
+        or family.evidence is None
+        or family.evidence.expires_at is not None
+        and family.evidence.expires_at < now
+        for family in outcome.freshness.evidence_families
+    ):
+        return False
     history = ledger.monitoring_history(connection, report.access_scope, outcome.portfolio_id)
     assessments = tuple(
         fact

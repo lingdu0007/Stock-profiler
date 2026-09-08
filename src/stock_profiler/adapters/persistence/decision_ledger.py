@@ -151,23 +151,42 @@ class DecisionLedger:
     def monitoring_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]:
-        return tuple(
+        facts = tuple(
             fact
-            for fact in self._original_event_facts(connection, "monitoring history is unavailable")
+            for fact in self._event_facts(connection, "monitoring history is unavailable")
             if fact.case.access_scope is not None
             and fact.case.access_scope.user_id == access_scope.user_id
             and fact.case.access_scope.visibility == access_scope.visibility
             and fact.case.monitoring is not None
             and fact.case.monitoring.portfolio_id == portfolio_id
             and fact.result.monitoring is not None
+            and not set(fact.result.monitoring.reasons).intersection(
+                {
+                    "MONITORING_HISTORY_SCOPE_INCOMPLETE",
+                    "MONITORING_SNAPSHOT_NOT_FORWARD",
+                }
+            )
         )
+        selected: list[DecisionEventFact] = []
+        latest_assessment: str | None = None
+        for fact in facts:
+            assert fact.case.monitoring is not None
+            if fact.case.monitoring.kind in {"DAILY_CLOSE", "EVENT_REASSESS"}:
+                if (
+                    fact.corrects_event_id is not None
+                    and fact.corrects_event_id != latest_assessment
+                ):
+                    continue
+                latest_assessment = fact.decision_event_id
+            selected.append(fact)
+        return tuple(selected)
 
     def monitoring_inputs_unchanged(
         self, connection: Connection, access_scope: ResultAccessScope, plan_event_id: str
     ) -> bool:
         """Any newer owner fact requires a fresh plan; publication does not refresh facts."""
         found = False
-        for fact in self._original_event_facts(connection, "monitoring inputs are unavailable"):
+        for fact in self._event_facts(connection, "monitoring inputs are unavailable"):
             if fact.decision_event_id == plan_event_id:
                 found = True
                 continue
@@ -312,11 +331,21 @@ class DecisionLedger:
     def _original_event_facts(
         self, connection: Connection, unavailable_message: str
     ) -> tuple[DecisionEventFact, ...]:
+        return self._event_facts(connection, unavailable_message, originals_only=True)
+
+    def _event_facts(
+        self,
+        connection: Connection,
+        unavailable_message: str,
+        *,
+        originals_only: bool = False,
+    ) -> tuple[DecisionEventFact, ...]:
+        query = select(DECISION_EVENTS.c.decision_event_id)
+        if originals_only:
+            query = query.where(DECISION_EVENTS.c.corrects_event_id.is_(None))
         event_ids = (
             connection.execute(
-                select(DECISION_EVENTS.c.decision_event_id)
-                .where(DECISION_EVENTS.c.corrects_event_id.is_(None))
-                .order_by(
+                query.order_by(
                     DECISION_EVENTS.c.event_sequence,
                     DECISION_EVENTS.c.committed_at,
                     DECISION_EVENTS.c.decision_event_id,

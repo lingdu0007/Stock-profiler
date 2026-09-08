@@ -2,7 +2,6 @@
 
 from calendar import monthrange
 from datetime import datetime
-from decimal import Decimal
 from hashlib import sha256
 from typing import get_args
 from zoneinfo import ZoneInfo
@@ -18,6 +17,7 @@ from stock_profiler.modules.delivery.monitoring_contracts import (
     MonitoringOutcome,
 )
 from stock_profiler.modules.delivery.monitoring_notifications import route_synthetic_notifications
+from stock_profiler.modules.position_management.contracts import PositionEvidence
 
 _EVENT_AUTHORITIES = {
     "ACCOUNT_STATE": "BROKER",
@@ -53,6 +53,26 @@ def _evidence_status(command: MonitoringCommand) -> tuple[MonitoringEvidenceStat
     return tuple(result)
 
 
+def _freshness(
+    command: MonitoringCommand,
+    observed_at: str,
+    account_evidence: tuple[PositionEvidence, ...] = (),
+) -> MonitoringFreshness:
+    calendar = command.calendar
+    assert calendar is not None
+    return MonitoringFreshness(
+        evidence_cutoff=command.cutoff_at,
+        assessed_at=observed_at,
+        market_status="CLOSED" if not calendar.is_trading_day else "WAITING_WINDOW",
+        next_window_start=calendar.next_window_start,
+        next_window_end=calendar.next_window_end,
+        account_evidence=account_evidence,
+        event_evidence=tuple(event.evidence for event in command.events),
+        calendar_evidence=calendar.evidence,
+        evidence_families=_evidence_status(command),
+    )
+
+
 def assess_monitoring(
     case: FrozenDecisionCase,
     ledger: DecisionLedger[Transaction],
@@ -66,6 +86,7 @@ def assess_monitoring(
         kind=command.kind,
         disposition="BLOCKED",
         reasons=("MONITORING_HANDOFF_UNAVAILABLE",),
+        freshness=_freshness(command, ledger.observed_at()) if command.calendar else None,
     )
     history = ledger.monitoring_history(connection, scope, command.portfolio_id)
     retained: dict[str, MonitoringCase] = {}
@@ -109,19 +130,60 @@ def assess_monitoring(
             event.kind in {"TERMINATION", "CAPITAL_PROTECTION"} for event in command.events
         )
         if protective:
+            affected = {
+                security
+                for event in command.events
+                if event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
+                for security in event.security_ids
+            }
+            plan_source = source
+            if source.result.monitoring is not None:
+                source_cases = source.result.monitoring.cases
+                if len(source_cases) != 1:
+                    return blocked
+                resolved = ledger.get_formal_report_for_event(
+                    source_cases[0].source_event_id, connection
+                )
+                if resolved is None:
+                    return blocked
+                plan_source = resolved
+            owned_plan = plan_source.result.execution_plan
+            owned_fact = ledger.get_original_decision_event(
+                plan_source.business_object_id, connection
+            )
+            if (
+                not affected
+                or owned_plan is None
+                or owned_fact is None
+                or owned_fact.case.execution_plan is None
+                or owned_fact.case.execution_plan.portfolio_id != command.portfolio_id
+                or plan_source.access_scope is None
+                or not scope.same_scope_as(plan_source.access_scope)
+                or ledger.get_correction_event(plan_source.event_id, connection) is not None
+            ):
+                return blocked
+            owned_targets = {
+                target.security_id: target
+                for target in owned_plan.targets
+                if target.security_id in affected
+                and target.direction == "EXIT"
+                and target.target_quantity == 0
+            }
+            if set(owned_targets) != affected:
+                return blocked.model_copy(
+                    update={"reasons": ("MONITORING_PROTECTION_TARGET_UNAVAILABLE",)}
+                )
             calendar = command.calendar
             if calendar is None or calendar.evidence.problem_codes(
                 command.cutoff_at, require_current_completeness=False
             ):
                 return blocked.model_copy(update={"reasons": ("MONITORING_CALENDAR_UNAVAILABLE",)})
             if not retained:
-                plan = source.result.execution_plan
                 source_fact = ledger.get_original_decision_event(
-                    source.business_object_id, connection
+                    plan_source.business_object_id, connection
                 )
                 if (
-                    plan is None
-                    or not plan.targets
+                    not owned_plan.targets
                     or source_fact is None
                     or source_fact.case.execution_plan is None
                     or source_fact.case.execution_plan.portfolio_id != command.portfolio_id
@@ -131,7 +193,7 @@ def assess_monitoring(
                     sorted(
                         {
                             identity
-                            for target in plan.targets
+                            for target in owned_plan.targets
                             for identity in target.source_obligation_ids
                         }
                     )
@@ -141,11 +203,11 @@ def assess_monitoring(
                 ).hexdigest()
                 initial = MonitoringCase(
                     case_id=f"monitoring-case-{identity}",
-                    source_event_id=source.event_id,
+                    source_event_id=plan_source.event_id,
                     obligation_ids=obligations,
                     priority="P0",
                     plan=None,
-                    required_targets=plan.targets,
+                    required_targets=owned_plan.targets,
                     quantity_status="UNKNOWN",
                     first_established_at=case.knowledge_cutoff,
                     last_reviewed_at=case.knowledge_cutoff,
@@ -159,19 +221,15 @@ def assess_monitoring(
                 cases=tuple(
                     item.model_copy(
                         update={
-                            "priority": "P0",
+                            "priority": "P0"
+                            if any(
+                                target.security_id in affected for target in item.required_targets
+                            )
+                            else item.priority,
                             "quantity_status": "UNKNOWN",
                             "plan": None,
                             "required_targets": tuple(
-                                target.model_copy(
-                                    update={
-                                        "target_quantity": Decimal(0),
-                                        "direction": "EXIT",
-                                        "required_sale_quantity": None,
-                                        "remaining_quantity": None,
-                                        "remaining_gap": None,
-                                    }
-                                )
+                                owned_targets.get(target.security_id, target)
                                 for target in item.required_targets
                             ),
                             "last_reviewed_at": case.knowledge_cutoff,
@@ -180,17 +238,7 @@ def assess_monitoring(
                     for item in retained.values()
                 ),
                 source_report_ids=(source.report_version_id,),
-                freshness=MonitoringFreshness(
-                    evidence_cutoff=command.cutoff_at,
-                    assessed_at=ledger.observed_at(),
-                    market_status="CLOSED" if not calendar.is_trading_day else "WAITING_WINDOW",
-                    next_window_start=calendar.next_window_start,
-                    next_window_end=calendar.next_window_end,
-                    account_evidence=(),
-                    event_evidence=tuple(event.evidence for event in command.events),
-                    calendar_evidence=calendar.evidence,
-                    evidence_families=_evidence_status(command),
-                ),
+                freshness=_freshness(command, ledger.observed_at()),
             )
     if command.kind in {"LIFECYCLE", "OPERATIONS"}:
         monitoring = source.result.monitoring
@@ -236,8 +284,9 @@ def assess_monitoring(
             for prior in history
             if prior.case.monitoring is not None
             and prior.case.monitoring.kind != "OPERATIONS"
-            and prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-            in dates
+            and dates[0]
+            <= prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            <= as_of
         )
         covered = {
             prior.case.monitoring.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
@@ -320,7 +369,13 @@ def assess_monitoring(
                 "kind": command.kind,
                 "source_report_ids": (source.report_version_id,),
                 "notifications": attempts,
-                "notification_due_at": request.quiet_until if not attempts else None,
+                "notification_due_at": (
+                    request.quiet_until
+                    if not attempts
+                    else datetime.fromisoformat(ledger.observed_at())
+                    if any(attempt.result != "ACCEPTED" for attempt in attempts)
+                    else None
+                ),
             }
         )
     fact = ledger.get_original_decision_event(source.business_object_id, connection)
@@ -414,17 +469,9 @@ def assess_monitoring(
         reasons=(),
         cases=cases,
         action_units=position.snapshot.action_units,
-        freshness=MonitoringFreshness(
-            evidence_cutoff=command.cutoff_at,
-            assessed_at=ledger.observed_at(),
-            market_status="CLOSED" if not calendar.is_trading_day else "WAITING_WINDOW",
-            next_window_start=calendar.next_window_start,
-            next_window_end=calendar.next_window_end,
-            account_evidence=tuple(
-                unit.position_evidence for unit in position.snapshot.action_units
-            ),
-            event_evidence=tuple(event.evidence for event in command.events),
-            calendar_evidence=calendar.evidence,
-            evidence_families=_evidence_status(command),
+        freshness=_freshness(
+            command,
+            ledger.observed_at(),
+            tuple(unit.position_evidence for unit in position.snapshot.action_units),
         ),
     )

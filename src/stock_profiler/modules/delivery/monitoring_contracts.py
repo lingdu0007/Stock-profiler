@@ -89,6 +89,7 @@ class MonitoringEvent(MonitoringContract):
     event_id: str = Field(min_length=1)
     kind: str = Field(min_length=1)
     authority: str = Field(min_length=1)
+    security_ids: tuple[str, ...] = ()
     evidence: PositionEvidence
 
 
