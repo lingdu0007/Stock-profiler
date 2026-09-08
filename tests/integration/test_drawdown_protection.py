@@ -353,7 +353,7 @@ def test_single_observation_escalates_at_exact_boundaries_without_assuming_execu
     outcome = observed.report.result.model_dump(mode="json")["drawdown"]
     assert outcome["disposition"] == "ACCEPTED"
     state = outcome["state"]
-    assert state["risk_state"] == risk_state
+    assert state["risk_state"] == risk_state, "PROTECTION_CONTRACT_CAPITAL_PRESERVATION_GATE"
     assert state["new_exposure_blocked"] is blocked
     assert state["stock_exposure_limit"] == limit
     assert state["risk_direction"] == (

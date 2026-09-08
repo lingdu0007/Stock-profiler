@@ -206,7 +206,7 @@ def test_buffer_and_hard_boundaries_have_distinct_actions(
     assert outcome is not None and outcome.disposition == "ASSESSED"
     issuer = outcome.issuers[0]
     assert issuer.position_weight == Decimal(weight)
-    assert issuer.state == state
+    assert issuer.state == state, "PROTECTION_CONTRACT_CONCENTRATION_HARD_GATE"
     assert issuer.new_exposure_blocked is True
     assert issuer.direction == direction
     assert issuer.exposure_gap == Decimal(gap)

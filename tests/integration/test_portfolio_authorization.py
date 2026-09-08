@@ -2632,7 +2632,7 @@ def test_expired_authorization_blocks_new_exposure_but_retains_protection_and_ob
     assert blocked.report is not None
     blocked_outcome = blocked.report.result.portfolio
     assert blocked_outcome is not None
-    assert blocked_outcome.disposition == "DENIED"
+    assert blocked_outcome.disposition == "DENIED", "PROTECTION_CONTRACT_BUDGET_EXPIRY"
     assert blocked_outcome.reasons == ("RISK_BUDGET_EXPIRED",)
     assert blocked_outcome.usage is not None
     assert blocked_outcome.usage.allowed is False

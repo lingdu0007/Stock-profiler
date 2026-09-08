@@ -26,6 +26,20 @@ from stock_profiler.modules.delivery.access import AccessPrincipal
 from stock_profiler.modules.delivery.user_facts import UserFactRequest
 
 
+def rebuilt_settings(base: Settings, directory: Path) -> Settings:
+    directory.mkdir()
+    settings = base.model_copy(
+        update={
+            "app_database_url": f"sqlite:///{directory / 'application.sqlite3'}",
+            "m_agent_run_store_path": directory / "framework.sqlite3",
+        }
+    )
+    configuration = Config("alembic.ini")
+    configuration.set_main_option("sqlalchemy.url", settings.app_database_url)
+    command.upgrade(configuration, "head")
+    return settings
+
+
 @pytest.mark.parametrize(
     "scenario,expected_priority,expected_target,expected_disposition",
     [
@@ -47,15 +61,7 @@ def test_frozen_protection_journey_rebuilds_without_releasing_risk(
 ) -> None:
     snapshots: list[dict[str, Any]] = []
     for repetition in range(2):
-        settings = migrated_settings.model_copy(
-            update={
-                "app_database_url": f"sqlite:///{tmp_path / f'application-{repetition}.sqlite3'}",
-                "m_agent_run_store_path": tmp_path / f"framework-{repetition}.sqlite3",
-            }
-        )
-        configuration = Config("alembic.ini")
-        configuration.set_main_option("sqlalchemy.url", settings.app_database_url)
-        command.upgrade(configuration, "head")
+        settings = rebuilt_settings(migrated_settings, tmp_path / f"journey-{repetition}")
         clock = GovernanceClock()
         payload = risk_handoff_payload(
             settings, normal=scenario == "normal", buffer=scenario == "buffer"
@@ -223,15 +229,7 @@ def test_frozen_execution_allocations_rebuild_and_replay_exactly(
 ) -> None:
     reports: list[dict[str, Any]] = []
     for repetition in range(2):
-        settings = migrated_settings.model_copy(
-            update={
-                "app_database_url": f"sqlite:///{tmp_path / f'allocation-{repetition}.sqlite3'}",
-                "m_agent_run_store_path": tmp_path / f"allocation-host-{repetition}.sqlite3",
-            }
-        )
-        configuration = Config("alembic.ini")
-        configuration.set_main_option("sqlalchemy.url", settings.app_database_url)
-        command.upgrade(configuration, "head")
+        settings = rebuilt_settings(migrated_settings, tmp_path / f"allocation-{repetition}")
         payload = risk_handoff_payload(
             settings,
             multi=scenario in {"waterfall", "partial"},

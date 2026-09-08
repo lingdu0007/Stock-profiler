@@ -41,9 +41,27 @@ def test_mutation_requires_the_named_contract_assertion_not_a_broken_test(tmp_pa
     module: dict[str, Any] = runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))
     read_result = module["read_result"]
     report = tmp_path / "mutation.xml"
+    expected = {"tests.contract::test_saved_result": "PROTECTION_CONTRACT_SAVED"}
     for child, code, accepted in (
-        ('<failure message="assert leaked is None">AssertionError</failure>', 1, True),
-        ('<failure message="DID NOT RAISE">Failed: DID NOT RAISE</failure>', 1, True),
+        (
+            '<failure message="PROTECTION_CONTRACT_SAVED&#10;assert leaked is None">'
+            "AssertionError</failure>",
+            1,
+            True,
+        ),
+        ('<failure message="PROTECTION_CONTRACT_SAVED">Failed</failure>', 1, True),
+        (
+            '<failure message="AssertionError: PROTECTION_CONTRACT_SAVED&#10;assert False"/>',
+            1,
+            True,
+        ),
+        ('<failure message="Failed: PROTECTION_CONTRACT_SAVED"/>', 1, True),
+        (
+            '<failure message="assert execution.report is not None">AssertionError</failure>',
+            1,
+            False,
+        ),
+        ('<failure message="DID NOT RAISE">Failed: DID NOT RAISE</failure>', 1, False),
         ('<failure message="ImportError">ImportError</failure>', 1, False),
         ('<error message="fixture unavailable"/>', 1, False),
         ("<skipped/>", 0, False),
@@ -55,20 +73,20 @@ def test_mutation_requires_the_named_contract_assertion_not_a_broken_test(tmp_pa
             encoding="utf-8",
         )
         if accepted:
-            assert read_result(report, code, expected_failure="test_saved_result") == {
+            assert read_result(report, code, expected_failures=expected) == {
                 "tests.contract::test_saved_result": "assertion_failed"
             }
         else:
             with pytest.raises(ValueError):
-                read_result(report, code, expected_failure="test_saved_result")
+                read_result(report, code, expected_failures=expected)
     report.write_text(
         '<testsuites><testsuite><testcase classname="tests.contract" name="test_unrelated">'
-        '<failure message="assert False">AssertionError</failure>'
+        '<failure message="PROTECTION_CONTRACT_SAVED">AssertionError</failure>'
         "</testcase></testsuite></testsuites>",
         encoding="utf-8",
     )
     with pytest.raises(ValueError):
-        read_result(report, 1, expected_failure="test_saved_result")
+        read_result(report, 1, expected_failures=expected)
 
 
 def test_matrix_catalog_exposes_only_non_actionable_contract_evidence() -> None:

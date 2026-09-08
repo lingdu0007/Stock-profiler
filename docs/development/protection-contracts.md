@@ -65,7 +65,10 @@ directory cannot satisfy the frozen matrix.
 After both baselines pass, the runner mutates actual source guards in separate
 temporary archives. Each mutation must match exactly one AST condition in its
 named function; a changed or missing guard makes the run fail closed. The mutated
-test inventory must match the corresponding passing baseline inventory.
+test inventory must match the corresponding passing baseline inventory. Every
+expected failing parametrized identity is pinned to its specific protection
+assertion marker. An earlier, unrelated assertion in that same function is
+rejected, and every required marked assertion must fail.
 
 Removing concentration, stress, cash restoration, capital preservation, user
 scope, account scope, budget expiry, shadow publication, rounding confirmation,

@@ -51,6 +51,15 @@ class GuardMutation(NamedTuple):
     condition: str
     replacement: str
     test: str
+    failure_parameters: tuple[str, ...] = ("",)
+
+    def expected_failures(self, name: str) -> dict[str, str]:
+        path, _, function = self.test.partition("::")
+        prefix = path.removesuffix(".py").replace("/", ".") + "::" + function
+        return {
+            prefix + parameters: f"PROTECTION_CONTRACT_{name.upper()}"
+            for parameters in self.failure_parameters
+        }
 
 
 MUTATIONS = {
@@ -61,6 +70,7 @@ MUTATIONS = {
         "True",
         "tests/integration/test_issuer_concentration.py"
         "::test_buffer_and_hard_boundaries_have_distinct_actions",
+        ("[90.001-0.190001-REMEDIATION_REQUIRED-REDUCE-600.01]",),
     ),
     "stress_hard_gate": GuardMutation(
         "src/stock_profiler/modules/portfolio/stress.py",
@@ -69,6 +79,7 @@ MUTATIONS = {
         "False",
         "tests/integration/test_portfolio_stress.py"
         "::test_thresholds_preserve_stock_conclusions_and_create_only_a_portfolio_obligation",
+        ("[1667.066-457.066-1259.066-HARD_BREACH]",),
     ),
     "cash_restoration_gate": GuardMutation(
         "src/stock_profiler/modules/portfolio/liquidity.py",
@@ -76,6 +87,7 @@ MUTATIONS = {
         "qualified < floor or prior_remediation_id is not None",
         "False",
         "tests/integration/test_liquidity_protection.py::test_liquidity_cash_threshold_boundaries",
+        ("[229-REMEDIATION_REQUIRED-True-161-0]",),
     ),
     "capital_preservation_gate": GuardMutation(
         "src/stock_profiler/modules/portfolio/drawdown.py",
@@ -84,6 +96,7 @@ MUTATIONS = {
         "False",
         "tests/integration/test_drawdown_protection.py"
         "::test_single_observation_escalates_at_exact_boundaries_without_assuming_execution",
+        ("[1027-PRESERVATION-True-0]", "[900-PRESERVATION-True-0]"),
     ),
     "user_scope": GuardMutation(
         "src/stock_profiler/modules/delivery/access.py",
@@ -92,6 +105,7 @@ MUTATIONS = {
         "False",
         "tests/integration/test_result_access_isolation.py"
         "::test_scope_denials_are_durable_without_disclosing_result_content",
+        ("[other-user-account_ids0-permissions0-USER_SCOPE]",),
     ),
     "account_scope": GuardMutation(
         "src/stock_profiler/modules/delivery/access.py",
@@ -100,6 +114,7 @@ MUTATIONS = {
         "False",
         "tests/integration/test_result_access_isolation.py"
         "::test_scope_denials_are_durable_without_disclosing_result_content",
+        ("[stock-profiler-single-user-account_ids1-permissions1-ACCOUNT_SCOPE]",),
     ),
     "notification_fallback": GuardMutation(
         "src/stock_profiler/modules/delivery/monitoring_notifications.py",
@@ -131,6 +146,7 @@ MUTATIONS = {
         "False",
         "tests/integration/test_execution_plans.py"
         "::test_strict_targets_windows_and_legal_units_preserve_action_meaning",
+        ("[full-sale-rounding-expected3]",),
     ),
     "restoration_waterfall": GuardMutation(
         "src/stock_profiler/modules/position_management/execution_waterfall.py",
@@ -139,6 +155,7 @@ MUTATIONS = {
         "True",
         "tests/integration/test_execution_plans.py"
         "::test_waterfall_credits_existing_targets_before_proportional_remaining_sales",
+        ("[False]",),
     ),
 }
 
@@ -181,9 +198,9 @@ def mutate_guard(path: Path, function: str, condition: str, replacement: str) ->
 
 
 def read_result(
-    path: Path, returncode: int, *, expected_failure: str | None = None
+    path: Path, returncode: int, *, expected_failures: dict[str, str] | None = None
 ) -> dict[str, str]:
-    if returncode != (1 if expected_failure else 0):
+    if returncode != (1 if expected_failures else 0):
         raise ValueError("Contract process did not pass")
     root = ElementTree.parse(path).getroot()
     outcomes: dict[str, str] = {}
@@ -198,22 +215,25 @@ def read_result(
             outcomes[identity] = "passed"
             continue
         message = failure.attrib.get("message", "")
-        assertion = (
-            message.startswith("assert ")
-            or message.startswith("AssertionError")
-            or "DID NOT RAISE" in message
-        )
         if (
-            expected_failure is None
-            or case.attrib["name"].split("[", 1)[0] != expected_failure
-            or not assertion
+            expected_failures is None
+            or identity not in expected_failures
+            or not message
+            or message.splitlines()[0]
+            not in {
+                expected_failures[identity],
+                "AssertionError: " + expected_failures[identity],
+                "Failed: " + expected_failures[identity],
+            }
         ):
             raise ValueError("Unexpected failure is not a killed protection mutation")
         outcomes[identity] = "assertion_failed"
     if not outcomes:
         raise ValueError("Contract results are empty")
-    if expected_failure and "assertion_failed" not in outcomes.values():
-        raise ValueError("Protection mutation survived")
+    if expected_failures and {
+        identity for identity, outcome in outcomes.items() if outcome == "assertion_failed"
+    } != set(expected_failures):
+        raise ValueError("Protection mutation survived or missed a required assertion")
     return outcomes
 
 
@@ -262,7 +282,11 @@ def verify_coverage(outcomes: dict[str, str], groups: dict[str, list[str]]) -> d
 
 
 def run_tests(
-    root: Path, destination: Path, paths: list[str], *, expected_failure: str | None = None
+    root: Path,
+    destination: Path,
+    paths: list[str],
+    *,
+    expected_failures: dict[str, str] | None = None,
 ) -> dict[str, str]:
     destination.mkdir()
     environment = {
@@ -298,7 +322,7 @@ def run_tests(
             timeout=1800,
         )
     try:
-        return read_result(report, process.returncode, expected_failure=expected_failure)
+        return read_result(report, process.returncode, expected_failures=expected_failures)
     except (ValueError, OSError, ElementTree.ParseError):
         print((destination / "pytest.log").read_text(encoding="utf-8")[-6000:], file=sys.stderr)
         raise
@@ -376,7 +400,7 @@ def run_matrix(root: Path, source: str, output: Path) -> int:
                     isolated,
                     workspace / f"mutation-{name}",
                     [mutation.test],
-                    expected_failure=mutation.test.split("::")[1],
+                    expected_failures=mutation.expected_failures(name),
                 )
                 expected = {
                     identity

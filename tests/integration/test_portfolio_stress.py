@@ -178,7 +178,7 @@ def test_thresholds_preserve_stock_conclusions_and_create_only_a_portfolio_oblig
     assert execution.report is not None
     result = execution.report.model_dump(mode="json")["result"]
     stress = result["stress"]
-    assert stress["state"] == state
+    assert stress["state"] == state, "PROTECTION_CONTRACT_STRESS_HARD_GATE"
     assert result["outcome_code"] == "SYNTHETIC_REVIEW_COMPLETE"
     assert stress["new_exposure_blocked"] is (state != "NORMAL")
     if state == "HARD_BREACH":
