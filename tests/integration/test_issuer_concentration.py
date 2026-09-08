@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from test_portfolio_authorization import (
     portfolio_case_payload,
     portfolio_confirmation_command,
@@ -24,6 +25,7 @@ from test_scoped_qualification import GovernanceClock
 
 from stock_profiler.bootstrap.decision_cases import get_formal_report, run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.delivery.access import AccessPrincipal
 
 
@@ -93,9 +95,9 @@ def concentration_payload(
     payload = position_case_payload(settings, identity, snapshot)
     del payload["position"]
     payload["version_bundle"].update(
-        case_contract_version="8.0.0",
-        host_contract_version="8.0.0",
-        report_projection_contract_version="8.0.0",
+        case_contract_version="8.1.0",
+        host_contract_version="8.1.0",
+        report_projection_contract_version="8.1.0",
     )
     payload["concentration"] = {
         "operation": "ISSUER_CONCENTRATION_ASSESS",
@@ -117,6 +119,20 @@ def concentration_payload(
         ],
     }
     return payload
+
+
+def test_concentration_contract_does_not_redefine_released_stress_version(
+    migrated_settings: Settings,
+) -> None:
+    payload = concentration_payload(migrated_settings, "synthetic-authorization")
+    assert FrozenDecisionCase.model_validate(payload).concentration is not None
+    payload["version_bundle"].update(
+        case_contract_version="8.0.0",
+        host_contract_version="8.0.0",
+        report_projection_contract_version="8.0.0",
+    )
+    with pytest.raises(ValidationError, match="concentration requires the version 8.1"):
+        FrozenDecisionCase.model_validate(payload)
 
 
 def test_target_boundary_preserves_security_result_and_committed_report(

@@ -43,7 +43,7 @@ successor's next calendar-defined monthly activation snapshot and cutoff. Invali
 governed cutoffs are rejected and audited before creating a Run. Reading a saved
 qualification outcome is historical replay, not a new grant or activation.
 
-Version 8 frozen cases add a distinct issuer-concentration stage using the
+Version 8.1 frozen cases add a distinct issuer-concentration stage using the
 saved deterministic portfolio authorization and reconciled position snapshot.
 Issuer exposure aggregates current market value across the selected accounts;
 the denominator is reconciled account equity less explicit, evidenced
@@ -139,6 +139,41 @@ snapshot, Definition, input, checkpoint and Run identity. The explicit recovery
 input is compared against the current template without rewriting the original;
 unknown release identities and missing original Runs fail closed. Saved events,
 qualification evidence and report fixtures keep their original runtime identity.
+
+The version 8 frozen case accepts `PORTFOLIO_STRESS_ASSESS` with an existing
+portfolio authorization and a complete selected-account position snapshot.
+Its explicit risk-budget calculation policy binds a conservative proportional
+disposal-friction ratio and a simultaneous adverse price shock equal to the
+highest registered downside-grid boundary. No personal thresholds or policy
+fallback are supplied by the engine. Historical policy-free authorizations
+remain readable but cannot establish a known stress result.
+Calculation-policy identities cannot be redefined and registration must precede
+confirmation. New assessments require the current effective authorization;
+expired authorizations retain protection without admitting new exposure.
+Lower friction or a lower stress shock invokes the existing risk-relaxation
+evidence gate, which also refuses an unfinished stress restoration obligation.
+
+Gross stress includes every reconciled stock exposure, independently of its
+origin, sellability, cost basis, or model result. Estimated disposal friction
+also reduces the reconciled account equity to net liquidation equity.
+Target-inclusive normal and hard-inclusive buffer states preserve the
+original business result. A hard breach records a portfolio-level restoration
+obligation rather than selecting a security for liquidation. Subsequent
+snapshots retain that obligation through missing valuation evidence; a
+reconciled sale and a satisfied target are required to mark it satisfied.
+Additive broker corrections are applied before counting an effective sale;
+a later reversal or corrected monetary evidence reopens its retained obligation
+for target reevaluation. Saved effective fill quantities, proceeds, and ledger
+correction identities distinguish corrections from ordinary market changes.
+Cost-only corrections do not reactivate obligations; the correction gate tracks
+added stock quantity or reduced cash, not bookkeeping cost basis.
+Stricter successor targets
+apply to outstanding obligations. A residual restoration gap describes the
+shortfall even after all verified sellable quantities, without creating a
+security allocation or treating hypothetical sales as completed execution.
+Reports expose the saved calculation policy, contribution amounts, cutoff,
+blocking state, and obligation. Report corrections retain the original
+stress decision. The authenticated report view does not recalculate it.
 
 The upstream store performs its own atomic schema migration. Before opening a
 real old store, stop every writer, take a consistent backup and upgrade every

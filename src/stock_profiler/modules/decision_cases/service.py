@@ -48,9 +48,11 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
+    PortfolioUseCommand,
     portfolio_id_for,
 )
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
+from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
@@ -185,6 +187,7 @@ def correct_default_frozen_decision_case(
                 portfolio=original_event.result.portfolio,
                 position=original_event.result.position,
                 concentration=original_event.result.concentration,
+                stress=original_event.result.stress,
             )
             correction_stages = (
                 StageResult(
@@ -477,6 +480,7 @@ def _commit_framework_result(
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
     concentration_result: StageResult | None = None
+    stress_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -544,6 +548,11 @@ def _commit_framework_result(
                     access_account_ids=execution_case.access_scope.account_ids,
                     knowledge_cutoff=execution_case.knowledge_cutoff,
                     business_prerequisite_met=business_result.status == "SUCCEEDED",
+                    stress_history=ledger.portfolio_stress_history(
+                        connection,
+                        execution_case.access_scope,
+                        portfolio_id_for(portfolio_command),
+                    ),
                 )
                 result = result.model_copy(update={"portfolio": portfolio})
                 portfolio_result = StageResult(
@@ -561,6 +570,7 @@ def _commit_framework_result(
                 execution_case.concentration.position_snapshot
                 if execution_case.concentration is not None
                 else execution_case.position
+                or (execution_case.stress.position_snapshot if execution_case.stress else None)
             )
             if business_result is not None and position_command is not None:
                 assert execution_case.access_scope is not None
@@ -589,6 +599,52 @@ def _commit_framework_result(
                     ),
                     reasons=position.reasons,
                 )
+                if execution_case.stress is not None:
+                    command = execution_case.stress
+                    scope = execution_case.access_scope
+                    authorization = adjudicate_portfolio(
+                        PortfolioUseCommand(
+                            operation="PORTFOLIO_USE",
+                            portfolio_id=command.portfolio_id,
+                            authorization_id=command.authorization_id,
+                            requested_action="DETERMINISTIC_PROTECTION",
+                        ),
+                        event_id=execution_case.decision_event_id,
+                        observed_at=ledger.observed_at(),
+                        history=ledger.portfolio_authorization_history(
+                            connection, scope, command.portfolio_id, execution_case.knowledge_cutoff
+                        ),
+                        lineage_history=ledger.portfolio_authorization_lineage(
+                            connection, scope, command.portfolio_id
+                        ),
+                        owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
+                            connection, scope
+                        ),
+                        access_account_ids=scope.account_ids,
+                        knowledge_cutoff=execution_case.knowledge_cutoff,
+                        business_prerequisite_met=True,
+                        require_current_authorization=True,
+                    )
+                    stress = assess_stress(
+                        command,
+                        authorization,
+                        position,
+                        history=ledger.portfolio_stress_history(
+                            connection, scope, command.portfolio_id
+                        ),
+                    )
+                    result = result.model_copy(update={"stress": stress})
+                    stress_result = StageResult(
+                        phase="PORTFOLIO_STRESS",
+                        status="REJECTED" if stress.state == "UNKNOWN" else "SUCCEEDED",
+                        gate_results=(
+                            GateResult(
+                                gate_id="GROSS_STRESS_EVIDENCE",
+                                status="UNKNOWN" if stress.state == "UNKNOWN" else "PASSED",
+                            ),
+                        ),
+                        reasons=stress.reasons,
+                    )
             if business_result is not None and execution_case.concentration is not None:
                 assert result.portfolio is not None and result.position is not None
                 assert execution_case.access_scope is not None
@@ -665,6 +721,13 @@ def _commit_framework_result(
             stage_result=concentration_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if stress_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=stress_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -674,6 +737,7 @@ def _commit_framework_result(
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
         *((concentration_result,) if concentration_result is not None else ()),
+        *((stress_result,) if stress_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,
