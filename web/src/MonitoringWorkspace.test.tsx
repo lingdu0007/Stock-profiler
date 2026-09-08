@@ -41,21 +41,41 @@ it("keeps current obligations visible across overview, inbox and immutable archi
       }
     }
   };
+  const recorded: unknown[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response(
+    vi.fn().mockImplementation(async (request: Request) => {
+      if (request.method === "POST") {
+        const fact = (await request.json()) as Record<string, unknown>;
+        recorded.push(fact);
+        return new Response(
           JSON.stringify({
-            reports: [report],
-            current_report_ids: [report.report_version_id],
-            inbox: [item],
-            user_facts: []
+            ...fact,
+            fact_id: "synthetic-view",
+            report_version_id: report.report_version_id,
+            event_id: report.event_id,
+            recorded_at: "2042-05-17T16:01:00Z",
+            reconciliation_status: "NOT_APPLICABLE",
+            authoritative_execution: false,
+            synthetic: true
           }),
           { headers: { "Content-Type": "application/json" } }
-        )
-      )
-    )
+        );
+      }
+      return new Response(
+        JSON.stringify(
+          request.url.includes("/api/v1/reports/")
+            ? report
+            : {
+                reports: [report],
+                current_report_ids: [report.report_version_id],
+                inbox: [item],
+                user_facts: []
+              }
+        ),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    })
   );
   window.history.pushState({}, "", "/monitoring");
   render(<App />);
@@ -69,4 +89,8 @@ it("keeps current obligations visible across overview, inbox and immutable archi
   fireEvent.click(screen.getByRole("link", { name: "Archive" }));
   expect(await screen.findByRole("link", { name: report.report_version_id })).toBeVisible();
   expect(screen.queryByRole("button", { name: /close obligation/i })).not.toBeInTheDocument();
+  expect(recorded).toEqual([]);
+  fireEvent.click(screen.getByRole("link", { name: report.report_version_id }));
+  expect(await screen.findByRole("status")).toHaveTextContent("VIEWED recorded");
+  expect(recorded).toEqual([expect.objectContaining({ kind: "VIEWED" })]);
 });

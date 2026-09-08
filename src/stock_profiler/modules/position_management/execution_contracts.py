@@ -78,12 +78,17 @@ class EstablishedQuantityTarget(PositionContract):
     direction: Literal["REDUCE", "EXIT"]
     qualified: bool
     policy_version: str = Field(min_length=1)
+    priority: Literal["P0", "P1", "P2"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     evidence: PositionEvidence
 
     @model_validator(mode="after")
     def validate_direction(self) -> "EstablishedQuantityTarget":
         if (self.direction == "EXIT") != (self.target_quantity == 0):
             raise ValueError("zero quantity requires an explicit exit target")
+        if self.priority == "P0" and self.direction != "EXIT":
+            raise ValueError("protective priority requires an explicit exit target")
         return self
 
 

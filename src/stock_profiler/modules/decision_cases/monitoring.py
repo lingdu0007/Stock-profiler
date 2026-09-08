@@ -213,6 +213,48 @@ def assess_monitoring(
                     last_reviewed_at=case.knowledge_cutoff,
                 )
                 retained[initial.case_id] = initial
+            covered_securities = {
+                target.security_id for item in retained.values() for target in item.required_targets
+            }
+            for security in sorted(affected - covered_securities):
+                target = owned_targets[security]
+                matching = next(
+                    (
+                        item
+                        for item in retained.values()
+                        if set(item.obligation_ids).intersection(target.source_obligation_ids)
+                    ),
+                    None,
+                )
+                if matching is not None:
+                    retained[matching.case_id] = matching.model_copy(
+                        update={
+                            "required_targets": (*matching.required_targets, target),
+                            "obligation_ids": tuple(
+                                sorted(
+                                    set((*matching.obligation_ids, *target.source_obligation_ids))
+                                )
+                            ),
+                            "source_event_id": plan_source.event_id,
+                        }
+                    )
+                else:
+                    identity = sha256(
+                        f"{scope.model_dump_json()}\n{command.portfolio_id}\n"
+                        f"{security}\n{target.source_obligation_ids}".encode()
+                    ).hexdigest()
+                    added = MonitoringCase(
+                        case_id=f"monitoring-case-{identity}",
+                        source_event_id=plan_source.event_id,
+                        obligation_ids=target.source_obligation_ids,
+                        priority="P0",
+                        plan=None,
+                        required_targets=(target,),
+                        quantity_status="UNKNOWN",
+                        first_established_at=case.knowledge_cutoff,
+                        last_reviewed_at=case.knowledge_cutoff,
+                    )
+                    retained[added.case_id] = added
             return MonitoringOutcome(
                 portfolio_id=command.portfolio_id,
                 kind=command.kind,
@@ -303,6 +345,8 @@ def assess_monitoring(
             update={
                 "kind": command.kind,
                 "source_report_ids": references,
+                "user_facts": ledger.monitoring_user_facts(connection, scope, references),
+                "interaction_cutoff_at": ledger.observed_at(),
                 "operations_dates": dates,
                 "missing_daily_dates": tuple(day for day in dates if day not in covered),
                 "notifications": tuple(
@@ -359,10 +403,21 @@ def assess_monitoring(
                 or previous_run.case.monitoring.notification.attempt_number + 1
                 != request.attempt_number
                 or previous_run.result.monitoring.notification_due_at is None
-                or datetime.fromisoformat(ledger.observed_at())
-                < previous_run.result.monitoring.notification_due_at
             ):
                 return blocked.model_copy(update={"reasons": ("MONITORING_RETRY_NOT_DUE",)})
+            if (
+                datetime.fromisoformat(ledger.observed_at())
+                < previous_run.result.monitoring.notification_due_at
+            ):
+                return monitoring.model_copy(
+                    update={
+                        "kind": command.kind,
+                        "source_report_ids": (source.report_version_id,),
+                        "notifications": (),
+                        "notification_due_at": previous_run.result.monitoring.notification_due_at,
+                        "reasons": ("MONITORING_RETRY_DEFERRED",),
+                    }
+                )
         attempts = route_synthetic_notifications(monitoring, request, ledger.observed_at())
         return monitoring.model_copy(
             update={
@@ -421,6 +476,20 @@ def assess_monitoring(
     obligations = tuple(
         sorted({identity for target in plan.targets for identity in target.source_obligation_ids})
     )
+    capital_report = ledger.get_formal_report_for_event(
+        fact.case.execution_plan.drawdown_event_id, connection
+    )
+    capital_state = (
+        capital_report.result.drawdown.state
+        if capital_report is not None and capital_report.result.drawdown is not None
+        else None
+    )
+    protective_priority = (
+        capital_state is not None and capital_state.risk_state == "PRESERVATION"
+    ) or any(
+        target.priority == "P0" and target.qualified and target.target_id in obligations
+        for target in fact.case.execution_plan.established_targets
+    )
     cases: tuple[MonitoringCase, ...] = tuple(retained.values())
     if any(
         target.target_quantity < candidate.target_quantity
@@ -446,7 +515,7 @@ def assess_monitoring(
             case_id=f"monitoring-case-{identity}",
             source_event_id=source.event_id,
             obligation_ids=obligations,
-            priority="P1",
+            priority="P0" if protective_priority else "P1",
             plan=plan,
             required_targets=plan.targets,
             first_established_at=case.knowledge_cutoff,
@@ -457,7 +526,7 @@ def assess_monitoring(
                 update={
                     "case_id": previous.case_id,
                     "first_established_at": previous.first_established_at,
-                    "priority": previous.priority,
+                    "priority": "P0" if "P0" in {current.priority, previous.priority} else "P1",
                 }
             )
         retained[current.case_id] = current

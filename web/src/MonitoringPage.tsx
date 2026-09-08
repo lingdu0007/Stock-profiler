@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowUpRight, RefreshCw } from "lucide-react";
 import { Link, Navigate, useLocation } from "react-router";
 
@@ -75,6 +75,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function MonitoringActions({ report }: { report: FormalReport }) {
   const client = useQueryClient();
+  const { pathname } = useLocation();
+  const viewed = useRef(new Set<string>());
   const [choice, setChoice] = useState<NonNullable<UserFactRequest["choice"]>>("DEFER");
   const [declaration, setDeclaration] =
     useState<NonNullable<UserFactRequest["declaration"]>>("PREPARING");
@@ -88,6 +90,12 @@ function MonitoringActions({ report }: { report: FormalReport }) {
     },
     onSuccess: () => void client.invalidateQueries({ queryKey: ["monitoring"] })
   });
+  const record = mutation.mutate;
+  useEffect(() => {
+    if (!pathname.startsWith("/reports/") || viewed.current.has(report.report_version_id)) return;
+    viewed.current.add(report.report_version_id);
+    record({ kind: "VIEWED" });
+  }, [pathname, report.report_version_id, record]);
   const monitoring = report.result.monitoring;
   const canConfirm =
     monitoring?.disposition === "ASSESSED" &&
@@ -219,6 +227,19 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
       ))}
       {outcome.notification_due_at && (
         <p>Deferred notification due: {monitoringTime(outcome.notification_due_at)}</p>
+      )}
+      {outcome.interaction_cutoff_at && (
+        <section className="report-section" aria-label="Frozen audit interactions">
+          <h3>Audit interactions</h3>
+          <p>{monitoringTime(outcome.interaction_cutoff_at)}</p>
+          {outcome.user_facts?.map((fact) => (
+            <p key={fact.fact_id}>
+              {fact.kind} | {fact.choice ?? fact.declaration ?? "Recorded"} |{" "}
+              {monitoringTime(fact.recorded_at)}
+            </p>
+          ))}
+          <p>Missing planned daily records: {outcome.missing_daily_dates?.join(", ") || "None"}</p>
+        </section>
       )}
       {outcome.cases.map((item) => (
         <CaseSummary key={item.case_id} item={item} reportId={report.report_version_id} />

@@ -16,7 +16,7 @@ local market date and contract. Retries recover the original frozen snapshot.
 Event identities bind the validated event set. Reports for rejected historical
 requests remain in the archive without displacing forward current pointers.
 
-The five independently appended user facts retain their existing meanings.
+Four user-fact kinds and authoritative reconciliation retain separate meanings.
 User execution declarations remain pending, non-authoritative observations.
 Confirmation of a monitoring plan fails closed when newer owner facts require
 a new plan or the report is superseded, corrected or outside its window.
@@ -27,6 +27,9 @@ Market/security, company events, broker accounts, costs/rules and
 qualification/version evidence carry individual provenance and clocks.
 Incomplete evidence cannot manufacture an exact quantity. Protective events
 can preserve an exit target while quantity verification is unavailable.
+Protective priority comes from saved target provenance or capital-preservation
+state, never merely from a zero quantity. Opening a complete assessment version
+automatically records viewing without acknowledging or confirming it.
 
 Publication timestamps are read from durable business-commit and publication
 stage records. Reading or refreshing a page never advances those clocks.

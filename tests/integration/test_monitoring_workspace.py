@@ -72,6 +72,7 @@ def ready_monitoring_payload(
                 "direction": "EXIT",
                 "qualified": True,
                 "policy_version": "synthetic-termination-rule-v1",
+                "priority": "P0",
                 "evidence": position_evidence("synthetic-owned-termination"),
             }
         ]
@@ -98,6 +99,13 @@ def test_monitoring_requires_a_saved_execution_handoff(migrated_settings: Settin
     assert monitoring.disposition == "BLOCKED"
     assert monitoring.reasons == ("MONITORING_HANDOFF_UNAVAILABLE",)
     assert monitoring.cases == ()
+
+
+def test_daily_close_projects_owned_protective_priority(migrated_settings: Settings) -> None:
+    payload = ready_monitoring_payload(migrated_settings, protective_target=True)
+    report = committed(migrated_settings, payload)
+    assert report.result.monitoring is not None
+    assert report.result.monitoring.cases[0].priority == "P0"
 
 
 def test_daily_close_cannot_omit_a_required_evidence_family(migrated_settings: Settings) -> None:
@@ -328,6 +336,75 @@ def test_initial_authoritative_termination_creates_a_zero_target_case(
     )
 
 
+def test_protection_adds_a_new_owned_target_without_dropping_existing_targets(
+    migrated_settings: Settings,
+) -> None:
+    from decimal import Decimal
+    from unittest.mock import Mock
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+    from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
+
+    payload = ready_monitoring_payload(migrated_settings)
+    original = committed(migrated_settings, payload)
+    ledger = DecisionLedger.from_settings(migrated_settings, clock=GovernanceClock())
+    with ledger.serialize_case_execution() as connection:
+        prior = ledger.get_decision_event(original.event_id, connection)
+        owner = ledger.get_decision_event(payload["monitoring"]["source_event_id"], connection)
+        source = ledger.get_formal_report_for_event(
+            payload["monitoring"]["source_event_id"], connection
+        )
+        assert prior is not None and owner is not None and source is not None
+        assert source.result.execution_plan is not None
+        old_target = source.result.execution_plan.targets[0]
+        new_target = old_target.model_copy(
+            update={
+                "security_id": "XQZ-NEW",
+                "target_quantity": Decimal(0),
+                "direction": "EXIT",
+                "source_obligation_ids": ("synthetic-new-owned-obligation",),
+            }
+        )
+        new_plan = source.result.execution_plan.model_copy(
+            update={"targets": (old_target, new_target)}
+        )
+        source = source.model_copy(
+            update={
+                "result": source.result.model_copy(update={"execution_plan": new_plan}),
+            }
+        )
+        payload["monitoring"].update(
+            kind="EVENT_REASSESS",
+            events=[
+                {
+                    "event_id": "synthetic-new-security-termination",
+                    "kind": "TERMINATION",
+                    "authority": "EXCHANGE",
+                    "security_ids": ["XQZ-NEW"],
+                    "evidence": position_evidence("synthetic-exchange"),
+                }
+            ],
+        )
+        saved_reports = Mock(spec=ledger)
+        saved_reports.monitoring_history.return_value = (prior,)
+        saved_reports.get_formal_report_for_event.return_value = source
+        saved_reports.get_original_decision_event.return_value = owner
+        saved_reports.get_correction_event.return_value = None
+        saved_reports.observed_at.return_value = "2042-05-17T16:01:00Z"
+        outcome = assess_monitoring(
+            FrozenDecisionCase.model_validate(payload), saved_reports, connection
+        )
+    assert outcome.disposition == "ASSESSED"
+    targets = {
+        target.security_id: target for item in outcome.cases for target in item.required_targets
+    }
+    assert targets[old_target.security_id] == old_target
+    assert targets["XQZ-NEW"] == new_target
+    assert any(item.priority == "P0" for item in outcome.cases)
+    assert any("synthetic-new-owned-obligation" in item.obligation_ids for item in outcome.cases)
+
+
 def test_termination_cannot_invent_an_exit_from_a_saved_reduction(
     migrated_settings: Settings,
 ) -> None:
@@ -495,10 +572,11 @@ def test_notification_fallback_preserves_action_and_minimizes_external_content(
     assert committed(migrated_settings, payload).report_version_id == report.report_version_id
 
 
-@pytest.mark.parametrize("quiet", [True, False])
+@pytest.mark.parametrize("quiet,premature", [(True, False), (False, False), (True, True)])
 def test_notification_retains_due_work_and_resumes_without_a_new_case(
     migrated_settings: Settings,
     quiet: bool,
+    premature: bool,
 ) -> None:
     payload = ready_monitoring_payload(migrated_settings)
     original = committed(migrated_settings, payload)
@@ -521,6 +599,17 @@ def test_notification_retains_due_work_and_resumes_without_a_new_case(
         attempt_number=2,
         previous_event_id=deferred.event_id,
     )
+    if premature:
+        early = committed(migrated_settings, payload)
+        assert early.result.monitoring is not None
+        assert (
+            early.result.monitoring.notification_due_at
+            == deferred.result.monitoring.notification_due_at
+        )
+        payload["monitoring"]["notification"].update(
+            attempt_number=3,
+            previous_event_id=early.event_id,
+        )
     resumed = run_frozen_decision_case(
         migrated_settings,
         payload,
@@ -575,12 +664,38 @@ def test_lifecycle_and_operations_reports_bind_saved_reconciliation_and_original
         (date(2042, 5, 18 if as_of_trading_day else 17) - timedelta(days=offset)).isoformat()
         for offset in reversed(range(20))
     ]
+    principal = AccessPrincipal(
+        user_id="stock-profiler-single-user",
+        account_ids=("synthetic-account-4017", "synthetic-account-8029"),
+        permissions=("REPORT_READ", "USER_FACT"),
+    )
+    delivery = ResultDelivery.from_settings(migrated_settings, clock=GovernanceClock())
+    acknowledged = delivery.record_user_fact(
+        original.report_version_id,
+        principal,
+        UserFactRequest(kind="ACKNOWLEDGED", idempotency_key="synthetic-audit-ack"),
+    )
+    assert acknowledged is not None
     audit = committed(migrated_settings, payload)
     assert audit.result.monitoring is not None
     assert original.report_version_id in audit.result.monitoring.source_report_ids
     assert lifecycle.report_version_id in audit.result.monitoring.source_report_ids
     assert len(audit.result.monitoring.operations_dates) == 20
     assert len(audit.result.monitoring.missing_daily_dates) == (19 if as_of_trading_day else 20)
+    assert audit.result.monitoring.user_facts == (acknowledged,)
+    assert (
+        delivery.record_user_fact(
+            original.report_version_id,
+            principal,
+            UserFactRequest(
+                kind="EXECUTION_DECLARED",
+                declaration="PREPARING",
+                idempotency_key="synthetic-after-audit",
+            ),
+        )
+        is not None
+    )
+    assert committed(migrated_settings, payload) == audit
 
 
 def test_confirmation_requires_a_current_plan_but_never_discharges_the_obligation(

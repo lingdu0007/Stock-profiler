@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.position_management.contracts import (
     PositionActionUnit,
     PositionEvidence,
@@ -140,4 +141,6 @@ class MonitoringOutcome(MonitoringContract):
     notification_due_at: AwareDatetime | None = None
     operations_dates: tuple[date, ...] = ()
     missing_daily_dates: tuple[date, ...] = ()
+    user_facts: tuple[UserFact, ...] = ()
+    interaction_cutoff_at: str | None = None
     reconciliation: PositionReconciliationOutcome | None = None

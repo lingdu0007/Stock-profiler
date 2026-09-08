@@ -1654,6 +1654,8 @@ export interface components {
              */
             disposition: "ASSESSED" | "BLOCKED";
             freshness?: components["schemas"]["MonitoringFreshness"] | null;
+            /** Interaction Cutoff At */
+            interaction_cutoff_at?: string | null;
             /**
              * Kind
              * @enum {string}
@@ -1686,6 +1688,11 @@ export interface components {
              * @default []
              */
             source_report_ids: string[];
+            /**
+             * User Facts
+             * @default []
+             */
+            user_facts: components["schemas"]["UserFact"][];
         };
         /** MonitoringPublication */
         MonitoringPublication: {

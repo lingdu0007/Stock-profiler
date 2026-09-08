@@ -3720,6 +3720,17 @@
               }
             ]
           },
+          "interaction_cutoff_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Cutoff At"
+          },
           "kind": {
             "enum": [
               "DAILY_CLOSE",
@@ -3796,6 +3807,14 @@
               "type": "string"
             },
             "title": "Source Report Ids",
+            "type": "array"
+          },
+          "user_facts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UserFact"
+            },
+            "title": "User Facts",
             "type": "array"
           }
         },

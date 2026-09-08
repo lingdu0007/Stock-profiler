@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection, Engine, Row
 
 from stock_profiler.adapters.persistence.access_audit import append_denial
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock, UtcClock
 from stock_profiler.modules.decision_cases.domain import (
@@ -40,6 +41,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
@@ -180,6 +182,28 @@ class DecisionLedger:
                 latest_assessment = fact.decision_event_id
             selected.append(fact)
         return tuple(selected)
+
+    def monitoring_user_facts(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        report_ids: tuple[str, ...],
+    ) -> tuple[UserFact, ...]:
+        covered = tuple(
+            identity
+            for identity in report_ids
+            if (report := self.get_formal_report(identity, connection)) is not None
+            and report.access_scope is not None
+            and access_scope.same_scope_as(report.access_scope)
+        )
+        return tuple(
+            UserFact.model_validate_json(payload)
+            for payload in connection.execute(
+                select(USER_FACTS.c.fact_payload)
+                .where(USER_FACTS.c.report_version_id.in_(covered))
+                .order_by(USER_FACTS.c.sequence)
+            ).scalars()
+        )
 
     def monitoring_inputs_unchanged(
         self, connection: Connection, access_scope: ResultAccessScope, plan_event_id: str
