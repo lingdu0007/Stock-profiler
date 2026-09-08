@@ -209,7 +209,7 @@ def assess_monitoring(
                     target_sources[target.security_id] = tuple(
                         sorted({*target_sources.get(target.security_id, ()), plan_source.event_id})
                     )
-            if set(owned_targets) != affected:
+            if not owned_targets or not protective_securities.issubset(owned_targets):
                 return blocked.model_copy(
                     update={"reasons": ("MONITORING_PROTECTION_TARGET_UNAVAILABLE",)}
                 )
@@ -238,7 +238,7 @@ def assess_monitoring(
             covered_securities = {
                 target.security_id for item in retained.values() for target in item.required_targets
             }
-            for security in sorted(affected - covered_securities):
+            for security in sorted(set(owned_targets) - covered_securities):
                 target = owned_targets[security]
                 matching = next(
                     (

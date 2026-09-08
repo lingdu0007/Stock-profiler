@@ -371,8 +371,10 @@ def test_first_authoritative_risk_breach_preserves_owned_direction_without_compl
     assert outcome.action_units == ()
 
 
+@pytest.mark.parametrize("normal_companion", [False, True])
 def test_first_mixed_events_preserve_both_saved_targets_with_independent_priority(
     migrated_settings: Settings,
+    normal_companion: bool,
 ) -> None:
     from decimal import Decimal
     from unittest.mock import Mock
@@ -400,6 +402,8 @@ def test_first_mixed_events_preserve_both_saved_targets_with_independent_priorit
                 "source_obligation_ids": ("synthetic-protection-B",),
             }
         )
+        if normal_companion:
+            first = first.model_copy(update={"direction": "HOLD", "source_obligation_ids": ()})
         source = source.model_copy(
             update={
                 "result": source.result.model_copy(
@@ -422,9 +426,9 @@ def test_first_mixed_events_preserve_both_saved_targets_with_independent_priorit
             events=[
                 {
                     "event_id": "synthetic-risk-A",
-                    "kind": "RISK_BREACH",
+                    "kind": "ACCOUNT_STATE" if normal_companion else "RISK_BREACH",
                     "security_ids": [first.security_id],
-                    "authority": "RISK_POLICY",
+                    "authority": "BROKER" if normal_companion else "RISK_POLICY",
                     "evidence": position_evidence("synthetic-policy"),
                 },
                 {
@@ -477,17 +481,20 @@ def test_first_mixed_events_preserve_both_saved_targets_with_independent_priorit
         payload["monitoring"]["source_event_id"] = monitoring_source.event_id
         repeated = assess_monitoring(FrozenDecisionCase.model_validate(payload), saved, connection)
     assert outcome.disposition == "ASSESSED"
+    expected = {("XQZ-B", "P0", Decimal(0))}
+    if not normal_companion:
+        expected.add((first.security_id, "P1", Decimal(50)))
     assert {
         (target.security_id, item.priority, target.target_quantity)
         for item in outcome.cases
         for target in item.required_targets
-    } == {(first.security_id, "P1", Decimal(50)), ("XQZ-B", "P0", Decimal(0))}
+    } == expected
     assert repeated.disposition == "ASSESSED"
     assert {
         (target.security_id, item.priority, target.target_quantity)
         for item in repeated.cases
         for target in item.required_targets
-    } == {(first.security_id, "P1", Decimal(50)), ("XQZ-B", "P0", Decimal(0))}
+    } == expected
 
 
 @pytest.mark.parametrize("new_security", [True, False])
