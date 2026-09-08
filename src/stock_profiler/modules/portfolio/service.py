@@ -17,6 +17,7 @@ from stock_profiler.modules.portfolio.contracts import (
     confirmation_block_reasons,
     preview_for,
 )
+from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 
 
 def adjudicate(
@@ -30,6 +31,8 @@ def adjudicate(
     owner_lineage_history: tuple[PortfolioAuthorizationOutcome, ...] | None = None,
     access_account_ids: tuple[str, ...],
     business_prerequisite_met: bool = True,
+    require_current_authorization: bool = False,
+    stress_history: tuple[PortfolioStressOutcome, ...] = (),
 ) -> PortfolioAuthorizationOutcome:
     """Preview a full scope or freeze its first confirmed synthetic authorization."""
     now = datetime.fromisoformat(observed_at)
@@ -47,6 +50,7 @@ def adjudicate(
             lineage_history=lineage_history,
             access_account_ids=access_account_ids,
             business_prerequisite_met=business_prerequisite_met,
+            require_current_authorization=require_current_authorization,
         )
     proposal_reason = _proposal_evidence_reason(command, cutoff, now)
     if proposal_reason is not None:
@@ -123,6 +127,12 @@ def adjudicate(
     ) is not None:
         reasons = (action_policy_reason,)
     elif (
+        stress_policy_reason := _redefined_stress_policy_reason(
+            command.proposal, owner_lineage_history
+        )
+    ) is not None:
+        reasons = (stress_policy_reason,)
+    elif (
         requalification_identity_reason := _redefined_downside_grid_requalification_identity_reason(
             command,
             owner_lineage_history,
@@ -151,6 +161,7 @@ def adjudicate(
                 current,
                 lineage_history,
                 cutoff,
+                stress_history,
             )
         )
         is not None
@@ -184,6 +195,7 @@ def _adjudicate_use(
     lineage_history: tuple[PortfolioAuthorizationOutcome, ...],
     access_account_ids: tuple[str, ...],
     business_prerequisite_met: bool,
+    require_current_authorization: bool,
 ) -> PortfolioAuthorizationOutcome:
     if not business_prerequisite_met and command.requested_action == "NEW_EXPOSURE":
         return PortfolioAuthorizationOutcome(
@@ -206,6 +218,17 @@ def _adjudicate_use(
             reasons=("AUTHORIZATION_SCOPE_MISMATCH",),
         )
     preview = preview_for(authorization.proposal)
+    if require_current_authorization:
+        for available_history in (lineage_history, history):
+            active, reason = _active_authorization(available_history, command.portfolio_id, now)
+            if reason is not None or (
+                active is None or active.authorization_id != authorization.authorization_id
+            ):
+                return PortfolioAuthorizationOutcome(
+                    disposition="DENIED",
+                    reasons=(reason or "CURRENT_PORTFOLIO_AUTHORIZATION_REQUIRED",),
+                    preview=preview,
+                )
     if now < authorization.proposal.risk_budget.effective_at:
         allowed = False
         reasons = ("RISK_BUDGET_NOT_YET_EFFECTIVE",)
@@ -436,6 +459,20 @@ def _redefined_downside_grid_requalification_identity_reason(
     return None
 
 
+def _redefined_stress_policy_reason(
+    proposal: PortfolioProposal,
+    history: tuple[PortfolioAuthorizationOutcome, ...],
+) -> str | None:
+    policy = proposal.risk_budget.stress_calculation
+    if policy is not None and any(
+        retained is not None and retained.version_id == policy.version_id and retained != policy
+        for authorization in _authorizations(history)
+        for retained in (authorization.proposal.risk_budget.stress_calculation,)
+    ):
+        return "STRESS_CALCULATION_POLICY_REDEFINED"
+    return None
+
+
 def _requalification_identity_is_rebound(
     retained: DownsideGridRequalificationEvidence,
     submitted: DownsideGridRequalificationEvidence,
@@ -458,6 +495,7 @@ def _risk_budget_relaxation_reason(
     current: PortfolioAuthorization,
     history: tuple[PortfolioAuthorizationOutcome, ...],
     cutoff: datetime,
+    stress_history: tuple[PortfolioStressOutcome, ...],
 ) -> str | None:
     evidence = command.confirmation.relaxation_evidence
     if evidence is None:
@@ -477,7 +515,23 @@ def _risk_budget_relaxation_reason(
         != command.proposal.risk_budget.effective_at
     ):
         return "RISK_BUDGET_RELAXATION_EVIDENCE_INVALID"
-    if _unresolved_cash_obligations(history, command.proposal.portfolio_id):
+    visible_stress = tuple(
+        result
+        for result in stress_history
+        if result.cutoff_at <= min(cutoff, command.confirmation.confirmed_at)
+    )
+    # Later history may veto a relaxation, but never establish earlier restoration.
+    if _unresolved_cash_obligations(history, command.proposal.portfolio_id) or any(
+        records
+        and (
+            records[-1].state != "NORMAL"
+            or (
+                records[-1].obligation is not None
+                and records[-1].obligation.status == "OUTSTANDING"
+            )
+        )
+        for records in (visible_stress, stress_history)
+    ):
         return "RISK_BUDGET_RELAXATION_OBLIGATIONS_UNRESOLVED"
     return None
 

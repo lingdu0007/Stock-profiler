@@ -21,6 +21,8 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
+from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
+from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -136,12 +138,27 @@ class DecisionLedger(Protocol[Transaction]):
         cutoff_at: datetime,
     ) -> PositionReconciliationOutcome | None: ...
 
+    def portfolio_stress_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioStressOutcome, ...]: ...
+
     def position_cash_history(
         self,
         connection: Transaction,
         access_scope: ResultAccessScope,
         cutoff_at: datetime,
     ) -> tuple[AccountCashState, ...]: ...
+
+    def liquidity_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        cutoff_at: datetime,
+    ) -> tuple[LiquidityOutcome, ...]: ...
 
     def mapped_framework_run_ids(self, connection: Transaction) -> frozenset[str]: ...
 

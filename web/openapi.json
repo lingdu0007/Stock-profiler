@@ -1884,6 +1884,16 @@
             "title": "Key Reasons",
             "type": "array"
           },
+          "liquidity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiquidityOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "outcome_code": {
             "title": "Outcome Code",
             "type": "string"
@@ -1902,6 +1912,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/PositionReconciliationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioStressOutcome"
               },
               {
                 "type": "null"
@@ -2404,6 +2424,295 @@
         "title": "LegalTaskNode",
         "type": "object"
       },
+      "LiquidityOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "deployable_purchase_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Purchase Cash"
+          },
+          "disposition": {
+            "enum": [
+              "AVAILABLE",
+              "ZERO_DEPLOYABLE_CASH",
+              "REMEDIATION_REQUIRED",
+              "EVIDENCE_FAILED",
+              "FUNDING_INFEASIBLE"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "hard_cash_floor": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Cash Floor"
+          },
+          "maximum_fundable_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Fundable Cash"
+          },
+          "maximum_funding_plan": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MaximumFundingLeg"
+            },
+            "title": "Maximum Funding Plan",
+            "type": "array"
+          },
+          "net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation Equity"
+          },
+          "new_exposure_blocked": {
+            "default": true,
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "normal_cash_target": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normal Cash Target"
+          },
+          "obligation_funding": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ObligationFunding"
+            },
+            "title": "Obligation Funding",
+            "type": "array"
+          },
+          "position_snapshot": {
+            "$ref": "#/components/schemas/PositionReconciliationOutcome"
+          },
+          "protection_authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purchase_authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualified_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified Cash"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "remediation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation Id"
+          },
+          "remediation_shortfall": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation Shortfall"
+          },
+          "reserved_buy_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reserved Buy Cash"
+          },
+          "restoration_cash_confirmed": {
+            "default": false,
+            "title": "Restoration Cash Confirmed",
+            "type": "boolean"
+          },
+          "retained_remediation_shortfall": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained Remediation Shortfall"
+          },
+          "settled_coverage": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettledObligationCoverage"
+            },
+            "title": "Settled Coverage",
+            "type": "array"
+          },
+          "six_month_obligations": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Six Month Obligations"
+          },
+          "uncovered_obligation_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncovered Obligation Gap"
+          }
+        },
+        "required": ["disposition", "reasons", "authorization_id", "position_snapshot"],
+        "title": "LiquidityOutcome",
+        "type": "object"
+      },
+      "MaximumFundingLeg": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "deadline_funding_contribution": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Deadline Funding Contribution",
+            "type": "string"
+          },
+          "disposal_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Cost",
+            "type": "string"
+          },
+          "gross_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Proceeds",
+            "type": "string"
+          },
+          "net_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Proceeds",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/SaleFundingTerms"
+          },
+          "transferable_at": {
+            "format": "date-time",
+            "title": "Transferable At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "quantity",
+          "gross_proceeds",
+          "disposal_cost",
+          "net_proceeds",
+          "transferable_at",
+          "terms"
+        ],
+        "title": "MaximumFundingLeg",
+        "type": "object"
+      },
       "NormalMarketSessionEvidence": {
         "additionalProperties": false,
         "description": "One immutable normal market session from a versioned synthetic calendar.",
@@ -2442,6 +2751,49 @@
           "normal"
         ],
         "title": "NormalMarketSessionEvidence",
+        "type": "object"
+      },
+      "ObligationFunding": {
+        "additionalProperties": false,
+        "properties": {
+          "latest_usable_at": {
+            "format": "date-time",
+            "title": "Latest Usable At",
+            "type": "string"
+          },
+          "maximum_covered_cash": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Covered Cash",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "required_cash": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Required Cash",
+            "type": "string"
+          },
+          "target_account_id": {
+            "title": "Target Account Id",
+            "type": "string"
+          },
+          "uncovered_gap": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Uncovered Gap",
+            "type": "string"
+          }
+        },
+        "required": [
+          "obligation_id",
+          "target_account_id",
+          "latest_usable_at",
+          "required_cash",
+          "maximum_covered_cash",
+          "uncovered_gap"
+        ],
+        "title": "ObligationFunding",
         "type": "object"
       },
       "OpaqueRequestErrorDto": {
@@ -2513,6 +2865,16 @@
           },
           "stress": {
             "$ref": "#/components/schemas/TwoThresholdBudget"
+          },
+          "stress_calculation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressCalculationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "synthetic": {
             "const": true,
@@ -2896,6 +3258,165 @@
         },
         "required": ["snapshot_id", "cutoff_at", "accounts", "selected_account_ids"],
         "title": "PortfolioSnapshot",
+        "type": "object"
+      },
+      "PortfolioStressOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Account Ids",
+            "type": "array"
+          },
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TwoThresholdBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calculation_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressCalculationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contributions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressContribution"
+            },
+            "title": "Contributions",
+            "type": "array"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "execution_blocked": {
+            "default": false,
+            "title": "Execution Blocked",
+            "type": "boolean"
+          },
+          "gross_stress_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Stress Loss"
+          },
+          "net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation Equity"
+          },
+          "new_exposure_blocked": {
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "obligation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StressObligation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "residual_restoration_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Residual Restoration Gap"
+          },
+          "risk_budget_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Budget Version Id"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["NORMAL", "BUFFER", "HARD_BREACH", "UNKNOWN"],
+            "title": "State",
+            "type": "string"
+          },
+          "stress_ratio": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stress Ratio"
+          }
+        },
+        "required": [
+          "state",
+          "reasons",
+          "portfolio_id",
+          "authorization_id",
+          "snapshot_id",
+          "cutoff_at",
+          "account_ids",
+          "new_exposure_blocked"
+        ],
+        "title": "PortfolioStressOutcome",
         "type": "object"
       },
       "PositionActionUnit": {
@@ -4782,6 +5303,72 @@
         "title": "SafetyCapabilitiesDiagnosticDto",
         "type": "object"
       },
+      "SaleFundingTerms": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "allow_full_odd_lot": {
+            "title": "Allow Full Odd Lot",
+            "type": "boolean"
+          },
+          "commission_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission Ratio",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "minimum_commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Commission",
+            "type": "string"
+          },
+          "minimum_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Quantity",
+            "type": "string"
+          },
+          "other_cost_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Other Cost Ratio",
+            "type": "string"
+          },
+          "quantity_increment": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Increment",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "transferable_at": {
+            "format": "date-time",
+            "title": "Transferable At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "minimum_quantity",
+          "quantity_increment",
+          "allow_full_odd_lot",
+          "commission_ratio",
+          "minimum_commission",
+          "other_cost_ratio",
+          "transferable_at",
+          "evidence"
+        ],
+        "title": "SaleFundingTerms",
+        "type": "object"
+      },
       "SessionRefreshDto": {
         "description": "Pydantic transport contract for a CSRF-protected idle-session refresh.",
         "properties": {
@@ -4792,6 +5379,37 @@
         },
         "required": ["status"],
         "title": "SessionRefreshDto",
+        "type": "object"
+      },
+      "SettledObligationCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "kind": {
+            "const": "EXTERNAL_SETTLED_PAYMENT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "obligation_id": {
+            "minLength": 1,
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "receipt_id": {
+            "minLength": 1,
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "required": ["receipt_id", "kind", "obligation_id", "amount", "evidence"],
+        "title": "SettledObligationCoverage",
         "type": "object"
       },
       "StageResult": {
@@ -4814,6 +5432,8 @@
               "PORTFOLIO_AUTHORIZATION",
               "POSITION_RECONCILIATION",
               "DRAWDOWN_PROTECTION",
+              "LIQUIDITY_PROTECTION",
+              "PORTFOLIO_STRESS",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -4854,6 +5474,179 @@
         },
         "required": ["phase", "status", "gate_results", "reasons"],
         "title": "StageResult",
+        "type": "object"
+      },
+      "StressCalculationPolicy": {
+        "additionalProperties": false,
+        "description": "Explicit conservative gross-stress inputs, never an engine default.",
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "disposal_friction_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction Ratio",
+            "type": "string"
+          },
+          "horizon_market_days": {
+            "const": 20,
+            "title": "Horizon Market Days",
+            "type": "integer"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "shock_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Shock Ratio",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "version_id",
+          "horizon_market_days",
+          "shock_ratio",
+          "disposal_friction_ratio",
+          "registered_at"
+        ],
+        "title": "StressCalculationPolicy",
+        "type": "object"
+      },
+      "StressContribution": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "adverse_price_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Adverse Price Loss",
+            "type": "string"
+          },
+          "current_exposure": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Exposure",
+            "type": "string"
+          },
+          "disposal_friction": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "current_exposure",
+          "adverse_price_loss",
+          "disposal_friction"
+        ],
+        "title": "StressContribution",
+        "type": "object"
+      },
+      "StressLedgerReference": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "entry_id"],
+        "title": "StressLedgerReference",
+        "type": "object"
+      },
+      "StressObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "const": "REDUCE_TOTAL_STOCK_EXPOSURE",
+            "title": "Direction",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "restoration_corrections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressLedgerReference"
+            },
+            "title": "Restoration Corrections",
+            "type": "array"
+          },
+          "restoration_fills": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StressRestorationFill"
+            },
+            "title": "Restoration Fills",
+            "type": "array"
+          },
+          "status": {
+            "enum": ["OUTSTANDING", "SATISFIED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_stress_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Stress Ratio",
+            "type": "string"
+          },
+          "triggered_at": {
+            "format": "date-time",
+            "title": "Triggered At",
+            "type": "string"
+          }
+        },
+        "required": ["obligation_id", "direction", "target_stress_ratio", "status", "triggered_at"],
+        "title": "StressObligation",
+        "type": "object"
+      },
+      "StressRestorationFill": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "net_cash_delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Cash Delta",
+            "type": "string"
+          },
+          "net_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Quantity",
+            "type": "string"
+          }
+        },
+        "required": ["account_id", "entry_id", "net_quantity", "net_cash_delta"],
+        "title": "StressRestorationFill",
         "type": "object"
       },
       "TaskUsage": {

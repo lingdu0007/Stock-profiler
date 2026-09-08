@@ -42,6 +42,8 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
+from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
+from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -374,6 +376,23 @@ class DecisionLedger:
             cutoff_at=cutoff_at,
         )
 
+    def portfolio_stress_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> tuple[PortfolioStressOutcome, ...]:
+        """Host-only lineage; future and uncovered records may only block new decisions."""
+        return tuple(
+            stress
+            for fact in self._original_event_facts(connection, "stress history is unavailable")
+            if (scope := fact.case.access_scope) is not None
+            and scope.user_id == access_scope.user_id
+            and scope.visibility == access_scope.visibility
+            and (stress := fact.result.stress) is not None
+            and stress.portfolio_id == portfolio_id
+        )
+
     def position_cash_history(
         self,
         connection: Connection,
@@ -385,6 +404,26 @@ class DecisionLedger:
             self._position_history(connection, access_scope),
             account_ids=frozenset(access_scope.account_ids),
             cutoff_at=cutoff_at,
+        )
+
+    def liquidity_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        cutoff_at: datetime,
+    ) -> tuple[LiquidityOutcome, ...]:
+        """Read same-owner portfolio history; adjudication guards missing account scope."""
+        return tuple(
+            fact.result.liquidity
+            for fact in self._original_event_facts(connection, "liquidity history is unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.liquidity is not None
+            and fact.case.liquidity.portfolio_id == portfolio_id
+            and fact.case.liquidity.position_snapshot.cutoff_at <= cutoff_at
+            and fact.result.liquidity is not None
         )
 
     def _position_history(

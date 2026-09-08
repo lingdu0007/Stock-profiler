@@ -99,6 +99,41 @@ input is compared against the current template without rewriting the original;
 unknown release identities and missing original Runs fail closed. Saved events,
 qualification evidence and report fixtures keep their original runtime identity.
 
+The version 8 frozen case accepts `PORTFOLIO_STRESS_ASSESS` with an existing
+portfolio authorization and a complete selected-account position snapshot.
+Its explicit risk-budget calculation policy binds a conservative proportional
+disposal-friction ratio and a simultaneous adverse price shock equal to the
+highest registered downside-grid boundary. No personal thresholds or policy
+fallback are supplied by the engine. Historical policy-free authorizations
+remain readable but cannot establish a known stress result.
+Calculation-policy identities cannot be redefined and registration must precede
+confirmation. New assessments require the current effective authorization;
+expired authorizations retain protection without admitting new exposure.
+Lower friction or a lower stress shock invokes the existing risk-relaxation
+evidence gate, which also refuses an unfinished stress restoration obligation.
+
+Gross stress includes every reconciled stock exposure, independently of its
+origin, sellability, cost basis, or model result. Estimated disposal friction
+also reduces the reconciled account equity to net liquidation equity.
+Target-inclusive normal and hard-inclusive buffer states preserve the
+original business result. A hard breach records a portfolio-level restoration
+obligation rather than selecting a security for liquidation. Subsequent
+snapshots retain that obligation through missing valuation evidence; a
+reconciled sale and a satisfied target are required to mark it satisfied.
+Additive broker corrections are applied before counting an effective sale;
+a later reversal or corrected monetary evidence reopens its retained obligation
+for target reevaluation. Saved effective fill quantities, proceeds, and ledger
+correction identities distinguish corrections from ordinary market changes.
+Cost-only corrections do not reactivate obligations; the correction gate tracks
+added stock quantity or reduced cash, not bookkeeping cost basis.
+Stricter successor targets
+apply to outstanding obligations. A residual restoration gap describes the
+shortfall even after all verified sellable quantities, without creating a
+security allocation or treating hypothetical sales as completed execution.
+Reports expose the saved calculation policy, contribution amounts, cutoff,
+blocking state, and obligation. Report corrections retain the original
+stress decision. The authenticated report view does not recalculate it.
+
 The upstream store performs its own atomic schema migration. Before opening a
 real old store, stop every writer, take a consistent backup and upgrade every
 process together. Mixed writers, downgrade of a migrated file, and reconstructing
@@ -115,6 +150,39 @@ without rewriting the original Run, report, outcome, or cutoff. Each report
 version remains independently readable.
 Scoped corrections retain the original projection contract and qualification
 snapshot. They do not re-adjudicate authorization or add qualification history.
+
+Liquidity D0 cases use the explicit `8.2.0` frozen host contract. The host
+reconciles their complete position snapshot before applying a retained,
+parameterized reserve policy. Broker-final trading cash already excludes
+unfinished-buy reserves; the report preserves those reserves separately rather
+than deducting them twice. Cash reserve calculations and deadline funding use
+fixed-context decimal arithmetic, never browser arithmetic or model estimates.
+Deadline funding is hypothetical: legal quantities, cost terms and settlement
+times do not credit current cash. A time-expanded account network enforces
+verified transfer capacity and timing without reusing money across obligations.
+Each disposal distinguishes its net proceeds from its deadline-funding contribution.
+Unknown funding evidence is distinct from a known funding gap.
+
+Liquidity outcomes, their original remediation identity, external settled-payment
+receipts and frozen authorization evidence are retained in original committed
+events. Business failure or authorization expiry cannot release deterministic
+protection or grant new exposure. Partial restoration retains the original
+obligation identity. The normal target is recalculated from the current
+reconciled equity under the frozen formula, not latched as a nominal amount.
+A valuation-only change cannot discharge the obligation: release requires
+confirmed cash restoration backed by a retained sale fill or a newly settled
+external obligation payment, as well as complete funding evidence.
+Discharge checks use the latest confirmed cash progress; an earlier insufficient
+partial fill cannot be reused to discharge the obligation after repricing.
+Confirmed target completion is retained independently while funding evidence
+is repaired. Rejected snapshots cannot broaden the authoritative protection scope.
+Unknown disposal terms preserve independently known cash deficits and valid
+settled payments. Account expansion retains same-owner, same-visibility
+protection history; omitting accounts with retained protection fails closed
+without returning those accounts' historical shortfalls.
+Report corrections preserve the original adjudication.
+The report-only contract neither submits orders nor treats future income,
+unsettled deposits, unused credit or outside assets as available funding.
 
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic

@@ -985,10 +985,12 @@ export interface components {
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             /** Key Reasons */
             key_reasons: string[];
+            liquidity?: components["schemas"]["LiquidityOutcome"] | null;
             /** Outcome Code */
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
             summary: string;
         };
@@ -1186,6 +1188,96 @@ export interface components {
              */
             valid_until: string;
         };
+        /** LiquidityOutcome */
+        LiquidityOutcome: {
+            /** Authorization Id */
+            authorization_id: string;
+            /** Deployable Purchase Cash */
+            deployable_purchase_cash?: string | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "AVAILABLE" | "ZERO_DEPLOYABLE_CASH" | "REMEDIATION_REQUIRED" | "EVIDENCE_FAILED" | "FUNDING_INFEASIBLE";
+            /** Hard Cash Floor */
+            hard_cash_floor?: string | null;
+            /** Maximum Fundable Cash */
+            maximum_fundable_cash?: string | null;
+            /**
+             * Maximum Funding Plan
+             * @default []
+             */
+            maximum_funding_plan: components["schemas"]["MaximumFundingLeg"][];
+            /** Net Liquidation Equity */
+            net_liquidation_equity?: string | null;
+            /**
+             * New Exposure Blocked
+             * @default true
+             */
+            new_exposure_blocked: boolean;
+            /** Normal Cash Target */
+            normal_cash_target?: string | null;
+            /**
+             * Obligation Funding
+             * @default []
+             */
+            obligation_funding: components["schemas"]["ObligationFunding"][];
+            position_snapshot: components["schemas"]["PositionReconciliationOutcome"];
+            protection_authorization?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
+            purchase_authorization?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
+            /** Qualified Cash */
+            qualified_cash?: string | null;
+            /** Reasons */
+            reasons: string[];
+            /** Remediation Id */
+            remediation_id?: string | null;
+            /** Remediation Shortfall */
+            remediation_shortfall?: string | null;
+            /** Reserved Buy Cash */
+            reserved_buy_cash?: string | null;
+            /**
+             * Restoration Cash Confirmed
+             * @default false
+             */
+            restoration_cash_confirmed: boolean;
+            /** Retained Remediation Shortfall */
+            retained_remediation_shortfall?: string | null;
+            /**
+             * Settled Coverage
+             * @default []
+             */
+            settled_coverage: components["schemas"]["SettledObligationCoverage"][];
+            /** Six Month Obligations */
+            six_month_obligations?: string | null;
+            /** Uncovered Obligation Gap */
+            uncovered_obligation_gap?: string | null;
+        };
+        /** MaximumFundingLeg */
+        MaximumFundingLeg: {
+            /** Account Id */
+            account_id: string;
+            /**
+             * Deadline Funding Contribution
+             * @default 0
+             */
+            deadline_funding_contribution: string;
+            /** Disposal Cost */
+            disposal_cost: string;
+            /** Gross Proceeds */
+            gross_proceeds: string;
+            /** Net Proceeds */
+            net_proceeds: string;
+            /** Quantity */
+            quantity: string;
+            /** Security Id */
+            security_id: string;
+            terms: components["schemas"]["SaleFundingTerms"];
+            /**
+             * Transferable At
+             * Format: date-time
+             */
+            transferable_at: string;
+        };
         /**
          * NormalMarketSessionEvidence
          * @description One immutable normal market session from a versioned synthetic calendar.
@@ -1207,6 +1299,24 @@ export interface components {
              * @constant
              */
             normal: true;
+        };
+        /** ObligationFunding */
+        ObligationFunding: {
+            /**
+             * Latest Usable At
+             * Format: date-time
+             */
+            latest_usable_at: string;
+            /** Maximum Covered Cash */
+            maximum_covered_cash: string;
+            /** Obligation Id */
+            obligation_id: string;
+            /** Required Cash */
+            required_cash: string;
+            /** Target Account Id */
+            target_account_id: string;
+            /** Uncovered Gap */
+            uncovered_gap: string;
         };
         /** OpaqueRequestErrorDto */
         OpaqueRequestErrorDto: {
@@ -1250,6 +1360,7 @@ export interface components {
             /** Seed */
             seed: number;
             stress: components["schemas"]["TwoThresholdBudget"];
+            stress_calculation?: components["schemas"]["StressCalculationPolicy"] | null;
             /**
              * Synthetic
              * @constant
@@ -1394,6 +1505,54 @@ export interface components {
             selected_account_ids: string[];
             /** Snapshot Id */
             snapshot_id: string;
+        };
+        /** PortfolioStressOutcome */
+        PortfolioStressOutcome: {
+            /** Account Ids */
+            account_ids: string[];
+            /** Authorization Id */
+            authorization_id: string;
+            budget?: components["schemas"]["TwoThresholdBudget"] | null;
+            calculation_policy?: components["schemas"]["StressCalculationPolicy"] | null;
+            /**
+             * Contributions
+             * @default []
+             */
+            contributions: components["schemas"]["StressContribution"][];
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Execution Blocked
+             * @default false
+             */
+            execution_blocked: boolean;
+            /** Gross Stress Loss */
+            gross_stress_loss?: string | null;
+            /** Net Liquidation Equity */
+            net_liquidation_equity?: string | null;
+            /** New Exposure Blocked */
+            new_exposure_blocked: boolean;
+            obligation?: components["schemas"]["StressObligation"] | null;
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Reasons */
+            reasons: string[];
+            /** Residual Restoration Gap */
+            residual_restoration_gap?: string | null;
+            /** Risk Budget Version Id */
+            risk_budget_version_id?: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "NORMAL" | "BUFFER" | "HARD_BREACH" | "UNKNOWN";
+            /** Stress Ratio */
+            stress_ratio?: string | null;
         };
         /**
          * PositionActionUnit
@@ -2054,6 +2213,31 @@ export interface components {
             /** Single User */
             single_user: boolean;
         };
+        /** SaleFundingTerms */
+        SaleFundingTerms: {
+            /** Account Id */
+            account_id: string;
+            /** Allow Full Odd Lot */
+            allow_full_odd_lot: boolean;
+            /** Commission Ratio */
+            commission_ratio: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Minimum Commission */
+            minimum_commission: string;
+            /** Minimum Quantity */
+            minimum_quantity: string;
+            /** Other Cost Ratio */
+            other_cost_ratio: string;
+            /** Quantity Increment */
+            quantity_increment: string;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Transferable At
+             * Format: date-time
+             */
+            transferable_at: string;
+        };
         /**
          * SessionRefreshDto
          * @description Pydantic transport contract for a CSRF-protected idle-session refresh.
@@ -2061,6 +2245,21 @@ export interface components {
         SessionRefreshDto: {
             /** Status */
             status: string;
+        };
+        /** SettledObligationCoverage */
+        SettledObligationCoverage: {
+            /** Amount */
+            amount: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "EXTERNAL_SETTLED_PAYMENT";
+            /** Obligation Id */
+            obligation_id: string;
+            /** Receipt Id */
+            receipt_id: string;
         };
         /**
          * StageResult
@@ -2073,7 +2272,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "DRAWDOWN_PROTECTION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**
@@ -2081,6 +2280,96 @@ export interface components {
              * @enum {string}
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
+        };
+        /**
+         * StressCalculationPolicy
+         * @description Explicit conservative gross-stress inputs, never an engine default.
+         */
+        StressCalculationPolicy: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Disposal Friction Ratio */
+            disposal_friction_ratio: string;
+            /**
+             * Horizon Market Days
+             * @constant
+             */
+            horizon_market_days: 20;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Shock Ratio */
+            shock_ratio: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** StressContribution */
+        StressContribution: {
+            /** Account Id */
+            account_id: string;
+            /** Adverse Price Loss */
+            adverse_price_loss: string;
+            /** Current Exposure */
+            current_exposure: string;
+            /** Disposal Friction */
+            disposal_friction: string;
+            /** Security Id */
+            security_id: string;
+        };
+        /** StressLedgerReference */
+        StressLedgerReference: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+        };
+        /** StressObligation */
+        StressObligation: {
+            /**
+             * Direction
+             * @constant
+             */
+            direction: "REDUCE_TOTAL_STOCK_EXPOSURE";
+            /** Obligation Id */
+            obligation_id: string;
+            /**
+             * Restoration Corrections
+             * @default []
+             */
+            restoration_corrections: components["schemas"]["StressLedgerReference"][];
+            /**
+             * Restoration Fills
+             * @default []
+             */
+            restoration_fills: components["schemas"]["StressRestorationFill"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "OUTSTANDING" | "SATISFIED";
+            /** Target Stress Ratio */
+            target_stress_ratio: string;
+            /**
+             * Triggered At
+             * Format: date-time
+             */
+            triggered_at: string;
+        };
+        /** StressRestorationFill */
+        StressRestorationFill: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+            /** Net Cash Delta */
+            net_cash_delta: string;
+            /** Net Quantity */
+            net_quantity: string;
         };
         /** TaskUsage */
         TaskUsage: {
