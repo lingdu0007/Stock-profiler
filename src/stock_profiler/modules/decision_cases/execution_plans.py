@@ -238,6 +238,9 @@ def adjudicate_execution_plan(
         return plan.model_copy(
             update={
                 "new_exposure_blocked": plan.new_exposure_blocked
+                or state.new_exposure_blocked
+                or stress.new_exposure_blocked
+                or liquidity.new_exposure_blocked
                 or any(issuer.new_exposure_blocked for issuer in concentration.issuers),
             }
         )

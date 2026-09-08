@@ -517,6 +517,27 @@ def test_capital_preservation_zero_survives_conjunction_and_missing_handoffs(
     assert len(plan.legs) == (0 if missing_stress else 2)
 
 
+def test_capital_caution_survives_dated_cash_waterfall_reallocation(
+    migrated_settings: Settings,
+) -> None:
+    payload = risk_handoff_payload(
+        migrated_settings, normal=True, dated=True, capital_state="CAUTION"
+    )
+    routes = execution_routes()
+    for route in routes:
+        route["rules_evidence"] = position_evidence(
+            "synthetic-current-rules", cutoff_at=payload["knowledge_cutoff"]
+        )
+        route["cost_curve"]["evidence"] = position_evidence(
+            "synthetic-current-cost", cutoff_at=payload["knowledge_cutoff"]
+        )
+    payload["execution_plan"]["routes"] = routes
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "PLANNED"
+    assert plan.projected_cash_gap == 0 and plan.legs
+    assert plan.new_exposure_blocked
+
+
 def test_waterfall_preserves_a_separate_rounding_induced_full_sale(
     migrated_settings: Settings,
 ) -> None:
