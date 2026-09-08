@@ -36,7 +36,9 @@ def route_synthetic_notifications(
             else "Unknown window"
         )
         for role, result in roles:
-            identity = sha256(f"{request.identity}\n{item.case_id}\n{role}".encode()).hexdigest()
+            identity = sha256(
+                f"{request.identity}\n{request.attempt_number}\n{item.case_id}\n{role}".encode()
+            ).hexdigest()
             attempts.append(
                 MonitoringNotification(
                     notification_id=f"monitoring-notification-{identity}",

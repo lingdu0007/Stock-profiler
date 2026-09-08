@@ -1,5 +1,7 @@
 """Current pointers and audit history derived from immutable published reports."""
 
+from datetime import datetime
+
 from stock_profiler.modules.decision_cases.domain import FormalReport
 from stock_profiler.modules.delivery.monitoring_contracts import MonitoringCase, MonitoringContract
 from stock_profiler.modules.delivery.user_facts import UserFact
@@ -20,6 +22,19 @@ def project_workspace(
         monitoring = report.result.monitoring
         assert monitoring is not None
         if monitoring.kind in {"DAILY_CLOSE", "EVENT_REASSESS"}:
+            previous = current.get(monitoring.portfolio_id)
+            if previous is not None and (
+                datetime.fromisoformat(report.knowledge_cutoff)
+                < datetime.fromisoformat(previous.knowledge_cutoff)
+                or report.access_scope != previous.access_scope
+                or "MONITORING_HISTORY_SCOPE_INCOMPLETE" in monitoring.reasons
+                or "MONITORING_SNAPSHOT_NOT_FORWARD" in monitoring.reasons
+                or (
+                    report.corrects_event_id is not None
+                    and report.corrects_event_id != previous.event_id
+                )
+            ):
+                continue
             current[monitoring.portfolio_id] = report
     return MonitoringWorkspace(
         reports=reports,

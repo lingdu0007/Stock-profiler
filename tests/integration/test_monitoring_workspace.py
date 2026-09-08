@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -16,9 +17,11 @@ from test_position_state_reconciliation import position_evidence
 from test_scoped_qualification import GovernanceClock
 
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
+from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
 from stock_profiler.modules.delivery.access import AccessPrincipal
+from stock_profiler.modules.delivery.monitoring_workspace import project_workspace
 from stock_profiler.modules.delivery.user_facts import UserFactRequest
 
 
@@ -39,6 +42,16 @@ def monitoring_payload(settings: Settings, source_event_id: str) -> dict[str, An
         "cutoff_at": payload["knowledge_cutoff"],
         "kind": "DAILY_CLOSE",
         "source_event_id": source_event_id,
+        "evidence_families": [
+            {"family": family, "evidence": position_evidence(f"synthetic-{family.lower()}")}
+            for family in (
+                "MARKET_SECURITY",
+                "COMPANY_EVENTS",
+                "BROKER_ACCOUNT",
+                "COST_RULES",
+                "QUALIFICATION_VERSION",
+            )
+        ],
     }
     return payload
 
@@ -71,6 +84,15 @@ def test_monitoring_requires_a_saved_execution_handoff(migrated_settings: Settin
     assert monitoring.cases == ()
 
 
+def test_daily_close_cannot_omit_a_required_evidence_family(migrated_settings: Settings) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    payload["monitoring"]["evidence_families"].pop()
+    report = committed(migrated_settings, payload)
+    assert report.result.monitoring is not None
+    assert report.result.monitoring.disposition == "BLOCKED"
+    assert "MONITORING_EVIDENCE_FAMILY_INCOMPLETE" in report.result.monitoring.reasons
+
+
 def test_daily_close_projects_saved_targets_and_has_one_identity_per_market_day(
     migrated_settings: Settings,
 ) -> None:
@@ -97,6 +119,9 @@ def test_daily_close_projects_saved_targets_and_has_one_identity_per_market_day(
     assert case.source_event_id == source.event_id
     assert case.first_established_at == "2042-05-17T16:00:00Z"
     assert len(monitoring.action_units) == 2
+    assert report.monitoring_publication is not None
+    assert report.monitoring_publication.committed_at
+    assert report.monitoring_publication.published_at
     retry = deepcopy(payload)
     retry["business_identity"] += ":another-scheduler-attempt"
     retry["case_id"] += "-retry"
@@ -232,6 +257,11 @@ def test_authoritative_termination_protects_without_a_fresh_quantity_plan(
     assert monitoring.cases[0].priority == "P0"
     assert monitoring.cases[0].quantity_status == "UNKNOWN"
     assert monitoring.cases[0].plan is None
+    assert monitoring.cases[0].required_targets
+    assert all(
+        target.direction == "EXIT" and target.target_quantity == 0
+        for target in monitoring.cases[0].required_targets
+    )
     assert monitoring.action_units == ()
     assert monitoring.freshness is not None
     assert monitoring.freshness.market_status == "CLOSED"
@@ -252,6 +282,69 @@ def test_authoritative_termination_protects_without_a_fresh_quantity_plan(
         "IMMEDIATE",
         "PERSISTENT",
     ]
+
+
+def test_initial_authoritative_termination_creates_a_zero_target_case(
+    migrated_settings: Settings,
+) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    payload["monitoring"].update(
+        kind="EVENT_REASSESS",
+        events=[
+            {
+                "event_id": "synthetic-initial-termination",
+                "kind": "TERMINATION",
+                "authority": "EXCHANGE",
+                "evidence": position_evidence("synthetic-exchange"),
+            }
+        ],
+    )
+    report = committed(migrated_settings, payload)
+    assert report.result.monitoring is not None
+    assert report.result.monitoring.cases[0].priority == "P0"
+    assert report.result.monitoring.cases[0].required_targets
+    assert all(
+        target.target_quantity == 0 for target in report.result.monitoring.cases[0].required_targets
+    )
+
+
+def test_rejected_backdated_report_is_archived_without_erasing_current_cases(
+    migrated_settings: Settings,
+) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    current = committed(migrated_settings, payload)
+    payload["knowledge_cutoff"] = "2042-05-16T16:00:00Z"
+    payload["monitoring"]["cutoff_at"] = payload["knowledge_cutoff"]
+    rejected = committed(migrated_settings, payload)
+    workspace = project_workspace((current, rejected), ())
+    assert workspace.current_report_ids == (current.report_version_id,)
+    assert current.result.monitoring is not None
+    assert workspace.inbox == current.result.monitoring.cases
+    assert workspace.reports == (current, rejected)
+
+
+def test_notification_cannot_route_another_portfolios_saved_cases(
+    migrated_settings: Settings,
+) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    original = committed(migrated_settings, payload)
+    payload["monitoring"].update(
+        kind="NOTIFICATION_RUN",
+        portfolio_id="synthetic-other-portfolio",
+        source_event_id=original.event_id,
+        notification={
+            "identity": "synthetic-cross-portfolio",
+            "routing_version": "synthetic-routing-v1",
+            "quiet_until": None,
+            "immediate_result": "ACCEPTED",
+            "persistent_result": "ACCEPTED",
+        },
+    )
+    denied = committed(migrated_settings, payload)
+    assert denied.result.monitoring is not None
+    assert denied.result.monitoring.disposition == "BLOCKED"
+    assert denied.result.monitoring.notifications == ()
+    assert denied.result.monitoring.cases == ()
 
 
 def test_workspace_reads_only_published_authorized_reports_and_keeps_independent_facts(
@@ -325,6 +418,46 @@ def test_notification_fallback_preserves_action_and_minimizes_external_content(
     assert committed(migrated_settings, payload).report_version_id == report.report_version_id
 
 
+def test_quiet_notification_retains_due_work_and_resumes_without_a_new_case(
+    migrated_settings: Settings,
+) -> None:
+    payload = ready_monitoring_payload(migrated_settings)
+    original = committed(migrated_settings, payload)
+    payload["monitoring"].update(
+        kind="NOTIFICATION_RUN",
+        source_event_id=original.event_id,
+        notification={
+            "identity": "synthetic-deferred-notification",
+            "routing_version": "synthetic-routing-v1",
+            "quiet_until": "2042-05-17T17:00:00Z",
+            "immediate_result": "ACCEPTED",
+            "persistent_result": "ACCEPTED",
+        },
+    )
+    deferred = committed(migrated_settings, payload)
+    assert deferred.result.monitoring is not None
+    assert deferred.result.monitoring.notifications == ()
+    assert deferred.result.monitoring.notification_due_at is not None
+    payload["monitoring"]["notification"].update(
+        attempt_number=2,
+        previous_event_id=deferred.event_id,
+    )
+    resumed = run_frozen_decision_case(
+        migrated_settings,
+        payload,
+        clock=GovernanceClock("2042-05-17T17:00:00Z"),
+    ).report
+    assert resumed is not None and resumed.result.monitoring is not None
+    assert resumed.result.monitoring.notifications
+    assert resumed.result.monitoring.cases == deferred.result.monitoring.cases
+    replay = run_frozen_decision_case(
+        migrated_settings,
+        payload,
+        clock=GovernanceClock("2042-05-17T17:01:00Z"),
+    ).report
+    assert replay == resumed
+
+
 def test_lifecycle_and_operations_reports_bind_saved_reconciliation_and_original_reports(
     migrated_settings: Settings,
 ) -> None:
@@ -357,10 +490,15 @@ def test_lifecycle_and_operations_reports_bind_saved_reconciliation_and_original
     assert original.result.monitoring is not None
     assert lifecycle.result.monitoring.cases == original.result.monitoring.cases
     payload["monitoring"].update(kind="OPERATIONS", reconciliation_event_id=None)
+    payload["monitoring"]["planned_trading_dates"] = [
+        (date(2042, 5, 18) - timedelta(days=offset)).isoformat() for offset in reversed(range(20))
+    ]
     audit = committed(migrated_settings, payload)
     assert audit.result.monitoring is not None
     assert original.report_version_id in audit.result.monitoring.source_report_ids
     assert lifecycle.report_version_id in audit.result.monitoring.source_report_ids
+    assert len(audit.result.monitoring.operations_dates) == 20
+    assert len(audit.result.monitoring.missing_daily_dates) == 19
 
 
 def test_confirmation_requires_a_current_plan_but_never_discharges_the_obligation(
@@ -393,6 +531,40 @@ def test_confirmation_requires_a_current_plan_but_never_discharges_the_obligatio
             principal,
             UserFactRequest(
                 kind="CONFIRMED", choice="ACCEPT", idempotency_key="synthetic-stale-accept"
+            ),
+        )
+        is None
+    )
+
+
+def test_new_authoritative_position_facts_invalidate_old_plan_confirmation(
+    migrated_settings: Settings,
+) -> None:
+    from test_issuer_concentration import concentration_payload
+    from test_position_state_reconciliation import position_case_payload
+
+    original = committed(migrated_settings, ready_monitoring_payload(migrated_settings))
+    snapshot = concentration_payload(
+        migrated_settings,
+        "synthetic-unused-authorization",
+        quantity="100",
+    )["concentration"]["position_snapshot"]
+    committed(
+        migrated_settings,
+        position_case_payload(migrated_settings, "synthetic-new-position-facts", snapshot),
+    )
+    delivery = ResultDelivery.from_settings(migrated_settings, clock=GovernanceClock())
+    principal = AccessPrincipal(
+        user_id="stock-profiler-single-user",
+        account_ids=("synthetic-account-4017", "synthetic-account-8029"),
+        permissions=("REPORT_READ", "USER_FACT"),
+    )
+    assert (
+        delivery.record_user_fact(
+            original.report_version_id,
+            principal,
+            UserFactRequest(
+                kind="CONFIRMED", choice="ACCEPT", idempotency_key="synthetic-new-facts"
             ),
         )
         is None

@@ -52,6 +52,13 @@ function CaseSummary({ item, reportId }: { item: Case; reportId: string }) {
         <Fact label="Established" value={monitoringTime(item.first_established_at)} />
         <Fact label="Last qualified review" value={monitoringTime(item.last_reviewed_at)} />
         <Fact label="Case" value={item.case_id} />
+        {item.required_targets?.map((target) => (
+          <Fact
+            key={target.security_id}
+            label={`${target.security_id} persistent target`}
+            value={`${target.direction} / ${target.target_quantity}`}
+          />
+        ))}
       </dl>
     </article>
   );
@@ -172,6 +179,14 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
         <Fact label="Evidence cutoff" value={monitoringTime(report.knowledge_cutoff)} />
         <Fact label="Assessment" value={monitoringTime(freshness?.assessed_at)} />
         <Fact label="Report generated" value={monitoringTime(report.generated_at)} />
+        <Fact
+          label="Reliably saved"
+          value={monitoringTime(report.monitoring_publication?.committed_at)}
+        />
+        <Fact
+          label="Published"
+          value={monitoringTime(report.monitoring_publication?.published_at)}
+        />
         <Fact label="Market" value={freshness?.market_status ?? "Unknown"} />
         <Fact
           label="Next window"
@@ -182,6 +197,29 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
           }
         />
       </dl>
+      {freshness?.evidence_families?.map((family) => (
+        <details className="report-section" key={family.family}>
+          <summary>
+            {family.family.replaceAll("_", " ")}: {family.status}
+          </summary>
+          <p>{family.reasons.join(", ")}</p>
+          <dl className="record-list">
+            <Fact label="Source" value={family.evidence?.source ?? "Unknown"} />
+            <Fact label="Version" value={family.evidence?.source_version ?? "Unknown"} />
+            <Fact
+              label="Effective"
+              value={monitoringTime(family.evidence?.business_effective_at)}
+            />
+            <Fact label="Observed" value={monitoringTime(family.evidence?.source_observed_at)} />
+            <Fact label="Acquired" value={monitoringTime(family.evidence?.locally_acquired_at)} />
+            <Fact label="Validated" value={monitoringTime(family.evidence?.validated_at)} />
+            <Fact label="Cutoff" value={monitoringTime(family.evidence?.cutoff_at)} />
+          </dl>
+        </details>
+      ))}
+      {outcome.notification_due_at && (
+        <p>Deferred notification due: {monitoringTime(outcome.notification_due_at)}</p>
+      )}
       {outcome.cases.map((item) => (
         <CaseSummary key={item.case_id} item={item} reportId={report.report_version_id} />
       ))}

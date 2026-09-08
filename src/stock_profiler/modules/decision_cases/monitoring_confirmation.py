@@ -34,6 +34,10 @@ def confirmation_permitted(
     if not assessments or assessments[-1].decision_event_id != report.event_id:
         return False
     plans = ledger.execution_plan_history(connection, report.access_scope, outcome.portfolio_id)
-    return bool(plans) and all(
-        item.source_event_id == plans[-1].decision_event_id for item in outcome.cases
+    return (
+        bool(plans)
+        and all(item.source_event_id == plans[-1].decision_event_id for item in outcome.cases)
+        and ledger.monitoring_inputs_unchanged(
+            connection, report.access_scope, plans[-1].decision_event_id
+        )
     )

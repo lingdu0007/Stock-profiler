@@ -162,6 +162,26 @@ class DecisionLedger:
             and fact.result.monitoring is not None
         )
 
+    def monitoring_inputs_unchanged(
+        self, connection: Connection, access_scope: ResultAccessScope, plan_event_id: str
+    ) -> bool:
+        """Any newer owner fact requires a fresh plan; publication does not refresh facts."""
+        found = False
+        for fact in self._original_event_facts(connection, "monitoring inputs are unavailable"):
+            if fact.decision_event_id == plan_event_id:
+                found = True
+                continue
+            scope = fact.case.access_scope
+            if (
+                found
+                and scope is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and fact.case.monitoring is None
+            ):
+                return False
+        return found and self.get_correction_event(plan_event_id, connection) is None
+
     def monitoring_report_ids(self, connection: Connection) -> tuple[str, ...]:
         """Internal projection inventory; ResultDelivery applies the principal boundary."""
         return tuple(
@@ -1273,7 +1293,29 @@ class DecisionLedger:
                 ).scalars()
             )
         )
-        return report.with_publication_history(event_stages)
+        projected = report.with_publication_history(event_stages)
+        if report.result.monitoring is None:
+            return projected
+        from stock_profiler.modules.delivery.monitoring_contracts import MonitoringPublication
+
+        clocks: dict[str, str] = {}
+        for payload, recorded_at in connection.execute(
+            select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        ):
+            stage = StageResult.model_validate_json(payload)
+            if stage.status == "SUCCEEDED":
+                clocks.setdefault(stage.phase, recorded_at)
+        if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+            raise DecisionEventCommitError("monitoring publication clocks are unavailable")
+        return projected.model_copy(
+            update={
+                "monitoring_publication": MonitoringPublication(
+                    committed_at=clocks["BUSINESS_COMMIT"], published_at=clocks["PUBLICATION"]
+                )
+            }
+        )
 
     def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
         """Expose a report only after an append-only publication success was saved."""

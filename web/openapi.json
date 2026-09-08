@@ -2669,6 +2669,16 @@
             "title": "Knowledge Cutoff",
             "type": "string"
           },
+          "monitoring_publication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonitoringPublication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "qualification_scope": {
             "title": "Qualification Scope",
             "type": "string"
@@ -3473,6 +3483,14 @@
             "title": "Quantity Status",
             "type": "string"
           },
+          "required_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionTarget"
+            },
+            "title": "Required Targets",
+            "type": "array"
+          },
           "source_event_id": {
             "title": "Source Event Id",
             "type": "string"
@@ -3488,6 +3506,48 @@
           "last_reviewed_at"
         ],
         "title": "MonitoringCase",
+        "type": "object"
+      },
+      "MonitoringEvidenceStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "family": {
+            "enum": [
+              "MARKET_SECURITY",
+              "COMPANY_EVENTS",
+              "BROKER_ACCOUNT",
+              "COST_RULES",
+              "QUALIFICATION_VERSION"
+            ],
+            "title": "Family",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "status": {
+            "enum": ["VALIDATED", "UNKNOWN", "BLOCKED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["family", "status", "evidence"],
+        "title": "MonitoringEvidenceStatus",
         "type": "object"
       },
       "MonitoringFreshness": {
@@ -3518,6 +3578,14 @@
             "format": "date-time",
             "title": "Evidence Cutoff",
             "type": "string"
+          },
+          "evidence_families": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MonitoringEvidenceStatus"
+            },
+            "title": "Evidence Families",
+            "type": "array"
           },
           "market_status": {
             "enum": ["CLOSED", "WAITING_WINDOW", "OPEN"],
@@ -3663,12 +3731,42 @@
             "title": "Kind",
             "type": "string"
           },
+          "missing_daily_dates": {
+            "default": [],
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Daily Dates",
+            "type": "array"
+          },
+          "notification_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Due At"
+          },
           "notifications": {
             "default": [],
             "items": {
               "$ref": "#/components/schemas/MonitoringNotification"
             },
             "title": "Notifications",
+            "type": "array"
+          },
+          "operations_dates": {
+            "default": [],
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Operations Dates",
             "type": "array"
           },
           "portfolio_id": {
@@ -3703,6 +3801,22 @@
         },
         "required": ["portfolio_id", "kind", "disposition", "reasons"],
         "title": "MonitoringOutcome",
+        "type": "object"
+      },
+      "MonitoringPublication": {
+        "additionalProperties": false,
+        "properties": {
+          "committed_at": {
+            "title": "Committed At",
+            "type": "string"
+          },
+          "published_at": {
+            "title": "Published At",
+            "type": "string"
+          }
+        },
+        "required": ["committed_at", "published_at"],
+        "title": "MonitoringPublication",
         "type": "object"
       },
       "MonitoringWorkspace": {

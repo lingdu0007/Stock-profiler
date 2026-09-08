@@ -1284,6 +1284,7 @@ export interface components {
             generated_at: string;
             /** Knowledge Cutoff */
             knowledge_cutoff: string;
+            monitoring_publication?: components["schemas"]["MonitoringPublication"] | null;
             /** Qualification Scope */
             qualification_scope: string;
             /** Report Version Id */
@@ -1548,8 +1549,32 @@ export interface components {
              * @enum {string}
              */
             quantity_status: "VERIFIED" | "UNKNOWN";
+            /**
+             * Required Targets
+             * @default []
+             */
+            required_targets: components["schemas"]["ExecutionTarget"][];
             /** Source Event Id */
             source_event_id: string;
+        };
+        /** MonitoringEvidenceStatus */
+        MonitoringEvidenceStatus: {
+            evidence: components["schemas"]["PositionEvidence"] | null;
+            /**
+             * Family
+             * @enum {string}
+             */
+            family: "MARKET_SECURITY" | "COMPANY_EVENTS" | "BROKER_ACCOUNT" | "COST_RULES" | "QUALIFICATION_VERSION";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "VALIDATED" | "UNKNOWN" | "BLOCKED";
         };
         /** MonitoringFreshness */
         MonitoringFreshness: {
@@ -1565,6 +1590,11 @@ export interface components {
              * Format: date-time
              */
             evidence_cutoff: string;
+            /**
+             * Evidence Families
+             * @default []
+             */
+            evidence_families: components["schemas"]["MonitoringEvidenceStatus"][];
             /**
              * Market Status
              * @enum {string}
@@ -1630,10 +1660,22 @@ export interface components {
              */
             kind: "DAILY_CLOSE" | "EVENT_REASSESS" | "NOTIFICATION_RUN" | "LIFECYCLE" | "OPERATIONS";
             /**
+             * Missing Daily Dates
+             * @default []
+             */
+            missing_daily_dates: string[];
+            /** Notification Due At */
+            notification_due_at?: string | null;
+            /**
              * Notifications
              * @default []
              */
             notifications: components["schemas"]["MonitoringNotification"][];
+            /**
+             * Operations Dates
+             * @default []
+             */
+            operations_dates: string[];
             /** Portfolio Id */
             portfolio_id: string;
             /** Reasons */
@@ -1644,6 +1686,13 @@ export interface components {
              * @default []
              */
             source_report_ids: string[];
+        };
+        /** MonitoringPublication */
+        MonitoringPublication: {
+            /** Committed At */
+            committed_at: string;
+            /** Published At */
+            published_at: string;
         };
         /** MonitoringWorkspace */
         MonitoringWorkspace: {

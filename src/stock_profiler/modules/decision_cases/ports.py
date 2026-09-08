@@ -99,6 +99,10 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...
 
+    def monitoring_inputs_unchanged(
+        self, connection: Transaction, access_scope: ResultAccessScope, plan_event_id: str
+    ) -> bool: ...
+
     def execution_plan_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...

@@ -12,16 +12,39 @@ from stock_profiler.modules.position_management.contracts import (
     PositionEvidence,
     PositionReconciliationOutcome,
 )
-from stock_profiler.modules.position_management.execution_contracts import ExecutionPlanOutcome
+from stock_profiler.modules.position_management.execution_contracts import (
+    ExecutionPlanOutcome,
+    ExecutionTarget,
+)
 
 MonitoringKind = Literal[
     "DAILY_CLOSE", "EVENT_REASSESS", "NOTIFICATION_RUN", "LIFECYCLE", "OPERATIONS"
 ]
 ChannelResult = Literal["ACCEPTED", "REJECTED", "UNKNOWN", "TIMEOUT"]
+EvidenceFamily = Literal[
+    "MARKET_SECURITY", "COMPANY_EVENTS", "BROKER_ACCOUNT", "COST_RULES", "QUALIFICATION_VERSION"
+]
 
 
 class MonitoringContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class MonitoringPublication(MonitoringContract):
+    committed_at: str
+    published_at: str
+
+
+class MonitoringEvidenceInput(MonitoringContract):
+    family: EvidenceFamily
+    evidence: PositionEvidence
+
+
+class MonitoringEvidenceStatus(MonitoringContract):
+    family: EvidenceFamily
+    status: Literal["VALIDATED", "UNKNOWN", "BLOCKED"]
+    evidence: PositionEvidence | None
+    reasons: tuple[str, ...] = ()
 
 
 class MonitoringCommand(MonitoringContract):
@@ -35,11 +58,16 @@ class MonitoringCommand(MonitoringContract):
     events: tuple[MonitoringEvent, ...] = ()
     notification: SyntheticNotificationInput | None = None
     reconciliation_event_id: str | None = None
+    evidence_families: tuple[MonitoringEvidenceInput, ...] = ()
+    planned_trading_dates: tuple[date, ...] = ()
+    monthly_freeze: bool = False
 
 
 class SyntheticNotificationInput(MonitoringContract):
     identity: str = Field(min_length=1)
     routing_version: str = Field(min_length=1)
+    attempt_number: int = Field(default=1, ge=1)
+    previous_event_id: str | None = None
     quiet_until: AwareDatetime | None
     immediate_result: ChannelResult
     persistent_result: ChannelResult
@@ -80,6 +108,7 @@ class MonitoringCase(MonitoringContract):
     obligation_ids: tuple[str, ...]
     priority: Literal["P0", "P1"]
     plan: ExecutionPlanOutcome | None
+    required_targets: tuple[ExecutionTarget, ...] = ()
     quantity_status: Literal["VERIFIED", "UNKNOWN"] = "VERIFIED"
     first_established_at: str
     last_reviewed_at: str
@@ -94,6 +123,7 @@ class MonitoringFreshness(MonitoringContract):
     account_evidence: tuple[PositionEvidence, ...]
     event_evidence: tuple[PositionEvidence, ...]
     calendar_evidence: PositionEvidence
+    evidence_families: tuple[MonitoringEvidenceStatus, ...] = ()
 
 
 class MonitoringOutcome(MonitoringContract):
@@ -106,4 +136,7 @@ class MonitoringOutcome(MonitoringContract):
     freshness: MonitoringFreshness | None = None
     source_report_ids: tuple[str, ...] = ()
     notifications: tuple[MonitoringNotification, ...] = ()
+    notification_due_at: AwareDatetime | None = None
+    operations_dates: tuple[date, ...] = ()
+    missing_daily_dates: tuple[date, ...] = ()
     reconciliation: PositionReconciliationOutcome | None = None

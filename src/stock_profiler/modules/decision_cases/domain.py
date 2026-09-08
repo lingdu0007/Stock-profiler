@@ -27,6 +27,7 @@ from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_p
 from stock_profiler.modules.delivery.monitoring_contracts import (
     MonitoringCommand,
     MonitoringOutcome,
+    MonitoringPublication,
 )
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
@@ -448,6 +449,9 @@ class FormalReport(FrozenContract):
     synthetic: bool
     qualification_scope: str
     generated_at: str
+    monitoring_publication: MonitoringPublication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     knowledge_cutoff: str
     evidence_clock: EvidenceClock
     version_bundle: DecisionCaseVersionBundle
@@ -889,6 +893,18 @@ class FrozenDecisionCase(FrozenContract):
                 {
                     "scope": scope,
                     "portfolio": command.portfolio_id,
+                    "operations_period": (
+                        command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                        if command.monthly_freeze
+                        else command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai"))
+                        .date()
+                        .isoformat()
+                    )
+                    if command.kind == "OPERATIONS"
+                    else None,
+                    "monthly_freeze": command.monthly_freeze
+                    if command.kind == "OPERATIONS"
+                    else None,
                     "kind": command.kind,
                     "market_date": command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai"))
                     .date()
@@ -901,8 +917,11 @@ class FrozenDecisionCase(FrozenContract):
                     "notification": command.notification.identity
                     if command.kind == "NOTIFICATION_RUN" and command.notification is not None
                     else None,
+                    "notification_attempt": command.notification.attempt_number
+                    if command.kind == "NOTIFICATION_RUN" and command.notification is not None
+                    else None,
                     "report_source": command.source_event_id
-                    if command.kind in {"LIFECYCLE", "OPERATIONS", "NOTIFICATION_RUN"}
+                    if command.kind in {"LIFECYCLE", "NOTIFICATION_RUN"}
                     else None,
                     "reconciliation": command.reconciliation_event_id
                     if command.kind == "LIFECYCLE"
