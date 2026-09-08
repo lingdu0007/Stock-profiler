@@ -43,7 +43,7 @@ def test_scope_denials_are_durable_without_disclosing_result_content(
     assert (
         get_formal_report(execution.report_version_id, migrated_settings, principal=principal)
         is None
-    )
+    ), f"PROTECTION_CONTRACT_{reason}"
     facts = ResultDelivery.from_settings(migrated_settings).audit_history()
     assert len(facts) == 1
     assert facts[0].reason == reason

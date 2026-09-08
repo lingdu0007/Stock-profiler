@@ -211,7 +211,7 @@ def test_liquidity_cash_threshold_boundaries(
     execution = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
     assert execution.report is not None
     outcome = execution.report.result.model_dump()["liquidity"]
-    assert outcome["disposition"] == disposition
+    assert outcome["disposition"] == disposition, "PROTECTION_CONTRACT_CASH_RESTORATION_GATE"
     assert outcome["new_exposure_blocked"] is blocked
     assert outcome["remediation_shortfall"] == Decimal(shortfall)
     assert outcome["deployable_purchase_cash"] == Decimal(deployable)

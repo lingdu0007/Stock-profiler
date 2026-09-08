@@ -908,7 +908,7 @@ def test_notification_fallback_preserves_action_and_minimizes_external_content(
     assert tuple(attempt.role for attempt in monitoring.notifications) == (
         "IMMEDIATE",
         "PERSISTENT",
-    )
+    ), "PROTECTION_CONTRACT_NOTIFICATION_FALLBACK"
     assert tuple(attempt.result for attempt in monitoring.notifications) == ("UNKNOWN", "ACCEPTED")
     body = monitoring.notifications[0].body
     assert "P1" in body and "/monitoring" in body

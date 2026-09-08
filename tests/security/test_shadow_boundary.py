@@ -26,6 +26,7 @@ def test_direct_persistence_cannot_publish_shadow_content(
         fact = ledger.get_decision_event(execution.decision_event_id, connection)
         assert fact is not None
         ledger.publish_report(connection, fact)
+        pytest.fail("PROTECTION_CONTRACT_SHADOW_PUBLICATION")
     assert ledger.get_formal_report(execution.report_version_id) is None
     audit = ResultDelivery.from_settings(migrated_settings).audit_history()
     assert len(audit) == 1

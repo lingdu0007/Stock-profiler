@@ -612,7 +612,7 @@ def test_waterfall_credits_existing_targets_before_proportional_remaining_sales(
     assert plan.initial_target_sale_value == Decimal("2000" if partial else "3500")
     assert sum((leg.gross_proceeds for leg in plan.legs), Decimal(0)) == Decimal(
         "2000" if partial else "4000"
-    )
+    ), "PROTECTION_CONTRACT_RESTORATION_WATERFALL"
     assert plan.projected_stress_gap == Decimal("440" if partial else "0")
     assert plan.projected_cash_gap == Decimal("1900" if partial else "0")
     assert plan.disposition == ("BLOCKED" if partial else "PLANNED")
@@ -826,7 +826,9 @@ def test_strict_targets_windows_and_legal_units_preserve_action_meaning(
         (account, Decimal(quantity)) for account, quantity in expected
     )
     if mode == "full-sale-rounding":
-        assert plan.disposition == "RECONFIRMATION_REQUIRED"
+        assert plan.disposition == "RECONFIRMATION_REQUIRED", (
+            "PROTECTION_CONTRACT_ROUNDING_CONFIRMATION"
+        )
         assert plan.targets[0].direction == "REDUCE"
         assert plan.targets[0].target_quantity == Decimal("60")
         assert plan.targets[0].rounding_induced_full_sale
