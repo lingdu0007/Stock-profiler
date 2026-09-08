@@ -1391,6 +1391,16 @@
             "title": "Key Reasons",
             "type": "array"
           },
+          "liquidity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiquidityOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "outcome_code": {
             "title": "Outcome Code",
             "type": "string"
@@ -1903,6 +1913,295 @@
         "title": "LegalTaskNode",
         "type": "object"
       },
+      "LiquidityOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization_id": {
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "deployable_purchase_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployable Purchase Cash"
+          },
+          "disposition": {
+            "enum": [
+              "AVAILABLE",
+              "ZERO_DEPLOYABLE_CASH",
+              "REMEDIATION_REQUIRED",
+              "EVIDENCE_FAILED",
+              "FUNDING_INFEASIBLE"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "hard_cash_floor": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Cash Floor"
+          },
+          "maximum_fundable_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Fundable Cash"
+          },
+          "maximum_funding_plan": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MaximumFundingLeg"
+            },
+            "title": "Maximum Funding Plan",
+            "type": "array"
+          },
+          "net_liquidation_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation Equity"
+          },
+          "new_exposure_blocked": {
+            "default": true,
+            "title": "New Exposure Blocked",
+            "type": "boolean"
+          },
+          "normal_cash_target": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normal Cash Target"
+          },
+          "obligation_funding": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ObligationFunding"
+            },
+            "title": "Obligation Funding",
+            "type": "array"
+          },
+          "position_snapshot": {
+            "$ref": "#/components/schemas/PositionReconciliationOutcome"
+          },
+          "protection_authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purchase_authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAuthorizationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualified_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified Cash"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "remediation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation Id"
+          },
+          "remediation_shortfall": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation Shortfall"
+          },
+          "reserved_buy_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reserved Buy Cash"
+          },
+          "restoration_cash_confirmed": {
+            "default": false,
+            "title": "Restoration Cash Confirmed",
+            "type": "boolean"
+          },
+          "retained_remediation_shortfall": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained Remediation Shortfall"
+          },
+          "settled_coverage": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettledObligationCoverage"
+            },
+            "title": "Settled Coverage",
+            "type": "array"
+          },
+          "six_month_obligations": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Six Month Obligations"
+          },
+          "uncovered_obligation_gap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncovered Obligation Gap"
+          }
+        },
+        "required": ["disposition", "reasons", "authorization_id", "position_snapshot"],
+        "title": "LiquidityOutcome",
+        "type": "object"
+      },
+      "MaximumFundingLeg": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "deadline_funding_contribution": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Deadline Funding Contribution",
+            "type": "string"
+          },
+          "disposal_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Cost",
+            "type": "string"
+          },
+          "gross_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Proceeds",
+            "type": "string"
+          },
+          "net_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Proceeds",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/SaleFundingTerms"
+          },
+          "transferable_at": {
+            "format": "date-time",
+            "title": "Transferable At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "quantity",
+          "gross_proceeds",
+          "disposal_cost",
+          "net_proceeds",
+          "transferable_at",
+          "terms"
+        ],
+        "title": "MaximumFundingLeg",
+        "type": "object"
+      },
       "NormalMarketSessionEvidence": {
         "additionalProperties": false,
         "description": "One immutable normal market session from a versioned synthetic calendar.",
@@ -1941,6 +2240,49 @@
           "normal"
         ],
         "title": "NormalMarketSessionEvidence",
+        "type": "object"
+      },
+      "ObligationFunding": {
+        "additionalProperties": false,
+        "properties": {
+          "latest_usable_at": {
+            "format": "date-time",
+            "title": "Latest Usable At",
+            "type": "string"
+          },
+          "maximum_covered_cash": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Covered Cash",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "required_cash": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Required Cash",
+            "type": "string"
+          },
+          "target_account_id": {
+            "title": "Target Account Id",
+            "type": "string"
+          },
+          "uncovered_gap": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Uncovered Gap",
+            "type": "string"
+          }
+        },
+        "required": [
+          "obligation_id",
+          "target_account_id",
+          "latest_usable_at",
+          "required_cash",
+          "maximum_covered_cash",
+          "uncovered_gap"
+        ],
+        "title": "ObligationFunding",
         "type": "object"
       },
       "OpaqueRequestErrorDto": {
@@ -4450,6 +4792,72 @@
         "title": "SafetyCapabilitiesDiagnosticDto",
         "type": "object"
       },
+      "SaleFundingTerms": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "allow_full_odd_lot": {
+            "title": "Allow Full Odd Lot",
+            "type": "boolean"
+          },
+          "commission_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission Ratio",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "minimum_commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Commission",
+            "type": "string"
+          },
+          "minimum_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Quantity",
+            "type": "string"
+          },
+          "other_cost_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Other Cost Ratio",
+            "type": "string"
+          },
+          "quantity_increment": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Increment",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "transferable_at": {
+            "format": "date-time",
+            "title": "Transferable At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "security_id",
+          "minimum_quantity",
+          "quantity_increment",
+          "allow_full_odd_lot",
+          "commission_ratio",
+          "minimum_commission",
+          "other_cost_ratio",
+          "transferable_at",
+          "evidence"
+        ],
+        "title": "SaleFundingTerms",
+        "type": "object"
+      },
       "SessionRefreshDto": {
         "description": "Pydantic transport contract for a CSRF-protected idle-session refresh.",
         "properties": {
@@ -4460,6 +4868,37 @@
         },
         "required": ["status"],
         "title": "SessionRefreshDto",
+        "type": "object"
+      },
+      "SettledObligationCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "kind": {
+            "const": "EXTERNAL_SETTLED_PAYMENT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "obligation_id": {
+            "minLength": 1,
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "receipt_id": {
+            "minLength": 1,
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "required": ["receipt_id", "kind", "obligation_id", "amount", "evidence"],
+        "title": "SettledObligationCoverage",
         "type": "object"
       },
       "StageResult": {
@@ -4481,6 +4920,7 @@
               "QUALIFICATION",
               "PORTFOLIO_AUTHORIZATION",
               "POSITION_RECONCILIATION",
+              "LIQUIDITY_PROTECTION",
               "PORTFOLIO_STRESS",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",

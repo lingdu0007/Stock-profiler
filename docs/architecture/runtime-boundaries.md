@@ -151,6 +151,39 @@ version remains independently readable.
 Scoped corrections retain the original projection contract and qualification
 snapshot. They do not re-adjudicate authorization or add qualification history.
 
+Liquidity D0 cases use the explicit `8.2.0` frozen host contract. The host
+reconciles their complete position snapshot before applying a retained,
+parameterized reserve policy. Broker-final trading cash already excludes
+unfinished-buy reserves; the report preserves those reserves separately rather
+than deducting them twice. Cash reserve calculations and deadline funding use
+fixed-context decimal arithmetic, never browser arithmetic or model estimates.
+Deadline funding is hypothetical: legal quantities, cost terms and settlement
+times do not credit current cash. A time-expanded account network enforces
+verified transfer capacity and timing without reusing money across obligations.
+Each disposal distinguishes its net proceeds from its deadline-funding contribution.
+Unknown funding evidence is distinct from a known funding gap.
+
+Liquidity outcomes, their original remediation identity, external settled-payment
+receipts and frozen authorization evidence are retained in original committed
+events. Business failure or authorization expiry cannot release deterministic
+protection or grant new exposure. Partial restoration retains the original
+obligation identity. The normal target is recalculated from the current
+reconciled equity under the frozen formula, not latched as a nominal amount.
+A valuation-only change cannot discharge the obligation: release requires
+confirmed cash restoration backed by a retained sale fill or a newly settled
+external obligation payment, as well as complete funding evidence.
+Discharge checks use the latest confirmed cash progress; an earlier insufficient
+partial fill cannot be reused to discharge the obligation after repricing.
+Confirmed target completion is retained independently while funding evidence
+is repaired. Rejected snapshots cannot broaden the authoritative protection scope.
+Unknown disposal terms preserve independently known cash deficits and valid
+settled payments. Account expansion retains same-owner, same-visibility
+protection history; omitting accounts with retained protection fails closed
+without returning those accounts' historical shortfalls.
+Report corrections preserve the original adjudication.
+The report-only contract neither submits orders nor treats future income,
+unsettled deposits, unused credit or outside assets as available funding.
+
 The HTTP transport returns Pydantic DTOs from `/api/v1`. Version diagnostics
 identify the installed build, while the static safety-capabilities diagnostic
 reports the official single-user, non-public-recommendation, and no-order-

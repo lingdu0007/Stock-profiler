@@ -20,6 +20,7 @@ import {
   type FormalReport,
   type VersionBundle
 } from "./api/client";
+import { LiquidityEvidence } from "./LiquidityEvidence";
 
 function createQueryClient() {
   return new QueryClient({
@@ -150,6 +151,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
       )}
 
       {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
+      {report.result.liquidity && <LiquidityEvidence liquidity={report.result.liquidity} />}
       {position && <PositionSnapshotEvidence position={position} />}
       {stress && <PortfolioStressEvidence stress={stress} />}
 
