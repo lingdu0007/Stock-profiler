@@ -823,6 +823,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
             summary: string;
         };
@@ -1185,6 +1186,7 @@ export interface components {
             /** Seed */
             seed: number;
             stress: components["schemas"]["TwoThresholdBudget"];
+            stress_calculation?: components["schemas"]["StressCalculationPolicy"] | null;
             /**
              * Synthetic
              * @constant
@@ -1329,6 +1331,54 @@ export interface components {
             selected_account_ids: string[];
             /** Snapshot Id */
             snapshot_id: string;
+        };
+        /** PortfolioStressOutcome */
+        PortfolioStressOutcome: {
+            /** Account Ids */
+            account_ids: string[];
+            /** Authorization Id */
+            authorization_id: string;
+            budget?: components["schemas"]["TwoThresholdBudget"] | null;
+            calculation_policy?: components["schemas"]["StressCalculationPolicy"] | null;
+            /**
+             * Contributions
+             * @default []
+             */
+            contributions: components["schemas"]["StressContribution"][];
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Execution Blocked
+             * @default false
+             */
+            execution_blocked: boolean;
+            /** Gross Stress Loss */
+            gross_stress_loss?: string | null;
+            /** Net Liquidation Equity */
+            net_liquidation_equity?: string | null;
+            /** New Exposure Blocked */
+            new_exposure_blocked: boolean;
+            obligation?: components["schemas"]["StressObligation"] | null;
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Reasons */
+            reasons: string[];
+            /** Residual Restoration Gap */
+            residual_restoration_gap?: string | null;
+            /** Risk Budget Version Id */
+            risk_budget_version_id?: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "NORMAL" | "BUFFER" | "HARD_BREACH" | "UNKNOWN";
+            /** Stress Ratio */
+            stress_ratio?: string | null;
         };
         /**
          * PositionActionUnit
@@ -2048,7 +2098,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "LIQUIDITY_PROTECTION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**
@@ -2056,6 +2106,96 @@ export interface components {
              * @enum {string}
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
+        };
+        /**
+         * StressCalculationPolicy
+         * @description Explicit conservative gross-stress inputs, never an engine default.
+         */
+        StressCalculationPolicy: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Disposal Friction Ratio */
+            disposal_friction_ratio: string;
+            /**
+             * Horizon Market Days
+             * @constant
+             */
+            horizon_market_days: 20;
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Shock Ratio */
+            shock_ratio: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** StressContribution */
+        StressContribution: {
+            /** Account Id */
+            account_id: string;
+            /** Adverse Price Loss */
+            adverse_price_loss: string;
+            /** Current Exposure */
+            current_exposure: string;
+            /** Disposal Friction */
+            disposal_friction: string;
+            /** Security Id */
+            security_id: string;
+        };
+        /** StressLedgerReference */
+        StressLedgerReference: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+        };
+        /** StressObligation */
+        StressObligation: {
+            /**
+             * Direction
+             * @constant
+             */
+            direction: "REDUCE_TOTAL_STOCK_EXPOSURE";
+            /** Obligation Id */
+            obligation_id: string;
+            /**
+             * Restoration Corrections
+             * @default []
+             */
+            restoration_corrections: components["schemas"]["StressLedgerReference"][];
+            /**
+             * Restoration Fills
+             * @default []
+             */
+            restoration_fills: components["schemas"]["StressRestorationFill"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "OUTSTANDING" | "SATISFIED";
+            /** Target Stress Ratio */
+            target_stress_ratio: string;
+            /**
+             * Triggered At
+             * Format: date-time
+             */
+            triggered_at: string;
+        };
+        /** StressRestorationFill */
+        StressRestorationFill: {
+            /** Account Id */
+            account_id: string;
+            /** Entry Id */
+            entry_id: string;
+            /** Net Cash Delta */
+            net_cash_delta: string;
+            /** Net Quantity */
+            net_quantity: string;
         };
         /** TaskUsage */
         TaskUsage: {
