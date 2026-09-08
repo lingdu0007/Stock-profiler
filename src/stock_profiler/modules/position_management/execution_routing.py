@@ -31,10 +31,11 @@ def route_targets(
     if len(routes) != len(command.routes) or not set(routes).issubset(units):
         return blocked.model_copy(update={"reasons": ("EXECUTION_ROUTE_SCOPE_INVALID",)})
     options: dict[tuple[str, str], tuple[Decimal, ...]] = {}
-    conservative = False
+    conservative_securities: set[str] = set()
+    active = {target.security_id for target in targets if target.required_sale_quantity != 0}
     for key, unit in units.items():
         maximum = unit.exact_statistical_action_quantity
-        if maximum == 0:
+        if maximum == 0 or unit.security_id not in active:
             options[key] = (Decimal(0),)
             continue
         route = routes.get(key)
@@ -42,7 +43,8 @@ def route_targets(
             return blocked.model_copy(update={"reasons": ("EXECUTION_QUANTITY_UNKNOWN",)})
         if route is None or route.qualified_curve(command.cutoff_at) is None:
             return blocked
-        conservative = conservative or route.qualified_curve(command.cutoff_at) != route.cost_curve
+        if route.qualified_curve(command.cutoff_at) != route.cost_curve:
+            conservative_securities.add(unit.security_id)
         if (
             route.rules_evidence.problem_codes(command.cutoff_at, require_current_completeness=True)
             or route.first_sellable_at < command.cutoff_at
@@ -107,8 +109,20 @@ def route_targets(
             )
             for window in windows
         )
-        cost = sum((leg.disposal_cost for leg in candidate), Decimal(0))
-        deviation = Decimal(0)
+        verified_cost = sum(
+            (
+                leg.disposal_cost
+                for leg in candidate
+                if leg.security_id not in conservative_securities
+            ),
+            Decimal(0),
+        )
+        bound_cost = sum(
+            (leg.disposal_cost for leg in candidate if leg.security_id in conservative_securities),
+            Decimal(0),
+        )
+        verified_deviation = Decimal(0)
+        bound_deviation = Decimal(0)
         for security in {key[1] for key in units}:
             keys = [key for key in units if key[1] == security]
             total = sum((quantities.get(key, Decimal(0)) for key in keys), Decimal(0))
@@ -116,7 +130,7 @@ def route_targets(
                 (units[key].exact_statistical_action_quantity or Decimal(0) for key in keys),
                 Decimal(0),
             )
-            deviation += sum(
+            deviation = sum(
                 (
                     abs(
                         quantities.get(key, Decimal(0)) * sellable
@@ -126,10 +140,17 @@ def route_targets(
                 ),
                 Decimal(0),
             )
+            if security in conservative_securities:
+                bound_deviation += deviation
+            else:
+                verified_deviation += deviation
         return (
             funding_gap(candidate) if funding_gap is not None else Decimal(0),
             *earlier,
-            *((deviation, cost) if conservative else (cost, deviation)),
+            verified_cost,
+            bound_deviation,
+            bound_cost,
+            verified_deviation,
             *(quantities.get(key, Decimal(0)) for key in sorted(units)),
         )
 
@@ -177,11 +198,11 @@ def route_targets(
             *(("RISK_REMEDIATION_BLOCKED",) if incomplete else ()),
             *(("TRADING_UNIT_FULL_SALE",) if reconfirm else ()),
         ),
-        new_exposure_blocked=True,
+        new_exposure_blocked=any(target.source_obligation_ids for target in targets),
         targets=tuple(revised),
         legs=tuple(legs),
         requires_confirmation=bool(legs),
         cost_routing_basis="CONSERVATIVE_BOUND_PROPORTIONAL"
-        if conservative
+        if conservative_securities
         else "VERIFIED_FULL_COST",
     )

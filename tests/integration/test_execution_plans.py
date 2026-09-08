@@ -15,9 +15,10 @@ from test_position_state_reconciliation import (
 )
 from test_scoped_qualification import GovernanceClock
 
-from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
+from stock_profiler.bootstrap.decision_cases import get_formal_report, run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import FormalReport
+from stock_profiler.modules.delivery.access import AccessPrincipal
 
 
 def execution_payload(settings: Settings) -> dict[str, Any]:
@@ -72,9 +73,20 @@ def committed(settings: Settings, payload: dict[str, Any]) -> FormalReport:
 
 
 def risk_handoff_payload(
-    settings: Settings, *, multi: bool = False, partial: bool = False, dated: bool = False
+    settings: Settings,
+    *,
+    multi: bool = False,
+    partial: bool = False,
+    dated: bool = False,
+    normal: bool = False,
+    split: bool = False,
 ) -> dict[str, Any]:
     authorization_payload = concentration_authorization_payload(settings)
+    if normal:
+        authorization_payload["portfolio"]["proposal"]["risk_budget"]["concentration"] = {
+            "target_ratio": "0.30",
+            "hard_ratio": "0.40",
+        }
     if dated:
         authorization_payload["portfolio"]["proposal"]["cash_obligations"] = [
             {
@@ -96,6 +108,21 @@ def risk_handoff_payload(
         settings, authorization.event_id, quantity="100", identity="plan-concentration"
     )
     snapshot = concentration["concentration"]["position_snapshot"]
+    if split:
+        for account in snapshot["accounts"]:
+            account["ledger_entries"][0]["quantity_delta"] = "50"
+            account["ledger_entries"].append(
+                {
+                    "entry_id": f"synthetic-split-{account['account_id']}",
+                    "entry_type": "CORPORATE_ACTION",
+                    "security_id": "XQZ-4017",
+                    "quantity_delta": "50",
+                    "cost_basis_delta": "0",
+                    "cash_delta": "0",
+                    "occurred_at": "2042-05-17T15:00:00Z",
+                    "evidence": position_evidence("synthetic-split"),
+                }
+            )
     if multi:
         for account in snapshot["accounts"]:
             original_position = account["positions"][0]
@@ -268,6 +295,180 @@ def test_valid_concentration_obligation_survives_an_unavailable_other_risk_hando
     assert plan.legs == ()
 
 
+def test_independent_zero_target_survives_missing_risk_evidence(
+    migrated_settings: Settings,
+) -> None:
+    payload = execution_payload(migrated_settings)
+    payload["execution_plan"]["established_targets"] = [
+        {
+            "target_id": "synthetic-zero",
+            "security_id": "XQZ-4017",
+            "target_quantity": "0",
+            "direction": "EXIT",
+            "qualified": True,
+            "policy_version": "synthetic-policy",
+            "evidence": position_evidence("synthetic-zero"),
+        }
+    ]
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "BLOCKED"
+    assert len(plan.targets) == 1 and plan.targets[0].target_quantity == 0
+    assert plan.targets[0].direction == "EXIT"
+
+
+def test_future_history_does_not_contaminate_an_earlier_denial(migrated_settings: Settings) -> None:
+    original = risk_handoff_payload(migrated_settings)
+    committed(migrated_settings, original)
+    earlier = execution_payload(migrated_settings)
+    earlier["case_id"] += "-earlier"
+    earlier["business_identity"] += ":earlier"
+    earlier["knowledge_cutoff"] = "2042-05-16T16:00:00Z"
+    earlier["execution_plan"]["cutoff_at"] = earlier["knowledge_cutoff"]
+    plan = committed(migrated_settings, earlier).result.execution_plan
+    assert plan is not None and plan.disposition == "BLOCKED"
+    assert plan.targets == ()
+    assert plan.reasons == ("EXECUTION_SNAPSHOT_NOT_FORWARD",)
+
+
+def test_narrow_scope_denial_cannot_seed_a_later_full_scope_target(
+    migrated_settings: Settings,
+) -> None:
+    payload = risk_handoff_payload(migrated_settings)
+    payload["execution_plan"]["routes"] = execution_routes()
+    original = committed(migrated_settings, payload).result.execution_plan
+    assert original is not None
+    narrow = deepcopy(payload)
+    narrow["case_id"] += "-narrow"
+    narrow["business_identity"] += ":narrow"
+    narrow["access_scope"]["account_ids"] = ["synthetic-account-4017"]
+    narrow["execution_plan"]["established_targets"] = [
+        {
+            "target_id": "synthetic-invalid-scope-zero",
+            "security_id": "XQZ-4017",
+            "target_quantity": "0",
+            "direction": "EXIT",
+            "qualified": True,
+            "policy_version": "synthetic-policy",
+            "evidence": position_evidence("synthetic-zero"),
+        }
+    ]
+    denied = committed(migrated_settings, narrow).result.execution_plan
+    assert denied is not None
+    assert denied.reasons == ("EXECUTION_HISTORY_SCOPE_INCOMPLETE",)
+    assert denied.targets == ()
+    payload["case_id"] += "-restored"
+    payload["business_identity"] += ":restored"
+    restored = committed(migrated_settings, payload).result.execution_plan
+    assert restored is not None and restored.targets == original.targets
+
+
+def test_quantity_changing_corporate_action_blocks_unadjusted_historical_caps(
+    migrated_settings: Settings,
+) -> None:
+    first = execution_payload(migrated_settings)
+    first["knowledge_cutoff"] = "2042-05-16T16:00:00Z"
+    first["execution_plan"]["cutoff_at"] = first["knowledge_cutoff"]
+    first["execution_plan"]["established_targets"] = [
+        {
+            "target_id": "synthetic-anchor",
+            "security_id": "XQZ-4017",
+            "target_quantity": "50",
+            "direction": "REDUCE",
+            "qualified": True,
+            "policy_version": "synthetic-policy",
+            "evidence": position_evidence("synthetic-anchor", cutoff_at=first["knowledge_cutoff"]),
+        }
+    ]
+    committed(migrated_settings, first)
+    later = risk_handoff_payload(migrated_settings, split=True)
+    later["case_id"] += "-split"
+    later["business_identity"] += ":split"
+    later["execution_plan"]["routes"] = execution_routes()
+    plan = committed(migrated_settings, later).result.execution_plan
+    assert plan is not None and plan.disposition == "BLOCKED"
+    assert plan.reasons == ("EXECUTION_QUANTITY_BASIS_UNRESOLVED",)
+    assert plan.legs == ()
+    assert plan.targets[0].required_sale_quantity is None
+
+
+def test_cost_failure_keeps_qualified_portfolio_gaps(migrated_settings: Settings) -> None:
+    plan = committed(
+        migrated_settings, risk_handoff_payload(migrated_settings, multi=True)
+    ).result.execution_plan
+    assert plan is not None and plan.disposition == "BLOCKED"
+    assert plan.projected_stress_gap == Decimal("900")
+    assert plan.projected_cash_gap == Decimal("3900")
+    assert any(
+        "stress" in source for target in plan.targets for source in target.source_obligation_ids
+    )
+
+
+def test_normal_no_action_does_not_invent_an_exposure_prohibition(
+    migrated_settings: Settings,
+) -> None:
+    payload = risk_handoff_payload(migrated_settings, normal=True)
+    payload["execution_plan"]["routes"] = execution_routes()
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "PLANNED"
+    assert not plan.new_exposure_blocked
+    assert plan.legs == ()
+    assert not plan.requires_confirmation
+
+
+def test_waterfall_preserves_a_separate_rounding_induced_full_sale(
+    migrated_settings: Settings,
+) -> None:
+    payload = risk_handoff_payload(migrated_settings, multi=True)
+    routes = []
+    for index in range(5):
+        for route in execution_routes():
+            route["security_id"] = f"XQZ-PLAN-{index}"
+            route["cost_curve"].update(commission_ratio="0.30", minimum_commission="0")
+            if index == 0:
+                route.update(minimum_quantity="100", quantity_increment="100")
+            routes.append(route)
+    payload["execution_plan"]["routes"] = routes
+    payload["execution_plan"]["established_targets"] = [
+        {
+            "target_id": "synthetic-reduction",
+            "security_id": "XQZ-PLAN-0",
+            "target_quantity": "60",
+            "direction": "REDUCE",
+            "qualified": True,
+            "policy_version": "synthetic-policy",
+            "evidence": position_evidence("synthetic-target"),
+        }
+    ]
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "RECONFIRMATION_REQUIRED"
+    target = plan.targets[0]
+    assert target.target_quantity == 60 and target.direction == "REDUCE"
+    assert target.rounding_induced_full_sale
+    assert plan.projected_cash_gap == 0
+
+
+def test_fallback_for_one_security_does_not_override_other_verified_costs(
+    migrated_settings: Settings,
+) -> None:
+    payload = risk_handoff_payload(migrated_settings, multi=True)
+    routes = []
+    for index in range(5):
+        for route in execution_routes():
+            route["security_id"] = f"XQZ-PLAN-{index}"
+            if index == 0:
+                route["conservative_cost_curve"] = route["cost_curve"]
+                route["cost_curve"] = None
+            routes.append(route)
+    payload["execution_plan"]["routes"] = routes
+    plan = committed(migrated_settings, payload).result.execution_plan
+    assert plan is not None and plan.disposition == "PLANNED"
+    assert all(
+        leg.account_id == "synthetic-account-8029"
+        for leg in plan.legs
+        if leg.security_id != "XQZ-PLAN-0"
+    )
+
+
 @pytest.mark.parametrize("partial", [False, True])
 def test_waterfall_credits_existing_targets_before_proportional_remaining_sales(
     migrated_settings: Settings,
@@ -437,6 +638,22 @@ def test_route_minimizes_full_cost_including_minimum_commission(
     assert plan.targets[0].remaining_gap == 0
     assert plan.new_exposure_blocked
     assert not plan.risk_restored
+    assert (
+        run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+        == report
+    )
+    assert (
+        get_formal_report(
+            report.report_version_id,
+            migrated_settings,
+            principal=AccessPrincipal(
+                user_id="stock-profiler-single-user",
+                account_ids=("synthetic-account-4017", "synthetic-account-8029"),
+                permissions=("REPORT_READ",),
+            ),
+        )
+        == report
+    )
 
 
 @pytest.mark.parametrize(

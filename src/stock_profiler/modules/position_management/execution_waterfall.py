@@ -84,12 +84,11 @@ def conjoin_portfolio_targets(
         return sum((item.uncovered_gap for item in funding), Decimal(0))
 
     initial = route_targets(command, snapshot, targets, funding_gap if obligations else None)
-    if (
+    routing_failed = (
         initial.reasons
         and initial.reasons != ("RISK_REMEDIATION_BLOCKED",)
         and "TRADING_UNIT_FULL_SALE" not in initial.reasons
-    ):
-        return initial
+    )
     initial_value = sum((leg.gross_proceeds for leg in initial.legs), Decimal(0))
 
     def project(plan: ExecutionPlanOutcome) -> ExecutionPlanOutcome:
@@ -127,6 +126,38 @@ def conjoin_portfolio_targets(
         )
 
     initial = project(initial)
+    ids = (
+        *(
+            (stress.obligation.obligation_id,)
+            if stress_active and stress.obligation is not None
+            else ()
+        ),
+        *((liquidity.remediation_id,) if liquidity.remediation_id else ()),
+        *((drawdown.decision_id,) if drawdown.risk_direction else ()),
+    )
+    initial = initial.model_copy(
+        update={
+            "new_exposure_blocked": initial.new_exposure_blocked
+            or stress.new_exposure_blocked
+            or liquidity.new_exposure_blocked
+            or bool(drawdown.risk_direction),
+            "targets": tuple(
+                target.model_copy(
+                    update={
+                        "source_obligation_ids": tuple(
+                            dict.fromkeys((*target.source_obligation_ids, *ids))
+                        ),
+                        "direction": "REDUCE"
+                        if ids and target.direction == "HOLD"
+                        else target.direction,
+                    }
+                )
+                for target in initial.targets
+            ),
+        }
+    )
+    if routing_failed:
+        return initial
     if restored(initial):
         return initial
     remaining_sellable: dict[str, Decimal] = {}
@@ -139,15 +170,6 @@ def conjoin_portfolio_targets(
         ) + (unit.exact_statistical_action_quantity or Decimal(0))
     for leg in initial.legs:
         remaining_sellable[leg.security_id] -= leg.quantity
-    ids = (
-        *(
-            (stress.obligation.obligation_id,)
-            if stress_active and stress.obligation is not None
-            else ()
-        ),
-        *((liquidity.remediation_id,) if liquidity.remediation_id else ()),
-        *((drawdown.decision_id,) if drawdown.risk_direction else ()),
-    )
 
     def allocate(fraction: Decimal) -> ExecutionPlanOutcome:
         revised = []
@@ -157,6 +179,8 @@ def conjoin_portfolio_targets(
                 target.target_quantity,
                 target.remaining_quantity - fraction * remaining_sellable[target.security_id],
             )
+            if target.rounding_induced_full_sale:
+                cap = target.target_quantity
             revised.append(
                 target.model_copy(
                     update={
@@ -167,7 +191,7 @@ def conjoin_portfolio_targets(
                         "source_obligation_ids": tuple(
                             dict.fromkeys((*target.source_obligation_ids, *ids))
                         ),
-                        "direction": "EXIT" if drawdown.risk_state == "PRESERVATION" else "REDUCE",
+                        "direction": "EXIT" if target.direction == "EXIT" else "REDUCE",
                     }
                 )
             )

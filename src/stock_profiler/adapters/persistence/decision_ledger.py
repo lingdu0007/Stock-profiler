@@ -138,6 +138,14 @@ class DecisionLedger:
             and fact.case.execution_plan.portfolio_id == portfolio_id
             and fact.result.execution_plan is not None
             and fact.result.execution_plan.targets
+            and not set(fact.result.execution_plan.reasons).intersection(
+                {
+                    "EXECUTION_HISTORY_SCOPE_INCOMPLETE",
+                    "EXECUTION_SNAPSHOT_NOT_FORWARD",
+                    "RISK_HANDOFF_IDENTITY_MISMATCH",
+                    "TARGET_SCOPE_INVALID",
+                }
+            )
         )
 
     def concentration_history(
