@@ -12,7 +12,7 @@ export STOCK_PROFILER_SOURCE_SHA := $(SOURCE_SHA)
 export SOURCE_DATE_EPOCH
 
 .PHONY: setup format lint type-check test build artifacts repo-guard secrets-scan \
-	license-check api-client-check dev dev-web compose-config verify
+	license-check api-client-check dev dev-web compose-config verify protection-contracts
 
 setup:
 	uv sync --locked --extra dev --python 3.11
@@ -90,3 +90,7 @@ compose-config:
 	STOCK_PROFILER_SOURCE_SHA=$(SOURCE_SHA) SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) docker compose -f deploy/compose.yml config
 
 verify: repo-guard secrets-scan license-check api-client-check lint type-check test build
+
+protection-contracts:
+	uv run --locked --python 3.11 python scripts/protection_matrix.py \
+		--source "$(SOURCE_SHA)" --output "$(CONTRACT_OUTPUT)"
