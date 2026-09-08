@@ -31,6 +31,7 @@ _EVENT_AUTHORITIES = {
     "CORPORATE_ACTION": "DISCLOSURE",
     "DATA_CORRECTION": "FACT_AUTHORITY",
 }
+_PROTECTIVE_EVENTS = {"TERMINATION", "CAPITAL_PROTECTION", "THESIS_FALSIFIED"}
 
 
 def _evidence_status(command: MonitoringCommand) -> tuple[MonitoringEvidenceStatus, ...]:
@@ -138,15 +139,13 @@ def assess_monitoring(
             for event in command.events
         ):
             return blocked.model_copy(update={"reasons": ("MONITORING_EVENT_UNQUALIFIED",)})
-        protective = any(
-            event.kind in {"TERMINATION", "CAPITAL_PROTECTION"} for event in command.events
-        )
+        protective = any(event.kind in _PROTECTIVE_EVENTS for event in command.events)
         if protective or any(item.status != "VALIDATED" for item in _evidence_status(command)):
             affected = {security for event in command.events for security in event.security_ids}
             protective_securities = {
                 security
                 for event in command.events
-                if event.kind in {"TERMINATION", "CAPITAL_PROTECTION"}
+                if event.kind in _PROTECTIVE_EVENTS
                 for security in event.security_ids
             }
             source_ids = {source.event_id}

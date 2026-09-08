@@ -312,18 +312,29 @@ def test_authoritative_termination_protects_without_a_fresh_quantity_plan(
     ]
 
 
+@pytest.mark.parametrize(
+    ("kind", "authority"),
+    [
+        ("TERMINATION", "EXCHANGE"),
+        ("CAPITAL_PROTECTION", "RISK_POLICY"),
+        ("THESIS_FALSIFIED", "DISCLOSURE"),
+    ],
+)
 def test_initial_authoritative_termination_creates_a_zero_target_case(
     migrated_settings: Settings,
+    kind: str,
+    authority: str,
 ) -> None:
     payload = ready_monitoring_payload(migrated_settings, protective_target=True)
     payload["monitoring"].update(
         kind="EVENT_REASSESS",
+        evidence_families=[],
         events=[
             {
                 "event_id": "synthetic-initial-termination",
-                "kind": "TERMINATION",
+                "kind": kind,
                 "security_ids": ["XQZ-4017"],
-                "authority": "EXCHANGE",
+                "authority": authority,
                 "evidence": position_evidence("synthetic-exchange"),
             }
         ],
@@ -335,6 +346,23 @@ def test_initial_authoritative_termination_creates_a_zero_target_case(
     assert all(
         target.target_quantity == 0 for target in report.result.monitoring.cases[0].required_targets
     )
+    payload["monitoring"].update(
+        kind="NOTIFICATION_RUN",
+        source_event_id=report.event_id,
+        notification={
+            "identity": "synthetic-first-protection-notification",
+            "routing_version": "synthetic-routing-v1",
+            "quiet_until": "2042-05-20T16:00:00Z",
+            "immediate_result": "ACCEPTED",
+            "persistent_result": "ACCEPTED",
+        },
+    )
+    notified = committed(migrated_settings, payload)
+    assert notified.result.monitoring is not None
+    assert [attempt.role for attempt in notified.result.monitoring.notifications] == [
+        "IMMEDIATE",
+        "PERSISTENT",
+    ]
 
 
 @pytest.mark.parametrize("normal", [False, True])
