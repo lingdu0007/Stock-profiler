@@ -44,6 +44,7 @@ from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOut
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
+from stock_profiler.modules.position_management.concentration_contracts import ConcentrationHistory
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -123,6 +124,46 @@ class DecisionLedger:
     def observed_at(self) -> str:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
+
+    def concentration_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> ConcentrationHistory:
+        """Read covered original obligations, including before an account expansion."""
+        lineage = [
+            (scope, concentration)
+            for fact in self._original_event_facts(
+                connection, "concentration history is unavailable"
+            )
+            if (scope := fact.case.access_scope) is not None
+            and scope.user_id == access_scope.user_id
+            and scope.visibility == access_scope.visibility
+            and (concentration := fact.result.concentration) is not None
+            and concentration.portfolio_id == portfolio_id
+            and "CONCENTRATION_SNAPSHOT_OUT_OF_ORDER" not in concentration.reasons
+            and "CONCENTRATION_HISTORY_SCOPE_UNRESOLVED" not in concentration.reasons
+        ]
+        lineage.sort(key=lambda item: item[1].cutoff_at)
+        latest = {
+            issuer.issuer_id: (scope, issuer)
+            for scope, outcome in lineage
+            for issuer in outcome.issuers
+            if issuer.obligation_id is not None
+        }
+        return ConcentrationHistory(
+            outcomes=tuple(
+                outcome
+                for scope, outcome in lineage
+                if set(scope.account_ids).issubset(access_scope.account_ids)
+            ),
+            uncovered_obligation=any(
+                issuer.direction == "REDUCE"
+                and not set(scope.account_ids).issubset(access_scope.account_ids)
+                for scope, issuer in latest.values()
+            ),
+        )
 
     def governance_history(
         self, connection: Connection, access_scope: ResultAccessScope

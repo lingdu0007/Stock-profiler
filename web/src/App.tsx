@@ -151,6 +151,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
       )}
 
       {portfolio && <PortfolioAuthorizationEvidence portfolio={portfolio} />}
+      {report.result.concentration && (
+        <ConcentrationEvidence concentration={report.result.concentration} />
+      )}
       {report.result.liquidity && <LiquidityEvidence liquidity={report.result.liquidity} />}
       {position && <PositionSnapshotEvidence position={position} />}
       {report.result.drawdown && <CapitalProtectionEvidence drawdown={report.result.drawdown} />}
@@ -212,6 +215,74 @@ function FormalReportView({ report }: { report: FormalReport }) {
           <Record label="Release commit" value={report.version_bundle.m_agent_release_commit} />
         </dl>
       </section>
+    </section>
+  );
+}
+
+function ConcentrationEvidence({
+  concentration
+}: {
+  concentration: NonNullable<FormalReport["result"]["concentration"]>;
+}) {
+  return (
+    <section className="report-section" aria-label="Issuer concentration">
+      <h2>Issuer concentration</h2>
+      <dl className="record-list">
+        <Record label="Assessment" value={concentration.disposition} />
+        <Record label="Reasons" value={concentration.reasons.join(", ")} />
+        <Record label="Portfolio" value={concentration.portfolio_id} />
+        <Record label="Snapshot" value={concentration.snapshot_id} />
+        <Record label="Cutoff" value={concentration.cutoff_at} />
+        <Record label="Valuation currency" value={concentration.valuation_currency} />
+        <Record
+          label="Net liquidation equity"
+          value={displayValue(concentration.portfolio_net_liquidation_equity)}
+        />
+        <Record
+          label="Threshold version"
+          value={displayValue(concentration.risk_budget_version_id)}
+        />
+        <Record label="Target ratio" value={displayValue(concentration.thresholds?.target_ratio)} />
+        <Record label="Hard ratio" value={displayValue(concentration.thresholds?.hard_ratio)} />
+      </dl>
+      {concentration.issuers.map((issuer) => (
+        <section key={issuer.issuer_id} aria-label={`Concentration ${issuer.issuer_id}`}>
+          <h3>{issuer.issuer_id}</h3>
+          <dl className="record-list">
+            <Record label="State" value={issuer.state} />
+            <Record label="Current exposure" value={displayValue(issuer.current_market_exposure)} />
+            <Record label="Position weight" value={displayValue(issuer.position_weight)} />
+            <Record label="Direction" value={issuer.direction ?? "No concentration action"} />
+            <Record label="Obligation" value={issuer.obligation_id ?? "Not applicable"} />
+            <Record
+              label="Obligation started"
+              value={issuer.obligation_started_at ?? "Not applicable"}
+            />
+            <Record
+              label="Original threshold version"
+              value={issuer.obligation_risk_budget_version_id ?? "Not applicable"}
+            />
+            <Record label="Exposure gap" value={issuer.exposure_gap ?? "Unknown"} />
+            <Record
+              label="New exposure"
+              value={
+                issuer.new_exposure_blocked ? "New exposure blocked" : "No concentration block"
+              }
+            />
+            <Record
+              label="Execution"
+              value={issuer.execution_blocked ? "Execution blocked" : "No execution block"}
+            />
+            {issuer.targets.map((target) => (
+              <Record
+                key={target.security_id}
+                label={target.security_id}
+                value={`Target quantity ${target.target_quantity}; required reduction ${target.required_reduction_quantity ?? "Unknown"}`}
+              />
+            ))}
+          </dl>
+        </section>
+      ))}
     </section>
   );
 }

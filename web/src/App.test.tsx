@@ -98,6 +98,75 @@ describe("App", () => {
     expect(authorization).toHaveTextContent("UNSUPPORTED_ACCOUNT_TYPE");
   });
 
+  it("renders saved issuer obligations and unknown execution quantities without recalculation", async () => {
+    const concentrationReport = {
+      ...report,
+      result: {
+        ...report.result,
+        concentration: {
+          disposition: "BLOCKED",
+          reasons: ["CONCENTRATION_POSITION_FACTS_UNRESOLVED"],
+          portfolio_id: "synthetic-decision-portfolio-alpha",
+          snapshot_id: "synthetic-position-snapshot-alpha",
+          cutoff_at: "2042-05-17T16:00:00Z",
+          valuation_currency: "XSP",
+          portfolio_net_liquidation_equity: "9500",
+          risk_budget_version_id: "synthetic-risk-budget-alpha",
+          thresholds: { target_ratio: "0.13", hard_ratio: "0.19" },
+          issuers: [
+            {
+              issuer_id: "FICTIONAL-ORBITAL-MOSAIC",
+              current_market_exposure: "1900",
+              position_weight: "0.2",
+              state: "REMEDIATION_REQUIRED",
+              new_exposure_blocked: true,
+              direction: "REDUCE",
+              obligation_id: "synthetic-concentration-obligation-alpha",
+              targets: [
+                {
+                  security_id: "XQZ-4017",
+                  target_quantity: "123.5",
+                  required_reduction_quantity: null
+                }
+              ],
+              exposure_gap: null,
+              execution_blocked: true
+            }
+          ]
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(concentrationReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const region = await screen.findByRole("region", { name: "Issuer concentration" });
+    for (const value of [
+      "synthetic-risk-budget-alpha",
+      "9500",
+      "0.13",
+      "0.19",
+      "123.5",
+      "synthetic-concentration-obligation-alpha",
+      "REMEDIATION_REQUIRED",
+      "REDUCE",
+      "Execution blocked",
+      "Unknown",
+      "New exposure blocked"
+    ]) {
+      expect(region).toHaveTextContent(value);
+    }
+  });
+
   it("renders saved authoritative position facts, source clocks, and conflicts", async () => {
     const positionEvidence = {
       source: "synthetic-broker-4017-position",

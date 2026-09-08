@@ -527,6 +527,57 @@ export interface components {
             /** Unfinished Trades Fact Id */
             unfinished_trades_fact_id: string;
         };
+        /** ConcentrationOutcome */
+        ConcentrationOutcome: {
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ASSESSED" | "BLOCKED";
+            /** Issuers */
+            issuers: components["schemas"]["IssuerConcentration"][];
+            /** Portfolio Id */
+            portfolio_id: string;
+            /** Portfolio Net Liquidation Equity */
+            portfolio_net_liquidation_equity: string | null;
+            /** Reasons */
+            reasons: string[];
+            /** Risk Budget Version Id */
+            risk_budget_version_id: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            thresholds: components["schemas"]["TwoThresholdBudget"] | null;
+            /** Valuation Currency */
+            valuation_currency: string;
+        };
+        /** ConcentrationQuantityBasis */
+        ConcentrationQuantityBasis: {
+            /** Account Id */
+            account_id: string;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Quantity */
+            quantity: string;
+            /** Security Id */
+            security_id: string;
+        };
+        /** ConcentrationTarget */
+        ConcentrationTarget: {
+            /** Required Reduction Quantity */
+            required_reduction_quantity: string | null;
+            /** Security Id */
+            security_id: string;
+            /** Target Quantity */
+            target_quantity: string;
+        };
         /**
          * CorrectionEvidence
          * @description New authoritative synthetic facts, distinct from the original Run's evidence.
@@ -980,6 +1031,7 @@ export interface components {
          * @description The user-visible result expected from this original synthetic fixture.
          */
         ExternalResult: {
+            concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
             drawdown?: components["schemas"]["DrawdownOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
@@ -1136,6 +1188,42 @@ export interface components {
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
+        };
+        /** IssuerConcentration */
+        IssuerConcentration: {
+            /** Current Market Exposure */
+            current_market_exposure: string | null;
+            /** Direction */
+            direction: "REDUCE" | null;
+            /** Execution Blocked */
+            execution_blocked: boolean;
+            /** Exposure Gap */
+            exposure_gap: string | null;
+            /** Issuer Id */
+            issuer_id: string;
+            /** New Exposure Blocked */
+            new_exposure_blocked: boolean;
+            /** Obligation Id */
+            obligation_id: string | null;
+            /**
+             * Obligation Quantity Basis
+             * @default []
+             */
+            obligation_quantity_basis: components["schemas"]["ConcentrationQuantityBasis"][];
+            /** Obligation Risk Budget Version Id */
+            obligation_risk_budget_version_id?: string | null;
+            /** Obligation Started At */
+            obligation_started_at?: string | null;
+            obligation_thresholds?: components["schemas"]["TwoThresholdBudget"] | null;
+            /** Position Weight */
+            position_weight: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "NORMAL" | "BUFFER" | "REMEDIATION_REQUIRED" | "RESOLVED" | "UNKNOWN";
+            /** Targets */
+            targets: components["schemas"]["ConcentrationTarget"][];
         };
         /**
          * IssuerExposure
@@ -2272,7 +2360,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**

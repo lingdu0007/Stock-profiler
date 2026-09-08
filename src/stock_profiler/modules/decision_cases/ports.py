@@ -23,6 +23,7 @@ from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOut
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressOutcome
+from stock_profiler.modules.position_management.concentration_contracts import ConcentrationHistory
 from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
@@ -93,6 +94,13 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def concentration_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+    ) -> ConcentrationHistory: ...
 
     def governance_history(
         self, connection: Transaction, access_scope: ResultAccessScope

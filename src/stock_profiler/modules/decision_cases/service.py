@@ -46,11 +46,16 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError,
     Transaction,
 )
-from stock_profiler.modules.portfolio.contracts import PortfolioUseCommand, portfolio_id_for
+from stock_profiler.modules.portfolio.contracts import (
+    PortfolioAuthorizationOutcome,
+    PortfolioUseCommand,
+    portfolio_id_for,
+)
 from stock_profiler.modules.portfolio.drawdown import adjudicate as adjudicate_drawdown
 from stock_profiler.modules.portfolio.liquidity import assess_liquidity
 from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_portfolio
 from stock_profiler.modules.portfolio.stress import assess_stress
+from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 
@@ -474,6 +479,7 @@ def _commit_framework_result(
     qualification_result: StageResult | None = None
     portfolio_result: StageResult | None = None
     position_result: StageResult | None = None
+    concentration_result: StageResult | None = None
     drawdown_result: StageResult | None = None
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
@@ -513,22 +519,29 @@ def _commit_framework_result(
                     ),
                     reasons=governance.reasons,
                 )
-            if business_result is not None and execution_case.portfolio is not None:
+            portfolio_command = (
+                execution_case.concentration.authorization
+                if execution_case.concentration is not None
+                else execution_case.portfolio
+            )
+            portfolio_history: tuple[PortfolioAuthorizationOutcome, ...] = ()
+            if business_result is not None and portfolio_command is not None:
                 assert execution_case.access_scope is not None
+                portfolio_history = ledger.portfolio_authorization_history(
+                    connection,
+                    execution_case.access_scope,
+                    portfolio_id_for(portfolio_command),
+                    execution_case.knowledge_cutoff,
+                )
                 portfolio = adjudicate_portfolio(
-                    execution_case.portfolio,
+                    portfolio_command,
                     event_id=execution_case.decision_event_id,
                     observed_at=ledger.observed_at(),
-                    history=ledger.portfolio_authorization_history(
-                        connection,
-                        execution_case.access_scope,
-                        portfolio_id_for(execution_case.portfolio),
-                        execution_case.knowledge_cutoff,
-                    ),
+                    history=portfolio_history,
                     lineage_history=ledger.portfolio_authorization_lineage(
                         connection,
                         execution_case.access_scope,
-                        portfolio_id_for(execution_case.portfolio),
+                        portfolio_id_for(portfolio_command),
                     ),
                     owner_lineage_history=ledger.portfolio_authorization_owner_lineage(
                         connection,
@@ -540,7 +553,7 @@ def _commit_framework_result(
                     stress_history=ledger.portfolio_stress_history(
                         connection,
                         execution_case.access_scope,
-                        portfolio_id_for(execution_case.portfolio),
+                        portfolio_id_for(portfolio_command),
                     ),
                 )
                 result = result.model_copy(update={"portfolio": portfolio})
@@ -555,8 +568,11 @@ def _commit_framework_result(
                     ),
                     reasons=portfolio.reasons,
                 )
-            position_command = execution_case.position or (
-                execution_case.stress.position_snapshot if execution_case.stress else None
+            position_command = (
+                execution_case.concentration.position_snapshot
+                if execution_case.concentration is not None
+                else execution_case.position
+                or (execution_case.stress.position_snapshot if execution_case.stress else None)
             )
             if business_result is not None and position_command is not None:
                 assert execution_case.access_scope is not None
@@ -752,6 +768,39 @@ def _commit_framework_result(
                     ),
                     reasons=liquidity.reasons,
                 )
+            if business_result is not None and execution_case.concentration is not None:
+                assert result.portfolio is not None and result.position is not None
+                assert execution_case.access_scope is not None
+                concentration = assess_concentration(
+                    execution_case.concentration,
+                    result.portfolio,
+                    result.position,
+                    authorization_history=portfolio_history,
+                    history=ledger.concentration_history(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.concentration.authorization.portfolio_id,
+                    ),
+                    authorization_lineage=ledger.portfolio_authorization_lineage(
+                        connection,
+                        execution_case.access_scope,
+                        execution_case.concentration.authorization.portfolio_id,
+                    ),
+                )
+                result = result.model_copy(update={"concentration": concentration})
+                concentration_result = StageResult(
+                    phase="ISSUER_CONCENTRATION",
+                    status="SUCCEEDED" if concentration.disposition == "ASSESSED" else "REJECTED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="CONCENTRATION_FACTS",
+                            status="PASSED"
+                            if concentration.disposition == "ASSESSED"
+                            else "FAILED",
+                        ),
+                    ),
+                    reasons=concentration.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -788,6 +837,13 @@ def _commit_framework_result(
             stage_result=position_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if concentration_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=concentration_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     if drawdown_result is not None:
         ledger.record_stage_result(
             connection,
@@ -817,6 +873,7 @@ def _commit_framework_result(
         *((qualification_result,) if qualification_result is not None else ()),
         *((portfolio_result,) if portfolio_result is not None else ()),
         *((position_result,) if position_result is not None else ()),
+        *((concentration_result,) if concentration_result is not None else ()),
         *((drawdown_result,) if drawdown_result is not None else ()),
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
