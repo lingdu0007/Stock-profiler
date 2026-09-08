@@ -2458,6 +2458,16 @@
               }
             ]
           },
+          "monitoring": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonitoringOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "outcome_code": {
             "title": "Outcome Code",
             "type": "string"
@@ -2658,6 +2668,16 @@
           "knowledge_cutoff": {
             "title": "Knowledge Cutoff",
             "type": "string"
+          },
+          "monitoring_publication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonitoringPublication"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "qualification_scope": {
             "title": "Qualification Scope",
@@ -3418,6 +3438,448 @@
           "terms"
         ],
         "title": "MaximumFundingLeg",
+        "type": "object"
+      },
+      "MonitoringCase": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "first_established_at": {
+            "title": "First Established At",
+            "type": "string"
+          },
+          "last_reviewed_at": {
+            "title": "Last Reviewed At",
+            "type": "string"
+          },
+          "obligation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Obligation Ids",
+            "type": "array"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionPlanOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "enum": ["P0", "P1"],
+            "title": "Priority",
+            "type": "string"
+          },
+          "quantity_status": {
+            "default": "VERIFIED",
+            "enum": ["VERIFIED", "UNKNOWN"],
+            "title": "Quantity Status",
+            "type": "string"
+          },
+          "required_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionTarget"
+            },
+            "title": "Required Targets",
+            "type": "array"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "source_event_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Event Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case_id",
+          "source_event_id",
+          "obligation_ids",
+          "priority",
+          "plan",
+          "first_established_at",
+          "last_reviewed_at"
+        ],
+        "title": "MonitoringCase",
+        "type": "object"
+      },
+      "MonitoringEvidenceStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "family": {
+            "enum": [
+              "MARKET_SECURITY",
+              "COMPANY_EVENTS",
+              "BROKER_ACCOUNT",
+              "COST_RULES",
+              "QUALIFICATION_VERSION"
+            ],
+            "title": "Family",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "status": {
+            "enum": ["VALIDATED", "UNKNOWN", "BLOCKED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["family", "status", "evidence"],
+        "title": "MonitoringEvidenceStatus",
+        "type": "object"
+      },
+      "MonitoringFreshness": {
+        "additionalProperties": false,
+        "properties": {
+          "account_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/PositionEvidence"
+            },
+            "title": "Account Evidence",
+            "type": "array"
+          },
+          "assessed_at": {
+            "title": "Assessed At",
+            "type": "string"
+          },
+          "calendar_evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "event_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/PositionEvidence"
+            },
+            "title": "Event Evidence",
+            "type": "array"
+          },
+          "evidence_cutoff": {
+            "format": "date-time",
+            "title": "Evidence Cutoff",
+            "type": "string"
+          },
+          "evidence_families": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MonitoringEvidenceStatus"
+            },
+            "title": "Evidence Families",
+            "type": "array"
+          },
+          "market_status": {
+            "enum": ["CLOSED", "WAITING_WINDOW", "OPEN"],
+            "title": "Market Status",
+            "type": "string"
+          },
+          "next_window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Window End"
+          },
+          "next_window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Window Start"
+          }
+        },
+        "required": [
+          "evidence_cutoff",
+          "assessed_at",
+          "market_status",
+          "next_window_start",
+          "next_window_end",
+          "account_evidence",
+          "event_evidence",
+          "calendar_evidence"
+        ],
+        "title": "MonitoringFreshness",
+        "type": "object"
+      },
+      "MonitoringNotification": {
+        "additionalProperties": false,
+        "properties": {
+          "attempted_at": {
+            "title": "Attempted At",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "null"
+          },
+          "notification_id": {
+            "title": "Notification Id",
+            "type": "string"
+          },
+          "result": {
+            "enum": ["ACCEPTED", "REJECTED", "UNKNOWN", "TIMEOUT"],
+            "title": "Result",
+            "type": "string"
+          },
+          "role": {
+            "enum": ["IMMEDIATE", "PERSISTENT"],
+            "title": "Role",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "synthetic": {
+            "const": true,
+            "default": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "notification_id",
+          "case_id",
+          "source_event_id",
+          "role",
+          "result",
+          "attempted_at",
+          "body"
+        ],
+        "title": "MonitoringNotification",
+        "type": "object"
+      },
+      "MonitoringOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "action_units": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PositionActionUnit"
+            },
+            "title": "Action Units",
+            "type": "array"
+          },
+          "cases": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MonitoringCase"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "disposition": {
+            "enum": ["ASSESSED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonitoringFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "interaction_cutoff_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Cutoff At"
+          },
+          "kind": {
+            "enum": [
+              "DAILY_CLOSE",
+              "EVENT_REASSESS",
+              "NOTIFICATION_RUN",
+              "LIFECYCLE",
+              "OPERATIONS"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "missing_daily_dates": {
+            "default": [],
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Daily Dates",
+            "type": "array"
+          },
+          "notification_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Due At"
+          },
+          "notifications": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MonitoringNotification"
+            },
+            "title": "Notifications",
+            "type": "array"
+          },
+          "operations_dates": {
+            "default": [],
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Operations Dates",
+            "type": "array"
+          },
+          "portfolio_id": {
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "reconciliation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionReconciliationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_report_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Report Ids",
+            "type": "array"
+          },
+          "user_facts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UserFact"
+            },
+            "title": "User Facts",
+            "type": "array"
+          }
+        },
+        "required": ["portfolio_id", "kind", "disposition", "reasons"],
+        "title": "MonitoringOutcome",
+        "type": "object"
+      },
+      "MonitoringPublication": {
+        "additionalProperties": false,
+        "properties": {
+          "committed_at": {
+            "title": "Committed At",
+            "type": "string"
+          },
+          "published_at": {
+            "title": "Published At",
+            "type": "string"
+          }
+        },
+        "required": ["committed_at", "published_at"],
+        "title": "MonitoringPublication",
+        "type": "object"
+      },
+      "MonitoringWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "current_report_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Current Report Ids",
+            "type": "array"
+          },
+          "inbox": {
+            "items": {
+              "$ref": "#/components/schemas/MonitoringCase"
+            },
+            "title": "Inbox",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/FormalReport"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "user_facts": {
+            "items": {
+              "$ref": "#/components/schemas/UserFact"
+            },
+            "title": "User Facts",
+            "type": "array"
+          }
+        },
+        "required": ["reports", "current_report_ids", "inbox", "user_facts"],
+        "title": "MonitoringWorkspace",
         "type": "object"
       },
       "NormalMarketSessionEvidence": {
@@ -7321,6 +7783,52 @@
           }
         },
         "summary": "Version Diagnostic"
+      }
+    },
+    "/api/v1/monitoring": {
+      "get": {
+        "operationId": "monitoring_workspace_api_v1_monitoring_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Monitoring Workspace"
       }
     },
     "/api/v1/reports/{report_version_id}": {

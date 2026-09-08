@@ -35,6 +35,7 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
+from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping,
     DecisionEventCommitError,
@@ -275,6 +276,10 @@ def _run_frozen_decision_case(
         has_existing_mapping = (
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
+        if case.monitoring is not None and has_existing_mapping:
+            mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
+            if mapping is not None and mapping.case is not None:
+                case = mapping.case
         known_run_ids = ledger.mapped_framework_run_ids(connection)
     if not has_existing_mapping and case.recovery_framework_run_id is None:
         try:
@@ -811,6 +816,10 @@ def _commit_framework_result(
                     status="REJECTED" if plan.disposition == "BLOCKED" else "SUCCEEDED",
                     gate_results=(),
                     reasons=plan.reasons,
+                )
+            if business_result is not None and execution_case.monitoring is not None:
+                result = result.model_copy(
+                    update={"monitoring": assess_monitoring(execution_case, ledger, connection)}
                 )
     ledger.record_stage_result(
         connection,

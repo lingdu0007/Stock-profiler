@@ -19,6 +19,7 @@ from stock_profiler.modules.decision_cases.domain import (
     ResultAccessScope,
     StageResult,
 )
+from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
@@ -94,6 +95,23 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def monitoring_history(
+        self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]: ...
+
+    def monitoring_user_facts(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        recorded_from: datetime,
+        recorded_until: datetime,
+    ) -> tuple[UserFact, ...]: ...
+
+    def monitoring_inputs_unchanged(
+        self, connection: Transaction, access_scope: ResultAccessScope, plan_event_id: str
+    ) -> bool: ...
 
     def execution_plan_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str

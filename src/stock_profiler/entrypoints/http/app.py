@@ -25,6 +25,7 @@ from stock_profiler.foundation.logging import log_operational_event
 from stock_profiler.foundation.versioning import build_version_bundle
 from stock_profiler.modules.decision_cases.domain import FormalReport
 from stock_profiler.modules.delivery.access import SINGLE_USER_ID, AccessPrincipal
+from stock_profiler.modules.delivery.monitoring_workspace import MonitoringWorkspace
 from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
 
 
@@ -391,6 +392,21 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
             public_recommendation_service=False,
             order_writing=False,
         )
+
+    @app.get("/api/v1/monitoring", response_model=MonitoringWorkspace)
+    def monitoring_workspace(
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
+    ) -> MonitoringWorkspace:
+        delivery = ResultDelivery.from_settings(app_settings, clock=clock)
+        try:
+            authenticator().require_session(session_token)
+        except AuthenticationError as error:
+            delivery.monitoring_workspace(None)
+            raise HTTPException(status_code=401, detail="authentication required") from error
+        workspace = delivery.monitoring_workspace(report_principal())
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="monitoring unavailable")
+        return workspace
 
     @app.get(
         "/api/v1/reports/{report_version_id}",

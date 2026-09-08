@@ -5,33 +5,29 @@ from __future__ import annotations
 from hashlib import sha256
 
 from pydantic import ValidationError
-from sqlalchemy import Column, Integer, MetaData, String, Table, select
+from sqlalchemy import select
 from sqlalchemy.engine import Connection, Engine
 
 from stock_profiler.adapters.persistence.access_audit import ACCESS_AUDIT as ACCESS_AUDIT
 from stock_profiler.adapters.persistence.access_audit import append_denial
 from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS as USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock
 from stock_profiler.modules.decision_cases.domain import FormalReport
+from stock_profiler.modules.decision_cases.monitoring_confirmation import confirmation_permitted
 from stock_profiler.modules.delivery.access import (
     SINGLE_USER_ID,
     AccessAuditFact,
     AccessPrincipal,
     read_denial,
 )
-from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
-
-USER_FACTS = Table(
-    "report_user_facts",
-    MetaData(),
-    Column("sequence", Integer, primary_key=True, autoincrement=True),
-    Column("fact_id", String(96), nullable=False, unique=True),
-    Column("report_version_id", String(96), nullable=False),
-    Column("request_digest", String(64), nullable=False),
-    Column("fact_payload", String, nullable=False),
+from stock_profiler.modules.delivery.monitoring_workspace import (
+    MonitoringWorkspace,
+    project_workspace,
 )
+from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
 
 
 class ResultDelivery:
@@ -48,6 +44,28 @@ class ResultDelivery:
     ) -> FormalReport | None:
         with self._engine.begin() as connection:
             return self._read_report(connection, report_id, principal)
+
+    def monitoring_workspace(self, principal: AccessPrincipal | None) -> MonitoringWorkspace | None:
+        with self._engine.begin() as connection:
+            reason = read_denial(principal, principal.account_ids if principal is not None else ())
+            if reason is not None:
+                self._deny(connection, "monitoring", principal, reason, "REPORT_READ")
+                return None
+            reports = tuple(
+                report
+                for identity in self._ledger.monitoring_report_ids(connection)
+                if (report := self._read_report(connection, identity, principal)) is not None
+            )
+            ids = tuple(report.report_version_id for report in reports)
+            facts = tuple(
+                UserFact.model_validate_json(payload)
+                for payload in connection.execute(
+                    select(USER_FACTS.c.fact_payload)
+                    .where(USER_FACTS.c.report_version_id.in_(ids))
+                    .order_by(USER_FACTS.c.sequence)
+                ).scalars()
+            )
+            return project_workspace(reports, facts)
 
     def _read_report(
         self,
@@ -125,6 +143,13 @@ class ResultDelivery:
                     )
                     return None
                 return UserFact.model_validate_json(existing.fact_payload)
+            if request.kind == "CONFIRMED" and not confirmation_permitted(
+                report, self._ledger, connection
+            ):
+                self._deny(
+                    connection, report_id, principal, "PLAN_REVALIDATION_FAILED", "USER_FACT"
+                )
+                return None
             fact = UserFact(
                 fact_id=fact_id,
                 report_version_id=report_id,

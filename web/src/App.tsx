@@ -3,6 +3,7 @@ import { KeyRound, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import {
   BrowserRouter,
+  NavLink,
   Navigate,
   Route,
   Routes,
@@ -22,6 +23,7 @@ import {
 } from "./api/client";
 import { LiquidityEvidence } from "./LiquidityEvidence";
 import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
+import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 
 function createQueryClient() {
   return new QueryClient({
@@ -46,6 +48,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         </p>
         <h1>Stock Profiler</h1>
       </header>
+      <nav className="workspace-nav" aria-label="Workspace">
+        <NavLink end to="/monitoring">
+          Overview
+        </NavLink>
+        <NavLink to="/monitoring/inbox">Inbox</NavLink>
+        <NavLink to="/monitoring/archive">Archive</NavLink>
+      </nav>
       {children}
     </main>
   );
@@ -162,6 +171,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
       {report.result.execution_plan && (
         <ExecutionPlanEvidence plan={report.result.execution_plan} />
       )}
+      {report.result.monitoring && <MonitoringEvidence report={report} />}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
@@ -1012,7 +1022,7 @@ function enrollmentGrantFromFragment(): string | null {
 }
 
 function safeReturnPath(value: string | null): string {
-  return value?.startsWith("/reports/") ? value : "/";
+  return value?.startsWith("/reports/") || value?.startsWith("/monitoring") ? value : "/monitoring";
 }
 
 export function App() {
@@ -1023,6 +1033,14 @@ export function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<VersionDiagnostics />} />
+          <Route
+            path="/monitoring/*"
+            element={
+              <Shell>
+                <MonitoringPage />
+              </Shell>
+            }
+          />
           <Route path="/reports/:reportVersionId" element={<ReportPage />} />
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/enroll" element={<EnrollmentPage />} />

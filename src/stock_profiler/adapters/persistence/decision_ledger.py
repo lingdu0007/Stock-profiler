@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection, Engine, Row
 
 from stock_profiler.adapters.persistence.access_audit import append_denial
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock, UtcClock
 from stock_profiler.modules.decision_cases.domain import (
@@ -40,6 +41,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
 from stock_profiler.modules.portfolio.liquidity import LiquidityOutcome
@@ -146,6 +148,104 @@ class DecisionLedger:
                     "TARGET_SCOPE_INVALID",
                 }
             )
+        )
+
+    def monitoring_history(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]:
+        facts = tuple(
+            fact
+            for fact in self._event_facts(connection, "monitoring history is unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.monitoring is not None
+            and fact.case.monitoring.portfolio_id == portfolio_id
+            and fact.result.monitoring is not None
+            and not set(fact.result.monitoring.reasons).intersection(
+                {
+                    "MONITORING_HISTORY_SCOPE_INCOMPLETE",
+                    "MONITORING_SNAPSHOT_NOT_FORWARD",
+                }
+            )
+        )
+        selected: list[DecisionEventFact] = []
+        latest_assessment: str | None = None
+        for fact in facts:
+            assert fact.case.monitoring is not None
+            if fact.case.monitoring.kind in {"DAILY_CLOSE", "EVENT_REASSESS"}:
+                if (
+                    fact.corrects_event_id is not None
+                    and fact.corrects_event_id != latest_assessment
+                ):
+                    continue
+                latest_assessment = fact.decision_event_id
+            selected.append(fact)
+        return tuple(selected)
+
+    def monitoring_user_facts(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        recorded_from: datetime,
+        recorded_until: datetime,
+    ) -> tuple[UserFact, ...]:
+        covered = tuple(
+            identity
+            for identity in self.monitoring_report_ids(connection)
+            if (report := self.get_formal_report(identity, connection)) is not None
+            and report.access_scope is not None
+            and access_scope.same_scope_as(report.access_scope)
+            and report.result.monitoring is not None
+            and report.result.monitoring.portfolio_id == portfolio_id
+        )
+        return tuple(
+            fact
+            for payload in connection.execute(
+                select(USER_FACTS.c.fact_payload)
+                .where(USER_FACTS.c.report_version_id.in_(covered))
+                .order_by(USER_FACTS.c.sequence)
+            ).scalars()
+            if recorded_from
+            <= datetime.fromisoformat((fact := UserFact.model_validate_json(payload)).recorded_at)
+            <= recorded_until
+        )
+
+    def monitoring_inputs_unchanged(
+        self, connection: Connection, access_scope: ResultAccessScope, plan_event_id: str
+    ) -> bool:
+        """Any newer owner fact requires a fresh plan; publication does not refresh facts."""
+        found = False
+        for fact in self._event_facts(connection, "monitoring inputs are unavailable"):
+            if fact.decision_event_id == plan_event_id:
+                found = True
+                continue
+            scope = fact.case.access_scope
+            if (
+                found
+                and scope is not None
+                and scope.user_id == access_scope.user_id
+                and scope.visibility == access_scope.visibility
+                and fact.case.monitoring is None
+            ):
+                return False
+        return found and self.get_correction_event(plan_event_id, connection) is None
+
+    def monitoring_report_ids(self, connection: Connection) -> tuple[str, ...]:
+        """Internal projection inventory; ResultDelivery applies the principal boundary."""
+        return tuple(
+            report.report_version_id
+            for report_id in connection.execute(
+                select(FORMAL_REPORTS.c.report_version_id)
+                .join(
+                    DECISION_EVENTS,
+                    FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+                )
+                .order_by(DECISION_EVENTS.c.event_sequence)
+            ).scalars()
+            if (report := self.get_formal_report(report_id, connection)) is not None
+            and report.result.monitoring is not None
         )
 
     def concentration_history(
@@ -262,11 +362,21 @@ class DecisionLedger:
     def _original_event_facts(
         self, connection: Connection, unavailable_message: str
     ) -> tuple[DecisionEventFact, ...]:
+        return self._event_facts(connection, unavailable_message, originals_only=True)
+
+    def _event_facts(
+        self,
+        connection: Connection,
+        unavailable_message: str,
+        *,
+        originals_only: bool = False,
+    ) -> tuple[DecisionEventFact, ...]:
+        query = select(DECISION_EVENTS.c.decision_event_id)
+        if originals_only:
+            query = query.where(DECISION_EVENTS.c.corrects_event_id.is_(None))
         event_ids = (
             connection.execute(
-                select(DECISION_EVENTS.c.decision_event_id)
-                .where(DECISION_EVENTS.c.corrects_event_id.is_(None))
-                .order_by(
+                query.order_by(
                     DECISION_EVENTS.c.event_sequence,
                     DECISION_EVENTS.c.committed_at,
                     DECISION_EVENTS.c.decision_event_id,
@@ -1243,7 +1353,29 @@ class DecisionLedger:
                 ).scalars()
             )
         )
-        return report.with_publication_history(event_stages)
+        projected = report.with_publication_history(event_stages)
+        if report.result.monitoring is None:
+            return projected
+        from stock_profiler.modules.delivery.monitoring_contracts import MonitoringPublication
+
+        clocks: dict[str, str] = {}
+        for payload, recorded_at in connection.execute(
+            select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        ):
+            stage = StageResult.model_validate_json(payload)
+            if stage.status == "SUCCEEDED":
+                clocks.setdefault(stage.phase, recorded_at)
+        if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+            raise DecisionEventCommitError("monitoring publication clocks are unavailable")
+        return projected.model_copy(
+            update={
+                "monitoring_publication": MonitoringPublication(
+                    committed_at=clocks["BUSINESS_COMMIT"], published_at=clocks["PUBLICATION"]
+                )
+            }
+        )
 
     def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
         """Expose a report only after an append-only publication success was saved."""
