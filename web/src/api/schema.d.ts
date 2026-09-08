@@ -709,6 +709,37 @@ export interface components {
             /** Rule Version */
             rule_version: string;
         };
+        /** DisposalCostCurve */
+        DisposalCostCurve: {
+            /** Commission Ratio */
+            commission_ratio: string;
+            /** Dividend Lots */
+            dividend_lots: components["schemas"]["DisposalDividendLot"][];
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Market Impact Ratio */
+            market_impact_ratio: string;
+            /** Minimum Commission */
+            minimum_commission: string;
+            /** Settlement Fee Ratio */
+            settlement_fee_ratio: string;
+            /** Slippage Ratio */
+            slippage_ratio: string;
+            /** Tax Ratio */
+            tax_ratio: string;
+            /** Trading Fee Ratio */
+            trading_fee_ratio: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** DisposalDividendLot */
+        DisposalDividendLot: {
+            /** Lot Id */
+            lot_id: string;
+            /** Quantity */
+            quantity: string;
+            /** Tax Per Share */
+            tax_per_share: string;
+        };
         /**
          * DownsideGridRequalificationEvidence
          * @description Immutable historical and locked-forward proof for a changed downside grid.
@@ -1026,6 +1057,116 @@ export interface components {
              */
             reason: "NOT_SELECTED" | "UNSUPPORTED_ACCOUNT_TYPE" | "UNKNOWN_ACCOUNT_TYPE";
         };
+        /** ExecutionLeg */
+        ExecutionLeg: {
+            /** Account Id */
+            account_id: string;
+            /** Disposal Cost */
+            disposal_cost: string;
+            /** Gross Proceeds */
+            gross_proceeds: string;
+            /** Net Proceeds */
+            net_proceeds: string;
+            /** Quantity */
+            quantity: string;
+            route: components["schemas"]["ExecutionRoute"];
+            /** Security Id */
+            security_id: string;
+        };
+        /** ExecutionPlanOutcome */
+        ExecutionPlanOutcome: {
+            /** Cost Routing Basis */
+            cost_routing_basis?: ("VERIFIED_FULL_COST" | "CONSERVATIVE_BOUND_PROPORTIONAL") | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "BLOCKED" | "PLANNED" | "RECONFIRMATION_REQUIRED";
+            /** Initial Target Sale Value */
+            initial_target_sale_value?: string | null;
+            /**
+             * Legs
+             * @default []
+             */
+            legs: components["schemas"]["ExecutionLeg"][];
+            /** New Exposure Blocked */
+            new_exposure_blocked: boolean;
+            /** Projected Cash Gap */
+            projected_cash_gap?: string | null;
+            /** Projected Exposure Gap */
+            projected_exposure_gap?: string | null;
+            /** Projected Stress Gap */
+            projected_stress_gap?: string | null;
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Requires Confirmation
+             * @default false
+             */
+            requires_confirmation: boolean;
+            /**
+             * Risk Restored
+             * @default false
+             * @constant
+             */
+            risk_restored: false;
+            /**
+             * Targets
+             * @default []
+             */
+            targets: components["schemas"]["ExecutionTarget"][];
+        };
+        /** ExecutionRoute */
+        ExecutionRoute: {
+            /** Account Id */
+            account_id: string;
+            /** Allow Full Odd Lot */
+            allow_full_odd_lot: boolean;
+            conservative_cost_curve?: components["schemas"]["DisposalCostCurve"] | null;
+            cost_curve: components["schemas"]["DisposalCostCurve"] | null;
+            /**
+             * First Sellable At
+             * Format: date-time
+             */
+            first_sellable_at: string;
+            /** Minimum Quantity */
+            minimum_quantity: string;
+            /** Quantity Increment */
+            quantity_increment: string;
+            rules_evidence: components["schemas"]["PositionEvidence"];
+            /** Security Id */
+            security_id: string;
+            /**
+             * Transferable At
+             * Format: date-time
+             */
+            transferable_at: string;
+        };
+        /** ExecutionTarget */
+        ExecutionTarget: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "HOLD" | "REDUCE" | "EXIT";
+            /** Remaining Gap */
+            remaining_gap?: string | null;
+            /** Remaining Quantity */
+            remaining_quantity?: string | null;
+            /** Required Sale Quantity */
+            required_sale_quantity: string | null;
+            /**
+             * Rounding Induced Full Sale
+             * @default false
+             */
+            rounding_induced_full_sale: boolean;
+            /** Security Id */
+            security_id: string;
+            /** Source Obligation Ids */
+            source_obligation_ids: string[];
+            /** Target Quantity */
+            target_quantity: string;
+        };
         /**
          * ExternalResult
          * @description The user-visible result expected from this original synthetic fixture.
@@ -1034,6 +1175,7 @@ export interface components {
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
             drawdown?: components["schemas"]["DrawdownOutcome"] | null;
+            execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             /** Key Reasons */
             key_reasons: string[];
@@ -2360,7 +2502,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
             /** Reasons */
             reasons: string[];
             /**

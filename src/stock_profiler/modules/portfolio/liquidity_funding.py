@@ -66,6 +66,26 @@ class FundingAssessment(PortfolioContract):
     obligations: tuple[ObligationFunding, ...]
 
 
+class AvailableCashResource(PortfolioContract):
+    account_id: str
+    available_at: AwareDatetime
+    amount: Decimal = Field(ge=0)
+
+
+def assess_available_cash(
+    resources: tuple[AvailableCashResource, ...],
+    routes: tuple[CashTransferRoute, ...],
+    obligations: tuple[DatedCashObligation, ...],
+) -> tuple[ObligationFunding, ...]:
+    """Project already validated cash resources without crediting current balances."""
+    _, results, _ = _fund_obligations(
+        [(item.account_id, item.available_at, item.amount) for item in resources],
+        routes,
+        obligations,
+    )
+    return results
+
+
 def assess_funding(
     snapshot: ReconciledPositionSnapshot,
     terms: tuple[SaleFundingTerms, ...],

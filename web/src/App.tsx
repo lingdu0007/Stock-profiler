@@ -21,6 +21,7 @@ import {
   type VersionBundle
 } from "./api/client";
 import { LiquidityEvidence } from "./LiquidityEvidence";
+import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 
 function createQueryClient() {
   return new QueryClient({
@@ -158,6 +159,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
       {position && <PositionSnapshotEvidence position={position} />}
       {report.result.drawdown && <CapitalProtectionEvidence drawdown={report.result.drawdown} />}
       {stress && <PortfolioStressEvidence stress={stress} />}
+      {report.result.execution_plan && (
+        <ExecutionPlanEvidence plan={report.result.execution_plan} />
+      )}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
