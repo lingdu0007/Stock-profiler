@@ -2505,6 +2505,16 @@
           "summary": {
             "title": "Summary",
             "type": "string"
+          },
+          "universe": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": ["outcome_code", "summary", "key_reasons"],
@@ -6873,6 +6883,448 @@
         },
         "required": ["target_ratio", "hard_ratio"],
         "title": "TwoThresholdBudget",
+        "type": "object"
+      },
+      "UniverseDataManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseManifestEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": ["version_id", "entries"],
+        "title": "UniverseDataManifest",
+        "type": "object"
+      },
+      "UniverseEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "authority": {
+            "enum": ["EXCHANGE", "BROKER", "CERTIFIED_DELIVERY", "EXPLORATORY"],
+            "title": "Authority",
+            "type": "string"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "complete_through": {
+            "format": "date-time",
+            "title": "Complete Through",
+            "type": "string"
+          },
+          "conflict": {
+            "title": "Conflict",
+            "type": "boolean"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "fact_effective_at": {
+            "format": "date-time",
+            "title": "Fact Effective At",
+            "type": "string"
+          },
+          "license_id": {
+            "minLength": 1,
+            "title": "License Id",
+            "type": "string"
+          },
+          "license_valid_from": {
+            "format": "date-time",
+            "title": "License Valid From",
+            "type": "string"
+          },
+          "license_valid_until": {
+            "format": "date-time",
+            "title": "License Valid Until",
+            "type": "string"
+          },
+          "licensed_purposes": {
+            "items": {
+              "enum": ["SYNTHETIC", "HISTORICAL_RECONSTRUCTED", "REAL_CANDIDATE"],
+              "type": "string"
+            },
+            "title": "Licensed Purposes",
+            "type": "array"
+          },
+          "retention_permitted": {
+            "title": "Retention Permitted",
+            "type": "boolean"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Observed At"
+          },
+          "source_published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source",
+          "source_version",
+          "authority",
+          "license_id",
+          "license_valid_from",
+          "license_valid_until",
+          "licensed_purposes",
+          "retention_permitted",
+          "complete",
+          "conflict",
+          "fact_effective_at",
+          "source_published_at",
+          "source_observed_at",
+          "acquired_at",
+          "validated_at",
+          "complete_through",
+          "content",
+          "content_sha256"
+        ],
+        "title": "UniverseEvidence",
+        "type": "object"
+      },
+      "UniverseExclusion": {
+        "additionalProperties": false,
+        "properties": {
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "reasons"],
+        "title": "UniverseExclusion",
+        "type": "object"
+      },
+      "UniverseManifestEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field_family": {
+            "minLength": 1,
+            "title": "Field Family",
+            "type": "string"
+          },
+          "primary_source": {
+            "minLength": 1,
+            "title": "Primary Source",
+            "type": "string"
+          },
+          "requirement": {
+            "enum": ["REQUIRED", "EXPLORATORY"],
+            "title": "Requirement",
+            "type": "string"
+          },
+          "semantics_version": {
+            "minLength": 1,
+            "title": "Semantics Version",
+            "type": "string"
+          },
+          "substitution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseSourceSubstitution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "field_family",
+          "requirement",
+          "semantics_version",
+          "primary_source",
+          "evidence"
+        ],
+        "title": "UniverseManifestEntry",
+        "type": "object"
+      },
+      "UniverseOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "board_qualifications": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualificationRecord"
+            },
+            "title": "Board Qualifications",
+            "type": "array"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": ["FROZEN", "DATA_FAILED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseExclusion"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UniverseDataManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/UniversePolicy"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "disposition",
+          "cutoff_at",
+          "policy",
+          "members",
+          "exclusions",
+          "reasons",
+          "qualification_scope"
+        ],
+        "title": "UniverseOutcome",
+        "type": "object"
+      },
+      "UniversePolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "maximum_participation": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Participation",
+            "type": "string"
+          },
+          "minimum_listing_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Listing Months",
+            "type": "integer"
+          },
+          "minimum_median_turnover": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Median Turnover",
+            "type": "string"
+          },
+          "turnover_sessions": {
+            "exclusiveMinimum": 0.0,
+            "title": "Turnover Sessions",
+            "type": "integer"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "minimum_listing_months",
+          "turnover_sessions",
+          "minimum_median_turnover",
+          "maximum_participation"
+        ],
+        "title": "UniversePolicy",
+        "type": "object"
+      },
+      "UniverseSourceSubstitution": {
+        "additionalProperties": false,
+        "properties": {
+          "alternate_source": {
+            "title": "Alternate Source",
+            "type": "string"
+          },
+          "alternate_version": {
+            "title": "Alternate Version",
+            "type": "string"
+          },
+          "authority_evidence": {
+            "$ref": "#/components/schemas/UniverseEvidence"
+          },
+          "certification_id": {
+            "minLength": 1,
+            "title": "Certification Id",
+            "type": "string"
+          },
+          "checks": {
+            "items": {
+              "enum": ["SEMANTICS", "LICENSE", "COMPLETENESS", "REPLAY", "SHADOW"],
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "field_family": {
+            "title": "Field Family",
+            "type": "string"
+          },
+          "manifest_version": {
+            "title": "Manifest Version",
+            "type": "string"
+          },
+          "primary_source": {
+            "title": "Primary Source",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reason": {
+            "enum": ["PRIMARY_UNAVAILABLE", "PRIMARY_CONFLICT"],
+            "title": "Reason",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "semantics_version": {
+            "title": "Semantics Version",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "certification_id",
+          "registered_at",
+          "valid_until",
+          "primary_source",
+          "alternate_source",
+          "alternate_version",
+          "field_family",
+          "manifest_version",
+          "semantics_version",
+          "purpose",
+          "reason",
+          "checks",
+          "authority_evidence"
+        ],
+        "title": "UniverseSourceSubstitution",
         "type": "object"
       },
       "UserFact": {

@@ -9,6 +9,7 @@ from threading import Lock
 
 from pydantic import ValidationError
 
+from stock_profiler.modules.candidate_selection.universe import freeze_universe
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     BusinessCommitStatus,
@@ -276,7 +277,7 @@ def _run_frozen_decision_case(
         has_existing_mapping = (
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
-        if case.monitoring is not None and has_existing_mapping:
+        if (case.monitoring is not None or case.universe is not None) and has_existing_mapping:
             mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
             if mapping is not None and mapping.case is not None:
                 case = mapping.case
@@ -821,6 +822,44 @@ def _commit_framework_result(
                 result = result.model_copy(
                     update={"monitoring": assess_monitoring(execution_case, ledger, connection)}
                 )
+            if business_result is not None and execution_case.universe is not None:
+                assert execution_case.access_scope is not None
+                universe = freeze_universe(
+                    execution_case.universe,
+                    history=ledger.governance_history(connection, execution_case.access_scope),
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(
+                    update={
+                        "universe": universe,
+                        "outcome_code": f"UNIVERSE_{universe.disposition}",
+                        "summary": "Synthetic monthly universe decision.",
+                        "key_reasons": universe.reasons or ("UNIVERSE_FROZEN",),
+                    }
+                )
+                business_result = StageResult(
+                    phase="BUSINESS_DECISION",
+                    status="FAILED"
+                    if universe.disposition == "DATA_FAILED"
+                    else "REJECTED"
+                    if universe.disposition == "BLOCKED"
+                    else "SUCCEEDED",
+                    gate_results=(
+                        GateResult(
+                            gate_id="UNIVERSE_DATA",
+                            status="PASSED" if universe.disposition == "FROZEN" else "FAILED",
+                        ),
+                    ),
+                    reasons=universe.reasons,
+                )
+                original_business_result = business_outcome_result(
+                    execution_case.expected_external_result
+                )
+                if original_business_result.status != "SUCCEEDED":
+                    business_result = original_business_result
+                    result = execution_case.expected_external_result.model_copy(
+                        update={"universe": universe}
+                    )
     ledger.record_stage_result(
         connection,
         case=execution_case,

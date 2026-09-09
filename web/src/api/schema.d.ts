@@ -1205,6 +1205,7 @@ export interface components {
             stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
             summary: string;
+            universe?: components["schemas"]["UniverseOutcome"] | null;
         };
         /** FlowLedgerKey */
         FlowLedgerKey: {
@@ -2830,6 +2831,179 @@ export interface components {
             hard_ratio: string;
             /** Target Ratio */
             target_ratio: string;
+        };
+        /** UniverseDataManifest */
+        UniverseDataManifest: {
+            /** Entries */
+            entries: components["schemas"]["UniverseManifestEntry"][];
+            /** Version Id */
+            version_id: string;
+        };
+        /** UniverseEvidence */
+        UniverseEvidence: {
+            /** Acquired At */
+            acquired_at: string | null;
+            /**
+             * Authority
+             * @enum {string}
+             */
+            authority: "EXCHANGE" | "BROKER" | "CERTIFIED_DELIVERY" | "EXPLORATORY";
+            /** Complete */
+            complete: boolean;
+            /**
+             * Complete Through
+             * Format: date-time
+             */
+            complete_through: string;
+            /** Conflict */
+            conflict: boolean;
+            /** Content */
+            content: string;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Fact Effective At
+             * Format: date-time
+             */
+            fact_effective_at: string;
+            /** License Id */
+            license_id: string;
+            /**
+             * License Valid From
+             * Format: date-time
+             */
+            license_valid_from: string;
+            /**
+             * License Valid Until
+             * Format: date-time
+             */
+            license_valid_until: string;
+            /** Licensed Purposes */
+            licensed_purposes: ("SYNTHETIC" | "HISTORICAL_RECONSTRUCTED" | "REAL_CANDIDATE")[];
+            /** Retention Permitted */
+            retention_permitted: boolean;
+            /** Source */
+            source: string;
+            /** Source Observed At */
+            source_observed_at: string | null;
+            /** Source Published At */
+            source_published_at: string | null;
+            /** Source Version */
+            source_version: string;
+            /** Validated At */
+            validated_at: string | null;
+        };
+        /** UniverseExclusion */
+        UniverseExclusion: {
+            /** Reasons */
+            reasons: string[];
+            /** Security Id */
+            security_id: string;
+        };
+        /** UniverseManifestEntry */
+        UniverseManifestEntry: {
+            evidence: components["schemas"]["UniverseEvidence"] | null;
+            /** Field Family */
+            field_family: string;
+            /** Primary Source */
+            primary_source: string;
+            /**
+             * Requirement
+             * @enum {string}
+             */
+            requirement: "REQUIRED" | "EXPLORATORY";
+            /** Semantics Version */
+            semantics_version: string;
+            substitution?: components["schemas"]["UniverseSourceSubstitution"] | null;
+        };
+        /** UniverseOutcome */
+        UniverseOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Board Qualifications
+             * @default []
+             */
+            board_qualifications: components["schemas"]["QualificationRecord"][];
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "FROZEN" | "DATA_FAILED" | "BLOCKED";
+            /** Exclusions */
+            exclusions: components["schemas"]["UniverseExclusion"][];
+            manifest?: components["schemas"]["UniverseDataManifest"] | null;
+            /** Members */
+            members: string[];
+            policy: components["schemas"]["UniversePolicy"];
+            /**
+             * Qualification Scope
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /** Reasons */
+            reasons: string[];
+        };
+        /** UniversePolicy */
+        UniversePolicy: {
+            /** Maximum Participation */
+            maximum_participation: string;
+            /** Minimum Listing Months */
+            minimum_listing_months: number;
+            /** Minimum Median Turnover */
+            minimum_median_turnover: string;
+            /** Turnover Sessions */
+            turnover_sessions: number;
+            /** Version Id */
+            version_id: string;
+        };
+        /** UniverseSourceSubstitution */
+        UniverseSourceSubstitution: {
+            /** Alternate Source */
+            alternate_source: string;
+            /** Alternate Version */
+            alternate_version: string;
+            authority_evidence: components["schemas"]["UniverseEvidence"];
+            /** Certification Id */
+            certification_id: string;
+            /** Checks */
+            checks: ("SEMANTICS" | "LICENSE" | "COMPLETENESS" | "REPLAY" | "SHADOW")[];
+            /** Field Family */
+            field_family: string;
+            /** Manifest Version */
+            manifest_version: string;
+            /** Primary Source */
+            primary_source: string;
+            /** Purpose */
+            purpose: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "PRIMARY_UNAVAILABLE" | "PRIMARY_CONFLICT";
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Semantics Version */
+            semantics_version: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
         };
         /** UserFact */
         UserFact: {

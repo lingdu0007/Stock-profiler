@@ -27,6 +27,21 @@ files to add to Git.
 
 ## Frozen Recovery
 
+The `universe.1.0.0` frozen-case contract accepts an explicit synthetic monthly
+universe command. Its policy, calendar, account scope, security inventory,
+dated market window, legal acquisition cost and source manifest are input
+evidence, not environment defaults. The host computes membership and exclusion
+reasons; framework output cannot supply them. Required evidence failures remain
+visible as a whole-month data failure.
+
+Evidence retains original content and its hash, independent availability
+clocks, license purpose and validity, and any preregistered substitution proof.
+Extended-board permissions use saved, cutoff-visible scoped qualifications.
+These are D0 contract checks, not provider certification or live authorization.
+All universe reports remain non-actionable, including simulated real-candidate
+purpose cases. The first committed scope/purpose/month snapshot is immutable;
+changed retry identities or later evidence do not replace it.
+
 `stock-profiler decision-case-replay --business-identity <identity>` reuses the
 saved business mapping and frozen snapshot. For an older unmapped Run whose
 build provenance differs, add `--recovery-case /absolute/path/original-case.json`
