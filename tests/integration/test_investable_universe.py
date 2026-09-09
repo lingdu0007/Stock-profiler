@@ -482,21 +482,7 @@ def test_alternate_source_requires_preregistered_equivalence(
     authority = deepcopy(entry["evidence"])
     entry["evidence"].update(source="fictional-alternate-731", authority="CERTIFIED_DELIVERY")
     if certified:
-        entry["substitution"] = {
-            "certification_id": "synthetic-substitution-731",
-            "registered_at": "2042-04-01T00:00:00+08:00",
-            "valid_until": "2042-12-01T00:00:00+08:00",
-            "primary_source": entry["primary_source"],
-            "alternate_source": "fictional-alternate-731",
-            "alternate_version": "synthetic-source-v1",
-            "field_family": entry["field_family"],
-            "manifest_version": payload["universe"]["manifest"]["version_id"],
-            "semantics_version": entry["semantics_version"],
-            "purpose": "SYNTHETIC",
-            "reason": "PRIMARY_UNAVAILABLE",
-            "checks": ["SEMANTICS", "LICENSE", "COMPLETENESS", "REPLAY", "SHADOW"],
-            "authority_evidence": authority,
-        }
+        entry["substitution"] = substitution(payload["universe"]["manifest"], entry, authority)
     report = run_frozen_decision_case(
         migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
     ).report
@@ -801,7 +787,19 @@ def test_certified_delivery_cannot_override_authoritative_evidence_restrictions(
     else:
         authority["licensed_purposes"] = ["HISTORICAL_RECONSTRUCTED"]
     entry["evidence"].update(source="fictional-alternate-731", authority="CERTIFIED_DELIVERY")
-    entry["substitution"] = {
+    entry["substitution"] = substitution(payload["universe"]["manifest"], entry, authority)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.disposition == "DATA_FAILED"
+
+
+def substitution(
+    source_manifest: dict[str, Any], entry: dict[str, Any], authority: dict[str, Any]
+) -> dict[str, Any]:
+    return {
         "certification_id": "synthetic-substitution-731",
         "registered_at": "2042-04-01T00:00:00+08:00",
         "valid_until": "2042-12-01T00:00:00+08:00",
@@ -809,19 +807,13 @@ def test_certified_delivery_cannot_override_authoritative_evidence_restrictions(
         "alternate_source": "fictional-alternate-731",
         "alternate_version": "synthetic-source-v1",
         "field_family": entry["field_family"],
-        "manifest_version": payload["universe"]["manifest"]["version_id"],
+        "manifest_version": source_manifest["version_id"],
         "semantics_version": entry["semantics_version"],
         "purpose": "SYNTHETIC",
         "reason": "PRIMARY_UNAVAILABLE",
         "checks": ["SEMANTICS", "LICENSE", "COMPLETENESS", "REPLAY", "SHADOW"],
         "authority_evidence": authority,
     }
-    execution = run_frozen_decision_case(
-        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
-    )
-    assert execution.report is not None
-    assert execution.report.result.universe is not None
-    assert execution.report.result.universe.disposition == "DATA_FAILED"
 
 
 @pytest.mark.parametrize("defect", ["account", "duplicate-board", "missing-calendar"])
@@ -887,3 +879,21 @@ def test_listing_age_uses_natural_month_boundaries_without_date_overflow(
     assert result.members == (("XQZ-UNIVERSE-731",) if months == 6 else ())
     if months != 6:
         assert result.exclusions[0].reasons == ("LISTING_IMMATURE",)
+
+
+def test_every_turnover_value_requires_a_distinct_completed_calendar_session(
+    migrated_settings: Settings,
+) -> None:
+    payload = universe_payload(migrated_settings)
+    command = payload["universe"]
+    command["policy"]["turnover_sessions"] = 31
+    command["securities"][0]["daily_turnover"] = ["20000"] * 31
+    command["securities"][0]["turnover_dates"] = [f"2042-05-{day:02}" for day in range(1, 31)]
+    command["manifest"] = manifest(command)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.disposition == "DATA_FAILED"
+    assert "MARKET_WINDOW_INCOMPLETE" in execution.report.result.universe.reasons

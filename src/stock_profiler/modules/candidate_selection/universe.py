@@ -325,7 +325,9 @@ def freeze_universe(
             for day in command.calendar.days
             if day.close_at is not None and day.close_at <= command.cutoff_at
         )[-command.policy.turnover_sessions :]
-        if any(security.turnover_dates != sessions for security in command.securities):
+        if len(sessions) != command.policy.turnover_sessions or any(
+            security.turnover_dates != sessions for security in command.securities
+        ):
             failure_reasons.append("MARKET_WINDOW_INCOMPLETE")
     with localcontext(Context(prec=38)):
         for security in command.securities:
