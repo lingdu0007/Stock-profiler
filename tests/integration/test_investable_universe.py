@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 from alembic import command as migration
 from alembic.config import Config
+from hypothesis import HealthCheck, given
+from hypothesis import settings as hypothesis_settings
+from hypothesis import strategies as st
 from test_scoped_qualification import (
     GovernanceClock,
     case_payload,
@@ -413,10 +418,13 @@ def test_universe_needs_account_local_legality_and_dated_market_evidence(
     assert result["members"] == []
 
 
-@pytest.mark.parametrize("late_suspension", [False, True])
+@pytest.mark.parametrize(
+    "qualification_state",
+    ["valid", "late-suspension", "suspended", "scope-mismatch", "no-rights", "conflicting-clock"],
+)
 @pytest.mark.parametrize("board", ["CHINEXT", "STAR", "BSE"])
 def test_each_extended_board_uses_its_own_saved_qualification(
-    migrated_settings: Settings, board: str, late_suspension: bool
+    migrated_settings: Settings, board: str, qualification_state: str
 ) -> None:
     payload = universe_payload(migrated_settings)
     command = payload["universe"]
@@ -451,26 +459,51 @@ def test_each_extended_board_uses_its_own_saved_qualification(
     assert granted.report is not None
     assert granted.report.result.governance is not None
     assert granted.report.result.governance.disposition == "APPROVED"
-    if late_suspension:
+    if qualification_state in {"late-suspension", "suspended", "conflicting-clock"}:
         suspend = deepcopy(grant)
         suspend.update(action="SUSPEND", previous_decision_id=granted.decision_event_id)
         suspend["evidence"].update(kind="REQUIRED_PREMISE_UNVERIFIABLE")
         suspended = run_frozen_decision_case(
             migrated_settings,
             case_payload(migrated_settings, f"suspend-{board}", suspend, contract_version="5.0.0"),
-            clock=GovernanceClock("2042-06-01T00:00:00Z"),
+            clock=GovernanceClock(
+                "2042-06-01T00:00:00Z"
+                if qualification_state != "suspended"
+                else "2042-05-29T00:00:00Z"
+            ),
         )
         assert suspended.report is not None
         assert suspended.report.result.governance is not None
         assert suspended.report.result.governance.disposition == "APPROVED"
+        if qualification_state == "conflicting-clock":
+            alert = deepcopy(grant)
+            alert.update(action="ALERT", previous_decision_id=suspended.decision_event_id)
+            alert["evidence"].update(kind="DIAGNOSTIC_ALERT")
+            alerted = run_frozen_decision_case(
+                migrated_settings,
+                case_payload(migrated_settings, f"alert-{board}", alert, contract_version="5.0.0"),
+                clock=GovernanceClock("2042-05-29T00:00:00Z"),
+            )
+            assert alerted.report is not None
+            assert alerted.report.result.governance is not None
+            assert alerted.report.result.governance.disposition == "APPROVED"
     command["board_qualifications"] = [{"scope": board_scope, "version": bundle}]
+    if qualification_state == "scope-mismatch":
+        board_scope["target"] = "SYNTHETIC_OTHER_TARGET"
+    elif qualification_state == "no-rights":
+        command["entitlements"] = []
+        command["manifest"] = manifest(command)
     execution = run_frozen_decision_case(
         migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
     )
     assert execution.report is not None
     result = execution.report.result.model_dump(mode="json")["universe"]
-    assert result["members"] == ["XQZ-UNIVERSE-731"]
-    assert result["board_qualifications"][0]["decision_id"] == granted.decision_event_id
+    if qualification_state in {"valid", "late-suspension"}:
+        assert result["members"] == ["XQZ-UNIVERSE-731"]
+        assert result["board_qualifications"][0]["decision_id"] == granted.decision_event_id
+    else:
+        assert result["members"] == []
+        assert "BOARD_NOT_ENABLED" in result["exclusions"][0]["reasons"]
 
 
 @pytest.mark.parametrize("certified", [True, False])
@@ -769,7 +802,7 @@ def test_intraday_market_snapshot_cannot_prove_completed_session_turnover(
     assert "CLOSING_MARKET_EVIDENCE_REQUIRED" in execution.report.result.universe.reasons
 
 
-@pytest.mark.parametrize("defect", ["stale", "license-expired", "license-purpose"])
+@pytest.mark.parametrize("defect", ["stale", "license-expired", "license-purpose", "authority"])
 def test_certified_delivery_cannot_override_authoritative_evidence_restrictions(
     migrated_settings: Settings, defect: str
 ) -> None:
@@ -784,8 +817,10 @@ def test_certified_delivery_cannot_override_authoritative_evidence_restrictions(
         authority["fact_effective_at"] = "2042-04-30T15:00:00+08:00"
     elif defect == "license-expired":
         authority["license_valid_until"] = "2042-04-30T15:00:00+08:00"
-    else:
+    elif defect == "license-purpose":
         authority["licensed_purposes"] = ["HISTORICAL_RECONSTRUCTED"]
+    else:
+        authority["authority"] = "EXPLORATORY"
     entry["evidence"].update(source="fictional-alternate-731", authority="CERTIFIED_DELIVERY")
     entry["substitution"] = substitution(payload["universe"]["manifest"], entry, authority)
     execution = run_frozen_decision_case(
@@ -897,3 +932,37 @@ def test_every_turnover_value_requires_a_distinct_completed_calendar_session(
     assert execution.report.result.universe is not None
     assert execution.report.result.universe.disposition == "DATA_FAILED"
     assert "MARKET_WINDOW_INCOMPLETE" in execution.report.result.universe.reasons
+
+
+@hypothesis_settings(
+    max_examples=8,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@given(budget=st.decimals(min_value="0", max_value="299.99", places=2))
+def test_lowering_budget_never_admits_an_unaffordable_legal_unit(
+    migrated_settings: Settings, budget: Decimal
+) -> None:
+    with TemporaryDirectory(prefix="synthetic-universe-budget-") as directory:
+        root = Path(directory)
+        settings = migrated_settings.model_copy(
+            update={
+                "app_database_url": f"sqlite:///{root / 'application.sqlite3'}",
+                "m_agent_run_store_path": root / "framework.sqlite3",
+            }
+        )
+        configuration = Config("alembic.ini")
+        configuration.set_main_option("sqlalchemy.url", settings.app_database_url)
+        migration.upgrade(configuration, "head")
+        payload = universe_payload(settings)
+        payload["universe"]["securities"][0]["available_budget"] = str(budget)
+        payload["universe"]["manifest"] = manifest(payload["universe"])
+        execution = run_frozen_decision_case(
+            settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+        )
+        assert execution.report is not None
+        outcome = execution.report.result.universe
+        assert outcome is not None
+        assert outcome.disposition == "FROZEN"
+        assert outcome.members == ()
+        assert outcome.exclusions[0].reasons == ("UNAFFORDABLE_UNIT",)

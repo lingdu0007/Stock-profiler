@@ -263,8 +263,24 @@ def freeze_universe(
                 if entry.field_family in payloads:
                     failure_reasons.append("REQUIRED_DATA_DOWNGRADED")
                 continue
+            if entry.field_family in payloads:
+                authority = (
+                    "BROKER"
+                    if entry.field_family in {"ENTITLEMENTS", "AFFORDABILITY"}
+                    else "EXCHANGE"
+                )
+                failure_reasons.extend(
+                    entry.failures(
+                        cutoff=command.cutoff_at,
+                        expected=payloads[entry.field_family],
+                        authority=authority,
+                        manifest_version=command.manifest.version_id,
+                        purpose=command.purpose,
+                    )
+                )
+            else:
+                failure_reasons.append("UNSUPPORTED_REQUIRED_FAMILY")
             if entry.evidence is None:
-                failure_reasons.append("REQUIRED_EVIDENCE_MISSING")
                 continue
             proofs = (entry.evidence,) + (
                 (entry.substitution.authority_evidence,) if entry.substitution else ()
@@ -296,23 +312,6 @@ def freeze_universe(
                     )
                 ):
                     failure_reasons.append("CLOSING_MARKET_EVIDENCE_REQUIRED")
-            if entry.field_family in payloads:
-                authority = (
-                    "BROKER"
-                    if entry.field_family in {"ENTITLEMENTS", "AFFORDABILITY"}
-                    else "EXCHANGE"
-                )
-                failure_reasons.extend(
-                    entry.failures(
-                        cutoff=command.cutoff_at,
-                        expected=payloads[entry.field_family],
-                        authority=authority,
-                        manifest_version=command.manifest.version_id,
-                        purpose=command.purpose,
-                    )
-                )
-            else:
-                failure_reasons.append("UNSUPPORTED_REQUIRED_FAMILY")
     if any(
         len(security.daily_turnover) != command.policy.turnover_sessions
         or any(not amount.is_finite() or amount < 0 for amount in security.daily_turnover)

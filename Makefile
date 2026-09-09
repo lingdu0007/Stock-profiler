@@ -36,6 +36,7 @@ type-check:
 
 test:
 	uv run pytest
+	uv run coverage report --include='*/candidate_selection/*' --fail-under=100
 	$(PNPM) test
 	$(PNPM) test:e2e
 

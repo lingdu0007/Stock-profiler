@@ -31,6 +31,7 @@ jobs:
       - run: uv run ruff format --check src tests scripts migrations
       - run: uv run mypy src tests
       - run: uv run pytest
+      - run: uv run coverage report --include='*/candidate_selection/*' --fail-under=100
       - name: Replay protection contracts and remove guards in isolated sources
         run: make protection-contracts CONTRACT_OUTPUT="$RUNNER_TEMP/protection-contracts.json"
       - run: STOCK_PROFILER_PROCESS_ROLE=migrate uv run alembic upgrade head
