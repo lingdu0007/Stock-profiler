@@ -36,5 +36,10 @@ it.each(["FROZEN", "ABSTAINED", "DATA_FAILED"] as const)(
     expect(section).toHaveTextContent("Recommendation coverage denominator");
     expect(section).toHaveTextContent("2042-05-30T23:59:59+08:00");
     if (disposition !== "FROZEN") expect(section).toHaveTextContent("No frozen members");
+    if (disposition !== "DATA_FAILED") {
+      expect(section).toHaveTextContent("Screening contributions (1)");
+      expect(section).toHaveTextContent("synthetic-cash-signal");
+      expect(section).toHaveTextContent("1.25");
+    }
   }
 );

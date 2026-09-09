@@ -2679,6 +2679,25 @@ export interface components {
              */
             transferable_at: string;
         };
+        /** ScreeningContribution */
+        ScreeningContribution: {
+            /** Positive Contributions */
+            positive_contributions: {
+                [key: string]: string;
+            };
+            /** Positive Score */
+            positive_score: string;
+            /** Security Id */
+            security_id: string;
+            /** Signals */
+            signals: components["schemas"]["TransformedSignal"][];
+            /** Terminal Contributions */
+            terminal_contributions: {
+                [key: string]: string;
+            };
+            /** Terminal Score */
+            terminal_score: string;
+        };
         /** ScreeningRank */
         ScreeningRank: {
             /** Composite Score */
@@ -2726,6 +2745,11 @@ export interface components {
             reasons: string[];
             /** Scan */
             scan: components["schemas"]["SelectionScan"][];
+            /**
+             * Screening Audit
+             * @default []
+             */
+            screening_audit: components["schemas"]["ScreeningContribution"][];
             /** Universe Event Id */
             universe_event_id: string;
         };
@@ -2926,6 +2950,17 @@ export interface components {
             /** Reasons */
             reasons: string[];
             task_snapshot: components["schemas"]["FrozenTask"];
+        };
+        /** TransformedSignal */
+        TransformedSignal: {
+            /** Percentile */
+            percentile: string;
+            /** Raw */
+            raw: string | null;
+            /** Signal Id */
+            signal_id: string;
+            /** State */
+            state: string;
         };
         /** TwoThresholdBudget */
         TwoThresholdBudget: {

@@ -50,6 +50,26 @@ export function selectionReport(
                   reasons: []
                 }
               ],
+        screening_audit:
+          disposition === "DATA_FAILED"
+            ? []
+            : [
+                {
+                  security_id: "XQZ-SELECT-0",
+                  signals: [
+                    {
+                      signal_id: "synthetic-cash-signal",
+                      raw: "1.25",
+                      state: "OBSERVED",
+                      percentile: "75"
+                    }
+                  ],
+                  positive_contributions: { intercept: "0", "synthetic-cash-signal": "2.5" },
+                  terminal_contributions: { intercept: "0", "synthetic-cash-signal": "1.5" },
+                  positive_score: "2.5",
+                  terminal_score: "1.5"
+                }
+              ],
         population: {
           scheduled_monthly: true,
           valid_monthly: disposition !== "DATA_FAILED",

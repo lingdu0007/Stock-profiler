@@ -28,6 +28,8 @@ for (const width of [1280, 375]) {
     await expect(selection.getByText("XQZ-SELECT-11: 51", { exact: true })).toBeVisible();
     await selection.getByText("Diversification scan (1)").click();
     await expect(selection).toContainText("Included during scan");
+    await selection.getByText("Screening contributions (1)").click();
+    await expect(selection.getByText("1.25; OBSERVED; 75")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width
     );

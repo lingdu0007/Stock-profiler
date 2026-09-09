@@ -10,12 +10,20 @@ from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, Field
 
+from stock_profiler.modules.candidate_selection.screening import (
+    ScreeningContribution,
+    ScreeningSnapshot,
+    replay_screening,
+)
 from stock_profiler.modules.candidate_selection.universe import (
     UniverseCommand,
     UniverseContract,
     UniverseOutcome,
 )
-from stock_profiler.modules.candidate_selection.universe_evidence import UniverseEvidence
+from stock_profiler.modules.candidate_selection.universe_evidence import (
+    UniverseDataManifest,
+    UniverseEvidence,
+)
 
 
 class SelectionPolicy(UniverseContract):
@@ -55,6 +63,50 @@ class SelectionCommand(UniverseContract):
     strategy_version: str = Field(min_length=1)
     rows: tuple[ScreeningRow, ...]
     evidence: UniverseEvidence | None = None
+    manifest: UniverseDataManifest | None = None
+    screening: ScreeningSnapshot | None = None
+
+    def data_payloads(self) -> dict[str, object]:
+        rows = self.model_dump(mode="json")["rows"]
+        payloads: dict[str, object] = {
+            "industry": {
+                "version": self.industry_version,
+                "rows": [
+                    {"security_id": row["security_id"], "industry": row["industry"]} for row in rows
+                ],
+            },
+            "capitalization": [
+                {
+                    "security_id": row["security_id"],
+                    "float_capitalization": row["float_capitalization"],
+                }
+                for row in rows
+            ],
+            "adjusted_returns": {
+                "version": self.adjustment_version,
+                "rows": [
+                    {key: row[key] for key in ("security_id", "return_dates", "adjusted_returns")}
+                    for row in rows
+                ],
+            },
+        }
+        if self.screening is not None:
+            for definition in self.screening.strategy.signals:
+                payloads[f"signal:{definition.signal_id}"] = {
+                    "semantics_version": definition.semantics_version,
+                    "rows": [
+                        {
+                            "security_id": row.security_id,
+                            "values": [
+                                value.model_dump(mode="json")
+                                for value in row.signals
+                                if value.signal_id == definition.signal_id
+                            ],
+                        }
+                        for row in self.screening.observations
+                    ],
+                }
+        return payloads
 
 
 class ScreeningRank(UniverseContract):
@@ -92,6 +144,7 @@ class SelectionOutcome(UniverseContract):
     scan: tuple[SelectionScan, ...]
     population: SelectionPopulation
     reasons: tuple[str, ...]
+    screening_audit: tuple[ScreeningContribution, ...] = ()
     qualification_scope: Literal["D0_SYNTHETIC_CONTRACT_ONLY"] = "D0_SYNTHETIC_CONTRACT_ONLY"
     actionable: Literal[False] = False
 
@@ -103,6 +156,15 @@ def freeze_selection(
     *,
     prerequisite: str = "SUCCEEDED",
 ) -> SelectionOutcome:
+    if (
+        prerequisite == "SUCCEEDED"
+        and source is not None
+        and source.cutoff_at == command.cutoff_at
+        and source.purpose == command.purpose
+        and universe is not None
+        and universe.disposition == "BLOCKED"
+    ):
+        prerequisite = "BLOCKED"
     if prerequisite != "SUCCEEDED":
         return SelectionOutcome(
             disposition="SYSTEM_FAILED" if prerequisite == "FAILED" else "BLOCKED",
@@ -161,10 +223,55 @@ def freeze_selection(
             failures.append("ADJUSTED_RETURN_INVALID")
         if len(set(row.adjusted_returns)) < 2:
             failures.append("CORRELATION_UNDEFINED")
+    closes = (
+        tuple(
+            day.close_at
+            for day in source.calendar.days
+            if day.close_at is not None and day.close_at <= command.cutoff_at
+        )
+        if source is not None and source.calendar is not None
+        else ()
+    )
+    if command.manifest is None:
+        failures.append("SELECTION_MANIFEST_REQUIRED")
+    else:
+        payloads = command.data_payloads()
+        families = [entry.field_family for entry in command.manifest.entries]
+        if len(families) != len(set(families)) or set(families) != set(payloads):
+            failures.append("SELECTION_MANIFEST_COVERAGE_FAILED")
+        for entry in command.manifest.entries:
+            if entry.field_family not in payloads:
+                continue
+            if entry.requirement != "REQUIRED":
+                failures.append("REQUIRED_SELECTION_DATA_DOWNGRADED")
+            failures.extend(
+                entry.failures(
+                    cutoff=command.cutoff_at,
+                    expected=payloads[entry.field_family],
+                    authority="CERTIFIED_DELIVERY"
+                    if entry.field_family.startswith("signal:")
+                    else "EXCHANGE",
+                    manifest_version=command.manifest.version_id,
+                    purpose=command.purpose,
+                )
+            )
+            if entry.field_family in {"capitalization", "adjusted_returns"} and closes:
+                proofs = (
+                    entry.evidence,
+                    entry.substitution.authority_evidence if entry.substitution else None,
+                )
+                for proof in proofs:
+                    if proof is not None:
+                        if not _available_after_close(proof, max(closes)):
+                            failures.append("SELECTION_MARKET_CLOSE_NOT_OBSERVED")
+                        if proof.fact_effective_at < max(closes):
+                            failures.append("SELECTION_FACT_STALE")
     if command.evidence is None:
         failures.append("SELECTION_EVIDENCE_REQUIRED")
     else:
-        if command.evidence.authority != "EXCHANGE":
+        if closes and not _available_after_close(command.evidence, max(closes)):
+            failures.append("SELECTION_MARKET_CLOSE_NOT_OBSERVED")
+        if command.evidence.authority != "CERTIFIED_DELIVERY":
             failures.append("SELECTION_SOURCE_NOT_AUTHORITATIVE")
         if command.evidence.fact_effective_at.astimezone(ZoneInfo("Asia/Shanghai")).date() != (
             command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
@@ -181,6 +288,8 @@ def freeze_selection(
                         "adjustment_version",
                         "screening_snapshot_id",
                         "strategy_version",
+                        "policy",
+                        "screening",
                     },
                 ),
                 command.purpose,
@@ -203,6 +312,41 @@ def freeze_selection(
             ),
             reasons=tuple(dict.fromkeys(failures)),
         )
+    audit: tuple[ScreeningContribution, ...] = ()
+    model_failures: tuple[str, ...] = ("SCREENING_SNAPSHOT_REQUIRED",)
+    if command.screening is not None:
+        audit, model_failures = replay_screening(
+            command.screening,
+            cutoff=command.cutoff_at,
+            policy=command.policy.model_dump(mode="json"),
+            strategy_version=command.strategy_version,
+            snapshot_id=command.screening_snapshot_id,
+            industries={row.security_id: row.industry for row in command.rows},
+        )
+        by_id = {row.security_id: row for row in audit}
+        if not model_failures and any(
+            row.positive_score != by_id[row.security_id].positive_score
+            or row.terminal_score != by_id[row.security_id].terminal_score
+            for row in command.rows
+        ):
+            model_failures = ("SCREENING_SCORE_REPLAY_MISMATCH",)
+    if model_failures:
+        return SelectionOutcome(
+            disposition="SYSTEM_FAILED",
+            cutoff_at=command.cutoff_at,
+            universe_event_id=command.universe_event_id,
+            policy=command.policy,
+            members=(),
+            ranking=(),
+            scan=(),
+            population=SelectionPopulation(
+                valid_monthly=False,
+                recommendation_coverage_denominator=False,
+                selection_pass_denominator=False,
+                availability_failure="SYSTEM",
+            ),
+            reasons=model_failures,
+        )
     with localcontext(Context(prec=38)):
         positive = _percentiles(command.rows, "positive_score")
         terminal = _percentiles(command.rows, "terminal_score")
@@ -219,9 +363,9 @@ def freeze_selection(
             ScreeningRank(
                 security_id=security_id,
                 rank=index + 1,
-                positive_percentile=positive[security_id],
-                terminal_percentile=terminal[security_id],
-                composite_score=scores[security_id],
+                positive_percentile=_project_fraction(positive[security_id]),
+                terminal_percentile=_project_fraction(terminal[security_id]),
+                composite_score=_project_fraction(scores[security_id]),
             )
             for index, security_id in enumerate(sorted(scores, key=lambda key: (-scores[key], key)))
         )
@@ -278,22 +422,41 @@ def freeze_selection(
                 selection_pass=None if formed else False,
             ),
             reasons=() if formed else ("CONSTRAINTS_PREVENT_COMPLETE_COHORT",),
+            screening_audit=audit,
         )
 
 
 def _percentiles(
     rows: tuple[ScreeningRow, ...], field: Literal["positive_score", "terminal_score"]
-) -> dict[str, Decimal]:
+) -> dict[str, Fraction]:
     values = [getattr(row, field) for row in rows]
     return {
-        row.security_id: Decimal(
+        row.security_id: Fraction(
             sum(value < getattr(row, field) for value in values)
-            + (sum(value == getattr(row, field) for value in values) - 1) / 2
+            + Fraction(sum(value == getattr(row, field) for value in values) - 1, 2)
         )
         * 100
         / max(1, len(rows) - 1)
         for row in rows
     }
+
+
+def _project_fraction(value: Fraction) -> Decimal:
+    return Decimal(value.numerator) / Decimal(value.denominator)
+
+
+def _available_after_close(evidence: UniverseEvidence, close: AwareDatetime) -> bool:
+    clocks = (
+        evidence.source_published_at,
+        evidence.source_observed_at,
+        evidence.acquired_at,
+        evidence.validated_at,
+    )
+    return all(instant is not None and instant >= close for instant in clocks) and (
+        evidence.source_published_at is not None
+        and evidence.source_observed_at is not None
+        and evidence.source_published_at <= evidence.source_observed_at
+    )
 
 
 def _correlation_exceeds(

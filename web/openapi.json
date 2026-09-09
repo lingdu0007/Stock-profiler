@@ -6558,6 +6558,58 @@
         "title": "SaleFundingTerms",
         "type": "object"
       },
+      "ScreeningContribution": {
+        "additionalProperties": false,
+        "properties": {
+          "positive_contributions": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Positive Contributions",
+            "type": "object"
+          },
+          "positive_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Positive Score",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/TransformedSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "terminal_contributions": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Terminal Contributions",
+            "type": "object"
+          },
+          "terminal_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Terminal Score",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "signals",
+          "positive_contributions",
+          "terminal_contributions",
+          "positive_score",
+          "terminal_score"
+        ],
+        "title": "ScreeningContribution",
+        "type": "object"
+      },
       "ScreeningRank": {
         "additionalProperties": false,
         "properties": {
@@ -6652,6 +6704,14 @@
               "$ref": "#/components/schemas/SelectionScan"
             },
             "title": "Scan",
+            "type": "array"
+          },
+          "screening_audit": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ScreeningContribution"
+            },
+            "title": "Screening Audit",
             "type": "array"
           },
           "universe_event_id": {
@@ -7141,6 +7201,39 @@
         },
         "required": ["allowed", "task_snapshot", "qualification_snapshot", "reasons", "checked_at"],
         "title": "TaskUsage",
+        "type": "object"
+      },
+      "TransformedSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "percentile": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Percentile",
+            "type": "string"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "signal_id": {
+            "title": "Signal Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": ["signal_id", "raw", "state", "percentile"],
+        "title": "TransformedSignal",
         "type": "object"
       },
       "TwoThresholdBudget": {

@@ -897,9 +897,11 @@ def _commit_framework_result(
                 business_result = StageResult(
                     phase="BUSINESS_DECISION",
                     status="FAILED"
-                    if selection.disposition == "DATA_FAILED"
+                    if selection.disposition in {"DATA_FAILED", "SYSTEM_FAILED"}
                     else "ABSTAINED"
                     if selection.disposition == "ABSTAINED"
+                    else "REJECTED"
+                    if selection.disposition == "BLOCKED"
                     else "SUCCEEDED",
                     gate_results=(),
                     reasons=selection.reasons,

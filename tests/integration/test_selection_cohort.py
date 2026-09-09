@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from copy import deepcopy
 from decimal import Decimal
 from hashlib import sha256
@@ -15,14 +16,18 @@ from test_scoped_qualification import GovernanceClock, case_payload
 from stock_profiler.bootstrap import decision_cases as case_bootstrap
 from stock_profiler.bootstrap.decision_cases import (
     correct_default_frozen_decision_case,
+    replay_default_frozen_decision_case,
     run_frozen_decision_case,
 )
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.entrypoints.cli import main
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import FrameworkRunResult
 
 
-def selection_payload(settings: Settings, *, security_count: int = 12) -> dict[str, Any]:
+def selection_payload(
+    settings: Settings, *, security_count: int = 12, universe_blocked: bool = False
+) -> dict[str, Any]:
     source = universe_payload(settings)
     universe = source["universe"]
     template = universe["securities"][0]
@@ -32,6 +37,14 @@ def selection_payload(settings: Settings, *, security_count: int = 12) -> dict[s
     ]
     universe["security_inventory"] = [row["security_id"] for row in universe["securities"]]
     universe["manifest"] = manifest(universe)
+    if universe_blocked:
+        rejected = json.loads(
+            (
+                Path(__file__).parents[1] / "fixtures/synthetic/result-families/input-rejected.json"
+            ).read_text()
+        )
+        source["input"] = rejected["input"]
+        source["expected_external_result"] = rejected["expected_external_result"]
     source_run = run_frozen_decision_case(
         settings, source, clock=GovernanceClock("2042-05-30T16:02:00Z")
     )
@@ -83,13 +96,18 @@ def selection_payload(settings: Settings, *, security_count: int = 12) -> dict[s
 
 
 def bind_selection_evidence(
-    payload: dict[str, Any], universe: dict[str, Any] | None = None
+    payload: dict[str, Any],
+    universe: dict[str, Any] | None = None,
+    *,
+    rebuild_screening: bool = True,
 ) -> None:
     selection = payload["selection"]
     if universe is not None:
         evidence = deepcopy(manifest(universe)["entries"][0]["evidence"])
     else:
         evidence = selection["evidence"]
+    if rebuild_screening:
+        bind_screening_snapshot(selection)
     content = json.dumps(
         {
             key: selection[key]
@@ -99,6 +117,8 @@ def bind_selection_evidence(
                 "adjustment_version",
                 "screening_snapshot_id",
                 "strategy_version",
+                "policy",
+                "screening",
             )
         },
         sort_keys=True,
@@ -106,7 +126,151 @@ def bind_selection_evidence(
     )
     evidence["content"] = content
     evidence["content_sha256"] = sha256(content.encode()).hexdigest()
+    evidence["authority"] = "CERTIFIED_DELIVERY"
     selection["evidence"] = evidence
+    rows = selection["rows"]
+    payloads = {
+        "industry": {
+            "version": selection["industry_version"],
+            "rows": [
+                {"security_id": row["security_id"], "industry": row["industry"]} for row in rows
+            ],
+        },
+        "capitalization": [
+            {"security_id": row["security_id"], "float_capitalization": row["float_capitalization"]}
+            for row in rows
+        ],
+        "adjusted_returns": {
+            "version": selection["adjustment_version"],
+            "rows": [
+                {key: row[key] for key in ("security_id", "return_dates", "adjusted_returns")}
+                for row in rows
+            ],
+        },
+    }
+    for definition in selection["screening"]["strategy"]["signals"]:
+        payloads[f"signal:{definition['signal_id']}"] = {
+            "semantics_version": definition["semantics_version"],
+            "rows": [
+                {
+                    "security_id": row["security_id"],
+                    "values": [
+                        value
+                        for value in row["signals"]
+                        if value["signal_id"] == definition["signal_id"]
+                    ],
+                }
+                for row in selection["screening"]["observations"]
+            ],
+        }
+    entries = []
+    for family, value in payloads.items():
+        fact = deepcopy(evidence)
+        fact["authority"] = "CERTIFIED_DELIVERY" if family.startswith("signal:") else "EXCHANGE"
+        fact["content"] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        fact["content_sha256"] = sha256(fact["content"].encode()).hexdigest()
+        entries.append(
+            {
+                "field_family": family,
+                "requirement": "REQUIRED",
+                "semantics_version": f"synthetic-{family}-v1",
+                "primary_source": fact["source"],
+                "evidence": fact,
+                "substitution": None,
+            }
+        )
+    selection["manifest"] = {"version_id": "synthetic-selection-manifest-v1", "entries": entries}
+
+
+def bind_screening_snapshot(selection: dict[str, Any]) -> None:
+    def digest(value: object) -> str:
+        return sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    features = ("synthetic-positive-signal", "synthetic-terminal-signal")
+    strategy = {
+        "model_family": "RESTRICTED_ADDITIVE_BINARY",
+        "curve_basis": "PIECEWISE_LINEAR",
+        "positive_target": "synthetic-positive-label-v1",
+        "terminal_target": "synthetic-terminal-label-v1",
+        "signals": [
+            {
+                "signal_id": key,
+                "semantics_version": f"{key}-v1",
+                "population": "UNIVERSE",
+                "reverse": False,
+                "monotone": True,
+                "minimum_states": [],
+            }
+            for key in features
+        ],
+        "interactions": [],
+        "knots": ["0", "100"],
+        "maximum_interaction_rank": 1,
+        "selection_policy_sha256": digest(selection["policy"]),
+        "training_policy_version": "synthetic-training-window-v1",
+        "regularization_version": "synthetic-fixed-penalty-v1",
+        "minimum_mature_months": 2,
+        "rolling_mature_months": 4,
+        "training_weighting": "MONTH_EQUAL_STOCK_EQUAL",
+        "regularization_strength": "0.5",
+    }
+    strategy["version_id"] = f"sha256:{digest(strategy)}"
+    observations = [
+        {
+            "security_id": row["security_id"],
+            "industry": row["industry"] or "synthetic-missing",
+            "signals": [
+                {"signal_id": key, "raw": row[field], "state": "OBSERVED"}
+                for key, field in zip(features, ("positive_score", "terminal_score"), strict=True)
+            ],
+        }
+        for row in selection["rows"]
+    ]
+    heads = []
+    for key, field in zip(features, ("positive_score", "terminal_score"), strict=True):
+        values = [Decimal(row[field]) for row in selection["rows"] if row[field] is not None]
+        low, high = min(values, default=Decimal(0)), max(values, default=Decimal(0))
+        heads.append(
+            {
+                "intercept": "0",
+                "interactions": {},
+                "main_effects": {
+                    feature: [str(low), str(high)] if feature == key else ["0", "0"]
+                    for feature in features
+                },
+            }
+        )
+    training_members = [
+        {
+            "month": month,
+            "security_id": f"synthetic-training-{index}",
+            "positive_label": True,
+            "terminal_label": False,
+            "label_available_at": "2042-04-01T12:00:00+08:00",
+        }
+        for index, month in enumerate(("2041-01", "2041-02"))
+    ]
+    artifact = {
+        "strategy_sha256": digest(strategy),
+        "fitted_at": "2042-05-29T12:00:00+08:00",
+        "label_available_through": "2042-04-30T12:00:00+08:00",
+        "training_months": ["2041-01", "2041-02"],
+        "training_members_sha256": digest(training_members),
+        "training_members": training_members,
+        "environment_sha256": digest("synthetic-environment"),
+        "diagnostics_sha256": digest({"status": "CONVERGED", "kind": "SYNTHETIC_PARAMETERS"}),
+        "fit_diagnostics": {"status": "CONVERGED", "kind": "SYNTHETIC_PARAMETERS"},
+        "positive": heads[0],
+        "terminal": heads[1],
+    }
+    artifact["snapshot_id"] = f"sha256:{digest(artifact)}"
+    selection["strategy_version"] = strategy["version_id"]
+    selection["screening_snapshot_id"] = artifact["snapshot_id"]
+    selection["screening"] = {
+        "strategy": strategy,
+        "artifact": artifact,
+        "observations": observations,
+    }
 
 
 def test_selection_freezes_ranked_members_from_committed_universe(
@@ -136,6 +300,101 @@ def test_selection_freezes_ranked_members_from_committed_universe(
         )
         == execution
     )
+
+
+def test_mixed_head_composite_ties_use_security_identity(migrated_settings: Settings) -> None:
+    payload = selection_payload(migrated_settings)
+    positive = [2, 0, 1, *range(3, 12)]
+    terminal = [5, 8, *[value for value in range(12) if value not in {5, 8}]]
+    for row, left, right in zip(payload["selection"]["rows"], positive, terminal, strict=True):
+        row["positive_score"] = str(left)
+        row["terminal_score"] = str(right)
+    bind_selection_evidence(payload)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    ranks = {row.security_id: row for row in execution.report.result.selection.ranking}
+    assert ranks["XQZ-SELECT-000"].composite_score == ranks["XQZ-SELECT-001"].composite_score
+    assert ranks["XQZ-SELECT-000"].rank < ranks["XQZ-SELECT-001"].rank
+
+
+def test_selection_policy_is_bound_to_screening_evidence(migrated_settings: Settings) -> None:
+    payload = selection_payload(migrated_settings)
+    payload["selection"]["policy"]["positive_weight"] += 1
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    assert execution.report.result.selection.disposition == "DATA_FAILED"
+
+
+def test_blocked_universe_does_not_become_data_failure(migrated_settings: Settings) -> None:
+    payload = selection_payload(migrated_settings, universe_blocked=True)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    result = execution.report.result.selection
+    assert result.disposition == "BLOCKED"
+    assert result.population.availability_failure is None
+    assert not result.population.valid_monthly
+    assert any(
+        stage.phase == "BUSINESS_DECISION" and stage.status == "REJECTED"
+        for stage in execution.report.stage_results
+    )
+
+
+def test_preclose_selection_evidence_cannot_claim_complete_daily_returns(
+    migrated_settings: Settings,
+) -> None:
+    payload = selection_payload(migrated_settings)
+    for key in (
+        "fact_effective_at",
+        "source_published_at",
+        "source_observed_at",
+        "acquired_at",
+        "validated_at",
+    ):
+        payload["selection"]["evidence"][key] = "2042-05-30T09:00:00+08:00"
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    assert execution.report.result.selection.disposition == "DATA_FAILED"
+    assert "SELECTION_MARKET_CLOSE_NOT_OBSERVED" in execution.report.result.selection.reasons
+
+
+def test_selection_requires_field_specific_manifest(migrated_settings: Settings) -> None:
+    payload = selection_payload(migrated_settings)
+    payload["selection"].pop("manifest", None)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    assert execution.report.result.selection.disposition == "DATA_FAILED"
+    assert "SELECTION_MANIFEST_REQUIRED" in execution.report.result.selection.reasons
+
+
+def test_selection_requires_replayable_screening_snapshot(migrated_settings: Settings) -> None:
+    payload = selection_payload(migrated_settings)
+    payload["selection"]["screening"] = None
+    payload["selection"]["manifest"]["entries"] = [
+        entry
+        for entry in payload["selection"]["manifest"]["entries"]
+        if not entry["field_family"].startswith("signal:")
+    ]
+    evidence = payload["selection"]["evidence"]
+    content = json.loads(evidence["content"])
+    content["screening"] = None
+    evidence["content"] = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    evidence["content_sha256"] = sha256(evidence["content"].encode()).hexdigest()
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert execution.report is not None and execution.report.result.selection is not None
+    assert execution.report.result.selection.disposition == "SYSTEM_FAILED"
+    assert execution.report.result.selection.population.availability_failure == "SYSTEM"
 
 
 @pytest.mark.parametrize("gate", ["INDUSTRY_LIMIT", "CAPITALIZATION_LIMIT", "CORRELATION_LIMIT"])
@@ -423,10 +682,13 @@ def test_selection_authenticated_readback_and_correction_retain_members(
         assert response.json()["result"]["selection"] == (
             execution.report.result.selection.model_dump(mode="json")
         )
-    monkeypatch.setattr(
-        case_bootstrap,
-        "load_frozen_decision_case",
-        lambda _: FrozenDecisionCase.model_validate(payload),
+    assert (
+        replay_default_frozen_decision_case(
+            migrated_settings,
+            payload["business_identity"],
+            clock=GovernanceClock("2042-06-01T16:05:00Z"),
+        )
+        == execution
     )
     correction = correct_default_frozen_decision_case(
         migrated_settings,
@@ -434,6 +696,49 @@ def test_selection_authenticated_readback_and_correction_retain_members(
         clock=GovernanceClock("2042-06-01T16:05:00Z"),
     )
     assert correction.report.result.selection == execution.report.result.selection
+
+
+def test_selection_cli_replays_and_corrects_saved_case(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = selection_payload(migrated_settings)
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert original.report is not None
+    monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
+    for command in ("decision-case-replay", "decision-case-correct"):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["stock-profiler", command, "--business-identity", payload["business_identity"]],
+        )
+        main()
+        result = json.loads(capsys.readouterr().out)
+        assert result["report"]["result"]["selection"] == (
+            original.report.result.selection.model_dump(mode="json")
+            if original.report.result.selection is not None
+            else None
+        )
+
+
+def test_selection_console_rejects_ambiguous_saved_identity(
+    migrated_settings: Settings,
+) -> None:
+    payload = selection_payload(migrated_settings)
+    run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    alternate = deepcopy(payload)
+    alternate["access_scope"]["account_ids"] = ["synthetic-unrelated-scope"]
+    alternate["input"]["account"]["account_id"] = "synthetic-unrelated-scope"
+    run_frozen_decision_case(
+        migrated_settings, alternate, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        replay_default_frozen_decision_case(migrated_settings, payload["business_identity"])
 
 
 @pytest.mark.parametrize("status", ["FAILED", "WAITING"])

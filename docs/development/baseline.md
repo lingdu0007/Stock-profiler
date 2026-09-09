@@ -34,11 +34,30 @@ percentiles, their explicitly weighted composite, and the diversification
 scan. Scores are uncalibrated research inputs, never success probabilities.
 This D0 interface does not fit statistical models or certify their outputs.
 
+The snapshot retains a content-addressed strategy and parameter artifact,
+training members and label-availability watermark, diagnostics/environment
+hashes, and complete signal observations. Strategy parameters freeze
+signal semantics, industry/universe percentile populations, conservative
+inapplicable states, curve knots and directions, low-rank interactions,
+training-window/weighting rules, regularization, targets and selection-policy
+hash. The host replays piecewise-linear additive curves and declared
+interaction components. It rejects a claimed head score that does not match
+that replay and retains raw values, states, transformed values and both
+heads' contributions for the entire universe. Context signals may enter
+only through declared interactions, never an independent main effect.
+
+Market fields and each signal have separate evidence-manifest entries.
+Derived inputs use certified-delivery evidence; market evidence and any
+authoritative substitute reconstruction must cover the completed close.
+Missing inputs are data failures; unavailable or inconsistent model
+artifacts are system failures. No fallback estimator is selected.
+
 The policy supplies the required member count, industry and capitalization
 limits, adjusted-return window length and inclusive positive-correlation
 ceiling, without personal defaults. Equal head values share an average rank
 on the zero-to-one-hundred endpoint scale; a singleton receives zero.
-Composite ties use ascending security identity. Capitalization groups are
+Composite comparisons use exact fractions, rounding only the displayed
+values; ties use ascending security identity. Capitalization groups are
 the three contiguous rank partitions of the entire eligible universe,
 ordered by float capitalization and then security identity; group index is
 `floor(3 * zero_based_rank / universe_size)`. The complete ranking survives
@@ -56,7 +75,7 @@ month identity; changed retry keys, policies or later evidence cannot
 replace the original snapshot, including after a failure.
 
 The existing authenticated report route shows ordered frozen members,
-complete ranking, gate-scan reasons and population registration. It adds no
+complete ranking, signal contributions, gate-scan reasons and population registration. It adds no
 trading, allocation or personal authorization capability.
 
 The `universe.1.0.0` frozen-case contract accepts an explicit synthetic monthly

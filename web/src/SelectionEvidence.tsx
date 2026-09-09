@@ -66,6 +66,44 @@ export function SelectionEvidence({ selection }: { selection: Selection }) {
           ))}
         </dl>
       </details>
+      <details className="portfolio-subsection">
+        <summary>Screening contributions ({selection.screening_audit?.length ?? 0})</summary>
+        {selection.screening_audit?.map((row) => (
+          <div className="portfolio-subsection" key={row.security_id}>
+            <h3>{row.security_id}</h3>
+            <dl className="record-list">
+              {row.signals.map((signal) => (
+                <div className="record-row" key={signal.signal_id}>
+                  <dt>{signal.signal_id}</dt>
+                  <dd>
+                    {signal.raw ?? "Not applicable"}; {signal.state}; {signal.percentile}
+                  </dd>
+                </div>
+              ))}
+              <div className="record-row">
+                <dt>Positive head</dt>
+                <dd>{row.positive_score}</dd>
+              </div>
+              {Object.entries(row.positive_contributions).map(([key, value]) => (
+                <div className="record-row" key={`positive:${key}`}>
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+              <div className="record-row">
+                <dt>Terminal head</dt>
+                <dd>{row.terminal_score}</dd>
+              </div>
+              {Object.entries(row.terminal_contributions).map(([key, value]) => (
+                <div className="record-row" key={`terminal:${key}`}>
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))}
+      </details>
     </section>
   );
 }
