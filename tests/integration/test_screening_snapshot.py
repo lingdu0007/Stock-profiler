@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from hashlib import sha256
 from typing import Any
 
@@ -46,6 +46,7 @@ def replay(selection: dict[str, Any]) -> Any:
         strategy_version=selection["strategy_version"],
         snapshot_id=selection["screening_snapshot_id"],
         industries={row["security_id"]: row["industry"] for row in selection["rows"]},
+        data_contracts=selection["screening"]["strategy"]["data_contracts"],
     )
 
 
@@ -170,10 +171,18 @@ def test_invalid_screening_artifact_fails_without_fallback(
     )
     assert result.report is not None and result.report.result.selection is not None
     outcome = result.report.result.selection
-    assert outcome.disposition == "SYSTEM_FAILED"
+    data_failure = defect in {
+        "observation-duplicate",
+        "observation-missing",
+        "industry",
+        "signal-missing",
+        "signal-unavailable",
+        "signal-state",
+    }
+    assert outcome.disposition == ("DATA_FAILED" if data_failure else "SYSTEM_FAILED")
     assert outcome.members == ()
     assert outcome.ranking == ()
-    assert outcome.population.availability_failure == "SYSTEM"
+    assert outcome.population.availability_failure == ("DATA" if data_failure else "SYSTEM")
     assert not outcome.population.valid_monthly
 
 
@@ -222,6 +231,110 @@ def test_industry_reversal_and_legal_minimum_states(migrated_settings: Settings)
     assert by_id["XQZ-SELECT-006"].signals[0].percentile == 100
     assert by_id["XQZ-SELECT-001"].signals[0].percentile == 0
     assert by_id["XQZ-SELECT-007"].signals[0].percentile == 100
+
+
+def test_reversed_precise_signals_ignore_ambient_decimal_context(
+    migrated_settings: Settings,
+) -> None:
+    selection = selection_payload(migrated_settings)["selection"]
+    snapshot = selection["screening"]
+    snapshot["strategy"]["signals"][0].update(population="INDUSTRY", reverse=True)
+    snapshot["observations"][0]["signals"][0]["raw"] = "1.00000000000000000000000000001"
+    snapshot["observations"][6]["signals"][0]["raw"] = "1.00000000000000000000000000002"
+    seal(selection)
+    results = []
+    for precision in (6, 28, 50):
+        with localcontext() as context:
+            context.prec = precision
+            audit, failures = replay(selection)
+            assert failures == ()
+            assert audit[0].signals[0].percentile == 100
+            assert audit[6].signals[0].percentile == 0
+            results.append(audit)
+    assert results[0] == results[1] == results[2]
+
+
+@pytest.mark.parametrize(
+    "months",
+    [
+        ["2043-01", "2043-02"],
+        ["2030-01", "2041-02"],
+    ],
+)
+def test_training_window_cannot_select_future_or_discontinuous_months(
+    migrated_settings: Settings,
+    months: list[str],
+) -> None:
+    selection = selection_payload(migrated_settings)["selection"]
+    artifact = selection["screening"]["artifact"]
+    artifact["training_months"] = months
+    for member, month in zip(artifact["training_members"], months, strict=True):
+        member["month"] = month
+    artifact["training_members_sha256"] = digest(artifact["training_members"])
+    seal(selection)
+    audit, failures = replay(selection)
+    assert audit == ()
+    assert "SCREENING_TRAINING_PROVENANCE_INVALID" in failures
+
+
+@pytest.mark.parametrize("field", ["industry_version", "adjustment_version", "semantics"])
+def test_data_contract_change_requires_new_strategy(
+    migrated_settings: Settings,
+    field: str,
+) -> None:
+    payload = selection_payload(migrated_settings)
+    if field == "semantics":
+        payload["selection"]["manifest"]["entries"][-1]["semantics_version"] = (
+            "synthetic-new-semantics"
+        )
+    else:
+        payload["selection"][field] = "synthetic-new-version"
+        bind_selection_evidence(payload, rebuild_screening=False)
+    result = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:05:00Z")
+    )
+    assert result.report is not None and result.report.result.selection is not None
+    assert result.report.result.selection.disposition == "SYSTEM_FAILED"
+    assert "SCREENING_VERSION_MISMATCH" in result.report.result.selection.reasons
+
+
+@pytest.mark.parametrize(
+    "case", ["rolling", "expanding", "calendar-gap", "wrong-month", "immature"]
+)
+def test_training_calendar_selects_the_prescribed_mature_window(
+    migrated_settings: Settings,
+    case: str,
+) -> None:
+    selection = selection_payload(migrated_settings)["selection"]
+    strategy, artifact = selection["screening"]["strategy"], selection["screening"]["artifact"]
+    strategy["training_start_month"] = "2040-11"
+    artifact["training_calendar"][:0] = [
+        {"month": "2040-11", "selection_cutoff_at": "2040-11-30T23:59:59+08:00"},
+        {"month": "2040-12", "selection_cutoff_at": "2040-12-31T23:59:59+08:00"},
+    ]
+    strategy["rolling_mature_months"] = 2
+    if case == "expanding":
+        strategy["rolling_mature_months"] = 4
+        artifact["training_months"][:0] = ["2040-11", "2040-12"]
+        artifact["training_members"][:0] = [
+            {**artifact["training_members"][0], "month": month} for month in ("2040-11", "2040-12")
+        ]
+        artifact["training_members_sha256"] = digest(artifact["training_members"])
+    elif case == "calendar-gap":
+        artifact["training_calendar"].pop(0)
+    elif case == "wrong-month":
+        artifact["training_calendar"][0]["selection_cutoff_at"] = "2040-12-01T23:59:59+08:00"
+    elif case == "immature":
+        strategy["label_horizon_months"] = 16
+        artifact["training_calendar"].pop()
+    seal(selection)
+    audit, failures = replay(selection)
+    if case in {"rolling", "expanding"}:
+        assert failures == ()
+        assert len(audit) == 12
+    else:
+        assert audit == ()
+        assert "SCREENING_TRAINING_PROVENANCE_INVALID" in failures
 
 
 @pytest.mark.parametrize(

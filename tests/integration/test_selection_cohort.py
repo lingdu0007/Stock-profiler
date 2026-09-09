@@ -107,7 +107,12 @@ def bind_selection_evidence(
     else:
         evidence = selection["evidence"]
     if rebuild_screening:
-        bind_screening_snapshot(selection)
+        universe_policy = (
+            universe["policy"]["version_id"]
+            if universe is not None
+            else selection["screening"]["strategy"]["data_contracts"]["universe_policy"]
+        )
+        bind_screening_snapshot(selection, universe_policy)
     content = json.dumps(
         {
             key: selection[key]
@@ -173,7 +178,9 @@ def bind_selection_evidence(
             {
                 "field_family": family,
                 "requirement": "REQUIRED",
-                "semantics_version": f"synthetic-{family}-v1",
+                "semantics_version": selection["screening"]["strategy"]["data_contracts"].get(
+                    f"field:{family}", f"synthetic-{family}-v1"
+                ),
                 "primary_source": fact["source"],
                 "evidence": fact,
                 "substitution": None,
@@ -182,7 +189,7 @@ def bind_selection_evidence(
     selection["manifest"] = {"version_id": "synthetic-selection-manifest-v1", "entries": entries}
 
 
-def bind_screening_snapshot(selection: dict[str, Any]) -> None:
+def bind_screening_snapshot(selection: dict[str, Any], universe_policy: str) -> None:
     def digest(value: object) -> str:
         return sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -213,6 +220,24 @@ def bind_screening_snapshot(selection: dict[str, Any]) -> None:
         "rolling_mature_months": 4,
         "training_weighting": "MONTH_EQUAL_STOCK_EQUAL",
         "regularization_strength": "0.5",
+        "training_start_month": "2041-01",
+        "label_horizon_months": 15,
+        "data_contracts": {
+            "industry": selection["industry_version"],
+            "adjustment": selection["adjustment_version"],
+            "universe_policy": universe_policy,
+            "manifest": "synthetic-selection-manifest-v1",
+            **{
+                f"field:{family}": f"synthetic-{family}-v1"
+                for family in ("industry", "capitalization", "adjusted_returns")
+            },
+            **{f"field:signal:{key}": f"{key}-v1" for key in features},
+        },
+        "label_contract_version": "synthetic-label-contract-v1",
+        "entry_contract_version": "synthetic-entry-contract-v1",
+        "cost_contract_version": "synthetic-cost-contract-v1",
+        "evaluation_contract_version": "synthetic-evaluation-contract-v1",
+        "qualification_contract_version": "synthetic-qualification-contract-v1",
     }
     strategy["version_id"] = f"sha256:{digest(strategy)}"
     observations = [
@@ -246,15 +271,19 @@ def bind_screening_snapshot(selection: dict[str, Any]) -> None:
             "security_id": f"synthetic-training-{index}",
             "positive_label": True,
             "terminal_label": False,
-            "label_available_at": "2042-04-01T12:00:00+08:00",
+            "label_available_at": "2042-05-29T10:00:00+08:00",
         }
         for index, month in enumerate(("2041-01", "2041-02"))
     ]
     artifact = {
         "strategy_sha256": digest(strategy),
         "fitted_at": "2042-05-29T12:00:00+08:00",
-        "label_available_through": "2042-04-30T12:00:00+08:00",
+        "label_available_through": "2042-05-29T11:00:00+08:00",
         "training_months": ["2041-01", "2041-02"],
+        "training_calendar": [
+            {"month": "2041-01", "selection_cutoff_at": "2041-01-31T23:59:59+08:00"},
+            {"month": "2041-02", "selection_cutoff_at": "2041-02-28T23:59:59+08:00"},
+        ],
         "training_members_sha256": digest(training_members),
         "training_members": training_members,
         "environment_sha256": digest("synthetic-environment"),

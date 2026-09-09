@@ -322,6 +322,20 @@ def freeze_selection(
             strategy_version=command.strategy_version,
             snapshot_id=command.screening_snapshot_id,
             industries={row.security_id: row.industry for row in command.rows},
+            data_contracts={
+                "industry": command.industry_version,
+                "adjustment": command.adjustment_version,
+                "universe_policy": source.policy.version_id if source is not None else "",
+                "manifest": command.manifest.version_id if command.manifest is not None else "",
+                **(
+                    {
+                        f"field:{entry.field_family}": entry.semantics_version
+                        for entry in command.manifest.entries
+                    }
+                    if command.manifest is not None
+                    else {}
+                ),
+            },
         )
         by_id = {row.security_id: row for row in audit}
         if not model_failures and any(
@@ -331,8 +345,18 @@ def freeze_selection(
         ):
             model_failures = ("SCREENING_SCORE_REPLAY_MISMATCH",)
     if model_failures:
+        data_failure = all(
+            reason
+            in {
+                "SCREENING_OBSERVATIONS_INCOMPLETE",
+                "SCREENING_SIGNAL_UNAVAILABLE",
+                "SCREENING_SIGNAL_STATE_INVALID",
+                "SCREENING_CONTEXT_INVALID",
+            }
+            for reason in model_failures
+        )
         return SelectionOutcome(
-            disposition="SYSTEM_FAILED",
+            disposition="DATA_FAILED" if data_failure else "SYSTEM_FAILED",
             cutoff_at=command.cutoff_at,
             universe_event_id=command.universe_event_id,
             policy=command.policy,
@@ -343,7 +367,7 @@ def freeze_selection(
                 valid_monthly=False,
                 recommendation_coverage_denominator=False,
                 selection_pass_denominator=False,
-                availability_failure="SYSTEM",
+                availability_failure="DATA" if data_failure else "SYSTEM",
             ),
             reasons=model_failures,
         )

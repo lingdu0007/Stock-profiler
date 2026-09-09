@@ -45,6 +45,13 @@ interaction components. It rejects a claimed head score that does not match
 that replay and retains raw values, states, transformed values and both
 heads' contributions for the entire universe. Context signals may enter
 only through declared interactions, never an independent main effect.
+The training calendar must cover every month from the frozen start through
+the potentially mature boundary. Calendar-month maturity is computed from
+each original selection cutoff and the declared horizon; the artifact must
+use the full expanding or trailing mature window, and no label may precede
+its own maturity. Industry, adjustment, universe-policy, manifest and
+per-field semantic contracts are checked against the content-addressed
+strategy before inference.
 
 Market fields and each signal have separate evidence-manifest entries.
 Derived inputs use certified-delivery evidence; market evidence and any

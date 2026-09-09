@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+from calendar import monthrange
 from datetime import datetime
 from decimal import Context, Decimal, localcontext
 from fractions import Fraction
 from hashlib import sha256
-from typing import Literal
+from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, Field, StrictBool
 
 from stock_profiler.modules.candidate_selection.universe_evidence import EvidenceContract
+
+Month = Annotated[str, Field(pattern=r"^[1-9][0-9]{3}-(0[1-9]|1[0-2])$")]
 
 
 class SignalDefinition(EvidenceContract):
@@ -46,6 +50,19 @@ class ScreeningStrategy(EvidenceContract):
     rolling_mature_months: int = Field(gt=0, strict=True)
     training_weighting: Literal["MONTH_EQUAL_STOCK_EQUAL"]
     regularization_strength: Decimal = Field(ge=0, allow_inf_nan=False)
+    training_start_month: Month
+    label_horizon_months: int = Field(gt=0, strict=True)
+    data_contracts: dict[str, str]
+    label_contract_version: str = Field(min_length=1)
+    entry_contract_version: str = Field(min_length=1)
+    cost_contract_version: str = Field(min_length=1)
+    evaluation_contract_version: str = Field(min_length=1)
+    qualification_contract_version: str = Field(min_length=1)
+
+
+class ScreeningTrainingMonth(EvidenceContract):
+    month: Month
+    selection_cutoff_at: AwareDatetime
 
 
 class InteractionComponent(EvidenceContract):
@@ -61,7 +78,7 @@ class ScreeningHead(EvidenceContract):
 
 
 class ScreeningTrainingMember(EvidenceContract):
-    month: str = Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
+    month: Month
     security_id: str
     positive_label: StrictBool
     terminal_label: StrictBool
@@ -74,6 +91,7 @@ class ScreeningArtifact(EvidenceContract):
     fitted_at: AwareDatetime
     label_available_through: AwareDatetime
     training_months: tuple[str, ...]
+    training_calendar: tuple[ScreeningTrainingMonth, ...]
     training_members_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     training_members: tuple[ScreeningTrainingMember, ...]
     environment_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -129,6 +147,7 @@ def replay_screening(
     strategy_version: str,
     snapshot_id: str,
     industries: dict[str, str | None],
+    data_contracts: dict[str, str],
 ) -> tuple[tuple[ScreeningContribution, ...], tuple[str, ...]]:
     strategy, artifact = snapshot.strategy, snapshot.artifact
     strategy_payload = strategy.model_dump(mode="json", exclude={"version_id"})
@@ -141,6 +160,11 @@ def replay_screening(
         or artifact.snapshot_id != f"sha256:{content_hash(artifact_payload)}"
         or artifact.strategy_sha256 != content_hash(strategy.model_dump(mode="json"))
         or strategy.selection_policy_sha256 != content_hash(policy)
+        or strategy.data_contracts != data_contracts
+        or any(
+            data_contracts.get(f"field:signal:{signal.signal_id}") != signal.semantics_version
+            for signal in strategy.signals
+        )
     ):
         failures.append("SCREENING_VERSION_MISMATCH")
     if (
@@ -162,6 +186,7 @@ def replay_screening(
         )
         or artifact.diagnostics_sha256 != content_hash(artifact.fit_diagnostics)
         or artifact.fit_diagnostics.get("status") != "CONVERGED"
+        or not _training_window_valid(strategy, artifact, cutoff)
     ):
         failures.append("SCREENING_TRAINING_PROVENANCE_INVALID")
     signals = {signal.signal_id: signal for signal in strategy.signals}
@@ -261,9 +286,9 @@ def replay_screening(
                 if definition.population == "UNIVERSE"
                 or observations[other_id].industry == row.industry
             ]
-            favorable = -value.raw if definition.reverse else value.raw
+            favorable = value.raw.copy_negate() if definition.reverse else value.raw
             ranked = [
-                -peer.raw if definition.reverse else peer.raw
+                peer.raw.copy_negate() if definition.reverse else peer.raw
                 for peer in peers
                 if peer.raw is not None
             ]
@@ -302,6 +327,44 @@ def replay_screening(
                 )
             )
     return tuple(audits), ()
+
+
+def _training_window_valid(
+    strategy: ScreeningStrategy,
+    artifact: ScreeningArtifact,
+    cutoff: datetime,
+) -> bool:
+    start = datetime.strptime(strategy.training_start_month, "%Y-%m")
+    local_cutoff = cutoff.astimezone(ZoneInfo("Asia/Shanghai"))
+    first = start.year * 12 + start.month - 1
+    last = local_cutoff.year * 12 + local_cutoff.month - 1 - strategy.label_horizon_months
+    expected_calendar = tuple(
+        f"{year:04}-{month + 1:02}"
+        for year, month in (divmod(index, 12) for index in range(first, last + 1))
+    )
+    if tuple(row.month for row in artifact.training_calendar) != expected_calendar:
+        return False
+    mature: dict[str, datetime] = {}
+    for row in artifact.training_calendar:
+        selected = row.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai"))
+        if selected.strftime("%Y-%m") != row.month:
+            return False
+        year, month_zero = divmod(
+            selected.year * 12 + selected.month - 1 + strategy.label_horizon_months,
+            12,
+        )
+        maturity = selected.replace(
+            year=year,
+            month=month_zero + 1,
+            day=min(selected.day, monthrange(year, month_zero + 1)[1]),
+        )
+        if maturity <= cutoff:
+            mature[row.month] = maturity
+    expected_window = tuple(mature)[-strategy.rolling_mature_months :]
+    return artifact.training_months == expected_window and all(
+        member.month in mature and mature[member.month] <= member.label_available_at
+        for member in artifact.training_members
+    )
 
 
 def _curve_valid(curve: tuple[Decimal, ...], size: int) -> bool:
