@@ -6962,6 +6962,24 @@
             "title": "License Id",
             "type": "string"
           },
+          "license_valid_from": {
+            "format": "date-time",
+            "title": "License Valid From",
+            "type": "string"
+          },
+          "license_valid_until": {
+            "format": "date-time",
+            "title": "License Valid Until",
+            "type": "string"
+          },
+          "licensed_purposes": {
+            "items": {
+              "enum": ["SYNTHETIC", "HISTORICAL_RECONSTRUCTED", "REAL_CANDIDATE"],
+              "type": "string"
+            },
+            "title": "Licensed Purposes",
+            "type": "array"
+          },
           "retention_permitted": {
             "title": "Retention Permitted",
             "type": "boolean"
@@ -7019,6 +7037,9 @@
           "source_version",
           "authority",
           "license_id",
+          "license_valid_from",
+          "license_valid_until",
+          "licensed_purposes",
           "retention_permitted",
           "complete",
           "conflict",

@@ -225,23 +225,27 @@ def freeze_universe(
         failure_reasons.append("SECURITY_FACT_UNKNOWN")
     if command.calendar is None or not command.calendar.cutoff_valid(command.cutoff_at):
         failure_reasons.append("MONTHLY_CUTOFF_INVALID")
+    close = (
+        next(
+            (
+                day.close_at
+                for day in command.calendar.days
+                if day.market_date == command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            ),
+            None,
+        )
+        if command.calendar is not None
+        else None
+    )
     if command.entitlements:
         accounts = [item.account_id for item in command.entitlements]
         if len(set(accounts)) != len(accounts) or set(accounts) != set(command.account_ids):
             failure_reasons.append("ENTITLEMENTS_SCOPE_INCOMPLETE")
         for entitlement in command.entitlements:
-            if command.calendar is not None:
-                close = next(
-                    (
-                        day.close_at
-                        for day in command.calendar.days
-                        if day.market_date
-                        == command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-                    ),
-                    None,
-                )
-                if close is None or not close < entitlement.snapshot_at <= command.cutoff_at:
-                    failure_reasons.append("ENTITLEMENTS_STALE")
+            if command.calendar is not None and (
+                close is None or not close < entitlement.snapshot_at <= command.cutoff_at
+            ):
+                failure_reasons.append("ENTITLEMENTS_STALE")
             boards = [permission.board for permission in entitlement.permissions]
             if len(set(boards)) != len(boards):
                 failure_reasons.append("ENTITLEMENTS_SCOPE_INCOMPLETE")
@@ -262,16 +266,36 @@ def freeze_universe(
             if entry.evidence is None:
                 failure_reasons.append("REQUIRED_EVIDENCE_MISSING")
                 continue
-            if entry.field_family == "ENTITLEMENTS" and any(
-                entry.evidence.acquired_at is None
-                or entitlement.snapshot_at > entry.evidence.acquired_at
-                for entitlement in command.entitlements
-            ):
-                failure_reasons.append("ENTITLEMENTS_EVIDENCE_CLOCK")
-            if entry.field_family in {"MARKET", "SECURITIES", "AFFORDABILITY", "INVENTORY"}:
-                local = entry.evidence.fact_effective_at.astimezone(ZoneInfo("Asia/Shanghai"))
-                if local.date() != command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date():
-                    failure_reasons.append("CURRENT_FACT_STALE")
+            proofs = (entry.evidence,) + (
+                (entry.substitution.authority_evidence,) if entry.substitution else ()
+            )
+            for proof in proofs:
+                if entry.field_family == "ENTITLEMENTS" and any(
+                    proof.acquired_at is None or entitlement.snapshot_at > proof.acquired_at
+                    for entitlement in command.entitlements
+                ):
+                    failure_reasons.append("ENTITLEMENTS_EVIDENCE_CLOCK")
+                if entry.field_family in {"MARKET", "SECURITIES", "AFFORDABILITY", "INVENTORY"}:
+                    local = proof.fact_effective_at.astimezone(ZoneInfo("Asia/Shanghai"))
+                    if (
+                        local.date()
+                        != command.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+                    ):
+                        failure_reasons.append("CURRENT_FACT_STALE")
+                if entry.field_family == "MARKET" and (
+                    close is None
+                    or any(
+                        instant is None or instant < close
+                        for instant in (
+                            proof.fact_effective_at,
+                            proof.source_published_at,
+                            proof.source_observed_at,
+                            proof.acquired_at,
+                            proof.validated_at,
+                        )
+                    )
+                ):
+                    failure_reasons.append("CLOSING_MARKET_EVIDENCE_REQUIRED")
             if entry.field_family in payloads:
                 authority = (
                     "BROKER"
@@ -357,7 +381,13 @@ def freeze_universe(
         ):
             continue
         try:
-            record = current_qualification(history, scope, binding.version)
+            visible_history = tuple(
+                outcome
+                for outcome in history
+                if outcome.qualification is not None
+                and outcome.qualification.recorded_at <= command.cutoff_at
+            )
+            record = current_qualification(visible_history, scope, binding.version)
         except ValueError:
             continue
         if (
@@ -397,17 +427,18 @@ def freeze_universe(
                 reasons.append("DELISTING")
             if security.suspended:
                 reasons.append("SUSPENDED")
-            month_index = (
-                security.listed_on.year * 12
-                + security.listed_on.month
-                - 1
-                + command.policy.minimum_listing_months
+            elapsed_months = (
+                (selected_on.year - security.listed_on.year) * 12
+                + selected_on.month
+                - security.listed_on.month
             )
-            year, month = divmod(month_index, 12)
-            mature_on = date(
-                year, month + 1, min(security.listed_on.day, monthrange(year, month + 1)[1])
+            anniversary_day = min(
+                security.listed_on.day, monthrange(selected_on.year, selected_on.month)[1]
             )
-            if selected_on < mature_on:
+            if elapsed_months < command.policy.minimum_listing_months or (
+                elapsed_months == command.policy.minimum_listing_months
+                and selected_on.day < anniversary_day
+            ):
                 reasons.append("LISTING_IMMATURE")
             turnover = Decimal(median(security.daily_turnover))
             if turnover < command.policy.minimum_median_turnover:

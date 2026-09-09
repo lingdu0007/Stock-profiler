@@ -20,6 +20,11 @@ class UniverseEvidence(EvidenceContract):
     source_version: str = Field(min_length=1)
     authority: Literal["EXCHANGE", "BROKER", "CERTIFIED_DELIVERY", "EXPLORATORY"]
     license_id: str = Field(min_length=1)
+    license_valid_from: AwareDatetime
+    license_valid_until: AwareDatetime
+    licensed_purposes: tuple[
+        Literal["SYNTHETIC", "HISTORICAL_RECONSTRUCTED", "REAL_CANDIDATE"], ...
+    ]
     retention_permitted: bool
     complete: bool
     conflict: bool
@@ -32,7 +37,7 @@ class UniverseEvidence(EvidenceContract):
     content: str
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
-    def failures(self, cutoff: datetime, expected: object) -> tuple[str, ...]:
+    def failures(self, cutoff: datetime, expected: object, purpose: str) -> tuple[str, ...]:
         reasons: list[str] = []
         clocks = (
             self.source_published_at,
@@ -58,6 +63,11 @@ class UniverseEvidence(EvidenceContract):
             reasons.append("SEMANTIC_COMPLETENESS_FAILED")
         if not self.retention_permitted:
             reasons.append("EVIDENCE_RETENTION_UNLICENSED")
+        if (
+            not self.license_valid_from <= cutoff <= self.license_valid_until
+            or purpose not in self.licensed_purposes
+        ):
+            reasons.append("EVIDENCE_USE_UNLICENSED")
         if self.conflict:
             reasons.append("SOURCE_CONFLICT")
         if sha256(self.content.encode()).hexdigest() != self.content_sha256:
@@ -108,7 +118,7 @@ class UniverseManifestEntry(EvidenceContract):
         evidence = self.evidence
         if evidence is None:
             return ("REQUIRED_EVIDENCE_MISSING",)
-        reasons = list(evidence.failures(cutoff, expected))
+        reasons = list(evidence.failures(cutoff, expected, purpose))
         if evidence.source == self.primary_source:
             if evidence.authority != authority or self.substitution is not None:
                 reasons.append("FACT_AUTHORITY_MISMATCH")
@@ -134,7 +144,7 @@ class UniverseManifestEntry(EvidenceContract):
         authority_evidence = substitution.authority_evidence
         if authority_evidence.authority != authority:
             reasons.append("FACT_AUTHORITY_MISMATCH")
-        reasons.extend(authority_evidence.failures(cutoff, expected))
+        reasons.extend(authority_evidence.failures(cutoff, expected, purpose))
         return tuple(reasons)
 
 

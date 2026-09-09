@@ -2870,6 +2870,18 @@ export interface components {
             fact_effective_at: string;
             /** License Id */
             license_id: string;
+            /**
+             * License Valid From
+             * Format: date-time
+             */
+            license_valid_from: string;
+            /**
+             * License Valid Until
+             * Format: date-time
+             */
+            license_valid_until: string;
+            /** Licensed Purposes */
+            licensed_purposes: ("SYNTHETIC" | "HISTORICAL_RECONSTRUCTED" | "REAL_CANDIDATE")[];
             /** Retention Permitted */
             retention_permitted: boolean;
             /** Source */

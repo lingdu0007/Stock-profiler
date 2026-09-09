@@ -63,8 +63,8 @@ export function UniverseEvidence({ universe }: { universe: Universe }) {
           </dl>
         </div>
       ))}
-      {universe.manifest?.entries.map((entry) => (
-        <details className="portfolio-subsection" key={entry.field_family}>
+      {universe.manifest?.entries.map((entry, index) => (
+        <details className="portfolio-subsection" key={`${entry.field_family}-${index}`}>
           <summary>
             {entry.field_family}: {entry.requirement}
           </summary>
@@ -73,6 +73,9 @@ export function UniverseEvidence({ universe }: { universe: Universe }) {
             <Fact label="Source" value={entry.evidence?.source} />
             <Fact label="Source version" value={entry.evidence?.source_version} />
             <Fact label="License" value={entry.evidence?.license_id} />
+            <Fact label="Licensed purposes" value={entry.evidence?.licensed_purposes.join(", ")} />
+            <Fact label="License valid from" value={entry.evidence?.license_valid_from} />
+            <Fact label="License valid until" value={entry.evidence?.license_valid_until} />
             <Fact label="Fact effective" value={entry.evidence?.fact_effective_at} />
             <Fact label="First published" value={entry.evidence?.source_published_at} />
             <Fact label="Source observed" value={entry.evidence?.source_observed_at} />

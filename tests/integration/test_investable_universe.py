@@ -258,6 +258,13 @@ def manifest(command: dict[str, Any]) -> dict[str, Any]:
                     if family in {"ENTITLEMENTS", "AFFORDABILITY"}
                     else "EXCHANGE",
                     "license_id": "synthetic-license-v1",
+                    "license_valid_from": "2042-01-01T00:00:00+08:00",
+                    "license_valid_until": "2042-12-31T23:59:59+08:00",
+                    "licensed_purposes": [
+                        "SYNTHETIC",
+                        "HISTORICAL_RECONSTRUCTED",
+                        "REAL_CANDIDATE",
+                    ],
                     "retention_permitted": True,
                     "complete": True,
                     "conflict": False,
@@ -406,9 +413,10 @@ def test_universe_needs_account_local_legality_and_dated_market_evidence(
     assert result["members"] == []
 
 
+@pytest.mark.parametrize("late_suspension", [False, True])
 @pytest.mark.parametrize("board", ["CHINEXT", "STAR", "BSE"])
 def test_each_extended_board_uses_its_own_saved_qualification(
-    migrated_settings: Settings, board: str
+    migrated_settings: Settings, board: str, late_suspension: bool
 ) -> None:
     payload = universe_payload(migrated_settings)
     command = payload["universe"]
@@ -443,6 +451,18 @@ def test_each_extended_board_uses_its_own_saved_qualification(
     assert granted.report is not None
     assert granted.report.result.governance is not None
     assert granted.report.result.governance.disposition == "APPROVED"
+    if late_suspension:
+        suspend = deepcopy(grant)
+        suspend.update(action="SUSPEND", previous_decision_id=granted.decision_event_id)
+        suspend["evidence"].update(kind="REQUIRED_PREMISE_UNVERIFIABLE")
+        suspended = run_frozen_decision_case(
+            migrated_settings,
+            case_payload(migrated_settings, f"suspend-{board}", suspend, contract_version="5.0.0"),
+            clock=GovernanceClock("2042-06-01T00:00:00Z"),
+        )
+        assert suspended.report is not None
+        assert suspended.report.result.governance is not None
+        assert suspended.report.result.governance.disposition == "APPROVED"
     command["board_qualifications"] = [{"scope": board_scope, "version": bundle}]
     execution = run_frozen_decision_case(
         migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
@@ -735,3 +755,135 @@ def test_entitlement_snapshot_cannot_postdate_its_evidence_acquisition(
     assert execution.report.result.universe is not None
     assert execution.report.result.universe.disposition == "DATA_FAILED"
     assert "ENTITLEMENTS_EVIDENCE_CLOCK" in execution.report.result.universe.reasons
+
+
+def test_intraday_market_snapshot_cannot_prove_completed_session_turnover(
+    migrated_settings: Settings,
+) -> None:
+    payload = universe_payload(migrated_settings)
+    evidence = next(
+        entry["evidence"]
+        for entry in payload["universe"]["manifest"]["entries"]
+        if entry["field_family"] == "MARKET"
+    )
+    for field in (
+        "fact_effective_at",
+        "source_published_at",
+        "source_observed_at",
+        "acquired_at",
+        "validated_at",
+    ):
+        evidence[field] = "2042-05-30T09:00:00+08:00"
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.disposition == "DATA_FAILED"
+    assert "CLOSING_MARKET_EVIDENCE_REQUIRED" in execution.report.result.universe.reasons
+
+
+@pytest.mark.parametrize("defect", ["stale", "license-expired", "license-purpose"])
+def test_certified_delivery_cannot_override_authoritative_evidence_restrictions(
+    migrated_settings: Settings, defect: str
+) -> None:
+    payload = universe_payload(migrated_settings)
+    entry = next(
+        entry
+        for entry in payload["universe"]["manifest"]["entries"]
+        if entry["field_family"] == "SECURITIES"
+    )
+    authority = deepcopy(entry["evidence"])
+    if defect == "stale":
+        authority["fact_effective_at"] = "2042-04-30T15:00:00+08:00"
+    elif defect == "license-expired":
+        authority["license_valid_until"] = "2042-04-30T15:00:00+08:00"
+    else:
+        authority["licensed_purposes"] = ["HISTORICAL_RECONSTRUCTED"]
+    entry["evidence"].update(source="fictional-alternate-731", authority="CERTIFIED_DELIVERY")
+    entry["substitution"] = {
+        "certification_id": "synthetic-substitution-731",
+        "registered_at": "2042-04-01T00:00:00+08:00",
+        "valid_until": "2042-12-01T00:00:00+08:00",
+        "primary_source": entry["primary_source"],
+        "alternate_source": "fictional-alternate-731",
+        "alternate_version": "synthetic-source-v1",
+        "field_family": entry["field_family"],
+        "manifest_version": payload["universe"]["manifest"]["version_id"],
+        "semantics_version": entry["semantics_version"],
+        "purpose": "SYNTHETIC",
+        "reason": "PRIMARY_UNAVAILABLE",
+        "checks": ["SEMANTICS", "LICENSE", "COMPLETENESS", "REPLAY", "SHADOW"],
+        "authority_evidence": authority,
+    }
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.disposition == "DATA_FAILED"
+
+
+@pytest.mark.parametrize("defect", ["account", "duplicate-board", "missing-calendar"])
+def test_permission_scope_gaps_remain_visible_data_failures(
+    migrated_settings: Settings, defect: str
+) -> None:
+    payload = universe_payload(migrated_settings)
+    command = payload["universe"]
+    permission = {"board": "SH_MAIN", "state": "GRANTED", "risk_disclosure": True}
+    command["entitlements"] = [
+        {
+            "account_id": "synthetic-account-4017",
+            "snapshot_at": "2042-05-30T15:02:00+08:00",
+            "permissions": [permission],
+        }
+    ]
+    if defect == "account":
+        command["entitlements"][0]["account_id"] = "synthetic-other-account"
+    elif defect == "duplicate-board":
+        command["entitlements"][0]["permissions"].append(deepcopy(permission))
+    else:
+        command["calendar"] = None
+    command["manifest"] = manifest(command)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.disposition == "DATA_FAILED"
+
+
+def test_missing_exploratory_data_does_not_replace_or_block_required_data(
+    migrated_settings: Settings,
+) -> None:
+    payload = universe_payload(migrated_settings)
+    optional = deepcopy(payload["universe"]["manifest"]["entries"][0])
+    optional.update(field_family="SYNTHETIC_EXPLORATORY", requirement="EXPLORATORY", evidence=None)
+    payload["universe"]["manifest"]["entries"].append(optional)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    assert execution.report.result.universe is not None
+    assert execution.report.result.universe.members == ("XQZ-UNIVERSE-731",)
+
+
+@pytest.mark.parametrize("months", [6, 120000])
+def test_listing_age_uses_natural_month_boundaries_without_date_overflow(
+    migrated_settings: Settings, months: int
+) -> None:
+    payload = universe_payload(migrated_settings)
+    command = payload["universe"]
+    command["policy"]["minimum_listing_months"] = months
+    command["securities"][0]["listed_on"] = "2041-11-30"
+    command["manifest"] = manifest(command)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-30T16:02:00Z")
+    )
+    assert execution.report is not None
+    result = execution.report.result.universe
+    assert result is not None
+    assert result.disposition == "FROZEN"
+    assert result.members == (("XQZ-UNIVERSE-731",) if months == 6 else ())
+    if months != 6:
+        assert result.exclusions[0].reasons == ("LISTING_IMMATURE",)
