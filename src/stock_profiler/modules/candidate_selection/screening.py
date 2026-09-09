@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, Field, StrictBool
 
+from stock_profiler.modules.candidate_selection.universe import UniverseCalendar
 from stock_profiler.modules.candidate_selection.universe_evidence import EvidenceContract
 
 Month = Annotated[str, Field(pattern=r"^[1-9][0-9]{3}-(0[1-9]|1[0-2])$")]
@@ -51,6 +52,7 @@ class ScreeningStrategy(EvidenceContract):
     training_weighting: Literal["MONTH_EQUAL_STOCK_EQUAL"]
     regularization_strength: Decimal = Field(ge=0, allow_inf_nan=False)
     training_start_month: Month
+    training_calendar_version: str = Field(min_length=1)
     label_horizon_months: int = Field(gt=0, strict=True)
     data_contracts: dict[str, str]
     label_contract_version: str = Field(min_length=1)
@@ -63,6 +65,7 @@ class ScreeningStrategy(EvidenceContract):
 class ScreeningTrainingMonth(EvidenceContract):
     month: Month
     selection_cutoff_at: AwareDatetime
+    calendar: UniverseCalendar | None = None
 
 
 class InteractionComponent(EvidenceContract):
@@ -347,7 +350,17 @@ def _training_window_valid(
     mature: dict[str, datetime] = {}
     for row in artifact.training_calendar:
         selected = row.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai"))
-        if selected.strftime("%Y-%m") != row.month:
+        if (
+            selected.strftime("%Y-%m") != row.month
+            or row.calendar is None
+            or row.calendar.version_id != strategy.training_calendar_version
+            or not row.calendar.cutoff_valid(selected)
+            or any(
+                day.close_at is not None and day.close_at > selected
+                for day in row.calendar.days
+                if (day.market_date.year, day.market_date.month) == (selected.year, selected.month)
+            )
+        ):
             return False
         year, month_zero = divmod(
             selected.year * 12 + selected.month - 1 + strategy.label_horizon_months,

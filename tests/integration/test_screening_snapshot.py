@@ -10,7 +10,11 @@ from typing import Any
 import pytest
 from test_investable_universe import substitution
 from test_scoped_qualification import GovernanceClock
-from test_selection_cohort import bind_selection_evidence, selection_payload
+from test_selection_cohort import (
+    bind_selection_evidence,
+    monthly_training_calendar,
+    selection_payload,
+)
 
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
@@ -309,8 +313,16 @@ def test_training_calendar_selects_the_prescribed_mature_window(
     strategy, artifact = selection["screening"]["strategy"], selection["screening"]["artifact"]
     strategy["training_start_month"] = "2040-11"
     artifact["training_calendar"][:0] = [
-        {"month": "2040-11", "selection_cutoff_at": "2040-11-30T23:59:59+08:00"},
-        {"month": "2040-12", "selection_cutoff_at": "2040-12-31T23:59:59+08:00"},
+        {
+            "month": "2040-11",
+            "selection_cutoff_at": "2040-11-30T23:59:59+08:00",
+            "calendar": monthly_training_calendar("2040-11"),
+        },
+        {
+            "month": "2040-12",
+            "selection_cutoff_at": "2040-12-31T23:59:59+08:00",
+            "calendar": monthly_training_calendar("2040-12"),
+        },
     ]
     strategy["rolling_mature_months"] = 2
     if case == "expanding":
@@ -330,6 +342,60 @@ def test_training_calendar_selects_the_prescribed_mature_window(
     seal(selection)
     audit, failures = replay(selection)
     if case in {"rolling", "expanding"}:
+        assert failures == ()
+        assert len(audit) == 12
+    else:
+        assert audit == ()
+        assert "SCREENING_TRAINING_PROVENANCE_INVALID" in failures
+
+
+@pytest.mark.parametrize(
+    "cutoff",
+    [
+        "2041-02-28T00:00:00+08:00",
+        "2041-02-01T23:59:59+08:00",
+    ],
+)
+def test_training_cutoff_must_be_the_original_monthly_boundary(
+    migrated_settings: Settings,
+    cutoff: str,
+) -> None:
+    selection = selection_payload(migrated_settings)["selection"]
+    artifact = selection["screening"]["artifact"]
+    artifact["training_calendar"][-1]["selection_cutoff_at"] = cutoff
+    artifact["training_members"][-1]["label_available_at"] = "2042-05-28T12:00:00+08:00"
+    artifact["training_members_sha256"] = digest(artifact["training_members"])
+    seal(selection)
+    audit, failures = replay(selection)
+    assert audit == ()
+    assert "SCREENING_TRAINING_PROVENANCE_INVALID" in failures
+
+
+@pytest.mark.parametrize(
+    "case", ["missing", "version", "incomplete", "late-close", "holiday", "utc"]
+)
+def test_historical_calendar_proves_its_monthly_cutoff(
+    migrated_settings: Settings,
+    case: str,
+) -> None:
+    selection = selection_payload(migrated_settings)["selection"]
+    record = selection["screening"]["artifact"]["training_calendar"][-1]
+    if case == "missing":
+        record["calendar"] = None
+    elif case == "version":
+        record["calendar"]["version_id"] = "synthetic-unregistered-calendar"
+    elif case == "incomplete":
+        record["calendar"]["days"].pop(0)
+    elif case == "late-close":
+        record["calendar"]["days"][-1]["close_at"] = "2041-02-28T23:59:59.000001+08:00"
+    elif case == "holiday":
+        record["calendar"]["days"][-1]["close_at"] = None
+        record["selection_cutoff_at"] = "2041-02-27T23:59:59+08:00"
+    elif case == "utc":
+        record["selection_cutoff_at"] = "2041-02-28T15:59:59Z"
+    seal(selection)
+    audit, failures = replay(selection)
+    if case in {"holiday", "utc"}:
         assert failures == ()
         assert len(audit) == 12
     else:

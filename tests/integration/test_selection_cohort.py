@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from calendar import monthrange
 from copy import deepcopy
 from decimal import Decimal
 from hashlib import sha256
@@ -221,6 +222,7 @@ def bind_screening_snapshot(selection: dict[str, Any], universe_policy: str) -> 
         "training_weighting": "MONTH_EQUAL_STOCK_EQUAL",
         "regularization_strength": "0.5",
         "training_start_month": "2041-01",
+        "training_calendar_version": "synthetic-training-calendar-v1",
         "label_horizon_months": 15,
         "data_contracts": {
             "industry": selection["industry_version"],
@@ -281,8 +283,16 @@ def bind_screening_snapshot(selection: dict[str, Any], universe_policy: str) -> 
         "label_available_through": "2042-05-29T11:00:00+08:00",
         "training_months": ["2041-01", "2041-02"],
         "training_calendar": [
-            {"month": "2041-01", "selection_cutoff_at": "2041-01-31T23:59:59+08:00"},
-            {"month": "2041-02", "selection_cutoff_at": "2041-02-28T23:59:59+08:00"},
+            {
+                "month": "2041-01",
+                "selection_cutoff_at": "2041-01-31T23:59:59+08:00",
+                "calendar": monthly_training_calendar("2041-01"),
+            },
+            {
+                "month": "2041-02",
+                "selection_cutoff_at": "2041-02-28T23:59:59+08:00",
+                "calendar": monthly_training_calendar("2041-02"),
+            },
         ],
         "training_members_sha256": digest(training_members),
         "training_members": training_members,
@@ -299,6 +309,20 @@ def bind_screening_snapshot(selection: dict[str, Any], universe_policy: str) -> 
         "strategy": strategy,
         "artifact": artifact,
         "observations": observations,
+    }
+
+
+def monthly_training_calendar(month: str) -> dict[str, Any]:
+    year, number = map(int, month.split("-"))
+    return {
+        "version_id": "synthetic-training-calendar-v1",
+        "days": [
+            {
+                "market_date": f"{month}-{day:02}",
+                "close_at": f"{month}-{day:02}T15:00:00+08:00",
+            }
+            for day in range(1, monthrange(year, number)[1] + 1)
+        ],
     }
 
 
