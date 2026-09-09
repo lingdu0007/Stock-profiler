@@ -27,6 +27,38 @@ files to add to Git.
 
 ## Frozen Recovery
 
+The `selection.1.0.0` frozen-case contract consumes an original committed
+monthly universe and an evidence-bound dual-head screening snapshot. The
+host, not the framework, computes complete cross-sectional midrank
+percentiles, their explicitly weighted composite, and the diversification
+scan. Scores are uncalibrated research inputs, never success probabilities.
+This D0 interface does not fit statistical models or certify their outputs.
+
+The policy supplies the required member count, industry and capitalization
+limits, adjusted-return window length and inclusive positive-correlation
+ceiling, without personal defaults. Equal head values share an average rank
+on the zero-to-one-hundred endpoint scale; a singleton receives zero.
+Composite ties use ascending security identity. Capitalization groups are
+the three contiguous rank partitions of the entire eligible universe,
+ordered by float capitalization and then security identity; group index is
+`floor(3 * zero_based_rank / universe_size)`. The complete ranking survives
+even when only its prefix is scanned. Conflicts retain higher-ranked
+members; the scan does not backtrack or relax constraints.
+
+Insufficient capacity produces `ABSTAINED` with no frozen members. The
+scan's provisional inclusions remain audit facts, not a partial cohort.
+Abstention remains a registered valid month and a coverage/pass denominator
+member; it is not a zero-drawdown success. Incomplete universe membership,
+missing or stale inputs, invalid or constant adjusted-return series and
+unavailable evidence produce a separate data failure. System prerequisites
+retain their own failed outcome. All planned attempts retain their stable
+month identity; changed retry keys, policies or later evidence cannot
+replace the original snapshot, including after a failure.
+
+The existing authenticated report route shows ordered frozen members,
+complete ranking, gate-scan reasons and population registration. It adds no
+trading, allocation or personal authorization capability.
+
 The `universe.1.0.0` frozen-case contract accepts an explicit synthetic monthly
 universe command. Its policy, calendar, account scope, security inventory,
 dated market window, legal acquisition cost and source manifest are input

@@ -9,6 +9,7 @@ from threading import Lock
 
 from pydantic import ValidationError
 
+from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
@@ -277,7 +278,9 @@ def _run_frozen_decision_case(
         has_existing_mapping = (
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
-        if (case.monitoring is not None or case.universe is not None) and has_existing_mapping:
+        if (
+            case.monitoring is not None or case.universe is not None or case.selection is not None
+        ) and has_existing_mapping:
             mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
             if mapping is not None and mapping.case is not None:
                 case = mapping.case
@@ -859,6 +862,52 @@ def _commit_framework_result(
                     business_result = original_business_result
                     result = execution_case.expected_external_result.model_copy(
                         update={"universe": universe}
+                    )
+            if business_result is not None and execution_case.selection is not None:
+                selection_command = execution_case.selection
+                source_event = ledger.get_original_decision_event(
+                    selection_command.universe_object_id, connection
+                )
+                source_valid = (
+                    source_event is not None
+                    and source_event.decision_event_id == selection_command.universe_event_id
+                    and source_event.case.access_scope is not None
+                    and execution_case.access_scope is not None
+                    and source_event.case.access_scope.same_scope_as(execution_case.access_scope)
+                )
+                selection = freeze_selection(
+                    selection_command,
+                    source_event.case.universe
+                    if source_event is not None and source_valid
+                    else None,
+                    source_event.result.universe
+                    if source_event is not None and source_valid
+                    else None,
+                    prerequisite=business_result.status,
+                )
+                result = result.model_copy(
+                    update={
+                        "selection": selection,
+                        "outcome_code": f"SELECTION_{selection.disposition}",
+                        "summary": "Synthetic monthly selection decision.",
+                        "key_reasons": selection.reasons or ("SELECTION_FROZEN",),
+                    }
+                )
+                original_selection_prerequisite = business_result
+                business_result = StageResult(
+                    phase="BUSINESS_DECISION",
+                    status="FAILED"
+                    if selection.disposition == "DATA_FAILED"
+                    else "ABSTAINED"
+                    if selection.disposition == "ABSTAINED"
+                    else "SUCCEEDED",
+                    gate_results=(),
+                    reasons=selection.reasons,
+                )
+                if original_selection_prerequisite.status != "SUCCEEDED":
+                    business_result = original_selection_prerequisite
+                    result = execution_case.expected_external_result.model_copy(
+                        update={"selection": selection}
                     )
     ledger.record_stage_result(
         connection,

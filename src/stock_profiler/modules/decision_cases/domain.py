@@ -23,6 +23,7 @@ from stock_profiler.foundation.decision_versions import (
 from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
+from stock_profiler.modules.candidate_selection.selection import SelectionCommand, SelectionOutcome
 from stock_profiler.modules.candidate_selection.universe import UniverseCommand, UniverseOutcome
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
 from stock_profiler.modules.delivery.monitoring_contracts import (
@@ -77,6 +78,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "execution.1.0.0",
         "monitoring.1.0.0",
         "universe.1.0.0",
+        "selection.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -98,6 +100,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("execution.1.0.0", "execution.1.0.0"),
         ("monitoring.1.0.0", "monitoring.1.0.0"),
         ("universe.1.0.0", "universe.1.0.0"),
+        ("selection.1.0.0", "selection.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -182,6 +185,7 @@ class ExternalResult(FrozenContract):
     summary: str
     key_reasons: tuple[str, ...]
     universe: UniverseOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
+    selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     correction_evidence: CorrectionEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -653,6 +657,7 @@ class FrozenDecisionCase(FrozenContract):
     input: dict[str, Any]
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -691,6 +696,13 @@ class FrozenDecisionCase(FrozenContract):
         execution_governed = self.version_bundle.case_contract_version == "execution.1.0.0"
         monitoring_governed = self.version_bundle.case_contract_version == "monitoring.1.0.0"
         universe_governed = self.version_bundle.case_contract_version == "universe.1.0.0"
+        selection_governed = self.version_bundle.case_contract_version == "selection.1.0.0"
+        if selection_governed != (self.selection is not None):
+            raise ValueError("selection requires its own frozen contract")
+        if self.selection is not None and self.selection.cutoff_at != datetime.fromisoformat(
+            self.knowledge_cutoff
+        ):
+            raise ValueError("selection and frozen cutoff must agree")
         if universe_governed != (self.universe is not None):
             raise ValueError("universe requires its own frozen contract")
         if self.universe is not None and (
@@ -739,6 +751,7 @@ class FrozenDecisionCase(FrozenContract):
             or execution_governed
             or monitoring_governed
             or universe_governed
+            or selection_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -766,6 +779,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.execution_plan,
                     self.monitoring,
                     self.universe,
+                    self.selection,
                 )
             )
             > 1
@@ -794,6 +808,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.execution_plan is not None
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
+            or self.expected_external_result.selection is not None
         ):
             raise ValueError("host decisions are never framework output")
         if self.governance is not None and (
@@ -909,6 +924,21 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def business_object_id(self) -> str:
         """Identify the Stock Profiler business object independently from a framework Run."""
+        if self.selection is not None:
+            assert self.access_scope is not None
+            return _stable_id(
+                "business-object",
+                {
+                    "owner": self.access_scope.user_id,
+                    "accounts": sorted(self.access_scope.account_ids),
+                    "visibility": self.access_scope.visibility,
+                    "purpose": self.selection.purpose,
+                    "month": self.selection.cutoff_at.astimezone(
+                        ZoneInfo("Asia/Shanghai")
+                    ).strftime("%Y-%m"),
+                    "contract": "selection",
+                },
+            )
         if self.universe is not None:
             assert self.access_scope is not None
             return _stable_id(
