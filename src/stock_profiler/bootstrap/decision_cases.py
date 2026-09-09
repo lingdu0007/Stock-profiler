@@ -104,15 +104,16 @@ def replay_default_frozen_decision_case(
     clock: Clock | None = None,
     recovery_case: FrozenDecisionCase | None = None,
 ) -> DecisionCaseExecution:
+    runtime = initialize_runtime_storage(settings)
+    ledger = DecisionLedger(runtime.engine, clock=clock)
     case = (
         recovery_case
         if recovery_case is not None and recovery_case.access_scope is not None
-        else load_frozen_decision_case(settings)
+        else _console_case(settings, business_identity, ledger)
     )
-    runtime = initialize_runtime_storage(settings)
     return service.replay_default_frozen_decision_case(
         case,
-        DecisionLedger(runtime.engine, clock=clock),
+        ledger,
         _FrozenFramework(runtime, clock),
         business_identity,
         recovery_case=recovery_case,
@@ -122,11 +123,24 @@ def replay_default_frozen_decision_case(
 def correct_default_frozen_decision_case(
     settings: Settings, business_identity: str, *, clock: Clock | None = None
 ) -> DecisionCaseCorrection:
+    ledger = DecisionLedger.from_settings(settings, clock=clock)
     return service.correct_default_frozen_decision_case(
-        load_frozen_decision_case(settings),
-        DecisionLedger.from_settings(settings, clock=clock),
+        _console_case(settings, business_identity, ledger),
+        ledger,
         business_identity,
     )
+
+
+def _console_case(
+    settings: Settings, business_identity: str, ledger: DecisionLedger
+) -> FrozenDecisionCase:
+    default = load_frozen_decision_case(settings)
+    if default.business_identity == business_identity:
+        return default
+    stored = ledger.get_frozen_case_by_identity(business_identity)
+    if stored is None:
+        raise ValueError("unknown frozen decision-case business identity")
+    return stored
 
 
 def retry_default_frozen_decision_case_notification(

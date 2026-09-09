@@ -10,7 +10,7 @@ from hashlib import sha256
 from typing import cast
 
 from pydantic import ValidationError
-from sqlalchemy import Column, Integer, MetaData, String, Table, func, select
+from sqlalchemy import JSON, Column, Integer, MetaData, String, Table, func, select, type_coerce
 from sqlalchemy.engine import Connection, Engine, Row
 
 from stock_profiler.adapters.persistence.access_audit import append_denial
@@ -441,6 +441,37 @@ class DecisionLedger:
             framework_run_id=row.framework_run_id,
             case=case,
         )
+
+    def get_frozen_case_by_identity(self, business_identity: str) -> FrozenDecisionCase | None:
+        """Resolve an unambiguous saved host-console identity, never an HTTP authorization."""
+        with self._engine.connect() as connection:
+            object_ids = (
+                connection.execute(
+                    select(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id).where(
+                        type_coerce(DECISION_CASE_BUSINESS_OBJECTS.c.case_payload, JSON)[
+                            "business_identity"
+                        ].as_string()
+                        == business_identity
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(object_ids) > 1:
+                raise ValueError("ambiguous frozen decision-case business identity")
+            if not object_ids:
+                return None
+            mapping = self.get_business_object_mapping(object_ids[0], connection)
+            if (
+                mapping is None
+                or mapping.case is None
+                or mapping.case.business_identity != business_identity
+                or mapping.case.business_object_id != object_ids[0]
+                or mapping.case.frozen_input_fingerprint != mapping.frozen_input_fingerprint
+                or mapping.case.case_id != mapping.case_id
+            ):
+                raise DecisionEventCommitError("stored frozen case identity is inconsistent")
+            return mapping.case
 
     def mapped_framework_run_ids(self, connection: Connection) -> frozenset[str]:
         return frozenset(

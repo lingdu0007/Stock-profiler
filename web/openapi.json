@@ -2492,6 +2492,16 @@
               }
             ]
           },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "stress": {
             "anyOf": [
               {
@@ -6548,6 +6558,332 @@
         "title": "SaleFundingTerms",
         "type": "object"
       },
+      "ScreeningContribution": {
+        "additionalProperties": false,
+        "properties": {
+          "positive_contributions": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Positive Contributions",
+            "type": "object"
+          },
+          "positive_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Positive Score",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/TransformedSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "terminal_contributions": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Terminal Contributions",
+            "type": "object"
+          },
+          "terminal_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Terminal Score",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "signals",
+          "positive_contributions",
+          "terminal_contributions",
+          "positive_score",
+          "terminal_score"
+        ],
+        "title": "ScreeningContribution",
+        "type": "object"
+      },
+      "ScreeningRank": {
+        "additionalProperties": false,
+        "properties": {
+          "composite_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Composite Score",
+            "type": "string"
+          },
+          "positive_percentile": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Positive Percentile",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "terminal_percentile": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Terminal Percentile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "rank",
+          "positive_percentile",
+          "terminal_percentile",
+          "composite_score"
+        ],
+        "title": "ScreeningRank",
+        "type": "object"
+      },
+      "SelectionOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": ["FROZEN", "ABSTAINED", "DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/SelectionPolicy"
+          },
+          "population": {
+            "$ref": "#/components/schemas/SelectionPopulation"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "ranking": {
+            "items": {
+              "$ref": "#/components/schemas/ScreeningRank"
+            },
+            "title": "Ranking",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "scan": {
+            "items": {
+              "$ref": "#/components/schemas/SelectionScan"
+            },
+            "title": "Scan",
+            "type": "array"
+          },
+          "screening_audit": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ScreeningContribution"
+            },
+            "title": "Screening Audit",
+            "type": "array"
+          },
+          "universe_event_id": {
+            "title": "Universe Event Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "disposition",
+          "cutoff_at",
+          "universe_event_id",
+          "policy",
+          "members",
+          "ranking",
+          "scan",
+          "population",
+          "reasons"
+        ],
+        "title": "SelectionOutcome",
+        "type": "object"
+      },
+      "SelectionPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "capitalization_limit": {
+            "exclusiveMinimum": 0.0,
+            "title": "Capitalization Limit",
+            "type": "integer"
+          },
+          "cohort_size": {
+            "exclusiveMinimum": 0.0,
+            "title": "Cohort Size",
+            "type": "integer"
+          },
+          "correlation_sessions": {
+            "exclusiveMinimum": 1.0,
+            "title": "Correlation Sessions",
+            "type": "integer"
+          },
+          "industry_limit": {
+            "exclusiveMinimum": 0.0,
+            "title": "Industry Limit",
+            "type": "integer"
+          },
+          "maximum_correlation": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Correlation",
+            "type": "string"
+          },
+          "positive_weight": {
+            "exclusiveMinimum": 0.0,
+            "title": "Positive Weight",
+            "type": "integer"
+          },
+          "terminal_weight": {
+            "exclusiveMinimum": 0.0,
+            "title": "Terminal Weight",
+            "type": "integer"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "cohort_size",
+          "industry_limit",
+          "capitalization_limit",
+          "correlation_sessions",
+          "maximum_correlation",
+          "positive_weight",
+          "terminal_weight"
+        ],
+        "title": "SelectionPolicy",
+        "type": "object"
+      },
+      "SelectionPopulation": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "recommendation_coverage_denominator": {
+            "title": "Recommendation Coverage Denominator",
+            "type": "boolean"
+          },
+          "scheduled_monthly": {
+            "const": true,
+            "default": true,
+            "title": "Scheduled Monthly",
+            "type": "boolean"
+          },
+          "selection_pass": {
+            "anyOf": [
+              {
+                "const": false,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Pass"
+          },
+          "selection_pass_denominator": {
+            "title": "Selection Pass Denominator",
+            "type": "boolean"
+          },
+          "valid_monthly": {
+            "title": "Valid Monthly",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid_monthly",
+          "recommendation_coverage_denominator",
+          "selection_pass_denominator"
+        ],
+        "title": "SelectionPopulation",
+        "type": "object"
+      },
+      "SelectionScan": {
+        "additionalProperties": false,
+        "properties": {
+          "capitalization_group": {
+            "title": "Capitalization Group",
+            "type": "integer"
+          },
+          "correlated_with": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Correlated With",
+            "type": "array"
+          },
+          "included": {
+            "title": "Included",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "capitalization_group",
+          "included",
+          "reasons",
+          "correlated_with"
+        ],
+        "title": "SelectionScan",
+        "type": "object"
+      },
       "SessionRefreshDto": {
         "description": "Pydantic transport contract for a CSRF-protected idle-session refresh.",
         "properties": {
@@ -6865,6 +7201,39 @@
         },
         "required": ["allowed", "task_snapshot", "qualification_snapshot", "reasons", "checked_at"],
         "title": "TaskUsage",
+        "type": "object"
+      },
+      "TransformedSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "percentile": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Percentile",
+            "type": "string"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "signal_id": {
+            "title": "Signal Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": ["signal_id", "raw", "state", "percentile"],
+        "title": "TransformedSignal",
         "type": "object"
       },
       "TwoThresholdBudget": {

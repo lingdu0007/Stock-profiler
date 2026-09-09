@@ -27,6 +27,64 @@ files to add to Git.
 
 ## Frozen Recovery
 
+The `selection.1.0.0` frozen-case contract consumes an original committed
+monthly universe and an evidence-bound dual-head screening snapshot. The
+host, not the framework, computes complete cross-sectional midrank
+percentiles, their explicitly weighted composite, and the diversification
+scan. Scores are uncalibrated research inputs, never success probabilities.
+This D0 interface does not fit statistical models or certify their outputs.
+
+The snapshot retains a content-addressed strategy and parameter artifact,
+training members and label-availability watermark, diagnostics/environment
+hashes, and complete signal observations. Strategy parameters freeze
+signal semantics, industry/universe percentile populations, conservative
+inapplicable states, curve knots and directions, low-rank interactions,
+training-window/weighting rules, regularization, targets and selection-policy
+hash. The host replays piecewise-linear additive curves and declared
+interaction components. It rejects a claimed head score that does not match
+that replay and retains raw values, states, transformed values and both
+heads' contributions for the entire universe. Context signals may enter
+only through declared interactions, never an independent main effect.
+The training calendar must cover every month from the frozen start through
+the potentially mature boundary. Calendar-month maturity is computed from
+each original selection cutoff and the declared horizon; the artifact must
+use the full expanding or trailing mature window, and no label may precede
+its own maturity. Industry, adjustment, universe-policy, manifest and
+per-field semantic contracts are checked against the content-addressed
+strategy before inference.
+
+Market fields and each signal have separate evidence-manifest entries.
+Derived inputs use certified-delivery evidence; market evidence and any
+authoritative substitute reconstruction must cover the completed close.
+Missing inputs are data failures; unavailable or inconsistent model
+artifacts are system failures. No fallback estimator is selected.
+
+The policy supplies the required member count, industry and capitalization
+limits, adjusted-return window length and inclusive positive-correlation
+ceiling, without personal defaults. Equal head values share an average rank
+on the zero-to-one-hundred endpoint scale; a singleton receives zero.
+Composite comparisons use exact fractions, rounding only the displayed
+values; ties use ascending security identity. Capitalization groups are
+the three contiguous rank partitions of the entire eligible universe,
+ordered by float capitalization and then security identity; group index is
+`floor(3 * zero_based_rank / universe_size)`. The complete ranking survives
+even when only its prefix is scanned. Conflicts retain higher-ranked
+members; the scan does not backtrack or relax constraints.
+
+Insufficient capacity produces `ABSTAINED` with no frozen members. The
+scan's provisional inclusions remain audit facts, not a partial cohort.
+Abstention remains a registered valid month and a coverage/pass denominator
+member; it is not a zero-drawdown success. Incomplete universe membership,
+missing or stale inputs, invalid or constant adjusted-return series and
+unavailable evidence produce a separate data failure. System prerequisites
+retain their own failed outcome. All planned attempts retain their stable
+month identity; changed retry keys, policies or later evidence cannot
+replace the original snapshot, including after a failure.
+
+The existing authenticated report route shows ordered frozen members,
+complete ranking, signal contributions, gate-scan reasons and population registration. It adds no
+trading, allocation or personal authorization capability.
+
 The `universe.1.0.0` frozen-case contract accepts an explicit synthetic monthly
 universe command. Its policy, calendar, account scope, security inventory,
 dated market window, legal acquisition cost and source manifest are input

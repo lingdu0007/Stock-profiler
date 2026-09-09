@@ -1202,6 +1202,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            selection?: components["schemas"]["SelectionOutcome"] | null;
             stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
             summary: string;
@@ -2678,6 +2679,131 @@ export interface components {
              */
             transferable_at: string;
         };
+        /** ScreeningContribution */
+        ScreeningContribution: {
+            /** Positive Contributions */
+            positive_contributions: {
+                [key: string]: string;
+            };
+            /** Positive Score */
+            positive_score: string;
+            /** Security Id */
+            security_id: string;
+            /** Signals */
+            signals: components["schemas"]["TransformedSignal"][];
+            /** Terminal Contributions */
+            terminal_contributions: {
+                [key: string]: string;
+            };
+            /** Terminal Score */
+            terminal_score: string;
+        };
+        /** ScreeningRank */
+        ScreeningRank: {
+            /** Composite Score */
+            composite_score: string;
+            /** Positive Percentile */
+            positive_percentile: string;
+            /** Rank */
+            rank: number;
+            /** Security Id */
+            security_id: string;
+            /** Terminal Percentile */
+            terminal_percentile: string;
+        };
+        /** SelectionOutcome */
+        SelectionOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "FROZEN" | "ABSTAINED" | "DATA_FAILED" | "SYSTEM_FAILED" | "BLOCKED";
+            /** Members */
+            members: string[];
+            policy: components["schemas"]["SelectionPolicy"];
+            population: components["schemas"]["SelectionPopulation"];
+            /**
+             * Qualification Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /** Ranking */
+            ranking: components["schemas"]["ScreeningRank"][];
+            /** Reasons */
+            reasons: string[];
+            /** Scan */
+            scan: components["schemas"]["SelectionScan"][];
+            /**
+             * Screening Audit
+             * @default []
+             */
+            screening_audit: components["schemas"]["ScreeningContribution"][];
+            /** Universe Event Id */
+            universe_event_id: string;
+        };
+        /** SelectionPolicy */
+        SelectionPolicy: {
+            /** Capitalization Limit */
+            capitalization_limit: number;
+            /** Cohort Size */
+            cohort_size: number;
+            /** Correlation Sessions */
+            correlation_sessions: number;
+            /** Industry Limit */
+            industry_limit: number;
+            /** Maximum Correlation */
+            maximum_correlation: string;
+            /** Positive Weight */
+            positive_weight: number;
+            /** Terminal Weight */
+            terminal_weight: number;
+            /** Version Id */
+            version_id: string;
+        };
+        /** SelectionPopulation */
+        SelectionPopulation: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM") | null;
+            /** Recommendation Coverage Denominator */
+            recommendation_coverage_denominator: boolean;
+            /**
+             * Scheduled Monthly
+             * @default true
+             * @constant
+             */
+            scheduled_monthly: true;
+            /** Selection Pass */
+            selection_pass?: false | null;
+            /** Selection Pass Denominator */
+            selection_pass_denominator: boolean;
+            /** Valid Monthly */
+            valid_monthly: boolean;
+        };
+        /** SelectionScan */
+        SelectionScan: {
+            /** Capitalization Group */
+            capitalization_group: number;
+            /** Correlated With */
+            correlated_with: string[];
+            /** Included */
+            included: boolean;
+            /** Reasons */
+            reasons: string[];
+            /** Security Id */
+            security_id: string;
+        };
         /**
          * SessionRefreshDto
          * @description Pydantic transport contract for a CSRF-protected idle-session refresh.
@@ -2824,6 +2950,17 @@ export interface components {
             /** Reasons */
             reasons: string[];
             task_snapshot: components["schemas"]["FrozenTask"];
+        };
+        /** TransformedSignal */
+        TransformedSignal: {
+            /** Percentile */
+            percentile: string;
+            /** Raw */
+            raw: string | null;
+            /** Signal Id */
+            signal_id: string;
+            /** State */
+            state: string;
         };
         /** TwoThresholdBudget */
         TwoThresholdBudget: {
