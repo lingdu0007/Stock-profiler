@@ -24,6 +24,7 @@ import {
 import { LiquidityEvidence } from "./LiquidityEvidence";
 import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
+import { UniverseEvidence } from "./UniverseEvidence";
 
 function createQueryClient() {
   return new QueryClient({
@@ -172,6 +173,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
         <ExecutionPlanEvidence plan={report.result.execution_plan} />
       )}
       {report.result.monitoring && <MonitoringEvidence report={report} />}
+      {report.result.universe && <UniverseEvidence universe={report.result.universe} />}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
