@@ -39,9 +39,6 @@ from m_agent.runtime import (
     ModelRequest,
     ModelResponse,
     OutputContract,
-    PolicyAction,
-    PolicyDecision,
-    PolicyGate,
     Runner,
     RunNotFoundError,
     RunRecord,
@@ -539,16 +536,9 @@ def _risk_definition(
     risk_policy = StaticRunPolicy(
         policy_id="synthetic-risk-veto",
         version="1",
-        decisions=(
-            {
-                PolicyGate.FINAL_OUTPUT: PolicyDecision(
-                    action=PolicyAction.REJECT,
-                    reason_code="SYNTHETIC_RISK_VETO",
-                )
-            }
-            if command.risk_scenario == "REJECT" and command.failure_mode != "RISK"
-            else {}
-        ),
+        # The typed RiskVetoDraft owns ACCEPTED/REJECTED.  A Run-policy
+        # rejection would discard that output before the host can validate it.
+        decisions={},
     )
     handoff_item = ContextItem(
         item_id=f"research-handoff:{research_run_id}",

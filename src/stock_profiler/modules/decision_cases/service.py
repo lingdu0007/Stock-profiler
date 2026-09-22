@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime
 from threading import Lock
 from typing import Literal
 
@@ -69,8 +70,6 @@ from stock_profiler.modules.research.contracts import (
     ResearchDraft,
     ResearchFrameworkOutput,
     ResearchRiskPlan,
-    RiskGate,
-    RiskMemberVeto,
     RiskVetoDraft,
 )
 from stock_profiler.modules.research.service import (
@@ -99,6 +98,68 @@ def run_default_frozen_decision_case(
     return _run_frozen_decision_case(case, ledger, framework)
 
 
+def _validate_research_selection_event(
+    case: FrozenDecisionCase,
+    selection_event: DecisionEventFact | None,
+) -> None:
+    """Require research to consume the committed upstream selection fact."""
+    command = case.research
+    assert command is not None
+    if selection_event is None:
+        raise ValueError("RESEARCH_SELECTION_EVENT_MISSING")
+    if (
+        selection_event.decision_event_id != command.selection_event_id
+        or selection_event.corrects_event_id is not None
+        or selection_event.validation_status != "PASSED"
+    ):
+        raise ValueError("RESEARCH_SELECTION_EVENT_INVALID")
+    source_case = selection_event.case
+    source_selection = source_case.selection
+    source_outcome = selection_event.result.selection
+    if source_selection is None or source_outcome is None:
+        raise ValueError("RESEARCH_SELECTION_HANDOFF_MISSING")
+    if (
+        selection_event.business_object_id != command.selection_object_id
+        or source_case.business_object_id != command.selection_object_id
+    ):
+        raise ValueError("RESEARCH_SELECTION_OBJECT_MISMATCH")
+    if (
+        case.access_scope is None
+        or source_case.access_scope is None
+        or not case.access_scope.same_scope_as(source_case.access_scope)
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCOPE_MISMATCH")
+    if (
+        source_selection.cutoff_at != command.cutoff_at
+        or source_outcome.cutoff_at != command.cutoff_at
+        or datetime.fromisoformat(source_case.knowledge_cutoff) != command.knowledge_cutoff
+    ):
+        raise ValueError("RESEARCH_SELECTION_CUTOFF_MISMATCH")
+    if source_outcome.disposition != "FROZEN":
+        raise ValueError("RESEARCH_SELECTION_NOT_FROZEN")
+    if tuple(source_outcome.members) != tuple(command.screening.selected_member_ids):
+        raise ValueError("RESEARCH_SELECTION_COHORT_MISMATCH")
+    source_rows = tuple(source_selection.rows)
+    if tuple(row.security_id for row in source_rows) != tuple(
+        command.screening.universe_security_ids
+    ):
+        raise ValueError("RESEARCH_SELECTION_UNIVERSE_MISMATCH")
+    if (
+        source_selection.screening_snapshot_id != command.screening.snapshot_id
+        or source_selection.strategy_version != command.screening.strategy_version
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCREENING_VERSION_MISMATCH")
+    source_positive_scores = {row.security_id: row.positive_score for row in source_rows}
+    source_terminal_scores = {row.security_id: row.terminal_score for row in source_rows}
+    if (
+        any(score is None for score in source_positive_scores.values())
+        or any(score is None for score in source_terminal_scores.values())
+        or source_positive_scores != command.screening.positive_scores
+        or source_terminal_scores != command.screening.terminal_scores
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCREENING_MISMATCH")
+
+
 async def execute_research_risk_journey(
     case: FrozenDecisionCase,
     *,
@@ -109,15 +170,19 @@ async def execute_research_risk_journey(
     command = case.research
     assert command is not None
     research_run = await execute_research()
-    if research_run.status != "SUCCEEDED" or research_run.output is None:
+    if research_run.status != "SUCCEEDED":
         return research_run
+    if research_run.output is None:
+        return replace(
+            research_run,
+            research_validation_error_code="RESEARCH_OUTPUT_MISSING",
+        )
     try:
         draft = ResearchDraft.model_validate_json(research_run.output)
     except ValueError:
         return replace(
             research_run,
-            status="FAILED",
-            error_code="RESEARCH_OUTPUT_INVALID",
+            research_validation_error_code="RESEARCH_OUTPUT_INVALID",
         )
     tool_evidence = research_run.research_tool_evidence
     try:
@@ -125,8 +190,7 @@ async def execute_research_risk_journey(
     except ValueError:
         return replace(
             research_run,
-            status="FAILED",
-            error_code="RESEARCH_PROVENANCE_INVALID",
+            research_validation_error_code="RESEARCH_PROVENANCE_INVALID",
         )
     if command.failure_mode == "RAW_SCORE":
         return replace(
@@ -166,8 +230,6 @@ async def execute_research_risk_journey(
             risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
         except ValueError:
             risk_veto = None
-    elif risk_run.status == "REJECTED":
-        risk_veto = _rejected_risk_veto(risk_plan, risk_run.error_code)
     else:
         risk_veto = None
     return replace(
@@ -187,31 +249,6 @@ async def execute_research_risk_journey(
         risk_run_error_code=risk_run.error_code,
         risk_transitions=risk_run.transitions,
         risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
-    )
-
-
-def _rejected_risk_veto(
-    risk_plan: ResearchRiskPlan,
-    error_code: str | None,
-) -> RiskVetoDraft:
-    reason = error_code or "SYNTHETIC_RISK_VETO"
-    failed_gate = RiskGate(gate_id="SYNTHETIC_RISK_VETO", status="FAILED")
-    return RiskVetoDraft(
-        contract_version="1.0.0",
-        handoff_fingerprint=risk_plan.handoff_fingerprint,
-        disposition="REJECTED",
-        gates=(failed_gate,),
-        reasons=(reason,),
-        member_vetoes=tuple(
-            RiskMemberVeto(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                disposition="REJECTED",
-                gates=(failed_gate,),
-                reasons=(reason,),
-            )
-            for member in risk_plan.member_handoffs
-        ),
     )
 
 
@@ -467,6 +504,49 @@ def _run_frozen_decision_case(
                         execution_case = execution_case.model_copy(
                             update={"recovery_framework_run_id": mapping.framework_run_id}
                         )
+                    if execution_case.research is not None:
+                        try:
+                            _validate_research_selection_event(
+                                execution_case,
+                                ledger.get_decision_event(
+                                    execution_case.research.selection_event_id,
+                                    connection,
+                                ),
+                            )
+                        except ValueError as error:
+                            ledger.record_stage_result(
+                                connection,
+                                case=execution_case,
+                                stage_result=StageResult(
+                                    phase="RESEARCH",
+                                    status="FAILED",
+                                    gate_results=(
+                                        GateResult(
+                                            gate_id="RESEARCH_SELECTION_EVENT",
+                                            status="FAILED",
+                                        ),
+                                    ),
+                                    reasons=(str(error),),
+                                ),
+                                framework_run_id=execution_case.framework_run_id,
+                            )
+                            ledger.record_stage_result(
+                                connection,
+                                case=execution_case,
+                                stage_result=_failed_host_validation(str(error)),
+                                framework_run_id=execution_case.framework_run_id,
+                            )
+                            return _unpublished_execution(
+                                execution_case,
+                                framework_run_status="CREATED",
+                                business_result_status=None,
+                                business_lifecycle=None,
+                                business_commit_status="NOT_ATTEMPTED",
+                                stage_results=ledger.get_stage_results(
+                                    execution_case.business_object_id,
+                                    connection,
+                                ),
+                            )
                 else:
                     execution_case = None
             if fact is None:
@@ -488,6 +568,7 @@ def _run_frozen_decision_case(
                         )
 
                     if execution_case.research is not None:
+
                         async def execute_risk(
                             research_run: FrameworkRunResult,
                             risk_plan: ResearchRiskPlan,
@@ -508,9 +589,7 @@ def _run_frozen_decision_case(
                                 research_run,
                                 risk_plan,
                                 record_risk_transition,
-                                record_auxiliary_run_reservation=(
-                                    record_auxiliary_run_reservation
-                                ),
+                                record_auxiliary_run_reservation=(record_auxiliary_run_reservation),
                             )
 
                         framework = asyncio.run(
@@ -604,11 +683,10 @@ async def _record_auxiliary_run_reservation(
             connection,
             framework_run_id=framework_run_id,
         )
-        if any(
-            stage_result.phase in {"AUXILIARY_RUN_RESERVATION", "RISK_FRAMEWORK_RUN"}
-            for stage_result in history
-        ):
+        if any(stage_result.phase == "RISK_FRAMEWORK_RUN" for stage_result in history):
             return False
+        if any(stage_result.phase == "AUXILIARY_RUN_RESERVATION" for stage_result in history):
+            return True
         ledger.record_stage_result(
             connection,
             case=case,
@@ -1409,6 +1487,16 @@ def _commit_research_framework_result(
                 ),
             )
         )
+    if framework.research_validation_error_code is not None:
+        return closed(
+            validation=_failed_host_validation(framework.research_validation_error_code),
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_HOST_VALIDATION", status="FAILED"),),
+                reasons=(framework.research_validation_error_code,),
+            ),
+        )
     if framework.output is None:
         return closed(
             research=StageResult(
@@ -1461,17 +1549,7 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation(framework.raw_score_error_code),
         )
-    if (
-        envelope.risk_veto is None
-        or framework.risk_run_status not in {"SUCCEEDED", "REJECTED"}
-        or (
-            framework.risk_run_status == "REJECTED" and envelope.risk_veto.disposition != "REJECTED"
-        )
-        or (
-            framework.risk_run_status == "SUCCEEDED"
-            and envelope.risk_veto.disposition != "ACCEPTED"
-        )
-    ):
+    if envelope.risk_veto is None or framework.risk_run_status != "SUCCEEDED":
         return closed(
             research=research_stage,
             risk=StageResult(

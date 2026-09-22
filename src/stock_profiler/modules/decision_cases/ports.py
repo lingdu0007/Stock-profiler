@@ -79,6 +79,7 @@ class FrameworkRunResult:
     risk_run_error_code: str | None = None
     risk_transitions: tuple[FrameworkRunTransition, ...] = ()
     risk_transitions_durably_recorded: bool = False
+    research_validation_error_code: str | None = None
     raw_score_error_code: str | None = None
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
@@ -240,6 +241,10 @@ class DecisionLedger(Protocol[Transaction]):
 
     def get_original_decision_event(
         self, business_object_id: str, connection: Transaction
+    ) -> DecisionEventFact | None: ...
+
+    def get_decision_event(
+        self, decision_event_id: str, connection: Transaction
     ) -> DecisionEventFact | None: ...
 
     def get_correction_event(

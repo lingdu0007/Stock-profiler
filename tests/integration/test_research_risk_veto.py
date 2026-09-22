@@ -27,7 +27,17 @@ from stock_profiler.foundation.decision_versions import (
     HISTORICAL_M_AGENT_RELEASE,
     DecisionCaseVersionBundle,
 )
+from stock_profiler.modules.candidate_selection.selection import (
+    ScreeningRank,
+    ScreeningRow,
+    SelectionCommand,
+    SelectionOutcome,
+    SelectionPolicy,
+    SelectionPopulation,
+)
+from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import (
+    FROZEN_AGENT_DEFINITION_ID,
     EvidenceClock,
     ExternalResult,
     FrozenAgentDefinition,
@@ -37,8 +47,10 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError,
+    FrameworkRunResult,
     MappedDurableRunMissingError,
 )
+from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
@@ -59,6 +71,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchMemberHandoff,
     ResearchMemberInput,
+    ResearchRiskPlan,
     ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
@@ -145,6 +158,158 @@ def research_command(
     )
 
 
+def _selection_anchor_case(
+    settings: Settings,
+    command: ResearchCommand,
+    scope: ResultAccessScope,
+) -> tuple[FrozenDecisionCase, SelectionOutcome]:
+    """Create a committed synthetic selection fact for the research handoff."""
+    selection = SelectionCommand(
+        contract_version="1.0.0",
+        synthetic=True,
+        generator_version="synthetic-selection-anchor-v1",
+        seed=1515,
+        cutoff_at=command.cutoff_at,
+        purpose="SYNTHETIC",
+        universe_object_id="synthetic-universe-object-1515",
+        universe_event_id="synthetic-universe-event-1515",
+        policy=SelectionPolicy(
+            version_id="synthetic-selection-policy-v1",
+            cohort_size=10,
+            industry_limit=2,
+            capitalization_limit=4,
+            correlation_sessions=2,
+            maximum_correlation=Decimal("0.8"),
+            positive_weight=8,
+            terminal_weight=5,
+        ),
+        industry_version="synthetic-industry-v1",
+        adjustment_version="synthetic-adjustment-v1",
+        screening_snapshot_id=command.screening.snapshot_id,
+        strategy_version=command.screening.strategy_version,
+        rows=tuple(
+            ScreeningRow(
+                security_id=security_id,
+                industry=f"synthetic-industry-{index % 5}",
+                float_capitalization=Decimal(1000 + index),
+                positive_score=command.screening.positive_scores[security_id],
+                terminal_score=command.screening.terminal_scores[security_id],
+                adjusted_returns=(Decimal("0.01"), Decimal("0.02")),
+                return_dates=(command.cutoff_at.date(),),
+            )
+            for index, security_id in enumerate(command.screening.universe_security_ids)
+        ),
+    )
+    selection_outcome = SelectionOutcome(
+        disposition="FROZEN",
+        cutoff_at=command.cutoff_at,
+        universe_event_id=selection.universe_event_id,
+        policy=selection.policy,
+        members=command.screening.selected_member_ids,
+        ranking=tuple(
+            ScreeningRank(
+                security_id=security_id,
+                rank=index + 1,
+                positive_percentile=Decimal("0.6"),
+                terminal_percentile=Decimal("0.7"),
+                composite_score=Decimal("0.64"),
+            )
+            for index, security_id in enumerate(command.screening.selected_member_ids)
+        ),
+        scan=(),
+        population=SelectionPopulation(
+            valid_monthly=True,
+            recommendation_coverage_denominator=True,
+            selection_pass_denominator=True,
+            selection_pass=False,
+        ),
+        reasons=("SELECTION_FROZEN",),
+    )
+    definition = FrozenAgentDefinition(
+        definition_id=FROZEN_AGENT_DEFINITION_ID,
+        version="2.0.0",
+        instructions="Return only the frozen synthetic selection result as JSON.",
+        model_adapter_id="m-agent-deterministic-model-adapter",
+        output_contract=FrozenOutputContract(
+            contract_id="synthetic-decision-case-output",
+            version="1.0.0",
+            schema={"type": "object"},
+        ),
+    )
+    bundle = DecisionCaseVersionBundle(
+        case_contract_version="selection.1.0.0",
+        host_contract_version="selection.1.0.0",
+        host_application_version=settings.configuration_version,
+        host_source_sha=settings.source_sha,
+        agent_definition_id=FROZEN_AGENT_DEFINITION_ID,
+        agent_definition_version="2.0.0",
+        model_adapter_id="m-agent-deterministic-model-adapter",
+        routing_policy_version="d0-single-definition-route-v1",
+        output_contract_version="1.0.0",
+        report_projection_contract_version="selection.1.0.0",
+        **CURRENT_M_AGENT_RELEASE.model_dump(),
+    )
+    anchor_case = FrozenDecisionCase(
+        synthetic=True,
+        generator_version="synthetic-selection-anchor-case-v1",
+        seed=1515,
+        case_id="synthetic-selection-anchor-case-1515",
+        business_identity="synthetic-selection-anchor-1515",
+        knowledge_cutoff=command.knowledge_cutoff.isoformat(),
+        report_generated_at=command.cutoff_at.isoformat(),
+        evidence_clock=EvidenceClock(
+            fact_effective_at=command.cutoff_at.isoformat(),
+            source_published_at=command.cutoff_at.isoformat(),
+            acquired_at=command.cutoff_at.isoformat(),
+            validated_at=command.cutoff_at.isoformat(),
+        ),
+        qualification_scope="D0_SYNTHETIC_CONTRACT_ONLY",
+        version_bundle=bundle,
+        agent_definition=definition,
+        input={
+            "account": {
+                "account_id": scope.account_ids[0],
+                "account_kind": "SIMULATED_CASH",
+            },
+            "selection": selection.model_dump(mode="json"),
+        },
+        expected_external_result=ExternalResult(
+            outcome_code="SYNTHETIC_REVIEW_COMPLETE",
+            summary="Synthetic selection anchor.",
+            key_reasons=("SELECTION_FROZEN",),
+        ),
+        selection=selection,
+        access_scope=scope,
+    )
+    return anchor_case, selection_outcome
+
+
+def _seed_selection_event(
+    settings: Settings,
+    anchor_case: FrozenDecisionCase,
+    selection_event_id: str,
+    selection_outcome: SelectionOutcome,
+) -> None:
+    """Persist the upstream selection event before executing research."""
+    runtime = initialize_runtime_storage(settings)
+    ledger = DecisionLedger(runtime.engine)
+    ledger.persist_business_mapping_before_framework(anchor_case)
+    with ledger.serialize_case_execution() as connection:
+        ledger.commit_event(
+            connection,
+            case=anchor_case,
+            framework_run_id=anchor_case.framework_run_id,
+            result=ExternalResult(
+                outcome_code="SELECTION_FROZEN",
+                summary="Synthetic selection anchor.",
+                key_reasons=("SELECTION_FROZEN",),
+                selection=selection_outcome,
+            ),
+            stage_results=(),
+            decision_event_id=selection_event_id,
+        )
+
+
 def _draft(command: ResearchCommand) -> ResearchDraft:
     return ResearchDraft(
         contract_version="1.0.0",
@@ -176,6 +341,20 @@ def _case(
         account_ids=("synthetic-account-4017",),
         visibility="USER",
     )
+    selection_anchor, selection_outcome = _selection_anchor_case(settings, command, scope)
+    command = command.model_copy(
+        update={
+            "selection_object_id": selection_anchor.business_object_id,
+            "selection_event_id": selection_anchor.decision_event_id,
+            "selection_fingerprint": selection_binding_sha256(
+                selection_anchor.business_object_id,
+                selection_anchor.decision_event_id,
+                command.cutoff_at,
+                command.screening,
+            ),
+        }
+    )
+    _seed_selection_event(settings, selection_anchor, command.selection_event_id, selection_outcome)
     draft = _draft(command)
     tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
     tool_evidence = tuple(
@@ -421,7 +600,7 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     risk_run_id = execution.report.result.research.handoff.risk_run_id
     risk_run = asyncio.run(runtime.run_store.get_run(risk_run_id))
     assert risk_run is not None
-    assert risk_run.status.value == "REJECTED"
+    assert risk_run.status.value == "SUCCEEDED"
     assert risk_run.definition_id == RISK_DEFINITION_ID
     assert risk_run.definition_version == RISK_DEFINITION_VERSION
     assert risk_run.snapshot is not None
@@ -534,6 +713,10 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
 
     assert execution.report is None
     assert any(
+        stage.phase == "FRAMEWORK_RUN" and stage.status == "SUCCEEDED"
+        for stage in execution.stage_results
+    )
+    assert any(
         stage.phase == "RESEARCH"
         and stage.status == "FAILED"
         and "RESEARCH_PROVENANCE_INVALID" in stage.reasons
@@ -550,6 +733,102 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
             )
         }
     assert recorded_run_ids == {case.framework_run_id}
+
+
+def test_missing_upstream_selection_event_stops_before_framework_execution(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research = payload["research"]
+    assert isinstance(research, dict)
+    research["selection_event_id"] = "selection-event-not-committed"
+    research["selection_fingerprint"] = selection_binding_sha256(
+        research["selection_object_id"],
+        research["selection_event_id"],
+        datetime.fromisoformat(research["cutoff_at"]),
+        FrozenDualTargetScreening.model_validate(research["screening"]),
+    )
+    payload["input"]["research"] = research
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    assert execution.framework_run_status == "CREATED"
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_SELECTION_EVENT_MISSING" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(
+        stage.phase in {"FRAMEWORK_RUN", "RAW_SCORE", "RISK_VETO"}
+        for stage in execution.stage_results
+    )
+
+
+def test_rejected_risk_run_does_not_fabricate_member_verdicts(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+
+    async def execute_research() -> FrameworkRunResult:
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="SUCCEEDED",
+            output=_draft(command).model_dump_json(),
+        )
+
+    async def execute_rejected_risk(
+        _: FrameworkRunResult, plan: ResearchRiskPlan
+    ) -> FrameworkRunResult:
+        return FrameworkRunResult(
+            run_id=plan.risk_run_id,
+            status="REJECTED",
+            output=None,
+            error_code="RISK_RUN_REJECTED",
+        )
+
+    framework = asyncio.run(
+        execute_research_risk_journey(
+            case,
+            execute_research=execute_research,
+            execute_risk=execute_rejected_risk,
+        )
+    )
+    assert framework.status == "SUCCEEDED"
+    assert framework.risk_run_status == "REJECTED"
+    envelope = ResearchFrameworkOutput.model_validate_json(framework.output or "")
+    assert envelope.risk_veto is None
+
+
+def test_pending_risk_reservation_can_be_reused_after_creation_gap(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    runtime = initialize_runtime_storage(migrated_settings)
+    ledger = DecisionLedger(runtime.engine)
+    ledger.persist_business_mapping_before_framework(case)
+    risk_run_id = "risk-run-pending-reservation"
+
+    first = asyncio.run(
+        decision_case_service._record_auxiliary_run_reservation(
+            ledger,
+            case,
+            risk_run_id,
+        )
+    )
+    second = asyncio.run(
+        decision_case_service._record_auxiliary_run_reservation(
+            ledger,
+            case,
+            risk_run_id,
+        )
+    )
+
+    assert first is True
+    assert second is True
 
 
 def test_research_context_stages_have_distinct_frozen_roles(
