@@ -31,6 +31,7 @@ from stock_profiler.modules.position_management.contracts import (
     PositionReconciliationOutcome,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
+from stock_profiler.modules.research.contracts import ResearchRiskPlan, ResearchToolEvidence
 
 Transaction = TypeVar("Transaction")
 
@@ -70,6 +71,7 @@ class FrameworkRunResult:
     run_id: str
     status: FrameworkRunStatus
     output: str | None
+    run_existed_before: bool = False
     waiting_reason: str | None = None
     error_code: str | None = None
     risk_run_id: str | None = None
@@ -80,6 +82,7 @@ class FrameworkRunResult:
     raw_score_error_code: str | None = None
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
+    research_tool_evidence: tuple[ResearchToolEvidence, ...] = ()
 
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
@@ -97,6 +100,21 @@ class FrozenFramework(Protocol):
         self,
         case: FrozenDecisionCase,
         record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_run(
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_risk_run(
+        self,
+        case: FrozenDecisionCase,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
         *,
         record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult: ...

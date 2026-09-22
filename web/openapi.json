@@ -6376,6 +6376,39 @@
         "title": "RequalificationProof",
         "type": "object"
       },
+      "ResearchEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "reference": {
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": ["evidence_id", "source", "reference", "statement", "knowledge_cutoff"],
+        "title": "ResearchEvidence",
+        "type": "object"
+      },
       "ResearchHandoff": {
         "additionalProperties": false,
         "description": "Versioned, immutable boundary between research/risk and later work.",
@@ -6408,6 +6441,14 @@
             "format": "date-time",
             "title": "Knowledge Cutoff",
             "type": "string"
+          },
+          "member_handoffs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchMemberHandoff"
+            },
+            "title": "Member Handoffs",
+            "type": "array"
           },
           "raw_scores": {
             "items": {
@@ -6556,6 +6597,41 @@
           "raw_scores"
         ],
         "title": "ResearchHandoff",
+        "type": "object"
+      },
+      "ResearchMemberHandoff": {
+        "additionalProperties": false,
+        "description": "Immutable per-member evidence and risk facts consumed by risk.",
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchEvidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "research_id": {
+            "minLength": 1,
+            "title": "Research Id",
+            "type": "string"
+          },
+          "risk_flags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Risk Flags",
+            "type": "array"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "research_id", "evidence"],
+        "title": "ResearchMemberHandoff",
         "type": "object"
       },
       "ResearchMemberResult": {
@@ -6958,6 +7034,46 @@
         "title": "RiskGate",
         "type": "object"
       },
+      "RiskMemberVeto": {
+        "additionalProperties": false,
+        "description": "Independent risk disposition and gates for one fixed cohort member.",
+        "properties": {
+          "disposition": {
+            "enum": ["ACCEPTED", "REJECTED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/RiskGate"
+            },
+            "minItems": 1,
+            "title": "Gates",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_id": {
+            "minLength": 1,
+            "title": "Research Id",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "research_id", "disposition", "gates", "reasons"],
+        "title": "RiskMemberVeto",
+        "type": "object"
+      },
       "RiskVetoOutcome": {
         "additionalProperties": false,
         "properties": {
@@ -6979,6 +7095,14 @@
               "$ref": "#/components/schemas/RiskGate"
             },
             "title": "Gates",
+            "type": "array"
+          },
+          "member_vetoes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RiskMemberVeto"
+            },
+            "title": "Member Vetoes",
             "type": "array"
           },
           "reasons": {

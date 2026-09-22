@@ -15,8 +15,10 @@ from stock_profiler.modules.research.contracts import (
     ResearchDraftMember,
     ResearchEvidence,
     ResearchFrameworkOutput,
+    ResearchMemberHandoff,
     ResearchMemberInput,
     RiskGate,
+    RiskMemberVeto,
     RiskVetoDraft,
     freeze_raw_score,
     handoff_fingerprint,
@@ -105,7 +107,7 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.probability is None
     assert raw_score.model_version == "elastic-net-logistic-z20-v1"
     assert raw_score.interaction_terms == ()
-    assert raw_score.z20 == Decimal("-0.030")
+    assert raw_score.z20 == Decimal("-0.038")
 
 
 def test_raw_score_does_not_change_when_research_text_changes() -> None:
@@ -152,6 +154,14 @@ def test_research_command_rejects_a_non_ten_or_incomplete_cohort() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_research_command_rejects_a_reordered_frozen_cohort() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"] = list(reversed(payload["members"]))
+
+    with pytest.raises(ValueError, match="preserve"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> None:
     command = _command(risk_scenario="REJECT")
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
@@ -176,10 +186,29 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
             command,
             draft,
             raw_scores=raw_scores,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
         disposition="REJECTED",
         gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
         reasons=("SYNTHETIC_RISK_VETO",),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED",
+                gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
+                reasons=("SYNTHETIC_RISK_VETO",),
+            )
+            for member in command.members
+        ),
     )
 
     outcome = freeze_research(
@@ -190,6 +219,15 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
             draft=draft,
             risk_veto=risk,
             raw_scores=raw_scores,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
     )
 
@@ -201,6 +239,27 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
     assert outcome.handoff.research_run_id == "research-run-1616"
     assert outcome.handoff.risk_run_id == "risk-run-1616"
     assert outcome.handoff.actionable is False
+
+    with pytest.raises(ValueError, match="order"):
+        freeze_research(
+            command,
+            ResearchFrameworkOutput(
+                research_run_id="research-run-1616",
+                risk_run_id="risk-run-1616",
+                draft=draft,
+                risk_veto=risk,
+                raw_scores=raw_scores,
+                member_handoffs=tuple(
+                    ResearchMemberHandoff(
+                        security_id=member.security_id,
+                        research_id=member.research_id,
+                        evidence=member.evidence,
+                        risk_flags=member.risk_flags,
+                    )
+                    for member in reversed(command.members)
+                ),
+            ),
+        )
 
 
 def test_research_freeze_honors_an_independent_rejection_without_command_override() -> None:
@@ -227,10 +286,29 @@ def test_research_freeze_honors_an_independent_rejection_without_command_overrid
             command,
             draft,
             raw_scores=raw_scores,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
         disposition="REJECTED",
         gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
         reasons=("INDEPENDENT_RISK_VETO",),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED",
+                gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
+                reasons=("INDEPENDENT_RISK_VETO",),
+            )
+            for member in command.members
+        ),
     )
 
     outcome = freeze_research(
@@ -241,6 +319,15 @@ def test_research_freeze_honors_an_independent_rejection_without_command_overrid
             draft=draft,
             risk_veto=risk,
             raw_scores=raw_scores,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
     )
 

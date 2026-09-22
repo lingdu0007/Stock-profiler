@@ -7,6 +7,8 @@ from typing import Any
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     execute_frozen_decision_case,
+    execute_research_risk_run,
+    execute_research_run,
     find_unmapped_legacy_frozen_decision_case,
     validate_frozen_recovery_case,
 )
@@ -35,6 +37,7 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
 from stock_profiler.modules.qualification.governance import InvalidGovernanceRequest
+from stock_profiler.modules.research.contracts import ResearchRiskPlan
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,35 @@ class _FrozenFramework:
             case,
             self.runtime,
             record_transition,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
+            clock=self.clock,
+        )
+
+    async def execute_research_run(
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+    ) -> FrameworkRunResult:
+        return await execute_research_run(
+            case,
+            self.runtime,
+            record_transition,
+            clock=self.clock,
+        )
+
+    async def execute_research_risk_run(
+        self,
+        case: FrozenDecisionCase,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
+    ) -> FrameworkRunResult:
+        return await execute_research_risk_run(
+            case,
+            self.runtime,
+            research_run,
+            risk_plan,
             record_auxiliary_run_reservation=record_auxiliary_run_reservation,
             clock=self.clock,
         )

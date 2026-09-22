@@ -90,7 +90,6 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError as MappedDurableRunMissingError,
 )
 from stock_profiler.modules.delivery.capabilities import CapabilityInventory
-from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_CONTRACT_VERSION,
@@ -102,12 +101,12 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
-    RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
-    ResearchFrameworkOutput,
+    ResearchRiskPlan,
     ResearchToolEvidence,
     RiskGate,
+    RiskMemberVeto,
     RiskVetoDraft,
 )
 
@@ -481,10 +480,9 @@ def _research_definition(
 
 def _risk_definition(
     command: ResearchCommand,
-    draft: ResearchDraft,
     *,
     research_run_id: str,
-    risk_plan: research_service.ResearchRiskPlan,
+    risk_plan: ResearchRiskPlan,
 ) -> AgentDefinition:
     """Register the independent risk Definition over an immutable handoff."""
     handoff = risk_plan.handoff_fingerprint
@@ -502,6 +500,25 @@ def _risk_definition(
             "SYNTHETIC_RISK_VETO"
             if command.risk_scenario == "REJECT"
             else "SYNTHETIC_RISK_ACCEPTED",
+        ),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED" if command.risk_scenario == "REJECT" else "ACCEPTED",
+                gates=(
+                    RiskGate(
+                        gate_id="SYNTHETIC_RISK_VETO",
+                        status="FAILED" if command.risk_scenario == "REJECT" else "PASSED",
+                    ),
+                ),
+                reasons=(
+                    "SYNTHETIC_RISK_VETO"
+                    if command.risk_scenario == "REJECT"
+                    else "SYNTHETIC_RISK_ACCEPTED",
+                ),
+            )
+            for member in command.members
         ),
     )
     if command.failure_mode == "RISK":
@@ -536,23 +553,7 @@ def _risk_definition(
     handoff_item = ContextItem(
         item_id=f"research-handoff:{research_run_id}",
         source="immutable-research-handoff",
-        content=json.dumps(
-            {
-                "handoff_fingerprint": handoff,
-                "research_run_id": research_run_id,
-                "draft": draft.model_dump(mode="json"),
-                "raw_scores": tuple(
-                    score.model_dump(mode="json") for score in risk_plan.raw_scores
-                ),
-                "tool_evidence_refs": risk_plan.tool_evidence_refs,
-                "tool_evidence": tuple(
-                    evidence.model_dump(mode="json") for evidence in risk_plan.tool_evidence
-                ),
-            },
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
+        content=risk_plan.input_payload,
         metadata={"availability": "IMMUTABLE_RESEARCH_HANDOFF"},
     )
     return AgentDefinition.for_adapter(
@@ -818,21 +819,17 @@ async def execute_frozen_decision_case(
     )
 
 
-async def execute_research_decision_case(
+async def execute_research_run(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
     *,
-    record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder | None = None,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
-    """Execute one staged research Run followed by an independent risk Run."""
+    """Execute or recover only the staged research Run."""
     command = case.research
     assert command is not None
     existing_research_run = await runtime.run_store.get_run(case.framework_run_id)
-    research_run_was_succeeded = (
-        existing_research_run is not None and existing_research_run.status.value == "SUCCEEDED"
-    )
     try:
         _assert_runtime_version_bundle(case)
         research_definition = _research_definition(
@@ -864,68 +861,46 @@ async def execute_research_decision_case(
         if command.failure_mode == "DATA":
             return replace(research_run, error_code="RESEARCH_DATA_UNAVAILABLE")
         return research_run
-    try:
-        draft = ResearchDraft.model_validate_json(research_run.output)
-    except ValueError:
-        return replace(
-            research_run,
-            status="FAILED",
-            error_code="RESEARCH_OUTPUT_INVALID",
-        )
-
     tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
+    return replace(
+        research_run,
+        run_existed_before=existing_research_run is not None,
+        research_tool_evidence=tool_evidence,
+    )
 
-    if command.failure_mode == "RAW_SCORE":
-        envelope = ResearchFrameworkOutput(
-            research_run_id=research_run.run_id,
-            risk_run_id=None,
-            draft=draft,
-            risk_veto=None,
-            tool_evidence_refs=tuple(evidence.evidence_id for evidence in tool_evidence),
-            tool_evidence=tool_evidence,
-        )
-        return replace(research_run, output=envelope.model_dump_json())
 
-    try:
-        risk_plan = research_service.prepare_research_risk_plan(
-            command,
-            research_run.run_id,
-            draft,
-            tool_evidence,
-        )
-    except RawScoreCalculationError as error:
-        envelope = ResearchFrameworkOutput(
-            research_run_id=research_run.run_id,
-            risk_run_id=None,
-            draft=draft,
-            risk_veto=None,
-            tool_evidence_refs=tuple(evidence.evidence_id for evidence in tool_evidence),
-            tool_evidence=tool_evidence,
-        )
-        return replace(
-            research_run,
-            output=envelope.model_dump_json(),
-            raw_score_error_code=str(error),
-        )
-
-    risk_run_id = risk_plan.risk_run_id
+async def execute_research_risk_run(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    research_run: FrameworkRunResult,
+    risk_plan: ResearchRiskPlan,
+    *,
+    record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder | None = None,
+    clock: Clock | None = None,
+) -> FrameworkRunResult:
+    """Execute or recover only the independent risk Run for an immutable plan."""
+    command = case.research
+    assert command is not None
     risk_definition = _risk_definition(
         command,
-        draft,
         research_run_id=research_run.run_id,
         risk_plan=risk_plan,
     )
     _assert_risk_definition(risk_definition)
-    existing_risk_run = await runtime.run_store.get_run(risk_run_id)
+    existing_risk_run = await runtime.run_store.get_run(risk_plan.risk_run_id)
     allow_create = True
-    if existing_risk_run is None and research_run_was_succeeded:
+    if (
+        existing_risk_run is None
+        and research_run.status == "SUCCEEDED"
+        and research_run.run_existed_before
+    ):
         allow_create = (
             record_auxiliary_run_reservation is not None
-            and await record_auxiliary_run_reservation(risk_run_id)
+            and await record_auxiliary_run_reservation(risk_plan.risk_run_id)
         )
-    risk_run = await _execute_registered_run(
+    return await _execute_registered_run(
         runtime=runtime,
-        run_id=risk_run_id,
+        run_id=risk_plan.risk_run_id,
         definition=risk_definition,
         input_payload=risk_plan.input_payload,
         case=None,
@@ -933,43 +908,35 @@ async def execute_research_decision_case(
         allow_create=allow_create,
         clock=clock,
     )
-    if risk_run.status == "SUCCEEDED" and risk_run.output is not None:
-        try:
-            risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
-        except ValueError:
-            risk_veto = None
-    elif risk_run.status == "REJECTED":
-        risk_veto = RiskVetoDraft(
-            contract_version="1.0.0",
-            handoff_fingerprint=risk_plan.handoff_fingerprint,
-            disposition="REJECTED",
-            gates=(
-                RiskGate(
-                    gate_id="SYNTHETIC_RISK_VETO",
-                    status="FAILED",
-                ),
-            ),
-            reasons=(risk_run.error_code or "SYNTHETIC_RISK_VETO",),
-        )
-    else:
-        risk_veto = None
-    envelope = ResearchFrameworkOutput(
-        research_run_id=research_run.run_id,
-        risk_run_id=risk_run.run_id,
-        draft=draft,
-        risk_veto=risk_veto,
-        raw_scores=risk_plan.raw_scores,
-        tool_evidence_refs=risk_plan.tool_evidence_refs,
-        tool_evidence=risk_plan.tool_evidence,
-    )
-    return replace(
-        research_run,
-        output=envelope.model_dump_json(),
-        risk_run_id=risk_run.run_id,
-        risk_run_status=risk_run.status,
-        risk_run_error_code=risk_run.error_code,
-        risk_transitions=risk_run.transitions,
-        risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
+
+
+async def execute_research_decision_case(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    record_transition: FrameworkTransitionRecorder | None = None,
+    *,
+    record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder | None = None,
+    clock: Clock | None = None,
+) -> FrameworkRunResult:
+    """Compatibility entry point that delegates journey orchestration to the host module."""
+    from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
+
+    return await execute_research_risk_journey(
+        case,
+        execute_research=lambda: execute_research_run(
+            case,
+            runtime,
+            record_transition,
+            clock=clock,
+        ),
+        execute_risk=lambda research_run, risk_plan: execute_research_risk_run(
+            case,
+            runtime,
+            research_run,
+            risk_plan,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
+            clock=clock,
+        ),
     )
 
 

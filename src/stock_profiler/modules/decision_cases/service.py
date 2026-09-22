@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from threading import Lock
 from typing import Literal
 
@@ -65,9 +66,17 @@ from stock_profiler.modules.position_management.service import reconcile as reco
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
     RawScoreCalculationError,
+    ResearchDraft,
     ResearchFrameworkOutput,
+    ResearchRiskPlan,
+    RiskGate,
+    RiskMemberVeto,
+    RiskVetoDraft,
 )
-from stock_profiler.modules.research.service import freeze_research
+from stock_profiler.modules.research.service import (
+    freeze_research,
+    prepare_research_risk_plan,
+)
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -87,6 +96,114 @@ def run_default_frozen_decision_case(
 ) -> DecisionCaseExecution:
     """Run the published public fixture through the same host module used by every entrypoint."""
     return _run_frozen_decision_case(case, ledger, framework)
+
+
+async def execute_research_risk_journey(
+    case: FrozenDecisionCase,
+    *,
+    execute_research: Callable[[], Awaitable[FrameworkRunResult]],
+    execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
+) -> FrameworkRunResult:
+    """Orchestrate typed research handoff and independent risk execution in the host."""
+    command = case.research
+    assert command is not None
+    research_run = await execute_research()
+    if research_run.status != "SUCCEEDED" or research_run.output is None:
+        return research_run
+    try:
+        draft = ResearchDraft.model_validate_json(research_run.output)
+    except ValueError:
+        return replace(
+            research_run,
+            status="FAILED",
+            error_code="RESEARCH_OUTPUT_INVALID",
+        )
+    tool_evidence = research_run.research_tool_evidence
+    if command.failure_mode == "RAW_SCORE":
+        return replace(
+            research_run,
+            output=ResearchFrameworkOutput(
+                research_run_id=research_run.run_id,
+                risk_run_id=None,
+                draft=draft,
+                risk_veto=None,
+                tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                tool_evidence=tool_evidence,
+            ).model_dump_json(),
+        )
+    try:
+        risk_plan = prepare_research_risk_plan(
+            command,
+            research_run.run_id,
+            draft,
+            tool_evidence,
+        )
+    except RawScoreCalculationError as error:
+        return replace(
+            research_run,
+            output=ResearchFrameworkOutput(
+                research_run_id=research_run.run_id,
+                risk_run_id=None,
+                draft=draft,
+                risk_veto=None,
+                tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                tool_evidence=tool_evidence,
+            ).model_dump_json(),
+            raw_score_error_code=str(error),
+        )
+    risk_run = await execute_risk(research_run, risk_plan)
+    if risk_run.status == "SUCCEEDED" and risk_run.output is not None:
+        try:
+            risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
+        except ValueError:
+            risk_veto = None
+    elif risk_run.status == "REJECTED":
+        risk_veto = _rejected_risk_veto(risk_plan, risk_run.error_code)
+    else:
+        risk_veto = None
+    return replace(
+        research_run,
+        output=ResearchFrameworkOutput(
+            research_run_id=research_run.run_id,
+            risk_run_id=risk_run.run_id,
+            draft=draft,
+            risk_veto=risk_veto,
+            raw_scores=risk_plan.raw_scores,
+            tool_evidence_refs=risk_plan.tool_evidence_refs,
+            tool_evidence=risk_plan.tool_evidence,
+            member_handoffs=risk_plan.member_handoffs,
+        ).model_dump_json(),
+        risk_run_id=risk_run.run_id,
+        risk_run_status=risk_run.status,
+        risk_run_error_code=risk_run.error_code,
+        risk_transitions=risk_run.transitions,
+        risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
+    )
+
+
+def _rejected_risk_veto(
+    risk_plan: ResearchRiskPlan,
+    error_code: str | None,
+) -> RiskVetoDraft:
+    reason = error_code or "SYNTHETIC_RISK_VETO"
+    failed_gate = RiskGate(gate_id="SYNTHETIC_RISK_VETO", status="FAILED")
+    return RiskVetoDraft(
+        contract_version="1.0.0",
+        handoff_fingerprint=risk_plan.handoff_fingerprint,
+        disposition="REJECTED",
+        gates=(failed_gate,),
+        reasons=(reason,),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED",
+                gates=(failed_gate,),
+                reasons=(reason,),
+            )
+            for member in risk_plan.member_handoffs
+        ),
+    )
 
 
 def replay_default_frozen_decision_case(
@@ -346,23 +463,49 @@ def _run_frozen_decision_case(
             if fact is None:
                 assert execution_case is not None
                 try:
-                    framework = asyncio.run(
-                        framework_adapter.execute(
+
+                    async def record_transition(transition: FrameworkRunTransition) -> None:
+                        await _record_framework_transition(
+                            ledger,
                             execution_case,
-                            lambda transition: _record_framework_transition(
-                                ledger,
-                                execution_case,
-                                transition,
-                            ),
-                            record_auxiliary_run_reservation=lambda risk_run_id: (
-                                _record_auxiliary_run_reservation(
-                                    ledger,
-                                    execution_case,
-                                    risk_run_id,
-                                )
-                            ),
+                            transition,
                         )
-                    )
+
+                    async def record_auxiliary_run_reservation(risk_run_id: str) -> bool:
+                        return await _record_auxiliary_run_reservation(
+                            ledger,
+                            execution_case,
+                            risk_run_id,
+                        )
+
+                    if execution_case.research is not None:
+                        framework = asyncio.run(
+                            execute_research_risk_journey(
+                                execution_case,
+                                execute_research=lambda: framework_adapter.execute_research_run(
+                                    execution_case,
+                                    record_transition,
+                                ),
+                                execute_risk=lambda research_run, risk_plan: (
+                                    framework_adapter.execute_research_risk_run(
+                                        execution_case,
+                                        research_run,
+                                        risk_plan,
+                                        record_auxiliary_run_reservation=(
+                                            record_auxiliary_run_reservation
+                                        ),
+                                    )
+                                ),
+                            )
+                        )
+                    else:
+                        framework = asyncio.run(
+                            framework_adapter.execute(
+                                execution_case,
+                                record_transition,
+                                record_auxiliary_run_reservation=(record_auxiliary_run_reservation),
+                            )
+                        )
                 except MappedDurableRunMissingError as error:
                     raise DecisionEventCommitError(
                         "business identity maps to a missing durable framework Run; "

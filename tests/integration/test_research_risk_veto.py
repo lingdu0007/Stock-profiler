@@ -55,9 +55,11 @@ from stock_profiler.modules.research.contracts import (
     ResearchDraftMember,
     ResearchEvidence,
     ResearchFrameworkOutput,
+    ResearchMemberHandoff,
     ResearchMemberInput,
     ResearchToolEvidence,
     RiskGate,
+    RiskMemberVeto,
     RiskVetoDraft,
     freeze_raw_score,
     handoff_fingerprint,
@@ -189,6 +191,15 @@ def _case(
             raw_scores=raw_scores,
             tool_evidence_refs=tool_evidence_refs,
             tool_evidence=tool_evidence,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
         disposition="REJECTED" if risk_scenario == "REJECT" else "ACCEPTED",
         gates=(
@@ -199,6 +210,25 @@ def _case(
         ),
         reasons=(
             "SYNTHETIC_RISK_VETO" if risk_scenario == "REJECT" else "SYNTHETIC_RISK_ACCEPTED",
+        ),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED" if risk_scenario == "REJECT" else "ACCEPTED",
+                gates=(
+                    RiskGate(
+                        gate_id="SYNTHETIC_RISK_VETO",
+                        status="FAILED" if risk_scenario == "REJECT" else "PASSED",
+                    ),
+                ),
+                reasons=(
+                    "SYNTHETIC_RISK_VETO"
+                    if risk_scenario == "REJECT"
+                    else "SYNTHETIC_RISK_ACCEPTED",
+                ),
+            )
+            for member in command.members
         ),
     )
     provisional = freeze_research(
@@ -211,6 +241,15 @@ def _case(
             raw_scores=raw_scores,
             tool_evidence_refs=tool_evidence_refs,
             tool_evidence=tool_evidence,
+            member_handoffs=tuple(
+                ResearchMemberHandoff(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence=member.evidence,
+                    risk_flags=member.risk_flags,
+                )
+                for member in command.members
+            ),
         ),
     )
     definition = FrozenAgentDefinition(
@@ -276,6 +315,15 @@ def _case(
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
+        member_handoffs=tuple(
+            ResearchMemberHandoff(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence=member.evidence,
+                risk_flags=member.risk_flags,
+            )
+            for member in command.members
+        ),
     )
     assert provisional.risk_veto is not None
     risk_veto = provisional.risk_veto.model_copy(update={"run_id": risk_run_id})
@@ -318,9 +366,14 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert execution.business_result_status == "REJECTED"
     assert execution.report.result.outcome_code == "RESEARCH_REJECTED"
     assert execution.report.result.research is not None
+    assert execution.report.result.research.risk_veto is not None
     assert execution.report.result.research.disposition == "REJECTED"
     assert execution.report.result.research.raw_scores is not None
     assert len(execution.report.result.research.raw_scores) == 10
+    assert len(execution.report.result.research.risk_veto.member_vetoes) == 10
+    assert {
+        member.security_id for member in execution.report.result.research.risk_veto.member_vetoes
+    } == set(execution.report.result.research.handoff.security_ids)
     assert tuple(
         evidence.evidence_id for evidence in execution.report.result.research.tool_evidence
     ) == (
@@ -361,6 +414,9 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert risk_run.snapshot is not None
     assert risk_run.snapshot.tool_declarations == ()
     assert risk_run.snapshot.has_context_provider is True
+    assert risk_run.input is not None
+    assert "fictional structured fact is available at the cutoff" in risk_run.input
+    assert "LIQUIDITY_WARNING" in risk_run.input
     checkpoints = asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
     assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 4
     assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 3
@@ -418,6 +474,23 @@ def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None
     assert outcome.result is not None
     assert "announcement:synthetic-security-00" in outcome.result
     assert "trade instruction" in outcome.result
+
+
+def test_risk_handoff_preserves_each_member_evidence_and_flags(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is not None
+    research = execution.report.result.research
+    assert research is not None
+    assert (
+        research.handoff.member_handoffs[0]
+        .evidence[0]
+        .statement.startswith("A fictional structured fact")
+    )
+    assert research.handoff.member_handoffs[0].risk_flags == ("LIQUIDITY_WARNING",)
 
 
 def test_research_context_stages_have_distinct_frozen_roles(
@@ -679,6 +752,15 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
                 validation_status="VALIDATED",
             )
             for index, evidence_id in enumerate(tool_evidence_refs)
+        ),
+        member_handoffs=tuple(
+            ResearchMemberHandoff(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence=member.evidence,
+                risk_flags=member.risk_flags,
+            )
+            for member in command.members
         ),
     )
     with initialize_runtime_storage(migrated_settings).engine.connect() as connection:

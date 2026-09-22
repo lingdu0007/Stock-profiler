@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
@@ -19,14 +18,16 @@ from stock_profiler.modules.research.contracts import (
     RISK_MODEL_ADAPTER_ID,
     RISK_OUTPUT_CONTRACT_ID,
     RISK_OUTPUT_CONTRACT_VERSION,
-    RawScore,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
     ResearchFrameworkOutput,
     ResearchHandoff,
+    ResearchMemberHandoff,
     ResearchOutcome,
+    ResearchRiskPlan,
     ResearchToolEvidence,
+    RiskMemberVeto,
     RiskVetoOutcome,
     freeze_raw_score,
     handoff_fingerprint,
@@ -42,18 +43,6 @@ __all__ = (
 )
 
 
-@dataclass(frozen=True)
-class ResearchRiskPlan:
-    """Pure, immutable input plan for the independent risk Definition."""
-
-    raw_scores: tuple[RawScore, ...]
-    tool_evidence_refs: tuple[str, ...]
-    tool_evidence: tuple[ResearchToolEvidence, ...]
-    risk_run_id: str
-    handoff_fingerprint: str
-    input_payload: str
-
-
 def prepare_research_risk_plan(
     command: ResearchCommand,
     research_run_id: str,
@@ -64,12 +53,14 @@ def prepare_research_risk_plan(
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
     _validate_tool_evidence(command, tool_evidence_refs, tool_evidence)
+    member_handoffs = _member_handoffs_for_command(command)
     fingerprint = handoff_fingerprint(
         command,
         draft,
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
+        member_handoffs=member_handoffs,
     )
     risk_run_id = risk_run_id_for(
         research_run_id,
@@ -77,6 +68,7 @@ def prepare_research_risk_plan(
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
+        member_handoffs=member_handoffs,
     )
     input_payload = json.dumps(
         {
@@ -86,6 +78,7 @@ def prepare_research_risk_plan(
             "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
             "tool_evidence_refs": tool_evidence_refs,
             "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
+            "member_handoffs": tuple(member.model_dump(mode="json") for member in member_handoffs),
         },
         ensure_ascii=True,
         separators=(",", ":"),
@@ -95,6 +88,7 @@ def prepare_research_risk_plan(
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
+        member_handoffs=member_handoffs,
         risk_run_id=risk_run_id,
         handoff_fingerprint=fingerprint,
         input_payload=input_payload,
@@ -120,6 +114,10 @@ def freeze_research(
         framework.tool_evidence_refs,
         framework.tool_evidence,
     )
+    member_handoffs = _validate_member_handoffs(
+        command,
+        framework.member_handoffs,
+    )
     _validate_draft_against_command(command, framework)
     if risk_veto_draft.disposition == "REJECTED" and not any(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
@@ -129,6 +127,7 @@ def freeze_research(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
     ):
         raise ValueError("risk acceptance cannot contain a failed risk gate")
+    member_vetoes = _validate_risk_member_vetoes(command, risk_veto_draft.member_vetoes)
 
     raw_scores = framework.raw_scores
     risk_veto = RiskVetoOutcome(
@@ -138,6 +137,7 @@ def freeze_research(
         disposition=risk_veto_draft.disposition,
         gates=risk_veto_draft.gates,
         reasons=risk_veto_draft.reasons,
+        member_vetoes=member_vetoes,
     )
     base_evidence_ids = tuple(
         evidence.evidence_id for member in command.members for evidence in member.evidence
@@ -174,6 +174,7 @@ def freeze_research(
         screening_snapshot_id=command.screening.snapshot_id,
         raw_scores=raw_scores,
         tool_evidence=tool_evidence,
+        member_handoffs=member_handoffs,
         risk_veto=risk_veto,
     )
     return ResearchOutcome(
@@ -207,12 +208,14 @@ def _validate_draft_against_command(
         framework.tool_evidence_refs,
         framework.tool_evidence,
     )
+    member_handoffs = _validate_member_handoffs(command, framework.member_handoffs)
     expected_fingerprint = handoff_fingerprint(
         command,
         framework.draft,
         raw_scores=framework.raw_scores,
         tool_evidence_refs=framework.tool_evidence_refs,
         tool_evidence=tool_evidence,
+        member_handoffs=member_handoffs,
     )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
@@ -220,6 +223,8 @@ def _validate_draft_against_command(
     actual = {member.security_id: member for member in framework.draft.members}
     if set(expected) != set(actual):
         raise ValueError("research draft must cover exactly the fixed-ten cohort")
+    if tuple(actual) != tuple(expected):
+        raise ValueError("research draft must preserve the frozen selected cohort order")
     for security_id, source in expected.items():
         draft = actual[security_id]
         if (
@@ -253,3 +258,49 @@ def _validate_tool_evidence(
         ):
             raise ValueError("research Tool evidence is not bound to the frozen cutoff")
     return evidence
+
+
+def _member_handoffs_for_command(command: ResearchCommand) -> tuple[ResearchMemberHandoff, ...]:
+    return tuple(
+        ResearchMemberHandoff(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence=member.evidence,
+            risk_flags=member.risk_flags,
+        )
+        for member in command.members
+    )
+
+
+def _validate_member_handoffs(
+    command: ResearchCommand,
+    member_handoffs: tuple[ResearchMemberHandoff, ...],
+) -> tuple[ResearchMemberHandoff, ...]:
+    handoffs = tuple(member_handoffs)
+    if len(handoffs) != len(command.members):
+        raise ValueError("research risk handoff must contain every member's evidence")
+    expected = tuple(
+        (member.security_id, member.research_id, member.evidence, member.risk_flags)
+        for member in command.members
+    )
+    actual = tuple(
+        (member.security_id, member.research_id, member.evidence, member.risk_flags)
+        for member in handoffs
+    )
+    if actual != expected:
+        raise ValueError("research risk handoff changed member order, evidence, or risk flags")
+    return handoffs
+
+
+def _validate_risk_member_vetoes(
+    command: ResearchCommand,
+    member_vetoes: tuple[RiskMemberVeto, ...],
+) -> tuple[RiskMemberVeto, ...]:
+    vetoes = tuple(member_vetoes)
+    if len(vetoes) != len(command.members):
+        raise ValueError("risk veto must contain a decision for every research member")
+    expected = tuple((member.security_id, member.research_id) for member in command.members)
+    actual = tuple((member.security_id, member.research_id) for member in vetoes)
+    if actual != expected:
+        raise ValueError("risk veto member identities or order do not match the research cohort")
+    return vetoes

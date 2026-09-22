@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
@@ -31,32 +32,32 @@ RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
 RAW_SCORE_INTERACTION_TERMS: tuple[str, ...] = ()
 RAW_SCORE_FEATURE_IDS: tuple[str, ...] = (
-    "revenue_growth",
-    "earnings_revision",
-    "free_cash_flow_margin",
-    "leverage_ratio",
-    "valuation_gap",
-    "price_trend_6m",
-    "volatility_20d",
-    "drawdown_6m",
-    "breakout_distance",
-    "path_consistency",
-    "level2_imbalance",
+    "single_quarter_revenue_acceleration",
+    "asset_normalized_quarter_profit_improvement",
+    "operating_cash_flow_return_on_assets",
+    "working_capital_pressure_change",
+    "leverage_ratio_change",
+    "industry_relative_return_20d",
+    "downside_semivariance_60d",
+    "max_drawdown_60d",
+    "turnover_change",
+    "institutional_net_buy_ratio",
+    "institutional_listing_frequency",
 )
 RAW_SCORE_COEFFICIENTS: dict[str, Decimal] = {
     "screening_positive_prior": Decimal("0.15"),
     "screening_terminal_prior": Decimal("0.35"),
-    "revenue_growth": Decimal("0.08"),
-    "earnings_revision": Decimal("0.07"),
-    "free_cash_flow_margin": Decimal("0.06"),
-    "leverage_ratio": Decimal("-0.05"),
-    "valuation_gap": Decimal("0.04"),
-    "price_trend_6m": Decimal("0.09"),
-    "volatility_20d": Decimal("-0.03"),
-    "drawdown_6m": Decimal("-0.04"),
-    "breakout_distance": Decimal("0.02"),
-    "path_consistency": Decimal("0.05"),
-    "level2_imbalance": Decimal("0.06"),
+    "single_quarter_revenue_acceleration": Decimal("0.08"),
+    "asset_normalized_quarter_profit_improvement": Decimal("0.07"),
+    "operating_cash_flow_return_on_assets": Decimal("0.06"),
+    "working_capital_pressure_change": Decimal("-0.05"),
+    "leverage_ratio_change": Decimal("-0.04"),
+    "industry_relative_return_20d": Decimal("0.09"),
+    "downside_semivariance_60d": Decimal("-0.03"),
+    "max_drawdown_60d": Decimal("-0.04"),
+    "turnover_change": Decimal("0.02"),
+    "institutional_net_buy_ratio": Decimal("0.05"),
+    "institutional_listing_frequency": Decimal("0.06"),
 }
 
 
@@ -153,6 +154,15 @@ class ResearchMemberInput(ResearchContract):
         return self
 
 
+class ResearchMemberHandoff(ResearchContract):
+    """Immutable per-member evidence and risk facts consumed by risk."""
+
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
+    evidence: tuple[ResearchEvidence, ...] = Field(min_length=1)
+    risk_flags: tuple[str, ...] = ()
+
+
 class ResearchCommand(ResearchContract):
     """The frozen host input for one fixed-ten monthly research run."""
 
@@ -182,8 +192,8 @@ class ResearchCommand(ResearchContract):
             raise ValueError("research identities must be independent and unique")
         if self.cutoff_at != self.knowledge_cutoff:
             raise ValueError("research cutoff and knowledge cutoff must agree")
-        if set(security_ids) != set(self.screening.selected_member_ids):
-            raise ValueError("research members must bind the frozen selected cohort")
+        if tuple(security_ids) != tuple(self.screening.selected_member_ids):
+            raise ValueError("research members must preserve the frozen selected cohort order")
         if any(member.knowledge_cutoff != self.knowledge_cutoff for member in self.members):
             raise ValueError("all research members must share the frozen knowledge cutoff")
         evidence_ids = [
@@ -226,6 +236,16 @@ class RiskGate(ResearchContract):
     status: Literal["PASSED", "FAILED"]
 
 
+class RiskMemberVeto(ResearchContract):
+    """Independent risk disposition and gates for one fixed cohort member."""
+
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
+    disposition: Literal["ACCEPTED", "REJECTED"]
+    gates: tuple[RiskGate, ...] = Field(min_length=1)
+    reasons: tuple[str, ...] = Field(min_length=1)
+
+
 class RiskVetoDraft(ResearchContract):
     """Typed output of the independent risk Definition and Run."""
 
@@ -234,6 +254,22 @@ class RiskVetoDraft(ResearchContract):
     disposition: Literal["ACCEPTED", "REJECTED"]
     gates: tuple[RiskGate, ...] = Field(min_length=1)
     reasons: tuple[str, ...] = Field(min_length=1)
+    member_vetoes: tuple[RiskMemberVeto, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_member_vetoes(self) -> RiskVetoDraft:
+        if self.member_vetoes:
+            member_ids = [member.security_id for member in self.member_vetoes]
+            research_ids = [member.research_id for member in self.member_vetoes]
+            if len(member_ids) != 10 or len(set(member_ids)) != 10:
+                raise ValueError("risk veto must contain one result for each fixed-ten member")
+            if len(set(research_ids)) != 10:
+                raise ValueError("risk veto research identities must be independent and unique")
+            member_dispositions = {member.disposition for member in self.member_vetoes}
+            expected = "REJECTED" if "REJECTED" in member_dispositions else "ACCEPTED"
+            if self.disposition != expected:
+                raise ValueError("cohort risk disposition must summarize member vetoes")
+        return self
 
 
 class RawScore(ResearchContract):
@@ -264,6 +300,20 @@ class ResearchFrameworkOutput(ResearchContract):
     raw_scores: tuple[RawScore, ...] | None = None
     tool_evidence_refs: tuple[str, ...] = ()
     tool_evidence: tuple[ResearchToolEvidence, ...] = ()
+    member_handoffs: tuple[ResearchMemberHandoff, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResearchRiskPlan:
+    """Pure, immutable input plan for the independent risk Definition."""
+
+    raw_scores: tuple[RawScore, ...]
+    tool_evidence_refs: tuple[str, ...]
+    tool_evidence: tuple[ResearchToolEvidence, ...]
+    member_handoffs: tuple[ResearchMemberHandoff, ...]
+    risk_run_id: str
+    handoff_fingerprint: str
+    input_payload: str
 
 
 class RiskVetoOutcome(ResearchContract):
@@ -273,6 +323,7 @@ class RiskVetoOutcome(ResearchContract):
     disposition: Literal["ACCEPTED", "REJECTED"]
     gates: tuple[RiskGate, ...]
     reasons: tuple[str, ...]
+    member_vetoes: tuple[RiskMemberVeto, ...] = ()
 
 
 class ResearchHandoff(ResearchContract):
@@ -304,6 +355,7 @@ class ResearchHandoff(ResearchContract):
     screening_snapshot_id: str
     raw_scores: tuple[RawScore, ...] = Field(min_length=10, max_length=10)
     tool_evidence: tuple[ResearchToolEvidence, ...] = ()
+    member_handoffs: tuple[ResearchMemberHandoff, ...] = ()
     risk_veto: RiskVetoOutcome | None = None
     actionable: Literal[False] = False
 
@@ -398,6 +450,7 @@ def handoff_fingerprint(
     raw_scores: tuple[RawScore, ...] | None = None,
     tool_evidence_refs: tuple[str, ...] = (),
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
+    member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
 ) -> str:
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
@@ -410,6 +463,7 @@ def handoff_fingerprint(
         ),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
+        "member_handoffs": tuple(member.model_dump(mode="json") for member in member_handoffs),
     }
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -421,6 +475,7 @@ def risk_run_id_for(
     raw_scores: tuple[RawScore, ...] | None = None,
     tool_evidence_refs: tuple[str, ...] = (),
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
+    member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
 ) -> str:
     """Derive the independent risk Run identity from the frozen research Run."""
     digest = sha256(
@@ -436,6 +491,9 @@ def risk_run_id_for(
                 "tool_evidence_refs": tool_evidence_refs,
                 "tool_evidence": tuple(
                     evidence.model_dump(mode="json") for evidence in tool_evidence
+                ),
+                "member_handoffs": tuple(
+                    member.model_dump(mode="json") for member in member_handoffs
                 ),
             },
             ensure_ascii=True,

@@ -2584,6 +2584,22 @@ export interface components {
              */
             registered_at: string;
         };
+        /** ResearchEvidence */
+        ResearchEvidence: {
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Reference */
+            reference: string;
+            /** Source */
+            source: string;
+            /** Statement */
+            statement: string;
+        };
         /**
          * ResearchHandoff
          * @description Versioned, immutable boundary between research/risk and later work.
@@ -2612,6 +2628,11 @@ export interface components {
              * Format: date-time
              */
             knowledge_cutoff: string;
+            /**
+             * Member Handoffs
+             * @default []
+             */
+            member_handoffs: components["schemas"]["ResearchMemberHandoff"][];
             /** Raw Scores */
             raw_scores: components["schemas"]["RawScore"][];
             /** Research Definition Id */
@@ -2663,6 +2684,23 @@ export interface components {
              * @default []
              */
             tool_evidence: components["schemas"]["ResearchToolEvidence"][];
+        };
+        /**
+         * ResearchMemberHandoff
+         * @description Immutable per-member evidence and risk facts consumed by risk.
+         */
+        ResearchMemberHandoff: {
+            /** Evidence */
+            evidence: components["schemas"]["ResearchEvidence"][];
+            /** Research Id */
+            research_id: string;
+            /**
+             * Risk Flags
+             * @default []
+             */
+            risk_flags: string[];
+            /** Security Id */
+            security_id: string;
         };
         /** ResearchMemberResult */
         ResearchMemberResult: {
@@ -2863,6 +2901,25 @@ export interface components {
              */
             status: "PASSED" | "FAILED";
         };
+        /**
+         * RiskMemberVeto
+         * @description Independent risk disposition and gates for one fixed cohort member.
+         */
+        RiskMemberVeto: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ACCEPTED" | "REJECTED";
+            /** Gates */
+            gates: components["schemas"]["RiskGate"][];
+            /** Reasons */
+            reasons: string[];
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+        };
         /** RiskVetoOutcome */
         RiskVetoOutcome: {
             /** Definition Id */
@@ -2876,6 +2933,11 @@ export interface components {
             disposition: "ACCEPTED" | "REJECTED";
             /** Gates */
             gates: components["schemas"]["RiskGate"][];
+            /**
+             * Member Vetoes
+             * @default []
+             */
+            member_vetoes: components["schemas"]["RiskMemberVeto"][];
             /** Reasons */
             reasons: string[];
             /** Run Id */

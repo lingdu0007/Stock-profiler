@@ -35,7 +35,7 @@ let apiProcess: ChildProcess | undefined;
 let httpsProxy: HttpsServer | undefined;
 
 test.beforeEach(async ({ baseURL }, testInfo) => {
-  test.setTimeout(120_000);
+  test.setTimeout(60_000);
   if (!baseURL) {
     throw new Error("The authenticated report journey requires the configured web origin.");
   }
@@ -529,7 +529,7 @@ async function waitForApi() {
         return;
       }
     } catch {
-      if (apiProcess && apiProcess.exitCode !== null) {
+      if (apiProcess?.exitCode !== null) {
         throw new Error(`FastAPI process exited with code ${apiProcess.exitCode}.`);
       }
     }
