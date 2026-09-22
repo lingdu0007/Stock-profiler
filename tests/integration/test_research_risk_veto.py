@@ -469,12 +469,11 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
             )
         }
         risk_phases = {
-            row.phase
-            for row in connection.execute(
-                DECISION_STAGE_EVENTS.select().where(
-                    (DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id)
-                    & (DECISION_STAGE_EVENTS.c.framework_run_id == risk_run_id)
-                )
+            stage.phase
+            for stage in DecisionLedger(runtime.engine).get_stage_results(
+                case.business_object_id,
+                connection,
+                framework_run_id=risk_run_id,
             )
         }
     assert {case.framework_run_id, risk_run_id}.issubset(recorded_run_ids)
