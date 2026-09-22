@@ -36,9 +36,6 @@ def freeze_research(
     if risk_veto_draft is None or risk_run_id is None:
         raise ValueError("independent risk Run did not produce a typed veto")
     _validate_draft_against_command(command, framework)
-    expected_risk_disposition = "REJECTED" if command.risk_scenario == "REJECT" else "ACCEPTED"
-    if risk_veto_draft.disposition != expected_risk_disposition:
-        raise ValueError("independent risk Run disposition cannot be overridden")
     if risk_veto_draft.disposition == "REJECTED" and not any(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
     ):

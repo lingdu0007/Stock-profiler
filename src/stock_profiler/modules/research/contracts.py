@@ -61,6 +61,10 @@ RAW_SCORE_COEFFICIENTS: dict[str, Decimal] = {
 }
 
 
+class RawScoreCalculationError(ValueError):
+    """A structured raw-score calculation failed without a downstream result."""
+
+
 class ResearchContract(BaseModel):
     """Reject unversioned research fields and mutable contract payloads."""
 
@@ -107,6 +111,8 @@ class FrozenDualTargetScreening(ResearchContract):
             for value in (*self.positive_scores.values(), *self.terminal_scores.values())
         ):
             raise ValueError("screening scores must be finite")
+        if self.output_sha256 != screening_output_sha256(self):
+            raise ValueError("screening output hash does not match canonical output")
         return self
 
 
@@ -327,12 +333,19 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         "screening_terminal_prior": command.screening.terminal_scores[member.security_id],
         **member.structured_signals,
     }
-    with localcontext(Context(prec=38)):
-        contributions = {
-            key: structured_inputs[key] * RAW_SCORE_COEFFICIENTS[key]
-            for key in structured_inputs
-        }
-        z20 = RAW_SCORE_INTERCEPT + sum(contributions.values(), Decimal("0"))
+    try:
+        with localcontext(Context(prec=38)):
+            contributions = {
+                key: structured_inputs[key] * RAW_SCORE_COEFFICIENTS[key]
+                for key in structured_inputs
+            }
+            z20 = RAW_SCORE_INTERCEPT + sum(contributions.values(), Decimal("0"))
+            if not z20.is_finite() or any(
+                not value.is_finite() for value in contributions.values()
+            ):
+                raise ArithmeticError("raw score is not finite")
+    except ArithmeticError as error:
+        raise RawScoreCalculationError("RAW_SCORE_CALCULATION_FAILED") from error
     return RawScore(
         security_id=member.security_id,
         research_id=member.research_id,
@@ -347,6 +360,19 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         l1_ratio=RAW_SCORE_L1_RATIO,
         l2_ratio=RAW_SCORE_L2_RATIO,
     )
+
+
+def screening_output_sha256(screening: FrozenDualTargetScreening) -> str:
+    """Hash the canonical dual-head output without its self-referential digest."""
+    payload = screening.model_dump(mode="json", exclude={"output_sha256"})
+    return sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
 
 
 def handoff_fingerprint(command: ResearchCommand, draft: ResearchDraft) -> str:

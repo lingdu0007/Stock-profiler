@@ -62,7 +62,10 @@ from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
-from stock_profiler.modules.research.contracts import ResearchFrameworkOutput
+from stock_profiler.modules.research.contracts import (
+    RawScoreCalculationError,
+    ResearchFrameworkOutput,
+)
 from stock_profiler.modules.research.service import freeze_research
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -461,14 +464,14 @@ def _commit_framework_result(
     durable_transition_count = (
         len(framework.transitions) if framework.transitions_durably_recorded else 0
     )
-    for framework_stage_result in framework_stage_results[durable_transition_count:]:
-        ledger.record_stage_result(
-            connection,
-            case=execution_case,
-            stage_result=framework_stage_result,
-            framework_run_id=execution_case.framework_run_id,
-            allow_repeated_occurrence=framework_stage_result.status in {"RUNNING", "WAITING"},
-        )
+    _record_framework_stage_results(
+        ledger,
+        connection,
+        execution_case,
+        execution_case.framework_run_id,
+        framework_stage_results,
+        durable_transition_count,
+    )
     if execution_case.research is not None:
         return _commit_research_framework_result(
             ledger,
@@ -1127,6 +1130,21 @@ def _commit_research_framework_result(
     """Validate the staged research envelope before committing its host result."""
     command = execution_case.research
     assert command is not None
+    if framework.risk_run_id is not None:
+        risk_stage_results = _framework_stage_results_for_auxiliary_run(framework)
+        risk_durable_transition_count = (
+            len(framework.risk_transitions)
+            if framework.risk_transitions_durably_recorded
+            else 0
+        )
+        _record_framework_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            framework.risk_run_id,
+            risk_stage_results,
+            risk_durable_transition_count,
+        )
 
     def record(stage_result: StageResult) -> None:
         ledger.record_stage_result(
@@ -1242,6 +1260,17 @@ def _commit_research_framework_result(
         )
     try:
         research_outcome = freeze_research(command, envelope)
+    except RawScoreCalculationError as error:
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),),
+                reasons=(str(error),),
+            ),
+            validation=_failed_host_validation("RAW_SCORE_CALCULATION_FAILED"),
+        )
     except ValueError as error:
         return closed(
             research=StageResult(
@@ -1616,34 +1645,10 @@ def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunRes
             gate_results=(GateResult(gate_id="ORIGINAL_RUN_IDENTITY", status="FAILED"),),
             reasons=("FRAMEWORK_IDENTITY_MISMATCH",),
         )
-    if framework.status in {"SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}:
-        return StageResult(
-            phase="FRAMEWORK_RUN",
-            status=framework.status,
-            gate_results=(
-                GateResult(gate_id="RUN_TERMINAL", status="PASSED"),
-                GateResult(
-                    gate_id="FRAMEWORK_EXECUTION",
-                    status="PASSED" if framework.status == "SUCCEEDED" else "FAILED",
-                ),
-            ),
-            reasons=(
-                ("FRAMEWORK_RUN_SUCCEEDED",)
-                if framework.status == "SUCCEEDED"
-                else (
-                    framework.error_code
-                    or framework.waiting_reason
-                    or f"FRAMEWORK_{framework.status}",
-                )
-            ),
-        )
-    return StageResult(
-        phase="FRAMEWORK_RUN",
+    return _framework_status_stage_result(
         status=framework.status,
-        gate_results=(GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
-        reasons=(
-            framework.error_code or framework.waiting_reason or f"FRAMEWORK_{framework.status}",
-        ),
+        error_code=framework.error_code,
+        waiting_reason=framework.waiting_reason,
     )
 
 
@@ -1662,6 +1667,58 @@ def _framework_stage_results(
     return (*transitions, final_result)
 
 
+def _framework_stage_results_for_auxiliary_run(
+    framework: FrameworkRunResult,
+) -> tuple[StageResult, ...]:
+    """Preserve a secondary framework Run under its own durable identity."""
+    if framework.risk_run_id is None or framework.risk_run_status is None:
+        return ()
+    return _framework_stage_results_for_run(
+        status=framework.risk_run_status,
+        error_code=framework.risk_run_error_code,
+        waiting_reason=None,
+        transitions=framework.risk_transitions,
+    )
+
+
+def _framework_stage_results_for_run(
+    *,
+    status: FrameworkRunStatus,
+    error_code: str | None,
+    waiting_reason: str | None,
+    transitions: tuple[FrameworkRunTransition, ...],
+) -> tuple[StageResult, ...]:
+    final_result = _framework_status_stage_result(
+        status=status,
+        error_code=error_code,
+        waiting_reason=waiting_reason,
+    )
+    transition_results = tuple(
+        _framework_transition_stage_result(transition) for transition in transitions
+    )
+    if transition_results and transition_results[-1] == final_result:
+        return transition_results
+    return (*transition_results, final_result)
+
+
+def _record_framework_stage_results(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+    stage_results: tuple[StageResult, ...],
+    durable_transition_count: int,
+) -> None:
+    for stage_result in stage_results[durable_transition_count:]:
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=stage_result,
+            framework_run_id=framework_run_id,
+            allow_repeated_occurrence=stage_result.status in {"RUNNING", "WAITING"},
+        )
+
+
 def _framework_transition_stage_result(
     transition: FrameworkRunTransition,
 ) -> StageResult:
@@ -1675,6 +1732,32 @@ def _framework_transition_stage_result(
         status=transition.status,
         gate_results=(GateResult(gate_id=gate_id, status="PASSED"),),
         reasons=(transition.reason,),
+    )
+
+
+def _framework_status_stage_result(
+    *,
+    status: FrameworkRunStatus,
+    error_code: str | None,
+    waiting_reason: str | None,
+) -> StageResult:
+    return StageResult(
+        phase="FRAMEWORK_RUN",
+        status=status,
+        gate_results=(
+            GateResult(gate_id="RUN_TERMINAL", status="PASSED"),
+            GateResult(
+                gate_id="FRAMEWORK_EXECUTION",
+                status="PASSED" if status == "SUCCEEDED" else "FAILED",
+            ),
+        )
+        if status in {"SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}
+        else (GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
+        reasons=(
+            ("FRAMEWORK_RUN_SUCCEEDED",)
+            if status == "SUCCEEDED"
+            else (error_code or waiting_reason or f"FRAMEWORK_{status}",)
+        ),
     )
 
 

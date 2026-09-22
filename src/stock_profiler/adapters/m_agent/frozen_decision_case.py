@@ -25,6 +25,7 @@ from m_agent.runtime import (
     ContextRequest,
     ContextScope,
     ContextStage,
+    ContextStageConfig,
     ContextStageIdentity,
     ContextTransformType,
     DefinitionRegistry,
@@ -136,6 +137,12 @@ RISK_DEFINITION_INSTRUCTIONS = (
     "be changed by research or orchestration."
 )
 RESEARCH_STAGE_IDS = ("collect", "analyze", "bull-bear", "draft")
+RESEARCH_STAGE_CONTRACTS = (
+    ("collect", ("RUN_INPUT",), ("RESEARCH_COLLECTION",)),
+    ("analyze", ("RESEARCH_COLLECTION",), ("RESEARCH_ANALYSIS",)),
+    ("bull-bear", ("RESEARCH_ANALYSIS",), ("RESEARCH_BULL_BEAR",)),
+    ("draft", ("RESEARCH_BULL_BEAR",), ("RESEARCH_DRAFT",)),
+)
 RESEARCH_TOOL_NAME = "read_announcement"
 RESEARCH_TOOL_PARAMETERS = {
     "type": "object",
@@ -194,10 +201,30 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
 
 def _read_announcement_tool() -> DeterministicTool:
     def handler(request: ToolRequest) -> ToolOutcome:
+        try:
+            arguments = json.loads(request.arguments)
+        except json.JSONDecodeError:
+            return ToolOutcome.rejected(
+                request.call_id,
+                request.tool_name,
+                "INVALID_ARGUMENTS",
+                "announcement lookup arguments must be JSON",
+            )
+        security_id = arguments.get("security_id")
+        if not isinstance(security_id, str) or not security_id:
+            return ToolOutcome.rejected(
+                request.call_id,
+                request.tool_name,
+                "INVALID_SECURITY_ID",
+                "announcement lookup requires one security_id",
+            )
         return ToolOutcome.success(
             request.call_id,
             request.tool_name,
-            "Synthetic announcement exploration is read-only and contains no trade instruction.",
+            (
+                f"Synthetic announcement evidence announcement:{security_id} "
+                "is read-only and contains no trade instruction."
+            ),
         )
 
     return DeterministicTool(
@@ -247,10 +274,20 @@ def _research_context_plan() -> ContextPlan:
                     transform_type=ContextTransformType.PROVIDE,
                     config_version=RESEARCH_CONTRACT_VERSION,
                 ),
-                input_channels=("REQUIRED_STRUCTURED_FACTS",),
-                output_channels=("REQUIRED_STRUCTURED_FACTS",),
+                config=ContextStageConfig(
+                    stage_id=stage_id,
+                    transform_type=ContextTransformType.PROVIDE,
+                    config_version=RESEARCH_CONTRACT_VERSION,
+                    config={
+                        "phase": stage_id,
+                        "input_channels": input_channels,
+                        "output_channels": output_channels,
+                    },
+                ),
+                input_channels=input_channels,
+                output_channels=output_channels,
             )
-            for stage_id in RESEARCH_STAGE_IDS
+            for stage_id, input_channels, output_channels in RESEARCH_STAGE_CONTRACTS
         ),
     )
 
@@ -382,10 +419,6 @@ def _research_model_response(command: ResearchCommand) -> str:
     if command.failure_mode in {"RESEARCH", "SYSTEM"}:
         response["probability"] = "0.99"
     return json.dumps(response, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-
-
-def _risk_run_id(research_run_id: str, draft: ResearchDraft) -> str:
-    return risk_run_id_for(research_run_id, draft)
 
 
 async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: RuntimeStorage) -> None:
@@ -535,12 +568,7 @@ async def execute_frozen_decision_case(
     try:
         run = await runner.get_run(case.framework_run_id)
     except RunNotFoundError:
-        if case.recovery_framework_run_id is not None:
-            raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
-        if case.version_bundle.runtime_release != CURRENT_M_AGENT_RELEASE:
-            raise MappedDurableRunMissingError(
-                "historical runtime identity requires the original durable Run"
-            ) from None
+        _assert_missing_run_can_be_created(case)
         try:
             created = await runner.create_run(
                 definition.definition_id,
@@ -668,7 +696,7 @@ async def execute_research_decision_case(
         )
         return replace(research_run, output=envelope.model_dump_json())
 
-    risk_run_id = _risk_run_id(research_run.run_id, draft)
+    risk_run_id = risk_run_id_for(research_run.run_id, draft)
     risk_definition = _risk_definition(
         command,
         draft,
@@ -713,6 +741,8 @@ async def execute_research_decision_case(
         risk_run_id=risk_run.run_id,
         risk_run_status=risk_run.status,
         risk_run_error_code=risk_run.error_code,
+        risk_transitions=risk_run.transitions,
+        risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
     )
 
 
@@ -771,8 +801,8 @@ async def _execute_registered_run(
     try:
         run = await runner.get_run(run_id)
     except RunNotFoundError:
-        if case is not None and case.recovery_framework_run_id is not None:
-            raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
+        if case is not None:
+            _assert_missing_run_can_be_created(case)
         try:
             created = await runner.create_run(
                 definition.definition_id,
@@ -807,28 +837,25 @@ async def _execute_registered_run(
             await record_framework_statuses()
     else:
         assert_run_matches(run)
-        if record_transition is not None:
-            await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
+        await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
         if run.status.is_terminal:
-            if record_transition is not None:
-                await observe(
-                    FrameworkRunTransition(
-                        status=cast(FrameworkRunStatus, run.status.value),
-                        reason="FRAMEWORK_RUN_RECOVERED_TERMINAL",
-                    )
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_RECOVERED_TERMINAL",
                 )
+            )
         else:
-            if record_transition is not None:
-                await observe(
-                    FrameworkRunTransition(
-                        status=cast(FrameworkRunStatus, run.status.value),
-                        reason=(
-                            run.waiting_reason
-                            if run.status.value == "WAITING" and run.waiting_reason is not None
-                            else "FRAMEWORK_RUN_RECOVERED"
-                        ),
-                    )
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason=(
+                        run.waiting_reason
+                        if run.status.value == "WAITING" and run.waiting_reason is not None
+                        else "FRAMEWORK_RUN_RECOVERED"
+                    ),
                 )
+            )
             try:
                 run = await runner.resume_run(run.run_id)
             except _CONCURRENT_RUN_RECOVERY_ERRORS:
@@ -927,6 +954,20 @@ def _assert_research_registered_capabilities(
         or not definition.context_plan.stages
         or tuple(stage.identity.stage_id for stage in definition.context_plan.stages)
         != RESEARCH_STAGE_IDS
+        or tuple(
+            (
+                stage.identity.stage_id,
+                stage.input_channels,
+                stage.output_channels,
+            )
+            for stage in definition.context_plan.stages
+        )
+        != RESEARCH_STAGE_CONTRACTS
+        or any(
+            stage.config is None
+            or stage.config.config.get("phase") != stage.identity.stage_id
+            for stage in definition.context_plan.stages
+        )
         or not isinstance(definition.context_provider, _FrozenResearchContextProvider)
         or not definition.context_provider.deterministic
         or case.research is None
@@ -1013,6 +1054,16 @@ def _is_concurrent_creation_error(error: sqlite3.Error) -> bool:
             marker in str(error).lower() for marker in ("database is locked", "database is busy")
         )
     )
+
+
+def _assert_missing_run_can_be_created(case: FrozenDecisionCase) -> None:
+    """Reject replacement creation for mapped or historical frozen identities."""
+    if case.recovery_framework_run_id is not None:
+        raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
+    if case.version_bundle.runtime_release != CURRENT_M_AGENT_RELEASE:
+        raise MappedDurableRunMissingError(
+            "historical runtime identity requires the original durable Run"
+        ) from None
 
 
 def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:

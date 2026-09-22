@@ -5,14 +5,20 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
+import pytest
+from m_agent.runtime import ToolRequest
+
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     RESEARCH_DEFINITION_INSTRUCTIONS,
+    _read_announcement_tool,
 )
+from stock_profiler.adapters.persistence.decision_ledger import DECISION_STAGE_EVENTS
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.decision_versions import (
     CURRENT_M_AGENT_RELEASE,
+    HISTORICAL_M_AGENT_RELEASE,
     DecisionCaseVersionBundle,
 )
 from stock_profiler.modules.decision_cases.domain import (
@@ -23,6 +29,8 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenOutputContract,
     ResultAccessScope,
 )
+from stock_profiler.modules.decision_cases.ports import DecisionEventCommitError
+from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_DEFINITION_ID,
@@ -33,6 +41,7 @@ from stock_profiler.modules.research.contracts import (
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
     FrozenDualTargetScreening,
+    RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
     ResearchDraftMember,
@@ -43,6 +52,7 @@ from stock_profiler.modules.research.contracts import (
     RiskVetoDraft,
     handoff_fingerprint,
     risk_run_id_for,
+    screening_output_sha256,
 )
 from stock_profiler.modules.research.service import freeze_research
 
@@ -50,9 +60,7 @@ from stock_profiler.modules.research.service import freeze_research
 def research_command(
     *,
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
-    failure_mode: Literal[
-        "NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"
-    ] = "NONE",
+    failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
 ) -> ResearchCommand:
     cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
     members = tuple(
@@ -70,14 +78,31 @@ def research_command(
                 ),
             ),
             structured_signals={
-                signal_id: Decimal(index + 1) / Decimal(100)
-                for signal_id in RAW_SCORE_FEATURE_IDS
+                signal_id: Decimal(index + 1) / Decimal(100) for signal_id in RAW_SCORE_FEATURE_IDS
             },
             risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
         )
         for index in range(10)
     )
     ids = tuple(member.security_id for member in members)
+    screening = FrozenDualTargetScreening.model_construct(
+        positive_target="SIX_MONTH_POSITIVE_RETURN",
+        terminal_target="SIX_MONTH_TERMINAL_20_PERCENT",
+        strategy_version="synthetic-dual-head-strategy-v1",
+        snapshot_id="synthetic-dual-head-snapshot-v1",
+        universe_security_ids=ids,
+        selected_member_ids=ids,
+        positive_scores={security_id: Decimal("0.6") for security_id in ids},
+        terminal_scores={security_id: Decimal("0.7") for security_id in ids},
+        positive_head_version="synthetic-positive-head-v1",
+        terminal_head_version="synthetic-terminal-head-v1",
+        output_sha256="",
+    )
+    screening = FrozenDualTargetScreening.model_validate(
+        screening.model_copy(
+            update={"output_sha256": screening_output_sha256(screening)}
+        ).model_dump(mode="python")
+    )
     return ResearchCommand(
         contract_version="1.0.0",
         synthetic=True,
@@ -88,19 +113,7 @@ def research_command(
         cutoff_at=cutoff,
         knowledge_cutoff=cutoff,
         purpose="SYNTHETIC",
-        screening=FrozenDualTargetScreening(
-            positive_target="SIX_MONTH_POSITIVE_RETURN",
-            terminal_target="SIX_MONTH_TERMINAL_20_PERCENT",
-            strategy_version="synthetic-dual-head-strategy-v1",
-            snapshot_id="synthetic-dual-head-snapshot-v1",
-            universe_security_ids=ids,
-            selected_member_ids=ids,
-            positive_scores={security_id: Decimal("0.6") for security_id in ids},
-            terminal_scores={security_id: Decimal("0.7") for security_id in ids},
-            positive_head_version="synthetic-positive-head-v1",
-            terminal_head_version="synthetic-terminal-head-v1",
-            output_sha256="a" * 64,
-        ),
+        screening=screening,
         members=members,
         risk_scenario=risk_scenario,
         failure_mode=failure_mode,
@@ -129,9 +142,7 @@ def _case(
     settings: Settings,
     *,
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
-    failure_mode: Literal[
-        "NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"
-    ] = "NONE",
+    failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
 ) -> FrozenDecisionCase:
     command = research_command(risk_scenario=risk_scenario, failure_mode=failure_mode)
     scope = ResultAccessScope(
@@ -152,9 +163,7 @@ def _case(
             ),
         ),
         reasons=(
-            "SYNTHETIC_RISK_VETO"
-            if risk_scenario == "REJECT"
-            else "SYNTHETIC_RISK_ACCEPTED",
+            "SYNTHETIC_RISK_VETO" if risk_scenario == "REJECT" else "SYNTHETIC_RISK_ACCEPTED",
         ),
     )
     provisional = freeze_research(
@@ -215,9 +224,7 @@ def _case(
             "research": command.model_dump(mode="json"),
         },
         expected_external_result=ExternalResult(
-            outcome_code="RESEARCH_REJECTED"
-            if risk_scenario == "REJECT"
-            else "RESEARCH_FROZEN",
+            outcome_code="RESEARCH_REJECTED" if risk_scenario == "REJECT" else "RESEARCH_FROZEN",
             summary="provisional",
             key_reasons=("PROVISIONAL",),
             research=provisional,
@@ -302,6 +309,85 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert risk_run.snapshot.tool_declarations == ()
     assert risk_run.snapshot.has_context_provider is True
 
+    with runtime.engine.connect() as connection:
+        recorded_run_ids = {
+            row.framework_run_id
+            for row in connection.execute(
+                DECISION_STAGE_EVENTS.select().where(
+                    DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id
+                )
+            )
+        }
+    assert {case.framework_run_id, risk_run_id}.issubset(recorded_run_ids)
+
+
+def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None:
+    tool = _read_announcement_tool()
+    outcome = asyncio.run(
+        tool.invoke(
+            ToolRequest(
+                call_id="tool-call-1616",
+                tool_name="read_announcement",
+                arguments='{"security_id":"synthetic-security-00"}',
+            )
+        )
+    )
+
+    assert outcome.status.value == "SUCCESS"
+    assert outcome.result is not None
+    assert "announcement:synthetic-security-00" in outcome.result
+    assert "trade instruction" in outcome.result
+
+
+def test_research_context_stages_have_distinct_frozen_roles(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+    assert execution.report is not None
+
+    runtime = initialize_runtime_storage(migrated_settings)
+    research_run = asyncio.run(runtime.run_store.get_run(case.framework_run_id))
+    assert research_run is not None and research_run.snapshot is not None
+    stages = research_run.snapshot.context_plan.stages
+    assert tuple(stage.identity.stage_id for stage in stages) == (
+        "collect",
+        "analyze",
+        "bull-bear",
+        "draft",
+    )
+    assert tuple(stage.config.config["phase"] for stage in stages if stage.config) == (
+        "collect",
+        "analyze",
+        "bull-bear",
+        "draft",
+    )
+    assert tuple(stage.output_channels for stage in stages) == (
+        ("RESEARCH_COLLECTION",),
+        ("RESEARCH_ANALYSIS",),
+        ("RESEARCH_BULL_BEAR",),
+        ("RESEARCH_DRAFT",),
+    )
+
+
+def test_historical_research_case_without_original_run_fails_closed(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings)
+    historical_case = case.model_copy(
+        update={
+            "version_bundle": case.version_bundle.model_copy(
+                update=HISTORICAL_M_AGENT_RELEASE.model_dump()
+            )
+        }
+    )
+
+    with pytest.raises(DecisionEventCommitError, match="missing durable framework Run"):
+        run_frozen_decision_case(
+            migrated_settings,
+            historical_case.model_dump(mode="json"),
+        )
+
 
 def test_research_provider_failure_closes_without_raw_score_or_risk_run(
     migrated_settings: Settings,
@@ -360,6 +446,28 @@ def test_raw_score_failure_has_its_own_gate_and_does_not_start_risk(
     assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
 
 
+def test_actual_raw_score_arithmetic_failure_is_saved_at_raw_score_phase(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    def fail_raw_score(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RawScoreCalculationError("RAW_SCORE_CALCULATION_FAILED")
+
+    monkeypatch.setattr(research_service, "freeze_raw_score", fail_raw_score)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RAW_SCORE"
+        and stage.status == "FAILED"
+        and "RAW_SCORE_CALCULATION_FAILED" in stage.reasons
+        for stage in execution.stage_results
+    )
+
+
 def test_risk_run_failure_is_saved_without_fabricating_a_veto(
     migrated_settings: Settings,
 ) -> None:
@@ -372,8 +480,7 @@ def test_risk_run_failure_is_saved_without_fabricating_a_veto(
 
     assert execution.report is None
     assert any(
-        stage.phase == "RISK_VETO" and stage.status == "FAILED"
-        for stage in execution.stage_results
+        stage.phase == "RISK_VETO" and stage.status == "FAILED" for stage in execution.stage_results
     )
     assert not any(stage.phase == "BUSINESS_DECISION" for stage in execution.stage_results)
 
