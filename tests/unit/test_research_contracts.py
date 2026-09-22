@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Literal
+
+import pytest
+
+from stock_profiler.modules.research.contracts import (
+    RAW_SCORE_FEATURE_IDS,
+    FrozenDualTargetScreening,
+    ResearchCommand,
+    ResearchDraft,
+    ResearchDraftMember,
+    ResearchEvidence,
+    ResearchFrameworkOutput,
+    ResearchMemberInput,
+    RiskGate,
+    RiskVetoDraft,
+    freeze_raw_score,
+    handoff_fingerprint,
+)
+from stock_profiler.modules.research.service import freeze_research
+
+
+def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> ResearchCommand:
+    cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
+    members = tuple(
+        ResearchMemberInput(
+            security_id=f"synthetic-security-{index:02}",
+            research_id=f"research-{index:02}",
+            knowledge_cutoff=cutoff,
+            evidence=(
+                ResearchEvidence(
+                    evidence_id=f"evidence-{index:02}",
+                    source="fictional-certified-feed",
+                    reference=f"synthetic://evidence/{index:02}",
+                    statement="A fictional structured fact is available at the cutoff.",
+                    knowledge_cutoff=cutoff,
+                ),
+            ),
+            structured_signals={
+                signal_id: Decimal(index + 1) / Decimal(10)
+                for signal_id in RAW_SCORE_FEATURE_IDS
+            },
+            risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
+        )
+        for index in range(10)
+    )
+    ids = tuple(member.security_id for member in members)
+    return ResearchCommand(
+        contract_version="1.0.0",
+        synthetic=True,
+        generator_version="synthetic-research-v1",
+        seed=1616,
+        selection_object_id="selection-object-1616",
+        selection_event_id="selection-event-1616",
+        cutoff_at=cutoff,
+        knowledge_cutoff=cutoff,
+        purpose="SYNTHETIC",
+        screening=FrozenDualTargetScreening(
+            positive_target="SIX_MONTH_POSITIVE_RETURN",
+            terminal_target="SIX_MONTH_TERMINAL_20_PERCENT",
+            strategy_version="synthetic-dual-head-strategy-v1",
+            snapshot_id="synthetic-dual-head-snapshot-v1",
+            universe_security_ids=ids,
+            selected_member_ids=ids,
+            positive_scores={security_id: Decimal("0.6") for security_id in ids},
+            terminal_scores={security_id: Decimal("0.7") for security_id in ids},
+            positive_head_version="synthetic-positive-head-v1",
+            terminal_head_version="synthetic-terminal-head-v1",
+            output_sha256="a" * 64,
+        ),
+        members=members,
+        risk_scenario=risk_scenario,
+    )
+
+
+def test_research_command_freezes_ten_independent_member_identities() -> None:
+    command = _command()
+
+    assert len(command.members) == 10
+    assert len({member.research_id for member in command.members}) == 10
+    assert command.screening.selected_member_ids == tuple(
+        member.security_id for member in command.members
+    )
+    assert all(
+        member.evidence[0].knowledge_cutoff == command.knowledge_cutoff
+        for member in command.members
+    )
+
+
+def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None:
+    command = _command()
+    raw_score = freeze_raw_score(command, command.members[0])
+
+    assert raw_score.target == "SIX_MONTH_TERMINAL_20_PERCENT"
+    assert raw_score.probability is None
+    assert raw_score.model_version == "elastic-net-logistic-z20-v1"
+    assert raw_score.interaction_terms == ()
+    assert raw_score.z20 == Decimal("-0.030")
+
+
+def test_raw_score_does_not_change_when_research_text_changes() -> None:
+    command = _command()
+    original = freeze_raw_score(command, command.members[0])
+    changed_member = command.members[0].model_copy(
+        update={
+            "structured_signals": command.members[0].structured_signals,
+            "risk_flags": (),
+        }
+    )
+
+    assert freeze_raw_score(command, changed_member) == original
+
+
+def test_research_command_rejects_a_non_ten_or_incomplete_cohort() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"] = payload["members"][:-1]
+
+    with pytest.raises(ValueError, match="exactly ten"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> None:
+    command = _command(risk_scenario="REJECT")
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The fictional thesis is bounded by the frozen evidence.",
+                bull_case="The fictional upside case remains conditional.",
+                bear_case="The fictional downside case remains explicit.",
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in command.members
+        ),
+    )
+    risk = RiskVetoDraft(
+        contract_version="1.0.0",
+        handoff_fingerprint=handoff_fingerprint(command, draft),
+        disposition="REJECTED",
+        gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
+        reasons=("SYNTHETIC_RISK_VETO",),
+    )
+
+    outcome = freeze_research(
+        command,
+        ResearchFrameworkOutput(
+            research_run_id="research-run-1616",
+            risk_run_id="risk-run-1616",
+            draft=draft,
+            risk_veto=risk,
+        ),
+    )
+
+    assert outcome.disposition == "REJECTED"
+    assert outcome.risk_veto is not None
+    assert outcome.risk_veto.disposition == "REJECTED"
+    assert outcome.raw_scores is not None
+    assert len(outcome.raw_scores) == 10
+    assert outcome.handoff.research_run_id == "research-run-1616"
+    assert outcome.handoff.risk_run_id == "risk-run-1616"
+    assert outcome.handoff.actionable is False

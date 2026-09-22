@@ -72,6 +72,9 @@ class FrameworkRunResult:
     output: str | None
     waiting_reason: str | None = None
     error_code: str | None = None
+    risk_run_id: str | None = None
+    risk_run_status: FrameworkRunStatus | None = None
+    risk_run_error_code: str | None = None
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
 

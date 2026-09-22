@@ -62,6 +62,8 @@ from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
+from stock_profiler.modules.research.contracts import ResearchFrameworkOutput
+from stock_profiler.modules.research.service import freeze_research
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -466,6 +468,15 @@ def _commit_framework_result(
             stage_result=framework_stage_result,
             framework_run_id=execution_case.framework_run_id,
             allow_repeated_occurrence=framework_stage_result.status in {"RUNNING", "WAITING"},
+        )
+    if execution_case.research is not None:
+        return _commit_research_framework_result(
+            ledger,
+            connection,
+            execution_case,
+            framework,
+            framework_stage_results,
+            durable_transition_count,
         )
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
@@ -1018,6 +1029,312 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
+    stage_results = (
+        *stage_results_before_commit,
+        StageResult(
+            phase="BUSINESS_COMMIT",
+            status="SUCCEEDED",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="PASSED"),),
+            reasons=(),
+        ),
+    )
+    committed_at = ledger.observed_at()
+    attempted_fact = ledger.build_event_fact(
+        case=execution_case,
+        framework_run_id=framework.run_id,
+        result=result,
+        stage_results=stage_results,
+        committed_at=committed_at,
+        generated_at=execution_case.report_generated_at,
+    )
+    try:
+        return ledger.commit_event_fact(connection, attempted_fact)
+    except DecisionEventCommitUncertainError:
+        committed = ledger.reconcile_event_commit(connection, attempted_fact)
+        if committed is not None:
+            return committed
+        _restore_precommit_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            current_stage_results_before_commit,
+        )
+        uncertain_commit = StageResult(
+            phase="COMMIT_RECONCILIATION",
+            status="UNKNOWN",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="UNKNOWN"),),
+            reasons=("COMMIT_UNCERTAIN",),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=uncertain_commit,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=True,
+        )
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=business_result_status_from_stage(business_result),
+            business_lifecycle=(
+                business_lifecycle_from_stage(business_result)
+                or business_lifecycle_from_stage(uncertain_commit)
+            ),
+            business_commit_status="UNKNOWN",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+    except DecisionEventCommitError:
+        committed = ledger.reconcile_event_commit(connection, attempted_fact)
+        if committed is not None:
+            return committed
+        _restore_precommit_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            current_stage_results_before_commit,
+        )
+        failed_commit = StageResult(
+            phase="BUSINESS_COMMIT",
+            status="FAILED",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="FAILED"),),
+            reasons=("COMMIT_STORAGE_FAILED",),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=failed_commit,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=True,
+        )
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=business_result_status_from_stage(business_result),
+            business_lifecycle=business_lifecycle_from_stage(business_result),
+            business_commit_status="FAILED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+
+
+def _commit_research_framework_result(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    execution_case: FrozenDecisionCase,
+    framework: FrameworkRunResult,
+    framework_stage_results: tuple[StageResult, ...],
+    durable_transition_count: int,
+) -> DecisionEventFact | DecisionCaseExecution:
+    """Validate the staged research envelope before committing its host result."""
+    command = execution_case.research
+    assert command is not None
+
+    def record(stage_result: StageResult) -> None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=stage_result,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=stage_result.status
+            not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
+        )
+
+    def closed(
+        *,
+        validation: StageResult | None = None,
+        research: StageResult | None = None,
+        raw_score: StageResult | None = None,
+        risk: StageResult | None = None,
+    ) -> DecisionCaseExecution:
+        for stage_result in (research, raw_score, risk, validation):
+            if stage_result is not None:
+                record(stage_result)
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=None,
+            business_lifecycle=None,
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+
+    if framework.run_id != execution_case.framework_run_id:
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
+            business_result_status=None,
+            business_lifecycle=None,
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+    if framework.status != "SUCCEEDED":
+        return closed(
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_RUN", status="FAILED"),),
+                reasons=(
+                    framework.error_code
+                    or framework.waiting_reason
+                    or "RESEARCH_RUN_FAILED",
+                ),
+            )
+        )
+    if framework.output is None:
+        return closed(
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_OUTPUT", status="FAILED"),),
+                reasons=("RESEARCH_OUTPUT_MISSING",),
+            )
+        )
+    try:
+        envelope = ResearchFrameworkOutput.model_validate_json(framework.output)
+    except ValidationError:
+        return closed(
+            validation=_failed_host_validation("RESEARCH_OUTPUT_CONTRACT_INVALID"),
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="OUTPUT_CONTRACT", status="FAILED"),),
+                reasons=("RESEARCH_OUTPUT_CONTRACT_INVALID",),
+            ),
+        )
+    research_stage = StageResult(
+        phase="RESEARCH",
+        status="SUCCEEDED",
+        gate_results=(
+            GateResult(gate_id="RESEARCH_DRAFT_TYPED", status="PASSED"),
+            GateResult(gate_id="RESEARCH_PROVENANCE", status="PASSED"),
+        ),
+        reasons=("RESEARCH_DRAFT_READY",),
+    )
+    if command.failure_mode == "RAW_SCORE":
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RAW_SCORE_AVAILABLE", status="FAILED"),),
+                reasons=("RAW_SCORE_NOT_AVAILABLE",),
+            ),
+            validation=_failed_host_validation("RAW_SCORE_NOT_AVAILABLE"),
+        )
+    if (
+        envelope.risk_veto is None
+        or (
+            framework.risk_run_status is not None
+            and framework.risk_run_status != "SUCCEEDED"
+        )
+    ):
+        return closed(
+            research=research_stage,
+            risk=StageResult(
+                phase="RISK_VETO",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RISK_RUN", status="FAILED"),),
+                reasons=(
+                    framework.risk_run_error_code
+                    or "RISK_VETO_OUTPUT_INVALID",
+                ),
+            ),
+            validation=_failed_host_validation("RISK_VETO_OUTPUT_INVALID"),
+        )
+    try:
+        research_outcome = freeze_research(command, envelope)
+    except ValueError as error:
+        return closed(
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_PROVENANCE", status="FAILED"),),
+                reasons=(str(error),),
+            ),
+            risk=StageResult(
+                phase="RISK_VETO",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RISK_HANDOFF", status="FAILED"),),
+                reasons=("RISK_HANDOFF_INVALID",),
+            ),
+            validation=_failed_host_validation("RESEARCH_HANDOFF_INVALID"),
+        )
+    result = ExternalResult(
+        outcome_code=(
+            "RESEARCH_REJECTED"
+            if research_outcome.disposition == "REJECTED"
+            else "RESEARCH_FROZEN"
+        ),
+        summary=(
+            "Synthetic fixed-ten research and independent risk veto were frozen."
+            if research_outcome.disposition == "FROZEN"
+            else "Synthetic fixed-ten research was rejected by the independent risk veto."
+        ),
+        key_reasons=research_outcome.reasons,
+        research=research_outcome,
+    )
+    validation_result = host_validation_result(execution_case, result)
+    business_result = (
+        business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
+    )
+    risk_stage = StageResult(
+        phase="RISK_VETO",
+        status=(
+            "REJECTED"
+            if research_outcome.risk_veto is not None
+            and research_outcome.risk_veto.disposition == "REJECTED"
+            else "SUCCEEDED"
+        ),
+        gate_results=tuple(
+            GateResult(gate_id=gate.gate_id, status=gate.status)
+            for gate in research_outcome.risk_veto.gates
+        )
+        if research_outcome.risk_veto is not None
+        else (),
+        reasons=research_outcome.risk_veto.reasons
+        if research_outcome.risk_veto is not None
+        else ("RISK_VETO_MISSING",),
+    )
+    raw_score_stage = StageResult(
+        phase="RAW_SCORE",
+        status="SUCCEEDED",
+        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
+        reasons=("RAW_SCORE_FROZEN",),
+    )
+    record(research_stage)
+    record(raw_score_stage)
+    record(risk_stage)
+    record(validation_result)
+    if business_result is not None:
+        record(business_result)
+    current_stage_results_before_commit = (
+        *framework_stage_results[durable_transition_count:],
+        research_stage,
+        raw_score_stage,
+        risk_stage,
+        validation_result,
+        *((business_result,) if business_result is not None else ()),
+    )
+    stage_results_before_commit = ledger.get_stage_results(
+        execution_case.business_object_id,
+        connection,
+    )
+    if business_result is None or not is_committable_host_outcome(business_result):
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=(
+                business_result_status_from_stage(business_result)
+                if business_result is not None
+                else None
+            ),
+            business_lifecycle=(
+                business_lifecycle_from_stage(business_result)
+                if business_result is not None
+                else None
+            ),
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=stage_results_before_commit,
+        )
     stage_results = (
         *stage_results_before_commit,
         StageResult(

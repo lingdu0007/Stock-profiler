@@ -1202,6 +1202,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            research?: components["schemas"]["ResearchOutcome"] | null;
             selection?: components["schemas"]["SelectionOutcome"] | null;
             stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
@@ -2337,6 +2338,50 @@ export interface components {
             user_id: string;
         };
         /**
+         * RawScore
+         * @description The structured, uncalibrated terminal-target score frozen after the cohort.
+         */
+        RawScore: {
+            /** Coefficients */
+            coefficients: {
+                [key: string]: string;
+            };
+            /** Contributions */
+            contributions: {
+                [key: string]: string;
+            };
+            /**
+             * Interaction Terms
+             * @default []
+             */
+            interaction_terms: string[];
+            /** Intercept */
+            intercept: string;
+            /** L1 Ratio */
+            l1_ratio: string;
+            /** L2 Ratio */
+            l2_ratio: string;
+            /** Model Version */
+            model_version: string;
+            /** Probability */
+            probability?: null;
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Structured Inputs */
+            structured_inputs: {
+                [key: string]: string;
+            };
+            /**
+             * Target
+             * @constant
+             */
+            target: "SIX_MONTH_TERMINAL_20_PERCENT";
+            /** Z20 */
+            z20: string;
+        };
+        /**
          * ReauthenticationVerificationDto
          * @description Pydantic transport contract for a completed recent reauthentication.
          */
@@ -2540,6 +2585,126 @@ export interface components {
             registered_at: string;
         };
         /**
+         * ResearchHandoff
+         * @description Versioned, immutable boundary between research/risk and later work.
+         */
+        ResearchHandoff: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Raw Scores */
+            raw_scores?: components["schemas"]["RawScore"][] | null;
+            /** Research Definition Id */
+            research_definition_id: string;
+            /** Research Definition Version */
+            research_definition_version: string;
+            /** Research Model Adapter Id */
+            research_model_adapter_id: string;
+            /** Research Output Contract Id */
+            research_output_contract_id: string;
+            /** Research Output Contract Version */
+            research_output_contract_version: string;
+            /** Research Routing Policy Version */
+            research_routing_policy_version: string;
+            /** Research Run Id */
+            research_run_id: string;
+            /** Risk Definition Id */
+            risk_definition_id: string;
+            /** Risk Definition Version */
+            risk_definition_version: string;
+            /** Risk Model Adapter Id */
+            risk_model_adapter_id: string;
+            /** Risk Output Contract Id */
+            risk_output_contract_id: string;
+            /** Risk Output Contract Version */
+            risk_output_contract_version: string;
+            /** Risk Run Id */
+            risk_run_id: string;
+            risk_veto?: components["schemas"]["RiskVetoOutcome"] | null;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "D0_SYNTHETIC_RESEARCH_ONLY";
+            /** Screening Snapshot Id */
+            screening_snapshot_id: string;
+            /** Screening Strategy Version */
+            screening_strategy_version: string;
+            /** Security Ids */
+            security_ids: string[];
+            /** Selection Event Id */
+            selection_event_id: string;
+            /** Selection Object Id */
+            selection_object_id: string;
+            /** Targets */
+            targets: string[];
+        };
+        /** ResearchMemberResult */
+        ResearchMemberResult: {
+            /** Bear Case */
+            bear_case: string;
+            /** Bull Case */
+            bull_case: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Thesis */
+            thesis: string;
+        };
+        /**
+         * ResearchOutcome
+         * @description Host-owned research result, including independent risk disposition.
+         */
+        ResearchOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "FROZEN" | "REJECTED" | "DATA_FAILED" | "SYSTEM_FAILED" | "BLOCKED";
+            handoff: components["schemas"]["ResearchHandoff"];
+            /** Members */
+            members: components["schemas"]["ResearchMemberResult"][];
+            /** Raw Scores */
+            raw_scores?: components["schemas"]["RawScore"][] | null;
+            /** Reasons */
+            reasons: string[];
+            risk_veto?: components["schemas"]["RiskVetoOutcome"] | null;
+        };
+        /**
          * ResultAccessScope
          * @description Immutable ownership and visibility bound before a scoped case is executed.
          */
@@ -2641,6 +2806,34 @@ export interface components {
             predecessor_authorization_id: string;
             /** Predecessor Risk Budget Version Id */
             predecessor_risk_budget_version_id: string;
+        };
+        /** RiskGate */
+        RiskGate: {
+            /** Gate Id */
+            gate_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED";
+        };
+        /** RiskVetoOutcome */
+        RiskVetoOutcome: {
+            /** Definition Id */
+            definition_id: string;
+            /** Definition Version */
+            definition_version: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ACCEPTED" | "REJECTED";
+            /** Gates */
+            gates: components["schemas"]["RiskGate"][];
+            /** Reasons */
+            reasons: string[];
+            /** Run Id */
+            run_id: string;
         };
         /**
          * SafetyCapabilitiesDiagnosticDto
@@ -2838,7 +3031,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /** Reasons */
             reasons: string[];
             /**

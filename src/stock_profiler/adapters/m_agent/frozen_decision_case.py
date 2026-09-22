@@ -6,21 +6,33 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import version
 from typing import cast
 
-from m_agent.adapters import DeterministicContextProvider, DeterministicModelAdapter
+from m_agent.adapters import (
+    DeterministicContextProvider,
+    DeterministicModelAdapter,
+    DeterministicTool,
+)
 from m_agent.runtime import (
     DEFAULT_LEASE_TTL,
     AgentDefinition,
     AllowAllRunPolicy,
     ContextItem,
+    ContextPlan,
+    ContextProvider,
+    ContextRequest,
+    ContextScope,
+    ContextStage,
+    ContextStageIdentity,
+    ContextTransformType,
     DefinitionRegistry,
     DuplicateRunError,
     IllegalRunTransitionError,
     LeaseNotHeldError,
     ModelCapabilities,
+    ModelCapabilityCombination,
     ModelContractViolationError,
     OutputContract,
     Runner,
@@ -28,6 +40,10 @@ from m_agent.runtime import (
     RunRecord,
     StaleRunVersionError,
     StructuredOutputMode,
+    ToolCallingMode,
+    ToolEffect,
+    ToolOutcome,
+    ToolRequest,
 )
 
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
@@ -61,8 +77,27 @@ from stock_profiler.modules.decision_cases.ports import (
     MappedDurableRunMissingError as MappedDurableRunMissingError,
 )
 from stock_profiler.modules.delivery.capabilities import CapabilityInventory
+from stock_profiler.modules.research.contracts import (
+    RESEARCH_CONTRACT_VERSION,
+    RESEARCH_DEFINITION_ID,
+    RESEARCH_DEFINITION_VERSION,
+    RESEARCH_MODEL_ADAPTER_ID,
+    RESEARCH_OUTPUT_CONTRACT_ID,
+    RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_ROUTING_POLICY_VERSION,
+    RISK_DEFINITION_ID,
+    RISK_DEFINITION_VERSION,
+    ResearchCommand,
+    ResearchDraft,
+    ResearchFrameworkOutput,
+    RiskGate,
+    RiskVetoDraft,
+    handoff_fingerprint,
+    risk_run_id_for,
+)
 
 READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset()
+RESEARCH_READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset({"read_announcement"})
 
 DETERMINISTIC_MODEL_ADAPTER_ID = "m-agent-deterministic-model-adapter"
 D0_ROUTING_POLICY_VERSION = "d0-single-definition-route-v1"
@@ -87,6 +122,27 @@ DEFAULT_SYNTHETIC_MODEL_RESPONSE = (
     '],"outcome_code":"SYNTHETIC_REVIEW_COMPLETE",'
     '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
 )
+RESEARCH_DEFINITION_INSTRUCTIONS = (
+    "Run one structured single-stock research definition across the fixed ten cohort. "
+    "Use the required structured facts delivered by Context Provider before model steps. "
+    "The explicit stages are collect, analyze, bull-bear, and draft. "
+    "Use only the declared read-only announcement Tool for optional exploration. "
+    "Return only the typed research draft. Do not output scores, probabilities, qualification, "
+    "personal quantities, order, or trading conclusions."
+)
+RISK_DEFINITION_INSTRUCTIONS = (
+    "Evaluate the immutable research handoff with an independent risk-veto definition. "
+    "Return only the typed risk gate result. A REJECTED result is authoritative and cannot "
+    "be changed by research or orchestration."
+)
+RESEARCH_STAGE_IDS = ("collect", "analyze", "bull-bear", "draft")
+RESEARCH_TOOL_NAME = "read_announcement"
+RESEARCH_TOOL_PARAMETERS = {
+    "type": "object",
+    "properties": {"security_id": {"type": "string"}},
+    "required": ["security_id"],
+    "additionalProperties": False,
+}
 _CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS = 0.01
 _CONCURRENT_RUN_RECOVERY_ERRORS = (
     DuplicateRunError,
@@ -120,13 +176,230 @@ class _RunStatusCollector:
             self.statuses.append(cast(FrameworkRunStatus, value))
 
 
+class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
+    """Deterministic required-fact Provider with an explicit data-failure mode."""
+
+    deterministic = True
+
+    def __init__(self, items: tuple[ContextItem, ...], *, fail: bool = False) -> None:
+        self._items = items
+        self._fail = fail
+
+    async def provide(self, request: ContextRequest) -> tuple[ContextItem, ...]:
+        del request
+        if self._fail:
+            raise RuntimeError("RESEARCH_DATA_UNAVAILABLE")
+        return self._items
+
+
+def _read_announcement_tool() -> DeterministicTool:
+    def handler(request: ToolRequest) -> ToolOutcome:
+        return ToolOutcome.success(
+            request.call_id,
+            request.tool_name,
+            "Synthetic announcement exploration is read-only and contains no trade instruction.",
+        )
+
+    return DeterministicTool(
+        name=RESEARCH_TOOL_NAME,
+        description="Read one synthetic announcement without changing external state.",
+        effect=ToolEffect.READ_ONLY,
+        parameters=RESEARCH_TOOL_PARAMETERS,
+        handler=handler,
+    )
+
+
+def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]:
+    return tuple(
+        ContextItem(
+            item_id=f"required-fact:{member.security_id}:{evidence.evidence_id}",
+            source="synthetic-required-fact-provider",
+            content=json.dumps(
+                {
+                    "security_id": member.security_id,
+                    "research_id": member.research_id,
+                    "evidence": evidence.model_dump(mode="json"),
+                    "structured_signals": member.model_dump(mode="json")["structured_signals"],
+                    "risk_flags": member.risk_flags,
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            metadata={
+                "availability": "REQUIRED_BEFORE_MODEL",
+                "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+            },
+        )
+        for member in command.members
+        for evidence in member.evidence
+    )
+
+
+def _research_context_plan() -> ContextPlan:
+    return ContextPlan(
+        plan_version=RESEARCH_CONTRACT_VERSION,
+        stages=tuple(
+            ContextStage(
+                identity=ContextStageIdentity(
+                    stage_id=stage_id,
+                    scope=ContextScope.RUN_INPUT,
+                    transform_type=ContextTransformType.PROVIDE,
+                    config_version=RESEARCH_CONTRACT_VERSION,
+                ),
+                input_channels=("REQUIRED_STRUCTURED_FACTS",),
+                output_channels=("REQUIRED_STRUCTURED_FACTS",),
+            )
+            for stage_id in RESEARCH_STAGE_IDS
+        ),
+    )
+
+
+def _research_definition(case: FrozenDecisionCase) -> AgentDefinition:
+    """Register one staged research Definition with a narrow capability surface."""
+    command = case.research
+    assert command is not None
+    adapter = DeterministicModelAdapter(
+        responses=(_research_model_response(command),),
+        capabilities=ModelCapabilities(
+            tool_calling=ToolCallingMode.NATIVE,
+            structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            supported_combinations=(
+                ModelCapabilityCombination(
+                    tool_calling=ToolCallingMode.NATIVE,
+                    structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+                ),
+            ),
+        ),
+    )
+    return AgentDefinition.for_adapter(
+        definition_id=RESEARCH_DEFINITION_ID,
+        version=RESEARCH_DEFINITION_VERSION,
+        instructions=RESEARCH_DEFINITION_INSTRUCTIONS,
+        model_adapter=adapter,
+        context_provider=_FrozenResearchContextProvider(
+            _research_context_items(command),
+            fail=command.failure_mode == "DATA",
+        ),
+        tools=(_read_announcement_tool(),),
+        output_contract=OutputContract(
+            contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
+            version=RESEARCH_OUTPUT_CONTRACT_VERSION,
+            schema=ResearchDraft.model_json_schema(),
+            structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+        ),
+        context_plan=_research_context_plan(),
+    )
+
+
+def _risk_definition(
+    command: ResearchCommand,
+    draft: ResearchDraft,
+    *,
+    research_run_id: str,
+) -> AgentDefinition:
+    """Register the independent risk Definition over an immutable handoff."""
+    handoff = handoff_fingerprint(command, draft)
+    risk_response = RiskVetoDraft(
+        contract_version="1.0.0",
+        handoff_fingerprint=handoff,
+        disposition="REJECTED" if command.risk_scenario == "REJECT" else "ACCEPTED",
+        gates=(
+            RiskGate(
+                gate_id="SYNTHETIC_RISK_VETO",
+                status="FAILED" if command.risk_scenario == "REJECT" else "PASSED",
+            ),
+        ),
+        reasons=(
+            "SYNTHETIC_RISK_VETO"
+            if command.risk_scenario == "REJECT"
+            else "SYNTHETIC_RISK_ACCEPTED",
+        ),
+    )
+    if command.failure_mode == "RISK":
+        risk_response_payload = risk_response.model_dump(mode="json")
+        risk_response_payload["probability"] = "0.01"
+        risk_response_json = json.dumps(
+            risk_response_payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    else:
+        risk_response_json = risk_response.model_dump_json()
+    adapter = DeterministicModelAdapter(
+        responses=(risk_response_json,),
+        capabilities=ModelCapabilities(
+            structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT
+        ),
+    )
+    handoff_item = ContextItem(
+        item_id=f"research-handoff:{research_run_id}",
+        source="immutable-research-handoff",
+        content=json.dumps(
+            {
+                "handoff_fingerprint": handoff,
+                "research_run_id": research_run_id,
+                "draft": draft.model_dump(mode="json"),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        metadata={"availability": "IMMUTABLE_RESEARCH_HANDOFF"},
+    )
+    return AgentDefinition.for_adapter(
+        definition_id=RISK_DEFINITION_ID,
+        version=RISK_DEFINITION_VERSION,
+        instructions=RISK_DEFINITION_INSTRUCTIONS,
+        model_adapter=adapter,
+        context_provider=DeterministicContextProvider(items=(handoff_item,)),
+        tools=(),
+        output_contract=OutputContract(
+            contract_id="synthetic-independent-risk-veto",
+            version="1.0.0",
+            schema=RiskVetoDraft.model_json_schema(),
+            structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+        ),
+    )
+
+
+def _research_model_response(command: ResearchCommand) -> str:
+    members = []
+    for member in command.members:
+        members.append(
+            {
+                "security_id": member.security_id,
+                "research_id": member.research_id,
+                "evidence_refs": [evidence.evidence_id for evidence in member.evidence],
+                "thesis": "The fictional thesis is bounded by the frozen evidence.",
+                "bull_case": "The fictional upside case remains conditional.",
+                "bear_case": "The fictional downside case remains explicit.",
+                "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+            }
+        )
+    response: dict[str, object] = {"contract_version": "1.0.0", "members": members}
+    if command.failure_mode in {"RESEARCH", "SYSTEM"}:
+        response["probability"] = "0.99"
+    return json.dumps(response, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+
+def _risk_run_id(research_run_id: str, draft: ResearchDraft) -> str:
+    return risk_run_id_for(research_run_id, draft)
+
+
 async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: RuntimeStorage) -> None:
     """Require the supplied original snapshot to identify an already durable Run."""
     _assert_runtime_version_bundle(case)
     run = await runtime.run_store.get_run(case.framework_run_id)
     if run is None:
         raise MappedDurableRunMissingError("original durable M-Agent Run is missing")
-    _assert_existing_run_matches_case(run, case, _frozen_definition(case))
+    definition = (
+        _research_definition(case)
+        if case.research is not None
+        else _frozen_definition(case)
+    )
+    _assert_existing_run_matches_case(run, case, definition)
 
 
 async def find_unmapped_legacy_frozen_decision_case(
@@ -216,6 +489,13 @@ async def execute_frozen_decision_case(
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
+    if case.research is not None:
+        return await execute_research_decision_case(
+            case,
+            runtime,
+            record_transition,
+            clock=clock,
+        )
     try:
         _assert_runtime_version_bundle(case)
         definition = _frozen_definition(case)
@@ -333,6 +613,327 @@ async def execute_frozen_decision_case(
     )
 
 
+async def execute_research_decision_case(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    record_transition: FrameworkTransitionRecorder | None = None,
+    *,
+    clock: Clock | None = None,
+) -> FrameworkRunResult:
+    """Execute one staged research Run followed by an independent risk Run."""
+    command = case.research
+    assert command is not None
+    try:
+        _assert_runtime_version_bundle(case)
+        research_definition = _research_definition(case)
+        _assert_research_registered_capabilities(case, research_definition)
+    except ValueError:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
+        raise
+
+    research_input = json.dumps(
+        case.input,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    research_run = await _execute_registered_run(
+        runtime=runtime,
+        run_id=case.framework_run_id,
+        definition=research_definition,
+        input_payload=research_input,
+        case=case,
+        record_transition=record_transition,
+        clock=clock,
+    )
+    if research_run.status != "SUCCEEDED" or research_run.output is None:
+        if command.failure_mode == "DATA":
+            return replace(research_run, error_code="RESEARCH_DATA_UNAVAILABLE")
+        return research_run
+    try:
+        draft = ResearchDraft.model_validate_json(research_run.output)
+    except ValueError:
+        return replace(
+            research_run,
+            status="FAILED",
+            error_code="RESEARCH_OUTPUT_INVALID",
+        )
+
+    if command.failure_mode == "RAW_SCORE":
+        envelope = ResearchFrameworkOutput(
+            research_run_id=research_run.run_id,
+            risk_run_id=None,
+            draft=draft,
+            risk_veto=None,
+        )
+        return replace(research_run, output=envelope.model_dump_json())
+
+    risk_run_id = _risk_run_id(research_run.run_id, draft)
+    risk_definition = _risk_definition(
+        command,
+        draft,
+        research_run_id=research_run.run_id,
+    )
+    _assert_risk_definition(risk_definition)
+    risk_input = json.dumps(
+        {
+            "handoff_fingerprint": handoff_fingerprint(command, draft),
+            "research_run_id": research_run.run_id,
+            "draft": draft.model_dump(mode="json"),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    risk_run = await _execute_registered_run(
+        runtime=runtime,
+        run_id=risk_run_id,
+        definition=risk_definition,
+        input_payload=risk_input,
+        case=None,
+        record_transition=None,
+        clock=clock,
+    )
+    if risk_run.status == "SUCCEEDED" and risk_run.output is not None:
+        try:
+            risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
+        except ValueError:
+            risk_veto = None
+    else:
+        risk_veto = None
+    envelope = ResearchFrameworkOutput(
+        research_run_id=research_run.run_id,
+        risk_run_id=risk_run.run_id,
+        draft=draft,
+        risk_veto=risk_veto,
+    )
+    return replace(
+        research_run,
+        output=envelope.model_dump_json(),
+        risk_run_id=risk_run.run_id,
+        risk_run_status=risk_run.status,
+        risk_run_error_code=risk_run.error_code,
+    )
+
+
+async def _execute_registered_run(
+    *,
+    runtime: RuntimeStorage,
+    run_id: str,
+    definition: AgentDefinition,
+    input_payload: str,
+    case: FrozenDecisionCase | None,
+    record_transition: FrameworkTransitionRecorder | None,
+    clock: Clock | None,
+) -> FrameworkRunResult:
+    """Create/recover one durable Run while preserving the definition snapshot."""
+    registry = DefinitionRegistry()
+    registry.register(definition)
+    status_collector = _RunStatusCollector(run_id, [])
+    runner = Runner(
+        registry=registry,
+        store=runtime.run_store,
+        telemetry_sink=status_collector,
+    )
+    transitions: list[FrameworkRunTransition] = []
+    collected_status_count = 0
+
+    async def observe(transition: FrameworkRunTransition) -> None:
+        transitions.append(transition)
+        if record_transition is not None:
+            await record_transition(transition)
+
+    async def record_framework_statuses() -> None:
+        nonlocal collected_status_count
+        status_reasons = {
+            "CREATED": "FRAMEWORK_RUN_CREATED",
+            "RUNNING": "FRAMEWORK_RUN_STARTED",
+            "WAITING": "FRAMEWORK_RUN_WAITING",
+        }
+        for status in status_collector.statuses[collected_status_count:]:
+            reason = status_reasons.get(status)
+            if reason is not None:
+                await observe(FrameworkRunTransition(status=status, reason=reason))
+        collected_status_count = len(status_collector.statuses)
+
+    def assert_run_matches(run: RunRecord) -> None:
+        if case is not None:
+            _assert_existing_run_matches_case(run, case, definition)
+            return
+        if (
+            run.definition_id != definition.definition_id
+            or run.definition_version != definition.version
+            or run.input != input_payload
+            or run.snapshot != definition.frozen_snapshot()
+        ):
+            raise ValueError("durable auxiliary Run does not match its frozen input")
+
+    try:
+        run = await runner.get_run(run_id)
+    except RunNotFoundError:
+        if case is not None and case.recovery_framework_run_id is not None:
+            raise MappedDurableRunMissingError("mapped durable M-Agent Run is missing") from None
+        try:
+            created = await runner.create_run(
+                definition.definition_id,
+                definition.version,
+                input_payload,
+                run_id=run_id,
+            )
+            await record_framework_statuses()
+            run = await runner.start_run(created.run_id)
+            await record_framework_statuses()
+        except _CONCURRENT_RUN_RECOVERY_ERRORS:
+            run = await _recover_registered_run(
+                runner,
+                run_id,
+                definition,
+                input_payload,
+                case,
+                observe,
+            )
+            await record_framework_statuses()
+        except sqlite3.Error as error:
+            if not _is_concurrent_creation_error(error):
+                raise
+            run = await _recover_registered_run(
+                runner,
+                run_id,
+                definition,
+                input_payload,
+                case,
+                observe,
+            )
+            await record_framework_statuses()
+    else:
+        assert_run_matches(run)
+        if record_transition is not None:
+            await observe(FrameworkRunTransition(status="CREATED", reason="FRAMEWORK_RUN_CREATED"))
+        if run.status.is_terminal:
+            if record_transition is not None:
+                await observe(
+                    FrameworkRunTransition(
+                        status=cast(FrameworkRunStatus, run.status.value),
+                        reason="FRAMEWORK_RUN_RECOVERED_TERMINAL",
+                    )
+                )
+        else:
+            if record_transition is not None:
+                await observe(
+                    FrameworkRunTransition(
+                        status=cast(FrameworkRunStatus, run.status.value),
+                        reason=(
+                            run.waiting_reason
+                            if run.status.value == "WAITING" and run.waiting_reason is not None
+                            else "FRAMEWORK_RUN_RECOVERED"
+                        ),
+                    )
+                )
+            try:
+                run = await runner.resume_run(run.run_id)
+            except _CONCURRENT_RUN_RECOVERY_ERRORS:
+                run = await _recover_registered_run(
+                    runner,
+                    run_id,
+                    definition,
+                    input_payload,
+                    case,
+                    observe,
+                )
+            await record_framework_statuses()
+    if run.error_code == ModelContractViolationError.code:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(run_id)
+    return FrameworkRunResult(
+        run_id=run.run_id,
+        status=cast(FrameworkRunStatus, run.status.value),
+        output=run.output,
+        waiting_reason=run.waiting_reason,
+        error_code=run.error_code,
+        transitions=tuple(transitions),
+        transitions_durably_recorded=record_transition is not None,
+    )
+
+
+async def _recover_registered_run(
+    runner: Runner,
+    run_id: str,
+    definition: AgentDefinition,
+    input_payload: str,
+    case: FrozenDecisionCase | None,
+    observe: FrameworkTransitionRecorder,
+) -> RunRecord:
+    """Converge on a concurrently-created auxiliary or primary Run."""
+    deadline = asyncio.get_running_loop().time() + DEFAULT_LEASE_TTL.total_seconds()
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            run = await runner.get_run(run_id)
+        except RunNotFoundError:
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
+            continue
+        if case is not None:
+            _assert_existing_run_matches_case(run, case, definition)
+        else:
+            if (
+                run.definition_id != definition.definition_id
+                or run.definition_version != definition.version
+                or run.input != input_payload
+                or run.snapshot != definition.frozen_snapshot()
+            ):
+                raise ValueError("durable auxiliary Run does not match its frozen input")
+        if run.status.is_terminal or run.status.value == "WAITING":
+            await observe(
+                FrameworkRunTransition(
+                    status=cast(FrameworkRunStatus, run.status.value),
+                    reason="FRAMEWORK_RUN_CONCURRENT_RECOVERY",
+                )
+            )
+            return run
+        try:
+            return await runner.resume_run(run.run_id)
+        except LeaseNotHeldError:
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
+        except _CONCURRENT_RUN_RECOVERY_ERRORS:
+            await asyncio.sleep(_CONCURRENT_RUN_OBSERVATION_DELAY_SECONDS)
+    raise ValueError("concurrent durable auxiliary Run did not become recoverable")
+
+
+def _assert_risk_definition(definition: AgentDefinition) -> None:
+    if (
+        definition.tools
+        or definition.context_plan.stages
+        or not isinstance(definition.context_provider, DeterministicContextProvider)
+        or type(definition.model_adapter) is not DeterministicModelAdapter
+        or definition.model_adapters
+        or type(definition.run_policy) is not AllowAllRunPolicy
+        or definition.compression_contract is not None
+    ):
+        raise ValueError("undeclared risk framework capability")
+
+
+def _assert_research_registered_capabilities(
+    case: FrozenDecisionCase,
+    definition: AgentDefinition,
+) -> None:
+    """Keep research extensions deterministic and read-only at registration time."""
+    if (
+        tuple(tool.name for tool in definition.tools)
+        != tuple(sorted(RESEARCH_READ_ONLY_TOOL_ALLOWLIST))
+        or any(tool.effect is not ToolEffect.READ_ONLY for tool in definition.tools)
+        or any(not getattr(tool, "deterministic", False) for tool in definition.tools)
+        or type(definition.model_adapter) is not DeterministicModelAdapter
+        or definition.model_adapters
+        or type(definition.run_policy) is not AllowAllRunPolicy
+        or definition.compression_contract is not None
+        or not definition.context_plan.stages
+        or tuple(stage.identity.stage_id for stage in definition.context_plan.stages)
+        != RESEARCH_STAGE_IDS
+        or not isinstance(definition.context_provider, _FrozenResearchContextProvider)
+        or not definition.context_provider.deterministic
+        or case.research is None
+    ):
+        raise ValueError("undeclared research framework capability")
+
+
 def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentDefinition) -> None:
     """No request, session, or definition metadata can install an executable extension."""
     if (
@@ -354,8 +955,12 @@ def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentD
 
 def frozen_capability_inventory(case: FrozenDecisionCase) -> CapabilityInventory:
     _assert_runtime_version_bundle(case)
-    definition = _frozen_definition(case)
-    _assert_registered_capabilities(case, definition)
+    if case.research is not None:
+        definition = _research_definition(case)
+        _assert_research_registered_capabilities(case, definition)
+    else:
+        definition = _frozen_definition(case)
+        _assert_registered_capabilities(case, definition)
     snapshot = definition.frozen_snapshot()
     return CapabilityInventory(
         definition_id=snapshot.definition_id,
@@ -414,6 +1019,39 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     """Reject frozen metadata that does not describe the installed deterministic route."""
     bundle = case.version_bundle
     definition_version = definition_version_for_case_contract(bundle.case_contract_version)
+    if case.research is not None:
+        if (
+            not supports_case_host_contract(
+                bundle.case_contract_version,
+                bundle.host_contract_version,
+            )
+            or not supports_report_projection_contract(bundle.report_projection_contract_version)
+            or bundle.agent_definition_id != RESEARCH_DEFINITION_ID
+            or bundle.agent_definition_version != definition_version
+            or bundle.output_contract_version != RESEARCH_OUTPUT_CONTRACT_VERSION
+            or bundle.model_adapter_id != RESEARCH_MODEL_ADAPTER_ID
+            or bundle.routing_policy_version != RESEARCH_ROUTING_POLICY_VERSION
+            or case.agent_definition.definition_id != RESEARCH_DEFINITION_ID
+            or case.agent_definition.version != definition_version
+            or case.agent_definition.model_adapter_id != RESEARCH_MODEL_ADAPTER_ID
+            or case.agent_definition.instructions != RESEARCH_DEFINITION_INSTRUCTIONS
+            or case.agent_definition.output_contract.contract_id != RESEARCH_OUTPUT_CONTRACT_ID
+            or case.agent_definition.output_contract.version != RESEARCH_OUTPUT_CONTRACT_VERSION
+            or case.agent_definition.output_contract.json_schema
+            != ResearchDraft.model_json_schema()
+        ):
+            raise ValueError("research version bundle is not supported by this runtime")
+        if (
+            version(M_AGENT_DISTRIBUTION) != CURRENT_M_AGENT_RELEASE.m_agent_version
+            or bundle.runtime_release
+            not in (CURRENT_M_AGENT_RELEASE, HISTORICAL_M_AGENT_RELEASE)
+        ):
+            raise ValueError("frozen M-Agent release bundle does not match the installed runtime")
+        try:
+            FrozenDecisionCase.model_validate(case.model_dump(mode="python"))
+        except ValueError as error:
+            raise ValueError("full research version bundle or scoped case is invalid") from error
+        return
     if (
         not supports_case_host_contract(
             bundle.case_contract_version,
