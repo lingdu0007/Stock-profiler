@@ -265,6 +265,11 @@ def _validate_tool_evidence(
         raise ValueError("research Tool evidence references do not match structured evidence")
     if len(set(evidence_ids)) != len(evidence_ids):
         raise ValueError("research Tool evidence identities must be unique")
+    provider_evidence_ids = {
+        item.evidence_id for member in command.members for item in member.evidence
+    }
+    if provider_evidence_ids.intersection(evidence_ids):
+        raise ValueError("research evidence identity collision between Provider and Tool")
     for item in evidence:
         if (
             item.semantic_version != RESEARCH_ANNOUNCEMENT_TOOL_VERSION

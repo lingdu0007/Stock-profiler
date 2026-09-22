@@ -99,10 +99,12 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_REQUIRED_DATA_TYPES,
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
     ResearchCommand,
+    ResearchDataManifest,
     ResearchDraft,
     ResearchRiskPlan,
     ResearchToolEvidence,
@@ -214,22 +216,40 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         *,
         runtime: RuntimeStorage | None = None,
         run_id: str | None = None,
+        expected_security_ids: tuple[str, ...] = (),
         fail: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
         self._run_id = run_id
+        self._expected_security_ids = expected_security_ids
         self._fail = fail
+        self._failure_code: str | None = None
+
+    @property
+    def failure_code(self) -> str | None:
+        return self._failure_code
 
     async def provide(self, request: ContextRequest) -> tuple[ContextItem, ...]:
         del request
         if self._fail:
+            self._failure_code = "RESEARCH_DATA_UNAVAILABLE"
             raise RuntimeError("RESEARCH_DATA_UNAVAILABLE")
         if self._runtime is None or self._run_id is None:
+            try:
+                _validate_research_context_items(self._items, self._expected_security_ids)
+            except ValueError as error:
+                self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
+                raise RuntimeError(str(error)) from error
             return self._items
         checkpoints = await self._runtime.run_store.get_checkpoints(self._run_id)
         tool_boundary = sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints)
         if tool_boundary == 0:
+            try:
+                _validate_research_context_items(self._items, self._expected_security_ids)
+            except ValueError as error:
+                self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
+                raise RuntimeError(str(error)) from error
             return self._items
         current_boundary_results = tuple(
             result
@@ -292,6 +312,34 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 },
             ),
         )
+
+
+def _validate_research_context_items(
+    items: tuple[ContextItem, ...],
+    expected_security_ids: tuple[str, ...],
+) -> None:
+    """Verify that the Provider will deliver every member's complete manifest."""
+    if len(items) != len(expected_security_ids):
+        raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: member coverage")
+    actual_security_ids: list[str] = []
+    for item in items:
+        if item.metadata.get("availability") != "REQUIRED_BEFORE_MODEL":
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: availability")
+        try:
+            payload = json.loads(item.content)
+            security_id = payload["security_id"]
+            evidence_ids = tuple(evidence["evidence_id"] for evidence in payload["evidence"])
+            manifest = ResearchDataManifest.model_validate(payload["data_manifest"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: malformed item") from error
+        manifest_evidence_ids = tuple(
+            evidence_id for entry in manifest.entries for evidence_id in entry.evidence_ids
+        )
+        if set(manifest_evidence_ids) != set(evidence_ids):
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: evidence coverage")
+        actual_security_ids.append(security_id)
+    if tuple(actual_security_ids) != expected_security_ids:
+        raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: security coverage")
 
 
 class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[misc]
@@ -393,13 +441,16 @@ def _read_announcement_tool(
 def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]:
     return tuple(
         ContextItem(
-            item_id=f"required-fact:{member.security_id}:{evidence.evidence_id}",
+            item_id=f"required-facts:{member.security_id}",
             source="synthetic-required-fact-provider",
             content=json.dumps(
                 {
                     "security_id": member.security_id,
                     "research_id": member.research_id,
-                    "evidence": evidence.model_dump(mode="json"),
+                    "evidence": tuple(
+                        evidence.model_dump(mode="json") for evidence in member.evidence
+                    ),
+                    "data_manifest": member.data_manifest.model_dump(mode="json"),
                     "structured_signals": member.model_dump(mode="json")["structured_signals"],
                     "risk_flags": member.risk_flags,
                 },
@@ -410,10 +461,10 @@ def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]
             metadata={
                 "availability": "REQUIRED_BEFORE_MODEL",
                 "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+                "required_data_types": RESEARCH_REQUIRED_DATA_TYPES,
             },
         )
         for member in command.members
-        for evidence in member.evidence
     )
 
 
@@ -466,6 +517,7 @@ def _research_definition(
             _research_context_items(command),
             runtime=runtime,
             run_id=run_id,
+            expected_security_ids=tuple(member.security_id for member in command.members),
             fail=command.failure_mode == "DATA",
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),
@@ -859,6 +911,12 @@ async def execute_research_run(
         clock=clock,
     )
     if research_run.status != "SUCCEEDED" or research_run.output is None:
+        context_provider = research_definition.context_provider
+        if (
+            isinstance(context_provider, _FrozenResearchContextProvider)
+            and context_provider.failure_code is not None
+        ):
+            return replace(research_run, error_code=context_provider.failure_code)
         if command.failure_mode == "DATA":
             return replace(research_run, error_code="RESEARCH_DATA_UNAVAILABLE")
         return research_run

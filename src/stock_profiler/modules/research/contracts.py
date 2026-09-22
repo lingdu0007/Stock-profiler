@@ -24,6 +24,18 @@ RISK_OUTPUT_CONTRACT_ID = "synthetic-independent-risk-veto"
 RISK_OUTPUT_CONTRACT_VERSION = "1.0.0"
 RESEARCH_SCOPE: Literal["D0_SYNTHETIC_RESEARCH_ONLY"] = "D0_SYNTHETIC_RESEARCH_ONLY"
 RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
+ResearchDataType = Literal[
+    "DAILY_MARKET",
+    "MONEY_FLOW",
+    "INSTITUTIONAL_ACTIVITY",
+    "FINANCIAL_STATEMENTS",
+]
+RESEARCH_REQUIRED_DATA_TYPES: tuple[ResearchDataType, ...] = (
+    "DAILY_MARKET",
+    "MONEY_FLOW",
+    "INSTITUTIONAL_ACTIVITY",
+    "FINANCIAL_STATEMENTS",
+)
 
 RAW_SCORE_MODEL_VERSION = "elastic-net-logistic-z20-v1"
 RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL_20_PERCENT"
@@ -151,6 +163,44 @@ class FrozenDualTargetScreening(ResearchContract):
         return self
 
 
+class ResearchDataManifestEntry(ResearchContract):
+    """One complete, cutoff-bound Provider contract for a member."""
+
+    data_type: ResearchDataType
+    provider_id: str = Field(min_length=1)
+    provider_version: str = Field(min_length=1)
+    completeness: Literal["COMPLETE", "INCOMPLETE"]
+    event_status: Literal["PRESENT", "VERIFIED_EMPTY"]
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    knowledge_cutoff: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> ResearchDataManifestEntry:
+        if self.completeness != "COMPLETE":
+            raise ValueError("research data manifest entries must be complete")
+        if self.event_status == "VERIFIED_EMPTY" and self.data_type != "INSTITUTIONAL_ACTIVITY":
+            raise ValueError("only institutional activity may use a verified-empty event status")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("research data manifest evidence identities must be unique")
+        return self
+
+
+class ResearchDataManifest(ResearchContract):
+    """The per-stock required-data availability contract delivered by a Provider."""
+
+    version: str = Field(min_length=1)
+    entries: tuple[ResearchDataManifestEntry, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_required_data_types(self) -> ResearchDataManifest:
+        actual = tuple(entry.data_type for entry in self.entries)
+        if actual != RESEARCH_REQUIRED_DATA_TYPES:
+            raise ValueError(
+                "research data manifest must contain the required research data types exactly once"
+            )
+        return self
+
+
 class ResearchMemberInput(ResearchContract):
     """Structured, cutoff-bound facts for one member of the research cohort."""
 
@@ -158,6 +208,7 @@ class ResearchMemberInput(ResearchContract):
     research_id: str = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
     evidence: tuple[ResearchEvidence, ...] = Field(min_length=1)
+    data_manifest: ResearchDataManifest
     structured_signals: dict[str, Decimal]
     risk_flags: tuple[str, ...] = ()
 
@@ -170,6 +221,21 @@ class ResearchMemberInput(ResearchContract):
         evidence_ids = [evidence.evidence_id for evidence in self.evidence]
         if len(set(evidence_ids)) != len(evidence_ids):
             raise ValueError("research evidence identities must be unique per member")
+        manifest_evidence_ids = tuple(
+            evidence_id
+            for entry in self.data_manifest.entries
+            for evidence_id in entry.evidence_ids
+        )
+        if set(manifest_evidence_ids) != set(evidence_ids):
+            raise ValueError(
+                "research data manifest must account for every Provider evidence identity"
+            )
+        if len(set(manifest_evidence_ids)) != len(manifest_evidence_ids):
+            raise ValueError("research data manifest evidence identities must be unique")
+        if any(
+            entry.knowledge_cutoff != self.knowledge_cutoff for entry in self.data_manifest.entries
+        ):
+            raise ValueError("research data manifest and member knowledge cutoffs must agree")
         if any(evidence.knowledge_cutoff != self.knowledge_cutoff for evidence in self.evidence):
             raise ValueError("research evidence and member knowledge cutoffs must agree")
         if any(
@@ -410,6 +476,8 @@ class ResearchHandoff(ResearchContract):
             "SIX_MONTH_TERMINAL_20_PERCENT",
         ):
             raise ValueError("research handoff must bind the two frozen screening targets")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("research handoff evidence identities must be unique")
         return self
 
 

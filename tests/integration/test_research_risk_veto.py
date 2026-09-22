@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal, cast
 
 import pytest
 from m_agent.runtime import PolicyAction, PolicyGate, StepType, ToolRequest, parse_stage_result
@@ -60,12 +62,15 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_REQUIRED_DATA_TYPES,
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     ResearchCommand,
+    ResearchDataManifest,
+    ResearchDataManifestEntry,
     ResearchDraft,
     ResearchDraftMember,
     ResearchEvidence,
@@ -97,17 +102,40 @@ def research_command(
             security_id=f"synthetic-security-{index:02}",
             research_id=f"research-{index:02}",
             knowledge_cutoff=cutoff,
-            evidence=(
+            evidence=tuple(
                 ResearchEvidence(
-                    evidence_id=f"evidence-{index:02}",
-                    source="fictional-certified-feed",
-                    reference=f"synthetic://evidence/{index:02}",
-                    statement="A fictional structured fact is available at the cutoff.",
+                    evidence_id=f"{data_type.lower()}-evidence-{index:02}",
+                    source=f"fictional-{data_type.lower()}-feed",
+                    reference=f"synthetic://evidence/{data_type.lower()}/{index:02}",
+                    statement=(
+                        "A fictional structured fact is available at the cutoff "
+                        f"for {data_type.lower()}."
+                    ),
                     acquired_at=cutoff,
                     validated_at=cutoff,
                     knowledge_cutoff=cutoff,
-                    semantic_version="fictional-certified-feed-v1",
+                    semantic_version=f"fictional-{data_type.lower()}-feed-v1",
                     validation_status="VALIDATED",
+                )
+                for data_type in RESEARCH_REQUIRED_DATA_TYPES
+            ),
+            data_manifest=ResearchDataManifest(
+                version="synthetic-per-stock-research-manifest-v1",
+                entries=tuple(
+                    ResearchDataManifestEntry(
+                        data_type=data_type,
+                        provider_id="synthetic-required-fact-provider",
+                        provider_version="synthetic-required-fact-provider-v1",
+                        completeness="COMPLETE",
+                        event_status=(
+                            "VERIFIED_EMPTY"
+                            if data_type == "INSTITUTIONAL_ACTIVITY" and index == 0
+                            else "PRESENT"
+                        ),
+                        evidence_ids=(f"{data_type.lower()}-evidence-{index:02}",),
+                        knowledge_cutoff=cutoff,
+                    )
+                    for data_type in RESEARCH_REQUIRED_DATA_TYPES
                 ),
             ),
             structured_signals={
@@ -743,6 +771,80 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
             )
         }
     assert recorded_run_ids == {case.framework_run_id}
+
+
+def test_incomplete_provider_manifest_fails_research_before_downstream_stages(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_context_items = frozen_decision_case._research_context_items
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_context_items",
+        lambda command: original_context_items(command)[:-1],
+    )
+
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
+        for stage in execution.stage_results
+    ), [(stage.phase, stage.status, stage.reasons) for stage in execution.stage_results]
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
+def test_invalid_risk_handoff_preserves_completed_research_and_raw_score(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_execute_risk = cast(
+        Callable[..., Awaitable[FrameworkRunResult]],
+        case_bootstrap.__dict__["execute_research_risk_run"],
+    )
+
+    async def execute_invalid_risk(*args: Any, **kwargs: Any) -> FrameworkRunResult:
+        result = await original_execute_risk(*args, **kwargs)
+        assert result.output is not None
+        payload = json.loads(result.output)
+        payload["handoff_fingerprint"] = "0" * 64
+        return replace(
+            result,
+            output=json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
+
+    monkeypatch.setattr(
+        case_bootstrap,
+        "execute_research_risk_run",
+        execute_invalid_risk,
+        raising=False,
+    )
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "SUCCEEDED"
+        and "RESEARCH_DRAFT_READY" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RAW_SCORE"
+        and stage.status == "SUCCEEDED"
+        and "RAW_SCORE_FROZEN" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RISK_VETO"
+        and stage.status == "FAILED"
+        and "RISK_HANDOFF_INVALID" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase == "BUSINESS_DECISION" for stage in execution.stage_results)
 
 
 def test_missing_upstream_selection_event_stops_before_framework_execution(

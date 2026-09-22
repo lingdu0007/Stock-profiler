@@ -1611,14 +1611,9 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation("RAW_SCORE_CALCULATION_FAILED"),
         )
-    except ValueError as error:
+    except ValueError:
         return closed(
-            research=StageResult(
-                phase="RESEARCH",
-                status="FAILED",
-                gate_results=(GateResult(gate_id="RESEARCH_PROVENANCE", status="FAILED"),),
-                reasons=(str(error),),
-            ),
+            research=research_stage,
             raw_score=raw_score_stage,
             risk=StageResult(
                 phase="RISK_VETO",

@@ -9,9 +9,12 @@ import pytest
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+    RESEARCH_REQUIRED_DATA_TYPES,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     ResearchCommand,
+    ResearchDataManifest,
+    ResearchDataManifestEntry,
     ResearchDraft,
     ResearchDraftMember,
     ResearchEvidence,
@@ -30,33 +33,57 @@ from stock_profiler.modules.research.contracts import (
 from stock_profiler.modules.research.service import freeze_research, validate_research_draft
 
 
+def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
+    evidence = tuple(
+        ResearchEvidence(
+            evidence_id=f"{data_type.lower()}-evidence-{index:02}",
+            source=f"fictional-{data_type.lower()}-feed",
+            reference=f"synthetic://evidence/{data_type.lower()}/{index:02}",
+            statement=(
+                f"A fictional structured fact is available at the cutoff for {data_type.lower()}."
+            ),
+            acquired_at=cutoff,
+            validated_at=cutoff,
+            knowledge_cutoff=cutoff,
+            semantic_version=f"fictional-{data_type.lower()}-feed-v1",
+            validation_status="VALIDATED",
+        )
+        for data_type in RESEARCH_REQUIRED_DATA_TYPES
+    )
+    return ResearchMemberInput(
+        security_id=f"synthetic-security-{index:02}",
+        research_id=f"research-{index:02}",
+        knowledge_cutoff=cutoff,
+        evidence=evidence,
+        data_manifest=ResearchDataManifest(
+            version="synthetic-per-stock-research-manifest-v1",
+            entries=tuple(
+                ResearchDataManifestEntry(
+                    data_type=data_type,
+                    provider_id="synthetic-required-fact-provider",
+                    provider_version="synthetic-required-fact-provider-v1",
+                    completeness="COMPLETE",
+                    event_status=(
+                        "VERIFIED_EMPTY"
+                        if data_type == "INSTITUTIONAL_ACTIVITY" and index == 0
+                        else "PRESENT"
+                    ),
+                    evidence_ids=(evidence[position].evidence_id,),
+                    knowledge_cutoff=cutoff,
+                )
+                for position, data_type in enumerate(RESEARCH_REQUIRED_DATA_TYPES)
+            ),
+        ),
+        structured_signals={
+            signal_id: Decimal(index + 1) / Decimal(10) for signal_id in RAW_SCORE_FEATURE_IDS
+        },
+        risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
+    )
+
+
 def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> ResearchCommand:
     cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
-    members = tuple(
-        ResearchMemberInput(
-            security_id=f"synthetic-security-{index:02}",
-            research_id=f"research-{index:02}",
-            knowledge_cutoff=cutoff,
-            evidence=(
-                ResearchEvidence(
-                    evidence_id=f"evidence-{index:02}",
-                    source="fictional-certified-feed",
-                    reference=f"synthetic://evidence/{index:02}",
-                    statement="A fictional structured fact is available at the cutoff.",
-                    acquired_at=cutoff,
-                    validated_at=cutoff,
-                    knowledge_cutoff=cutoff,
-                    semantic_version="fictional-certified-feed-v1",
-                    validation_status="VALIDATED",
-                ),
-            ),
-            structured_signals={
-                signal_id: Decimal(index + 1) / Decimal(10) for signal_id in RAW_SCORE_FEATURE_IDS
-            },
-            risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
-        )
-        for index in range(10)
-    )
+    members = tuple(_member_input(index, cutoff) for index in range(10))
     ids = tuple(member.security_id for member in members)
     screening = FrozenDualTargetScreening.model_construct(
         positive_target="SIX_MONTH_POSITIVE_RETURN",
@@ -237,6 +264,22 @@ def test_research_command_rejects_a_non_ten_or_incomplete_cohort() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_research_command_requires_complete_data_manifest_for_each_member() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["data_manifest"]["entries"] = payload["members"][0]["data_manifest"][
+        "entries"
+    ][:-1]
+
+    with pytest.raises(ValueError, match="required research data types"):
+        ResearchCommand.model_validate(payload)
+
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["data_manifest"]["entries"][1]["completeness"] = "INCOMPLETE"
+
+    with pytest.raises(ValueError, match="must be complete"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_research_command_rejects_a_reordered_frozen_cohort() -> None:
     payload = _command().model_dump(mode="json")
     payload["members"] = list(reversed(payload["members"]))
@@ -288,6 +331,43 @@ def test_research_draft_can_cite_validated_tool_evidence() -> None:
     )
 
     validate_research_draft(command, draft, (tool_evidence,))
+
+
+def test_research_draft_rejects_provider_and_tool_evidence_identity_collision() -> None:
+    payload = _command().model_dump(mode="json")
+    colliding_id = "announcement:synthetic-security-00"
+    payload["members"][0]["evidence"][0]["evidence_id"] = colliding_id
+    payload["members"][0]["data_manifest"]["entries"][0]["evidence_ids"] = [colliding_id]
+    command = ResearchCommand.model_validate(payload)
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The fictional thesis is bounded by the frozen evidence.",
+                bull_case="The fictional upside case remains conditional.",
+                bear_case="The fictional downside case remains explicit.",
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in command.members
+        ),
+    )
+    tool_evidence = ResearchToolEvidence(
+        evidence_id=colliding_id,
+        source="fictional-announcement-feed",
+        reference="synthetic://announcement/synthetic-security-00",
+        statement="A fictional announcement is available at the cutoff.",
+        acquired_at=command.knowledge_cutoff,
+        validated_at=command.knowledge_cutoff,
+        knowledge_cutoff=command.knowledge_cutoff,
+        semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+        validation_status="VALIDATED",
+    )
+
+    with pytest.raises(ValueError, match="collision between Provider and Tool"):
+        validate_research_draft(command, draft, (tool_evidence,))
 
 
 def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> None:
