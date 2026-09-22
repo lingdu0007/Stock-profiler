@@ -15,6 +15,7 @@ from stock_profiler.modules.research.contracts import (
     RISK_MODEL_ADAPTER_ID,
     RISK_OUTPUT_CONTRACT_ID,
     RISK_OUTPUT_CONTRACT_VERSION,
+    RawScoreCalculationError,
     ResearchCommand,
     ResearchFrameworkOutput,
     ResearchHandoff,
@@ -24,6 +25,8 @@ from stock_profiler.modules.research.contracts import (
     handoff_fingerprint,
     research_member_results,
 )
+
+__all__ = ("freeze_raw_score", "freeze_research")
 
 
 def freeze_research(
@@ -45,7 +48,13 @@ def freeze_research(
     ):
         raise ValueError("risk acceptance cannot contain a failed risk gate")
 
-    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    expected_raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    if framework.raw_scores is None:
+        raw_scores = expected_raw_scores
+    elif framework.raw_scores != expected_raw_scores:
+        raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH")
+    else:
+        raw_scores = framework.raw_scores
     risk_veto = RiskVetoOutcome(
         run_id=risk_run_id,
         definition_id=RISK_DEFINITION_ID,
@@ -54,9 +63,15 @@ def freeze_research(
         gates=risk_veto_draft.gates,
         reasons=risk_veto_draft.reasons,
     )
-    evidence_ids = tuple(
+    base_evidence_ids = tuple(
         evidence.evidence_id for member in command.members for evidence in member.evidence
     )
+    tool_evidence_refs = framework.tool_evidence_refs
+    if len(set(tool_evidence_refs)) != len(tool_evidence_refs) or any(
+        not reference.startswith("announcement:") for reference in tool_evidence_refs
+    ):
+        raise ValueError("research Tool evidence references are not allowlisted")
+    evidence_ids = (*base_evidence_ids, *tool_evidence_refs)
     handoff = ResearchHandoff(
         contract_version="1.0.0",
         scope=RESEARCH_SCOPE,
@@ -89,11 +104,7 @@ def freeze_research(
         risk_veto=risk_veto,
     )
     return ResearchOutcome(
-        disposition=(
-            "REJECTED"
-            if risk_veto_draft.disposition == "REJECTED"
-            else "FROZEN"
-        ),
+        disposition=("REJECTED" if risk_veto_draft.disposition == "REJECTED" else "FROZEN"),
         members=research_member_results(framework.draft),
         raw_scores=raw_scores,
         risk_veto=risk_veto,
@@ -115,7 +126,12 @@ def _validate_draft_against_command(
         raise ValueError("research and risk Runs must have independent identities")
     if framework.risk_veto is None or framework.risk_run_id is None:
         raise ValueError("independent risk Run did not produce a typed veto")
-    expected_fingerprint = handoff_fingerprint(command, framework.draft)
+    expected_fingerprint = handoff_fingerprint(
+        command,
+        framework.draft,
+        raw_scores=framework.raw_scores,
+        tool_evidence_refs=framework.tool_evidence_refs,
+    )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
     expected = {member.security_id: member for member in command.members}
@@ -127,8 +143,7 @@ def _validate_draft_against_command(
         if (
             draft.research_id != source.research_id
             or draft.knowledge_cutoff != source.knowledge_cutoff
-            or tuple(draft.evidence_refs) != tuple(
-                evidence.evidence_id for evidence in source.evidence
-            )
+            or tuple(draft.evidence_refs)
+            != tuple(evidence.evidence_id for evidence in source.evidence)
         ):
             raise ValueError("research draft lost immutable member provenance")

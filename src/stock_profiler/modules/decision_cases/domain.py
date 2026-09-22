@@ -220,9 +220,7 @@ class ExternalResult(FrozenContract):
     monitoring: MonitoringOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    research: ResearchOutcome | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    research: ResearchOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class GateResult(FrozenContract):
@@ -838,10 +836,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
-            or (
-                self.expected_external_result.research is not None
-                and not research_governed
-            )
+            or (self.expected_external_result.research is not None and not research_governed)
         ):
             raise ValueError("host decisions are never framework output")
         if research_governed and self.expected_external_result.research is None:
@@ -931,11 +926,7 @@ class FrozenDecisionCase(FrozenContract):
                 self.version_bundle.report_projection_contract_version
             )
             or self.version_bundle.agent_definition_id
-            != (
-                RESEARCH_DEFINITION_ID
-                if research_governed
-                else FROZEN_AGENT_DEFINITION_ID
-            )
+            != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
             or self.version_bundle.agent_definition_version != definition_version
             or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
         ):
@@ -985,9 +976,9 @@ class FrozenDecisionCase(FrozenContract):
                     "visibility": self.access_scope.visibility,
                     "selection_object_id": self.research.selection_object_id,
                     "selection_event_id": self.research.selection_event_id,
-                    "month": self.research.cutoff_at.astimezone(
-                        ZoneInfo("Asia/Shanghai")
-                    ).strftime("%Y-%m"),
+                    "month": self.research.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+                        "%Y-%m"
+                    ),
                     "contract": self.version_bundle.case_contract_version,
                 },
             )

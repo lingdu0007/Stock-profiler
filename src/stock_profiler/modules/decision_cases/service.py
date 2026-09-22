@@ -1130,18 +1130,22 @@ def _commit_research_framework_result(
     """Validate the staged research envelope before committing its host result."""
     command = execution_case.research
     assert command is not None
+    risk_run_id: str | None = None
+    risk_stage_results: tuple[StageResult, ...] = ()
+    risk_stage_results_to_restore: tuple[StageResult, ...] = ()
+    risk_durable_transition_count = 0
     if framework.risk_run_id is not None:
+        risk_run_id = framework.risk_run_id
         risk_stage_results = _framework_stage_results_for_auxiliary_run(framework)
         risk_durable_transition_count = (
-            len(framework.risk_transitions)
-            if framework.risk_transitions_durably_recorded
-            else 0
+            len(framework.risk_transitions) if framework.risk_transitions_durably_recorded else 0
         )
+        risk_stage_results_to_restore = risk_stage_results[risk_durable_transition_count:]
         _record_framework_stage_results(
             ledger,
             connection,
             execution_case,
-            framework.risk_run_id,
+            risk_run_id,
             risk_stage_results,
             risk_durable_transition_count,
         )
@@ -1191,9 +1195,7 @@ def _commit_research_framework_result(
                 status="FAILED",
                 gate_results=(GateResult(gate_id="RESEARCH_RUN", status="FAILED"),),
                 reasons=(
-                    framework.error_code
-                    or framework.waiting_reason
-                    or "RESEARCH_RUN_FAILED",
+                    framework.error_code or framework.waiting_reason or "RESEARCH_RUN_FAILED",
                 ),
             )
         )
@@ -1238,11 +1240,26 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation("RAW_SCORE_NOT_AVAILABLE"),
         )
+    if framework.raw_score_error_code is not None:
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),),
+                reasons=(framework.raw_score_error_code,),
+            ),
+            validation=_failed_host_validation(framework.raw_score_error_code),
+        )
     if (
         envelope.risk_veto is None
+        or framework.risk_run_status not in {"SUCCEEDED", "REJECTED"}
         or (
-            framework.risk_run_status is not None
-            and framework.risk_run_status != "SUCCEEDED"
+            framework.risk_run_status == "REJECTED" and envelope.risk_veto.disposition != "REJECTED"
+        )
+        or (
+            framework.risk_run_status == "SUCCEEDED"
+            and envelope.risk_veto.disposition != "ACCEPTED"
         )
     ):
         return closed(
@@ -1251,10 +1268,7 @@ def _commit_research_framework_result(
                 phase="RISK_VETO",
                 status="FAILED",
                 gate_results=(GateResult(gate_id="RISK_RUN", status="FAILED"),),
-                reasons=(
-                    framework.risk_run_error_code
-                    or "RISK_VETO_OUTPUT_INVALID",
-                ),
+                reasons=(framework.risk_run_error_code or "RISK_VETO_OUTPUT_INVALID",),
             ),
             validation=_failed_host_validation("RISK_VETO_OUTPUT_INVALID"),
         )
@@ -1289,9 +1303,7 @@ def _commit_research_framework_result(
         )
     result = ExternalResult(
         outcome_code=(
-            "RESEARCH_REJECTED"
-            if research_outcome.disposition == "REJECTED"
-            else "RESEARCH_FROZEN"
+            "RESEARCH_REJECTED" if research_outcome.disposition == "REJECTED" else "RESEARCH_FROZEN"
         ),
         summary=(
             "Synthetic fixed-ten research and independent risk veto were frozen."
@@ -1394,6 +1406,14 @@ def _commit_research_framework_result(
             execution_case,
             current_stage_results_before_commit,
         )
+        if risk_run_id is not None:
+            _restore_precommit_stage_results(
+                ledger,
+                connection,
+                execution_case,
+                risk_stage_results_to_restore,
+                framework_run_id=risk_run_id,
+            )
         uncertain_commit = StageResult(
             phase="COMMIT_RECONCILIATION",
             status="UNKNOWN",
@@ -1428,6 +1448,14 @@ def _commit_research_framework_result(
             execution_case,
             current_stage_results_before_commit,
         )
+        if risk_run_id is not None:
+            _restore_precommit_stage_results(
+                ledger,
+                connection,
+                execution_case,
+                risk_stage_results_to_restore,
+                framework_run_id=risk_run_id,
+            )
         failed_commit = StageResult(
             phase="BUSINESS_COMMIT",
             status="FAILED",
@@ -1775,14 +1803,17 @@ def _restore_precommit_stage_results(
     connection: Transaction,
     case: FrozenDecisionCase,
     stage_results: tuple[StageResult, ...],
+    *,
+    framework_run_id: str | None = None,
 ) -> None:
     """Restore durable pre-commit evidence after an event write transaction rolls back."""
+    durable_framework_run_id = framework_run_id or case.framework_run_id
     for stage_result in stage_results:
         ledger.record_stage_result(
             connection,
             case=case,
             stage_result=stage_result,
-            framework_run_id=case.framework_run_id,
+            framework_run_id=durable_framework_run_id,
             allow_repeated_occurrence=stage_result.status
             not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
         )

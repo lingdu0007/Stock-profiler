@@ -24,9 +24,7 @@ RISK_OUTPUT_CONTRACT_VERSION = "1.0.0"
 RESEARCH_SCOPE: Literal["D0_SYNTHETIC_RESEARCH_ONLY"] = "D0_SYNTHETIC_RESEARCH_ONLY"
 
 RAW_SCORE_MODEL_VERSION = "elastic-net-logistic-z20-v1"
-RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = (
-    "SIX_MONTH_TERMINAL_20_PERCENT"
-)
+RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL_20_PERCENT"
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
@@ -174,9 +172,7 @@ class ResearchCommand(ResearchContract):
         if any(member.knowledge_cutoff != self.knowledge_cutoff for member in self.members):
             raise ValueError("all research members must share the frozen knowledge cutoff")
         evidence_ids = [
-            evidence.evidence_id
-            for member in self.members
-            for evidence in member.evidence
+            evidence.evidence_id for member in self.members for evidence in member.evidence
         ]
         if len(set(evidence_ids)) != len(evidence_ids):
             raise ValueError("research evidence identities must be globally unique")
@@ -225,15 +221,6 @@ class RiskVetoDraft(ResearchContract):
     reasons: tuple[str, ...] = Field(min_length=1)
 
 
-class ResearchFrameworkOutput(ResearchContract):
-    """Adapter envelope joining two durable Runs without adding a business score."""
-
-    research_run_id: str = Field(min_length=1)
-    risk_run_id: str | None = None
-    draft: ResearchDraft
-    risk_veto: RiskVetoDraft | None = None
-
-
 class RawScore(ResearchContract):
     """The structured, uncalibrated terminal-target score frozen after the cohort."""
 
@@ -250,6 +237,17 @@ class RawScore(ResearchContract):
     interaction_terms: tuple[str, ...] = ()
     l1_ratio: Decimal
     l2_ratio: Decimal
+
+
+class ResearchFrameworkOutput(ResearchContract):
+    """Adapter envelope joining two durable Runs without adding a business score."""
+
+    research_run_id: str = Field(min_length=1)
+    risk_run_id: str | None = None
+    draft: ResearchDraft
+    risk_veto: RiskVetoDraft | None = None
+    raw_scores: tuple[RawScore, ...] | None = None
+    tool_evidence_refs: tuple[str, ...] = ()
 
 
 class RiskVetoOutcome(ResearchContract):
@@ -288,7 +286,7 @@ class ResearchHandoff(ResearchContract):
     risk_output_contract_version: str
     screening_strategy_version: str
     screening_snapshot_id: str
-    raw_scores: tuple[RawScore, ...] | None = None
+    raw_scores: tuple[RawScore, ...] = Field(min_length=10, max_length=10)
     risk_veto: RiskVetoOutcome | None = None
     actionable: Literal[False] = False
 
@@ -375,22 +373,46 @@ def screening_output_sha256(screening: FrozenDualTargetScreening) -> str:
     ).hexdigest()
 
 
-def handoff_fingerprint(command: ResearchCommand, draft: ResearchDraft) -> str:
-    """Hash only immutable input and typed draft identity for risk binding."""
+def handoff_fingerprint(
+    command: ResearchCommand,
+    draft: ResearchDraft,
+    *,
+    raw_scores: tuple[RawScore, ...] | None = None,
+    tool_evidence_refs: tuple[str, ...] = (),
+) -> str:
+    """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
         "command": command.model_dump(mode="json"),
         "draft": draft.model_dump(mode="json"),
+        "raw_scores": (
+            tuple(score.model_dump(mode="json") for score in raw_scores)
+            if raw_scores is not None
+            else None
+        ),
+        "tool_evidence_refs": tool_evidence_refs,
     }
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def risk_run_id_for(research_run_id: str, draft: ResearchDraft) -> str:
+def risk_run_id_for(
+    research_run_id: str,
+    draft: ResearchDraft,
+    *,
+    raw_scores: tuple[RawScore, ...] | None = None,
+    tool_evidence_refs: tuple[str, ...] = (),
+) -> str:
     """Derive the independent risk Run identity from the frozen research Run."""
     digest = sha256(
         json.dumps(
             {
                 "research_run_id": research_run_id,
                 "draft": draft.model_dump(mode="json"),
+                "raw_scores": (
+                    tuple(score.model_dump(mode="json") for score in raw_scores)
+                    if raw_scores is not None
+                    else None
+                ),
+                "tool_evidence_refs": tool_evidence_refs,
             },
             ensure_ascii=True,
             separators=(",", ":"),

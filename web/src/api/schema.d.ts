@@ -2613,7 +2613,7 @@ export interface components {
              */
             knowledge_cutoff: string;
             /** Raw Scores */
-            raw_scores?: components["schemas"]["RawScore"][] | null;
+            raw_scores: components["schemas"]["RawScore"][];
             /** Research Definition Id */
             research_definition_id: string;
             /** Research Definition Version */

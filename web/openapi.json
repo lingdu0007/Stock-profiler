@@ -6410,18 +6410,13 @@
             "type": "string"
           },
           "raw_scores": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/RawScore"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Scores"
+            "items": {
+              "$ref": "#/components/schemas/RawScore"
+            },
+            "maxItems": 10,
+            "minItems": 10,
+            "title": "Raw Scores",
+            "type": "array"
           },
           "research_definition_id": {
             "title": "Research Definition Id",
@@ -6549,7 +6544,8 @@
           "risk_output_contract_id",
           "risk_output_contract_version",
           "screening_strategy_version",
-          "screening_snapshot_id"
+          "screening_snapshot_id",
+          "raw_scores"
         ],
         "title": "ResearchHandoff",
         "type": "object"

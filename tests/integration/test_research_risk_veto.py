@@ -6,13 +6,17 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
-from m_agent.runtime import ToolRequest
+from m_agent.runtime import StepType, ToolRequest
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     RESEARCH_DEFINITION_INSTRUCTIONS,
     _read_announcement_tool,
+    execute_research_decision_case,
 )
-from stock_profiler.adapters.persistence.decision_ledger import DECISION_STAGE_EVENTS
+from stock_profiler.adapters.persistence.decision_ledger import (
+    DECISION_STAGE_EVENTS,
+    DecisionLedger,
+)
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
@@ -29,7 +33,10 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenOutputContract,
     ResultAccessScope,
 )
-from stock_profiler.modules.decision_cases.ports import DecisionEventCommitError
+from stock_profiler.modules.decision_cases.ports import (
+    DecisionEventCommitError,
+    MappedDurableRunMissingError,
+)
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
@@ -50,6 +57,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchMemberInput,
     RiskGate,
     RiskVetoDraft,
+    freeze_raw_score,
     handoff_fingerprint,
     risk_run_id_for,
     screening_output_sha256,
@@ -152,9 +160,16 @@ def _case(
         visibility="USER",
     )
     draft = _draft(command)
+    tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     provisional_risk = RiskVetoDraft(
         contract_version="1.0.0",
-        handoff_fingerprint=handoff_fingerprint(command, draft),
+        handoff_fingerprint=handoff_fingerprint(
+            command,
+            draft,
+            raw_scores=raw_scores,
+            tool_evidence_refs=tool_evidence_refs,
+        ),
         disposition="REJECTED" if risk_scenario == "REJECT" else "ACCEPTED",
         gates=(
             RiskGate(
@@ -173,6 +188,8 @@ def _case(
             risk_run_id="provisional-risk-run",
             draft=draft,
             risk_veto=provisional_risk,
+            raw_scores=raw_scores,
+            tool_evidence_refs=tool_evidence_refs,
         ),
     )
     definition = FrozenAgentDefinition(
@@ -232,7 +249,12 @@ def _case(
         research=command,
         access_scope=scope,
     )
-    risk_run_id = risk_run_id_for(base.framework_run_id, draft)
+    risk_run_id = risk_run_id_for(
+        base.framework_run_id,
+        draft,
+        raw_scores=raw_scores,
+        tool_evidence_refs=tool_evidence_refs,
+    )
     assert provisional.risk_veto is not None
     risk_veto = provisional.risk_veto.model_copy(update={"run_id": risk_run_id})
     risk = provisional.model_copy(
@@ -303,11 +325,20 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     risk_run_id = execution.report.result.research.handoff.risk_run_id
     risk_run = asyncio.run(runtime.run_store.get_run(risk_run_id))
     assert risk_run is not None
+    assert risk_run.status.value == "REJECTED"
     assert risk_run.definition_id == RISK_DEFINITION_ID
     assert risk_run.definition_version == RISK_DEFINITION_VERSION
     assert risk_run.snapshot is not None
     assert risk_run.snapshot.tool_declarations == ()
     assert risk_run.snapshot.has_context_provider is True
+    checkpoints = asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
+    assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 4
+    assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 3
+    assert execution.report.result.research.handoff.evidence_ids[-3:] == (
+        "announcement:synthetic-security-00",
+        "announcement:synthetic-security-01",
+        "announcement:synthetic-security-02",
+    )
 
     with runtime.engine.connect() as connection:
         recorded_run_ids = {
@@ -361,6 +392,12 @@ def test_research_context_stages_have_distinct_frozen_roles(
         "analyze",
         "bull-bear",
         "draft",
+    )
+    assert tuple(stage.identity.scope.value for stage in stages) == (
+        "RUN_INPUT",
+        "MODEL_STEP",
+        "MODEL_STEP",
+        "MODEL_STEP",
     )
     assert tuple(stage.output_channels for stage in stages) == (
         ("RESEARCH_COLLECTION",),
@@ -483,6 +520,64 @@ def test_risk_run_failure_is_saved_without_fabricating_a_veto(
         stage.phase == "RISK_VETO" and stage.status == "FAILED" for stage in execution.stage_results
     )
     assert not any(stage.phase == "BUSINESS_DECISION" for stage in execution.stage_results)
+
+
+def test_missing_existing_risk_run_fails_closed_without_replacement(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    runtime = initialize_runtime_storage(migrated_settings)
+    first = asyncio.run(execute_research_decision_case(case, runtime))
+    assert first.risk_run_id is not None
+
+    original_get_run = runtime.run_store.get_run
+
+    async def missing_risk_run(run_id: str):  # type: ignore[no-untyped-def]
+        if run_id == first.risk_run_id:
+            return None
+        return await original_get_run(run_id)
+
+    monkeypatch.setattr(runtime.run_store, "get_run", missing_risk_run)
+    with pytest.raises(MappedDurableRunMissingError, match="auxiliary"):
+        asyncio.run(execute_research_decision_case(case, runtime))
+
+
+def test_research_commit_failure_restores_auxiliary_risk_stage_history(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    def fail_commit(*_: object, **__: object) -> object:
+        raise DecisionEventCommitError("synthetic commit failure")
+
+    monkeypatch.setattr(DecisionLedger, "commit_event_fact", fail_commit)
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        case.model_dump(mode="json"),
+    )
+
+    assert execution.report is None
+    command = case.research
+    assert command is not None
+    tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
+    risk_run_id = risk_run_id_for(
+        case.framework_run_id,
+        _draft(command),
+        raw_scores=tuple(freeze_raw_score(command, member) for member in command.members),
+        tool_evidence_refs=tool_evidence_refs,
+    )
+    with initialize_runtime_storage(migrated_settings).engine.connect() as connection:
+        recorded_run_ids = {
+            row.framework_run_id
+            for row in connection.execute(
+                DECISION_STAGE_EVENTS.select().where(
+                    DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id
+                )
+            )
+        }
+    assert risk_run_id in recorded_run_ids
 
 
 def test_accepted_research_replays_the_same_report_without_new_downstream_outputs(

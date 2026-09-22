@@ -77,6 +77,7 @@ class FrameworkRunResult:
     risk_run_error_code: str | None = None
     risk_transitions: tuple[FrameworkRunTransition, ...] = ()
     risk_transitions_durably_recorded: bool = False
+    raw_score_error_code: str | None = None
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
 
