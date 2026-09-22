@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
-from m_agent.runtime import StepType, ToolRequest
+from m_agent.runtime import StepType, ToolRequest, parse_stage_result
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     RESEARCH_DEFINITION_INSTRUCTIONS,
@@ -40,6 +40,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
+    RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
@@ -55,6 +56,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchEvidence,
     ResearchFrameworkOutput,
     ResearchMemberInput,
+    ResearchToolEvidence,
     RiskGate,
     RiskVetoDraft,
     freeze_raw_score,
@@ -161,6 +163,23 @@ def _case(
     )
     draft = _draft(command)
     tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
+    tool_evidence = tuple(
+        ResearchToolEvidence(
+            evidence_id=evidence_id,
+            source="synthetic-announcement-feed",
+            reference=f"synthetic://announcement/{evidence_id.removeprefix('announcement:')}",
+            statement=(
+                f"Synthetic announcement evidence {evidence_id} is read-only "
+                "and contains no trade instruction."
+            ),
+            acquired_at=command.knowledge_cutoff,
+            validated_at=command.knowledge_cutoff,
+            knowledge_cutoff=command.knowledge_cutoff,
+            semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+            validation_status="VALIDATED",
+        )
+        for index, evidence_id in enumerate(tool_evidence_refs)
+    )
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     provisional_risk = RiskVetoDraft(
         contract_version="1.0.0",
@@ -169,6 +188,7 @@ def _case(
             draft,
             raw_scores=raw_scores,
             tool_evidence_refs=tool_evidence_refs,
+            tool_evidence=tool_evidence,
         ),
         disposition="REJECTED" if risk_scenario == "REJECT" else "ACCEPTED",
         gates=(
@@ -190,6 +210,7 @@ def _case(
             risk_veto=provisional_risk,
             raw_scores=raw_scores,
             tool_evidence_refs=tool_evidence_refs,
+            tool_evidence=tool_evidence,
         ),
     )
     definition = FrozenAgentDefinition(
@@ -254,6 +275,7 @@ def _case(
         draft,
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
+        tool_evidence=tool_evidence,
     )
     assert provisional.risk_veto is not None
     risk_veto = provisional.risk_veto.model_copy(update={"run_id": risk_run_id})
@@ -299,6 +321,14 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert execution.report.result.research.disposition == "REJECTED"
     assert execution.report.result.research.raw_scores is not None
     assert len(execution.report.result.research.raw_scores) == 10
+    assert tuple(
+        evidence.evidence_id for evidence in execution.report.result.research.tool_evidence
+    ) == (
+        "announcement:synthetic-security-00",
+        "announcement:synthetic-security-01",
+        "announcement:synthetic-security-02",
+    )
+    assert execution.framework_run_status == "SUCCEEDED"
     assert {
         stage.phase: stage.status
         for stage in execution.report.stage_results
@@ -334,6 +364,26 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     checkpoints = asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
     assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 4
     assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 3
+    context_results = tuple(
+        result
+        for checkpoint in checkpoints
+        if checkpoint.step_type is StepType.CONTEXT
+        if (result := parse_stage_result(checkpoint.output)) is not None
+    )
+    assert {
+        (result.stage_id, result.scope.value, result.boundary): len(result.output_items)
+        for result in context_results
+        if result.output_items
+    } == {
+        ("collect", "RUN_INPUT", 0): 10,
+        ("analyze", "TOOL_OUTCOME", 1): 1,
+        ("bull-bear", "TOOL_OUTCOME", 2): 1,
+        ("draft", "TOOL_OUTCOME", 3): 1,
+    }
+    draft_context = next(
+        result for result in context_results if result.stage_id == "draft" and result.output_items
+    )
+    assert draft_context.output_items[0].item.metadata["source_stage"] == "bull-bear"
     assert execution.report.result.research.handoff.evidence_ids[-3:] == (
         "announcement:synthetic-security-00",
         "announcement:synthetic-security-01",
@@ -395,9 +445,9 @@ def test_research_context_stages_have_distinct_frozen_roles(
     )
     assert tuple(stage.identity.scope.value for stage in stages) == (
         "RUN_INPUT",
-        "MODEL_STEP",
-        "MODEL_STEP",
-        "MODEL_STEP",
+        "TOOL_OUTCOME",
+        "TOOL_OUTCOME",
+        "TOOL_OUTCOME",
     )
     assert tuple(stage.output_channels for stage in stages) == (
         ("RESEARCH_COLLECTION",),
@@ -543,6 +593,52 @@ def test_missing_existing_risk_run_fails_closed_without_replacement(
         asyncio.run(execute_research_decision_case(case, runtime))
 
 
+def test_research_success_can_recover_the_same_risk_identity_after_a_reserved_gap(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    runtime = initialize_runtime_storage(migrated_settings)
+    reserved: list[str] = []
+
+    async def reserve(risk_run_id: str) -> bool:
+        reserved.append(risk_run_id)
+        return True
+
+    first = asyncio.run(
+        execute_research_decision_case(
+            case,
+            runtime,
+            record_auxiliary_run_reservation=reserve,
+        )
+    )
+    assert first.risk_run_id is not None
+    assert reserved == []
+
+    original_get_run = runtime.run_store.get_run
+    missing_once = True
+
+    async def observe_reserved_gap(run_id: str):  # type: ignore[no-untyped-def]
+        nonlocal missing_once
+        if run_id == first.risk_run_id and missing_once:
+            missing_once = False
+            return None
+        return await original_get_run(run_id)
+
+    monkeypatch.setattr(runtime.run_store, "get_run", observe_reserved_gap)
+    second = asyncio.run(
+        execute_research_decision_case(
+            case,
+            runtime,
+            record_auxiliary_run_reservation=reserve,
+        )
+    )
+
+    assert second.risk_run_id == first.risk_run_id
+    assert second.risk_run_status == "SUCCEEDED"
+    assert reserved == [first.risk_run_id]
+
+
 def test_research_commit_failure_restores_auxiliary_risk_stage_history(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -567,6 +663,23 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
         _draft(command),
         raw_scores=tuple(freeze_raw_score(command, member) for member in command.members),
         tool_evidence_refs=tool_evidence_refs,
+        tool_evidence=tuple(
+            ResearchToolEvidence(
+                evidence_id=evidence_id,
+                source="synthetic-announcement-feed",
+                reference=f"synthetic://announcement/{evidence_id.removeprefix('announcement:')}",
+                statement=(
+                    f"Synthetic announcement evidence {evidence_id} is read-only "
+                    "and contains no trade instruction."
+                ),
+                acquired_at=command.knowledge_cutoff,
+                validated_at=command.knowledge_cutoff,
+                knowledge_cutoff=command.knowledge_cutoff,
+                semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+                validation_status="VALIDATED",
+            )
+            for index, evidence_id in enumerate(tool_evidence_refs)
+        ),
     )
     with initialize_runtime_storage(migrated_settings).engine.connect() as connection:
         recorded_run_ids = {

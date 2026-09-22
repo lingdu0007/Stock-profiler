@@ -6518,6 +6518,14 @@
             "minItems": 2,
             "title": "Targets",
             "type": "array"
+          },
+          "tool_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchToolEvidence"
+            },
+            "title": "Tool Evidence",
+            "type": "array"
           }
         },
         "required": [
@@ -6654,10 +6662,82 @@
                 "type": "null"
               }
             ]
+          },
+          "tool_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchToolEvidence"
+            },
+            "title": "Tool Evidence",
+            "type": "array"
           }
         },
         "required": ["disposition", "members", "handoff", "reasons"],
         "title": "ResearchOutcome",
+        "type": "object"
+      },
+      "ResearchToolEvidence": {
+        "additionalProperties": false,
+        "description": "Structured provenance emitted by the allowlisted exploratory Tool.",
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "pattern": "^announcement:.+",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "reference": {
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "semantic_version": {
+            "minLength": 1,
+            "title": "Semantic Version",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          },
+          "validation_status": {
+            "const": "VALIDATED",
+            "title": "Validation Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source",
+          "reference",
+          "statement",
+          "acquired_at",
+          "validated_at",
+          "knowledge_cutoff",
+          "semantic_version",
+          "validation_status"
+        ],
+        "title": "ResearchToolEvidence",
         "type": "object"
       },
       "ResultAccessScope": {
@@ -7393,6 +7473,8 @@
           "phase": {
             "enum": [
               "FRAMEWORK_RUN",
+              "RISK_FRAMEWORK_RUN",
+              "AUXILIARY_RUN_RESERVATION",
               "HOST_VALIDATION",
               "BUSINESS_DECISION",
               "QUALIFICATION",

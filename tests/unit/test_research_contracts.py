@@ -154,6 +154,7 @@ def test_research_command_rejects_a_non_ten_or_incomplete_cohort() -> None:
 
 def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> None:
     command = _command(risk_scenario="REJECT")
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     draft = ResearchDraft(
         contract_version="1.0.0",
         members=tuple(
@@ -171,7 +172,11 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
     )
     risk = RiskVetoDraft(
         contract_version="1.0.0",
-        handoff_fingerprint=handoff_fingerprint(command, draft),
+        handoff_fingerprint=handoff_fingerprint(
+            command,
+            draft,
+            raw_scores=raw_scores,
+        ),
         disposition="REJECTED",
         gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
         reasons=("SYNTHETIC_RISK_VETO",),
@@ -184,6 +189,7 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
             risk_run_id="risk-run-1616",
             draft=draft,
             risk_veto=risk,
+            raw_scores=raw_scores,
         ),
     )
 
@@ -199,6 +205,50 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
 
 def test_research_freeze_honors_an_independent_rejection_without_command_override() -> None:
     command = _command(risk_scenario="ACCEPT")
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The fictional thesis is bounded by the frozen evidence.",
+                bull_case="The fictional upside case remains conditional.",
+                bear_case="The fictional downside case remains explicit.",
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in command.members
+        ),
+    )
+    risk = RiskVetoDraft(
+        contract_version="1.0.0",
+        handoff_fingerprint=handoff_fingerprint(
+            command,
+            draft,
+            raw_scores=raw_scores,
+        ),
+        disposition="REJECTED",
+        gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
+        reasons=("INDEPENDENT_RISK_VETO",),
+    )
+
+    outcome = freeze_research(
+        command,
+        ResearchFrameworkOutput(
+            research_run_id="research-run-independent-reject",
+            risk_run_id="risk-run-independent-reject",
+            draft=draft,
+            risk_veto=risk,
+            raw_scores=raw_scores,
+        ),
+    )
+
+    assert outcome.disposition == "REJECTED"
+
+
+def test_research_freeze_requires_the_raw_scores_seen_by_risk() -> None:
+    command = _command()
     draft = ResearchDraft(
         contract_version="1.0.0",
         members=tuple(
@@ -217,19 +267,18 @@ def test_research_freeze_honors_an_independent_rejection_without_command_overrid
     risk = RiskVetoDraft(
         contract_version="1.0.0",
         handoff_fingerprint=handoff_fingerprint(command, draft),
-        disposition="REJECTED",
-        gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="FAILED"),),
-        reasons=("INDEPENDENT_RISK_VETO",),
+        disposition="ACCEPTED",
+        gates=(RiskGate(gate_id="SYNTHETIC_RISK_GATE", status="PASSED"),),
+        reasons=("SYNTHETIC_RISK_ACCEPTED",),
     )
 
-    outcome = freeze_research(
-        command,
-        ResearchFrameworkOutput(
-            research_run_id="research-run-independent-reject",
-            risk_run_id="risk-run-independent-reject",
-            draft=draft,
-            risk_veto=risk,
-        ),
-    )
-
-    assert outcome.disposition == "REJECTED"
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_HANDOFF_MISSING"):
+        freeze_research(
+            command,
+            ResearchFrameworkOutput(
+                research_run_id="research-run-no-score",
+                risk_run_id="risk-run-no-score",
+                draft=draft,
+                risk_veto=risk,
+            ),
+        )

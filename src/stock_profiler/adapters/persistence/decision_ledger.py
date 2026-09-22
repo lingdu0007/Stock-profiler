@@ -894,12 +894,23 @@ class DecisionLedger:
             raise DecisionEventCommitError("stage event identity maps to different results")
 
     def get_stage_results(
-        self, business_object_id: str, connection: Connection | None = None
+        self,
+        business_object_id: str,
+        connection: Connection | None = None,
+        *,
+        framework_run_id: str | None = None,
     ) -> tuple[StageResult, ...]:
         """Read the append-only stage history in the order it was recorded."""
         statement = (
             select(DECISION_STAGE_EVENTS.c.stage_payload)
-            .where(DECISION_STAGE_EVENTS.c.business_object_id == business_object_id)
+            .where(
+                DECISION_STAGE_EVENTS.c.business_object_id == business_object_id,
+                *(
+                    (DECISION_STAGE_EVENTS.c.framework_run_id == framework_run_id,)
+                    if framework_run_id is not None
+                    else ()
+                ),
+            )
             .order_by(DECISION_STAGE_EVENTS.c.sequence)
         )
         if connection is not None:

@@ -7,6 +7,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from importlib.metadata import version
 from typing import cast
 
@@ -54,6 +55,7 @@ from m_agent.runtime import (
     ToolOutcome,
     ToolRequest,
     deserialize_tool_outcome,
+    parse_stage_result,
 )
 
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
@@ -75,8 +77,9 @@ from stock_profiler.modules.decision_cases.domain import (
     synthetic_outcome_code_from_input,
 )
 from stock_profiler.modules.decision_cases.ports import (
-    FrameworkRunResult as FrameworkRunResult,
+    AuxiliaryRunReservationRecorder,
 )
+from stock_profiler.modules.decision_cases.ports import FrameworkRunResult as FrameworkRunResult
 from stock_profiler.modules.decision_cases.ports import (
     FrameworkRunTransition as FrameworkRunTransition,
 )
@@ -89,6 +92,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.delivery.capabilities import CapabilityInventory
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
+    RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_CONTRACT_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
@@ -98,15 +102,13 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
-    RawScore,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
     ResearchFrameworkOutput,
+    ResearchToolEvidence,
     RiskGate,
     RiskVetoDraft,
-    handoff_fingerprint,
-    risk_run_id_for,
 )
 
 READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset()
@@ -157,9 +159,9 @@ RESEARCH_STAGE_CONTRACTS = (
 )
 RESEARCH_STAGE_SCOPES = {
     "collect": ContextScope.RUN_INPUT,
-    "analyze": ContextScope.MODEL_STEP,
-    "bull-bear": ContextScope.MODEL_STEP,
-    "draft": ContextScope.MODEL_STEP,
+    "analyze": ContextScope.TOOL_OUTCOME,
+    "bull-bear": ContextScope.TOOL_OUTCOME,
+    "draft": ContextScope.TOOL_OUTCOME,
 }
 RESEARCH_TOOL_NAME = "read_announcement"
 RESEARCH_TOOL_PARAMETERS = {
@@ -206,15 +208,90 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
 
     deterministic = True
 
-    def __init__(self, items: tuple[ContextItem, ...], *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        items: tuple[ContextItem, ...],
+        *,
+        runtime: RuntimeStorage | None = None,
+        run_id: str | None = None,
+        fail: bool = False,
+    ) -> None:
         self._items = items
+        self._runtime = runtime
+        self._run_id = run_id
         self._fail = fail
 
     async def provide(self, request: ContextRequest) -> tuple[ContextItem, ...]:
         del request
         if self._fail:
             raise RuntimeError("RESEARCH_DATA_UNAVAILABLE")
-        return self._items
+        if self._runtime is None or self._run_id is None:
+            return self._items
+        checkpoints = await self._runtime.run_store.get_checkpoints(self._run_id)
+        tool_boundary = sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints)
+        if tool_boundary == 0:
+            return self._items
+        current_boundary_results = tuple(
+            result
+            for checkpoint in checkpoints
+            if checkpoint.step_type is StepType.CONTEXT
+            if (result := parse_stage_result(checkpoint.output)) is not None
+            if result.scope is ContextScope.TOOL_OUTCOME and result.boundary == tool_boundary
+        )
+        invocation_index = len(current_boundary_results)
+        active_stage_index = tool_boundary
+        if (
+            active_stage_index >= len(RESEARCH_STAGE_IDS)
+            or invocation_index != active_stage_index - 1
+        ):
+            return ()
+        previous_stage_id = RESEARCH_STAGE_IDS[active_stage_index - 1]
+        previous_results = tuple(
+            result
+            for checkpoint in checkpoints
+            if checkpoint.step_type is StepType.CONTEXT
+            if (result := parse_stage_result(checkpoint.output)) is not None
+            if result.stage_id == previous_stage_id
+        )
+        if not previous_results:
+            raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
+        previous = max(previous_results, key=lambda result: result.boundary)
+        tool_checkpoints = tuple(
+            checkpoint for checkpoint in checkpoints if checkpoint.step_type is StepType.TOOL
+        )
+        if not tool_checkpoints:
+            raise RuntimeError("RESEARCH_TOOL_OUTCOME_UNAVAILABLE")
+        try:
+            tool_outcome = deserialize_tool_outcome(tool_checkpoints[-1].output)
+        except ValueError as error:
+            raise RuntimeError("RESEARCH_TOOL_OUTCOME_INVALID") from error
+        stage_id = RESEARCH_STAGE_IDS[active_stage_index]
+        content = json.dumps(
+            {
+                "stage": stage_id,
+                "source_stage": previous.stage_id,
+                "source_items": tuple(
+                    item.item.model_dump(mode="json") for item in previous.output_items
+                ),
+                "tool_outcome": tool_outcome.model_dump(mode="json"),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return (
+            ContextItem(
+                item_id=f"research-stage-output:{stage_id}:{tool_boundary}",
+                source="synthetic-research-stage",
+                content=content,
+                metadata={
+                    "stage": stage_id,
+                    "source_stage": previous.stage_id,
+                    "tool_boundary": tool_boundary,
+                    "source_item_ids": tuple(item.item.item_id for item in previous.output_items),
+                },
+            ),
+        )
 
 
 class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[misc]
@@ -261,7 +338,11 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         return ModelResponse(content=self._responses[0])
 
 
-def _read_announcement_tool() -> DeterministicTool:
+def _read_announcement_tool(
+    knowledge_cutoff: datetime | None = None,
+) -> DeterministicTool:
+    default_cutoff = knowledge_cutoff or datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
+
     def handler(request: ToolRequest) -> ToolOutcome:
         try:
             arguments = json.loads(request.arguments)
@@ -280,13 +361,24 @@ def _read_announcement_tool() -> DeterministicTool:
                 "INVALID_SECURITY_ID",
                 "announcement lookup requires one security_id",
             )
-        return ToolOutcome.success(
-            request.call_id,
-            request.tool_name,
-            (
+        evidence = ResearchToolEvidence(
+            evidence_id=f"announcement:{security_id}",
+            source="synthetic-announcement-feed",
+            reference=f"synthetic://announcement/{security_id}",
+            statement=(
                 f"Synthetic announcement evidence announcement:{security_id} "
                 "is read-only and contains no trade instruction."
             ),
+            acquired_at=default_cutoff,
+            validated_at=default_cutoff,
+            knowledge_cutoff=default_cutoff,
+            semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+            validation_status="VALIDATED",
+        )
+        return ToolOutcome.success(
+            request.call_id,
+            request.tool_name,
+            evidence.model_dump_json(),
         )
 
     return DeterministicTool(
@@ -355,7 +447,12 @@ def _research_context_plan() -> ContextPlan:
     )
 
 
-def _research_definition(case: FrozenDecisionCase) -> AgentDefinition:
+def _research_definition(
+    case: FrozenDecisionCase,
+    *,
+    runtime: RuntimeStorage | None = None,
+    run_id: str | None = None,
+) -> AgentDefinition:
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
     assert command is not None
@@ -367,9 +464,11 @@ def _research_definition(case: FrozenDecisionCase) -> AgentDefinition:
         model_adapter=adapter,
         context_provider=_FrozenResearchContextProvider(
             _research_context_items(command),
+            runtime=runtime,
+            run_id=run_id,
             fail=command.failure_mode == "DATA",
         ),
-        tools=(_read_announcement_tool(),),
+        tools=(_read_announcement_tool(command.knowledge_cutoff),),
         output_contract=OutputContract(
             contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
             version=RESEARCH_OUTPUT_CONTRACT_VERSION,
@@ -385,16 +484,10 @@ def _risk_definition(
     draft: ResearchDraft,
     *,
     research_run_id: str,
-    raw_scores: tuple[RawScore, ...],
-    tool_evidence_refs: tuple[str, ...],
+    risk_plan: research_service.ResearchRiskPlan,
 ) -> AgentDefinition:
     """Register the independent risk Definition over an immutable handoff."""
-    handoff = handoff_fingerprint(
-        command,
-        draft,
-        raw_scores=raw_scores,
-        tool_evidence_refs=tool_evidence_refs,
-    )
+    handoff = risk_plan.handoff_fingerprint
     risk_response = RiskVetoDraft(
         contract_version="1.0.0",
         handoff_fingerprint=handoff,
@@ -448,8 +541,13 @@ def _risk_definition(
                 "handoff_fingerprint": handoff,
                 "research_run_id": research_run_id,
                 "draft": draft.model_dump(mode="json"),
-                "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
-                "tool_evidence_refs": tool_evidence_refs,
+                "raw_scores": tuple(
+                    score.model_dump(mode="json") for score in risk_plan.raw_scores
+                ),
+                "tool_evidence_refs": risk_plan.tool_evidence_refs,
+                "tool_evidence": tuple(
+                    evidence.model_dump(mode="json") for evidence in risk_plan.tool_evidence
+                ),
             },
             ensure_ascii=True,
             separators=(",", ":"),
@@ -501,7 +599,13 @@ async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: Runti
     if run is None:
         raise MappedDurableRunMissingError("original durable M-Agent Run is missing")
     definition = (
-        _research_definition(case) if case.research is not None else _frozen_definition(case)
+        _research_definition(
+            case,
+            runtime=runtime,
+            run_id=case.framework_run_id,
+        )
+        if case.research is not None
+        else _frozen_definition(case)
     )
     _assert_existing_run_matches_case(run, case, definition)
 
@@ -590,6 +694,7 @@ async def execute_frozen_decision_case(
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
     *,
+    record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder | None = None,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Create or reuse the exact durable Run for one frozen host identity."""
@@ -598,6 +703,7 @@ async def execute_frozen_decision_case(
             case,
             runtime,
             record_transition,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
             clock=clock,
         )
     try:
@@ -717,6 +823,7 @@ async def execute_research_decision_case(
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
     *,
+    record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder | None = None,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Execute one staged research Run followed by an independent risk Run."""
@@ -728,7 +835,11 @@ async def execute_research_decision_case(
     )
     try:
         _assert_runtime_version_bundle(case)
-        research_definition = _research_definition(case)
+        research_definition = _research_definition(
+            case,
+            runtime=runtime,
+            run_id=case.framework_run_id,
+        )
         _assert_research_registered_capabilities(case, research_definition)
     except ValueError:
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
@@ -762,24 +873,7 @@ async def execute_research_decision_case(
             error_code="RESEARCH_OUTPUT_INVALID",
         )
 
-    tool_evidence_refs = await _research_tool_evidence_refs(runtime, research_run.run_id)
-    try:
-        raw_scores = tuple(
-            research_service.freeze_raw_score(command, member) for member in command.members
-        )
-    except RawScoreCalculationError as error:
-        envelope = ResearchFrameworkOutput(
-            research_run_id=research_run.run_id,
-            risk_run_id=None,
-            draft=draft,
-            risk_veto=None,
-            tool_evidence_refs=tool_evidence_refs,
-        )
-        return replace(
-            research_run,
-            output=envelope.model_dump_json(),
-            raw_score_error_code=str(error),
-        )
+    tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
 
     if command.failure_mode == "RAW_SCORE":
         envelope = ResearchFrameworkOutput(
@@ -787,49 +881,56 @@ async def execute_research_decision_case(
             risk_run_id=None,
             draft=draft,
             risk_veto=None,
-            tool_evidence_refs=tool_evidence_refs,
+            tool_evidence_refs=tuple(evidence.evidence_id for evidence in tool_evidence),
+            tool_evidence=tool_evidence,
         )
         return replace(research_run, output=envelope.model_dump_json())
 
-    risk_run_id = risk_run_id_for(
-        research_run.run_id,
-        draft,
-        raw_scores=raw_scores,
-        tool_evidence_refs=tool_evidence_refs,
-    )
+    try:
+        risk_plan = research_service.prepare_research_risk_plan(
+            command,
+            research_run.run_id,
+            draft,
+            tool_evidence,
+        )
+    except RawScoreCalculationError as error:
+        envelope = ResearchFrameworkOutput(
+            research_run_id=research_run.run_id,
+            risk_run_id=None,
+            draft=draft,
+            risk_veto=None,
+            tool_evidence_refs=tuple(evidence.evidence_id for evidence in tool_evidence),
+            tool_evidence=tool_evidence,
+        )
+        return replace(
+            research_run,
+            output=envelope.model_dump_json(),
+            raw_score_error_code=str(error),
+        )
+
+    risk_run_id = risk_plan.risk_run_id
     risk_definition = _risk_definition(
         command,
         draft,
         research_run_id=research_run.run_id,
-        raw_scores=raw_scores,
-        tool_evidence_refs=tool_evidence_refs,
+        risk_plan=risk_plan,
     )
     _assert_risk_definition(risk_definition)
-    risk_input = json.dumps(
-        {
-            "handoff_fingerprint": handoff_fingerprint(
-                command,
-                draft,
-                raw_scores=raw_scores,
-                tool_evidence_refs=tool_evidence_refs,
-            ),
-            "research_run_id": research_run.run_id,
-            "draft": draft.model_dump(mode="json"),
-            "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
-            "tool_evidence_refs": tool_evidence_refs,
-        },
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    existing_risk_run = await runtime.run_store.get_run(risk_run_id)
+    allow_create = True
+    if existing_risk_run is None and research_run_was_succeeded:
+        allow_create = (
+            record_auxiliary_run_reservation is not None
+            and await record_auxiliary_run_reservation(risk_run_id)
+        )
     risk_run = await _execute_registered_run(
         runtime=runtime,
         run_id=risk_run_id,
         definition=risk_definition,
-        input_payload=risk_input,
+        input_payload=risk_plan.input_payload,
         case=None,
         record_transition=None,
-        allow_create=not research_run_was_succeeded,
+        allow_create=allow_create,
         clock=clock,
     )
     if risk_run.status == "SUCCEEDED" and risk_run.output is not None:
@@ -840,12 +941,7 @@ async def execute_research_decision_case(
     elif risk_run.status == "REJECTED":
         risk_veto = RiskVetoDraft(
             contract_version="1.0.0",
-            handoff_fingerprint=handoff_fingerprint(
-                command,
-                draft,
-                raw_scores=raw_scores,
-                tool_evidence_refs=tool_evidence_refs,
-            ),
+            handoff_fingerprint=risk_plan.handoff_fingerprint,
             disposition="REJECTED",
             gates=(
                 RiskGate(
@@ -862,8 +958,9 @@ async def execute_research_decision_case(
         risk_run_id=risk_run.run_id,
         draft=draft,
         risk_veto=risk_veto,
-        raw_scores=raw_scores,
-        tool_evidence_refs=tool_evidence_refs,
+        raw_scores=risk_plan.raw_scores,
+        tool_evidence_refs=risk_plan.tool_evidence_refs,
+        tool_evidence=risk_plan.tool_evidence,
     )
     return replace(
         research_run,
@@ -876,12 +973,12 @@ async def execute_research_decision_case(
     )
 
 
-async def _research_tool_evidence_refs(
+async def _research_tool_evidence(
     runtime: RuntimeStorage,
     run_id: str,
-) -> tuple[str, ...]:
-    """Recover only successful announcement identities from durable Tool checkpoints."""
-    references: list[str] = []
+) -> tuple[ResearchToolEvidence, ...]:
+    """Recover structured provenance from successful announcement checkpoints."""
+    evidence_items: list[ResearchToolEvidence] = []
     for checkpoint in await runtime.run_store.get_checkpoints(run_id):
         if checkpoint.step_type is not StepType.TOOL:
             continue
@@ -895,17 +992,13 @@ async def _research_tool_evidence_refs(
             or outcome.status.value != "SUCCESS"
         ):
             continue
-        reference = next(
-            (
-                token
-                for token in outcome.result.split()
-                if token.startswith("announcement:") and len(token) > len("announcement:")
-            ),
-            None,
-        )
-        if reference is not None and reference not in references:
-            references.append(reference)
-    return tuple(references)
+        try:
+            evidence = ResearchToolEvidence.model_validate_json(outcome.result)
+        except ValueError as error:
+            raise ValueError("research Tool evidence is not structured") from error
+        if evidence.evidence_id not in {item.evidence_id for item in evidence_items}:
+            evidence_items.append(evidence)
+    return tuple(evidence_items)
 
 
 async def _execute_registered_run(

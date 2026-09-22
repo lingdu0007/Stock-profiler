@@ -29,6 +29,7 @@ from stock_profiler.modules.decision_cases.domain import (
     load_frozen_decision_case,
 )
 from stock_profiler.modules.decision_cases.ports import (
+    AuxiliaryRunReservationRecorder,
     FrameworkRunResult,
     FrameworkTransitionRecorder,
 )
@@ -50,10 +51,25 @@ class _FrozenFramework:
         return await find_unmapped_legacy_frozen_decision_case(case, self.runtime, known_run_ids)
 
     async def execute(
-        self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult:
+        if case.research is None:
+            return await execute_frozen_decision_case(
+                case,
+                self.runtime,
+                record_transition,
+                clock=self.clock,
+            )
         return await execute_frozen_decision_case(
-            case, self.runtime, record_transition, clock=self.clock
+            case,
+            self.runtime,
+            record_transition,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
+            clock=self.clock,
         )
 
 

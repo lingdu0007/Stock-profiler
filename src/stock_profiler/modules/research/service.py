@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+
 from stock_profiler.modules.research.contracts import (
+    RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
     RESEARCH_MODEL_ADAPTER_ID,
@@ -15,18 +19,86 @@ from stock_profiler.modules.research.contracts import (
     RISK_MODEL_ADAPTER_ID,
     RISK_OUTPUT_CONTRACT_ID,
     RISK_OUTPUT_CONTRACT_VERSION,
+    RawScore,
     RawScoreCalculationError,
     ResearchCommand,
+    ResearchDraft,
     ResearchFrameworkOutput,
     ResearchHandoff,
     ResearchOutcome,
+    ResearchToolEvidence,
     RiskVetoOutcome,
     freeze_raw_score,
     handoff_fingerprint,
     research_member_results,
+    risk_run_id_for,
 )
 
-__all__ = ("freeze_raw_score", "freeze_research")
+__all__ = (
+    "ResearchRiskPlan",
+    "freeze_raw_score",
+    "freeze_research",
+    "prepare_research_risk_plan",
+)
+
+
+@dataclass(frozen=True)
+class ResearchRiskPlan:
+    """Pure, immutable input plan for the independent risk Definition."""
+
+    raw_scores: tuple[RawScore, ...]
+    tool_evidence_refs: tuple[str, ...]
+    tool_evidence: tuple[ResearchToolEvidence, ...]
+    risk_run_id: str
+    handoff_fingerprint: str
+    input_payload: str
+
+
+def prepare_research_risk_plan(
+    command: ResearchCommand,
+    research_run_id: str,
+    draft: ResearchDraft,
+    tool_evidence: tuple[ResearchToolEvidence, ...],
+) -> ResearchRiskPlan:
+    """Calculate and bind the immutable inputs consumed by the risk Run."""
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
+    _validate_tool_evidence(command, tool_evidence_refs, tool_evidence)
+    fingerprint = handoff_fingerprint(
+        command,
+        draft,
+        raw_scores=raw_scores,
+        tool_evidence_refs=tool_evidence_refs,
+        tool_evidence=tool_evidence,
+    )
+    risk_run_id = risk_run_id_for(
+        research_run_id,
+        draft,
+        raw_scores=raw_scores,
+        tool_evidence_refs=tool_evidence_refs,
+        tool_evidence=tool_evidence,
+    )
+    input_payload = json.dumps(
+        {
+            "handoff_fingerprint": fingerprint,
+            "research_run_id": research_run_id,
+            "draft": draft.model_dump(mode="json"),
+            "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
+            "tool_evidence_refs": tool_evidence_refs,
+            "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return ResearchRiskPlan(
+        raw_scores=raw_scores,
+        tool_evidence_refs=tool_evidence_refs,
+        tool_evidence=tool_evidence,
+        risk_run_id=risk_run_id,
+        handoff_fingerprint=fingerprint,
+        input_payload=input_payload,
+    )
 
 
 def freeze_research(
@@ -38,6 +110,16 @@ def freeze_research(
     risk_run_id = framework.risk_run_id
     if risk_veto_draft is None or risk_run_id is None:
         raise ValueError("independent risk Run did not produce a typed veto")
+    if framework.raw_scores is None:
+        raise RawScoreCalculationError("RAW_SCORE_HANDOFF_MISSING")
+    expected_raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    if framework.raw_scores != expected_raw_scores:
+        raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH")
+    tool_evidence = _validate_tool_evidence(
+        command,
+        framework.tool_evidence_refs,
+        framework.tool_evidence,
+    )
     _validate_draft_against_command(command, framework)
     if risk_veto_draft.disposition == "REJECTED" and not any(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
@@ -48,13 +130,7 @@ def freeze_research(
     ):
         raise ValueError("risk acceptance cannot contain a failed risk gate")
 
-    expected_raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
-    if framework.raw_scores is None:
-        raw_scores = expected_raw_scores
-    elif framework.raw_scores != expected_raw_scores:
-        raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH")
-    else:
-        raw_scores = framework.raw_scores
+    raw_scores = framework.raw_scores
     risk_veto = RiskVetoOutcome(
         run_id=risk_run_id,
         definition_id=RISK_DEFINITION_ID,
@@ -66,11 +142,7 @@ def freeze_research(
     base_evidence_ids = tuple(
         evidence.evidence_id for member in command.members for evidence in member.evidence
     )
-    tool_evidence_refs = framework.tool_evidence_refs
-    if len(set(tool_evidence_refs)) != len(tool_evidence_refs) or any(
-        not reference.startswith("announcement:") for reference in tool_evidence_refs
-    ):
-        raise ValueError("research Tool evidence references are not allowlisted")
+    tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
     evidence_ids = (*base_evidence_ids, *tool_evidence_refs)
     handoff = ResearchHandoff(
         contract_version="1.0.0",
@@ -101,6 +173,7 @@ def freeze_research(
         screening_strategy_version=command.screening.strategy_version,
         screening_snapshot_id=command.screening.snapshot_id,
         raw_scores=raw_scores,
+        tool_evidence=tool_evidence,
         risk_veto=risk_veto,
     )
     return ResearchOutcome(
@@ -108,6 +181,7 @@ def freeze_research(
         members=research_member_results(framework.draft),
         raw_scores=raw_scores,
         risk_veto=risk_veto,
+        tool_evidence=tool_evidence,
         handoff=handoff,
         reasons=(
             "INDEPENDENT_RISK_VETO"
@@ -126,11 +200,19 @@ def _validate_draft_against_command(
         raise ValueError("research and risk Runs must have independent identities")
     if framework.risk_veto is None or framework.risk_run_id is None:
         raise ValueError("independent risk Run did not produce a typed veto")
+    if framework.raw_scores is None:
+        raise RawScoreCalculationError("RAW_SCORE_HANDOFF_MISSING")
+    tool_evidence = _validate_tool_evidence(
+        command,
+        framework.tool_evidence_refs,
+        framework.tool_evidence,
+    )
     expected_fingerprint = handoff_fingerprint(
         command,
         framework.draft,
         raw_scores=framework.raw_scores,
         tool_evidence_refs=framework.tool_evidence_refs,
+        tool_evidence=tool_evidence,
     )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
@@ -147,3 +229,27 @@ def _validate_draft_against_command(
             != tuple(evidence.evidence_id for evidence in source.evidence)
         ):
             raise ValueError("research draft lost immutable member provenance")
+
+
+def _validate_tool_evidence(
+    command: ResearchCommand,
+    tool_evidence_refs: tuple[str, ...],
+    tool_evidence: tuple[ResearchToolEvidence, ...],
+) -> tuple[ResearchToolEvidence, ...]:
+    """Bind every exploratory Tool claim to its cutoff and semantic version."""
+    evidence = tuple(tool_evidence)
+    evidence_ids = tuple(item.evidence_id for item in evidence)
+    if evidence_ids != tuple(tool_evidence_refs):
+        raise ValueError("research Tool evidence references do not match structured evidence")
+    if len(set(evidence_ids)) != len(evidence_ids):
+        raise ValueError("research Tool evidence identities must be unique")
+    for item in evidence:
+        if (
+            item.semantic_version != RESEARCH_ANNOUNCEMENT_TOOL_VERSION
+            or item.acquired_at != command.knowledge_cutoff
+            or item.validated_at != command.knowledge_cutoff
+            or item.knowledge_cutoff != command.knowledge_cutoff
+            or item.validation_status != "VALIDATED"
+        ):
+            raise ValueError("research Tool evidence is not bound to the frozen cutoff")
+    return evidence

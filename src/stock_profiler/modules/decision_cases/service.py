@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import Lock
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -353,6 +354,13 @@ def _run_frozen_decision_case(
                                 execution_case,
                                 transition,
                             ),
+                            record_auxiliary_run_reservation=lambda risk_run_id: (
+                                _record_auxiliary_run_reservation(
+                                    ledger,
+                                    execution_case,
+                                    risk_run_id,
+                                )
+                            ),
                         )
                     )
                 except MappedDurableRunMissingError as error:
@@ -411,6 +419,34 @@ async def _record_framework_transition(
             framework_run_id=case.framework_run_id,
             allow_repeated_occurrence=transition.status in {"RUNNING", "WAITING"},
         )
+
+
+async def _record_auxiliary_run_reservation(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+) -> bool:
+    """Reserve a deterministic auxiliary Run identity before creating it."""
+    with ledger.serialize_case_execution() as connection:
+        history = ledger.get_stage_results(
+            case.business_object_id,
+            connection,
+            framework_run_id=framework_run_id,
+        )
+        if any(stage_result.phase == "RISK_FRAMEWORK_RUN" for stage_result in history):
+            return False
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=StageResult(
+                phase="AUXILIARY_RUN_RESERVATION",
+                status="PENDING",
+                gate_results=(GateResult(gate_id="RISK_RUN_RESERVED", status="PASSED"),),
+                reasons=("RISK_RUN_ID_RESERVED",),
+            ),
+            framework_run_id=framework_run_id,
+        )
+    return True
 
 
 @contextmanager
@@ -1706,6 +1742,7 @@ def _framework_stage_results_for_auxiliary_run(
         error_code=framework.risk_run_error_code,
         waiting_reason=None,
         transitions=framework.risk_transitions,
+        phase="RISK_FRAMEWORK_RUN",
     )
 
 
@@ -1715,14 +1752,16 @@ def _framework_stage_results_for_run(
     error_code: str | None,
     waiting_reason: str | None,
     transitions: tuple[FrameworkRunTransition, ...],
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> tuple[StageResult, ...]:
     final_result = _framework_status_stage_result(
         status=status,
         error_code=error_code,
         waiting_reason=waiting_reason,
+        phase=phase,
     )
     transition_results = tuple(
-        _framework_transition_stage_result(transition) for transition in transitions
+        _framework_transition_stage_result(transition, phase=phase) for transition in transitions
     )
     if transition_results and transition_results[-1] == final_result:
         return transition_results
@@ -1749,6 +1788,8 @@ def _record_framework_stage_results(
 
 def _framework_transition_stage_result(
     transition: FrameworkRunTransition,
+    *,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> StageResult:
     gate_id = {
         "CREATED": "RUN_CREATED",
@@ -1756,7 +1797,7 @@ def _framework_transition_stage_result(
         "WAITING": "RUN_RECOVERABLE",
     }.get(transition.status, "RUN_RECOVERABLE")
     return StageResult(
-        phase="FRAMEWORK_RUN",
+        phase=phase,
         status=transition.status,
         gate_results=(GateResult(gate_id=gate_id, status="PASSED"),),
         reasons=(transition.reason,),
@@ -1768,9 +1809,10 @@ def _framework_status_stage_result(
     status: FrameworkRunStatus,
     error_code: str | None,
     waiting_reason: str | None,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> StageResult:
     return StageResult(
-        phase="FRAMEWORK_RUN",
+        phase=phase,
         status=status,
         gate_results=(
             GateResult(gate_id="RUN_TERMINAL", status="PASSED"),

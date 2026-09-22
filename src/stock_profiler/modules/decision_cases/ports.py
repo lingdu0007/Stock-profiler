@@ -83,6 +83,7 @@ class FrameworkRunResult:
 
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
+AuxiliaryRunReservationRecorder = Callable[[str], Awaitable[bool]]
 
 
 class FrozenFramework(Protocol):
@@ -93,7 +94,11 @@ class FrozenFramework(Protocol):
     ) -> FrozenDecisionCase | None: ...
 
     async def execute(
-        self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult: ...
 
 
@@ -223,7 +228,11 @@ class DecisionLedger(Protocol[Transaction]):
     ) -> DecisionEventFact | None: ...
 
     def get_stage_results(
-        self, business_object_id: str, connection: Transaction | None = None
+        self,
+        business_object_id: str,
+        connection: Transaction | None = None,
+        *,
+        framework_run_id: str | None = None,
     ) -> tuple[StageResult, ...]: ...
 
     def record_stage_result(

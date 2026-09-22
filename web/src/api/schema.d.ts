@@ -2658,6 +2658,11 @@ export interface components {
             selection_object_id: string;
             /** Targets */
             targets: string[];
+            /**
+             * Tool Evidence
+             * @default []
+             */
+            tool_evidence: components["schemas"]["ResearchToolEvidence"][];
         };
         /** ResearchMemberResult */
         ResearchMemberResult: {
@@ -2703,6 +2708,47 @@ export interface components {
             /** Reasons */
             reasons: string[];
             risk_veto?: components["schemas"]["RiskVetoOutcome"] | null;
+            /**
+             * Tool Evidence
+             * @default []
+             */
+            tool_evidence: components["schemas"]["ResearchToolEvidence"][];
+        };
+        /**
+         * ResearchToolEvidence
+         * @description Structured provenance emitted by the allowlisted exploratory Tool.
+         */
+        ResearchToolEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Reference */
+            reference: string;
+            /** Semantic Version */
+            semantic_version: string;
+            /** Source */
+            source: string;
+            /** Statement */
+            statement: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+            /**
+             * Validation Status
+             * @constant
+             */
+            validation_status: "VALIDATED";
         };
         /**
          * ResultAccessScope
@@ -3031,7 +3077,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /** Reasons */
             reasons: string[];
             /**

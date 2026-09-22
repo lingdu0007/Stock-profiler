@@ -22,6 +22,7 @@ RISK_MODEL_ADAPTER_ID = "m-agent-deterministic-risk-adapter"
 RISK_OUTPUT_CONTRACT_ID = "synthetic-independent-risk-veto"
 RISK_OUTPUT_CONTRACT_VERSION = "1.0.0"
 RESEARCH_SCOPE: Literal["D0_SYNTHETIC_RESEARCH_ONLY"] = "D0_SYNTHETIC_RESEARCH_ONLY"
+RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
 
 RAW_SCORE_MODEL_VERSION = "elastic-net-logistic-z20-v1"
 RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL_20_PERCENT"
@@ -75,6 +76,20 @@ class ResearchEvidence(ResearchContract):
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
+
+
+class ResearchToolEvidence(ResearchContract):
+    """Structured provenance emitted by the allowlisted exploratory Tool."""
+
+    evidence_id: str = Field(pattern=r"^announcement:.+")
+    source: str = Field(min_length=1)
+    reference: str = Field(min_length=1)
+    statement: str = Field(min_length=1)
+    acquired_at: AwareDatetime
+    validated_at: AwareDatetime
+    knowledge_cutoff: AwareDatetime
+    semantic_version: str = Field(min_length=1)
+    validation_status: Literal["VALIDATED"]
 
 
 class FrozenDualTargetScreening(ResearchContract):
@@ -248,6 +263,7 @@ class ResearchFrameworkOutput(ResearchContract):
     risk_veto: RiskVetoDraft | None = None
     raw_scores: tuple[RawScore, ...] | None = None
     tool_evidence_refs: tuple[str, ...] = ()
+    tool_evidence: tuple[ResearchToolEvidence, ...] = ()
 
 
 class RiskVetoOutcome(ResearchContract):
@@ -287,6 +303,7 @@ class ResearchHandoff(ResearchContract):
     screening_strategy_version: str
     screening_snapshot_id: str
     raw_scores: tuple[RawScore, ...] = Field(min_length=10, max_length=10)
+    tool_evidence: tuple[ResearchToolEvidence, ...] = ()
     risk_veto: RiskVetoOutcome | None = None
     actionable: Literal[False] = False
 
@@ -317,6 +334,7 @@ class ResearchOutcome(ResearchContract):
     members: tuple[ResearchMemberResult, ...]
     raw_scores: tuple[RawScore, ...] | None = None
     risk_veto: RiskVetoOutcome | None = None
+    tool_evidence: tuple[ResearchToolEvidence, ...] = ()
     handoff: ResearchHandoff
     reasons: tuple[str, ...] = Field(min_length=1)
     actionable: Literal[False] = False
@@ -379,6 +397,7 @@ def handoff_fingerprint(
     *,
     raw_scores: tuple[RawScore, ...] | None = None,
     tool_evidence_refs: tuple[str, ...] = (),
+    tool_evidence: tuple[ResearchToolEvidence, ...] = (),
 ) -> str:
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
@@ -390,6 +409,7 @@ def handoff_fingerprint(
             else None
         ),
         "tool_evidence_refs": tool_evidence_refs,
+        "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
     }
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -400,6 +420,7 @@ def risk_run_id_for(
     *,
     raw_scores: tuple[RawScore, ...] | None = None,
     tool_evidence_refs: tuple[str, ...] = (),
+    tool_evidence: tuple[ResearchToolEvidence, ...] = (),
 ) -> str:
     """Derive the independent risk Run identity from the frozen research Run."""
     digest = sha256(
@@ -413,6 +434,9 @@ def risk_run_id_for(
                     else None
                 ),
                 "tool_evidence_refs": tool_evidence_refs,
+                "tool_evidence": tuple(
+                    evidence.model_dump(mode="json") for evidence in tool_evidence
+                ),
             },
             ensure_ascii=True,
             separators=(",", ":"),
