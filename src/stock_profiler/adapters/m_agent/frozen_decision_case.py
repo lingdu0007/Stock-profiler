@@ -39,6 +39,9 @@ from m_agent.runtime import (
     ModelRequest,
     ModelResponse,
     OutputContract,
+    PolicyAction,
+    PolicyDecision,
+    PolicyGate,
     Runner,
     RunNotFoundError,
     RunRecord,
@@ -51,6 +54,7 @@ from m_agent.runtime import (
     ToolEffect,
     ToolOutcome,
     ToolRequest,
+    deserialize_model_response,
     deserialize_tool_outcome,
     parse_stage_result,
 )
@@ -536,9 +540,16 @@ def _risk_definition(
     risk_policy = StaticRunPolicy(
         policy_id="synthetic-risk-veto",
         version="1",
-        # The typed RiskVetoDraft owns ACCEPTED/REJECTED.  A Run-policy
-        # rejection would discard that output before the host can validate it.
-        decisions={},
+        decisions=(
+            {
+                PolicyGate.FINAL_OUTPUT: PolicyDecision(
+                    action=PolicyAction.REJECT,
+                    reason_code="SYNTHETIC_RISK_VETO",
+                )
+            }
+            if command.risk_scenario == "REJECT" and command.failure_mode != "RISK"
+            else {}
+        ),
     )
     handoff_item = ContextItem(
         item_id=f"research-handoff:{research_run_id}",
@@ -889,7 +900,7 @@ async def execute_research_risk_run(
             record_auxiliary_run_reservation is not None
             and await record_auxiliary_run_reservation(risk_plan.risk_run_id)
         )
-    return await _execute_registered_run(
+    result = await _execute_registered_run(
         runtime=runtime,
         run_id=risk_plan.risk_run_id,
         definition=risk_definition,
@@ -899,6 +910,11 @@ async def execute_research_risk_run(
         allow_create=allow_create,
         clock=clock,
     )
+    if result.status == "REJECTED" and result.output is None:
+        rejected_output = await _last_model_checkpoint_output(runtime, result.run_id)
+        if rejected_output is not None:
+            return replace(result, output=rejected_output)
+    return result
 
 
 async def execute_research_decision_case(
@@ -958,6 +974,21 @@ async def _research_tool_evidence(
         if evidence.evidence_id not in {item.evidence_id for item in evidence_items}:
             evidence_items.append(evidence)
     return tuple(evidence_items)
+
+
+async def _last_model_checkpoint_output(
+    runtime: RuntimeStorage,
+    run_id: str,
+) -> str | None:
+    """Recover a rejected Definition result without changing its Run terminal state."""
+    checkpoints = await runtime.run_store.get_checkpoints(run_id)
+    for checkpoint in reversed(checkpoints):
+        if checkpoint.step_type is StepType.MODEL:
+            try:
+                return cast(str, deserialize_model_response(checkpoint.output).content)
+            except ValueError:
+                return None
+    return None
 
 
 async def _execute_registered_run(

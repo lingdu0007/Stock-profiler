@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
-from m_agent.runtime import StepType, ToolRequest, parse_stage_result
+from m_agent.runtime import PolicyAction, PolicyGate, StepType, ToolRequest, parse_stage_result
 
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
@@ -126,6 +126,8 @@ def research_command(
         selected_member_ids=ids,
         positive_scores={security_id: Decimal("0.6") for security_id in ids},
         terminal_scores={security_id: Decimal("0.7") for security_id in ids},
+        positive_percentiles={security_id: Decimal("60") for security_id in ids},
+        terminal_percentiles={security_id: Decimal("70") for security_id in ids},
         positive_head_version="synthetic-positive-head-v1",
         terminal_head_version="synthetic-terminal-head-v1",
         output_sha256="",
@@ -210,9 +212,9 @@ def _selection_anchor_case(
             ScreeningRank(
                 security_id=security_id,
                 rank=index + 1,
-                positive_percentile=Decimal("0.6"),
-                terminal_percentile=Decimal("0.7"),
-                composite_score=Decimal("0.64"),
+                positive_percentile=command.screening.positive_percentiles[security_id],
+                terminal_percentile=command.screening.terminal_percentiles[security_id],
+                composite_score=Decimal("63.8461538461538461538461538462"),
             )
             for index, security_id in enumerate(command.screening.selected_member_ids)
         ),
@@ -600,7 +602,7 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     risk_run_id = execution.report.result.research.handoff.risk_run_id
     risk_run = asyncio.run(runtime.run_store.get_run(risk_run_id))
     assert risk_run is not None
-    assert risk_run.status.value == "SUCCEEDED"
+    assert risk_run.status.value == "REJECTED"
     assert risk_run.definition_id == RISK_DEFINITION_ID
     assert risk_run.definition_version == RISK_DEFINITION_VERSION
     assert risk_run.snapshot is not None
@@ -609,6 +611,13 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert risk_run.input is not None
     assert "fictional structured fact is available at the cutoff" in risk_run.input
     assert "LIQUIDITY_WARNING" in risk_run.input
+    risk_policy_decisions = asyncio.run(runtime.run_store.get_policy_decisions(risk_run_id))
+    assert any(
+        decision.gate is PolicyGate.FINAL_OUTPUT
+        and decision.action is PolicyAction.REJECT
+        and decision.reason_code == "SYNTHETIC_RISK_VETO"
+        for decision in risk_policy_decisions
+    )
     checkpoints = asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
     assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 4
     assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 3
@@ -758,6 +767,51 @@ def test_missing_upstream_selection_event_stops_before_framework_execution(
         stage.phase == "RESEARCH"
         and stage.status == "FAILED"
         and "RESEARCH_SELECTION_EVENT_MISSING" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(
+        stage.phase in {"FRAMEWORK_RUN", "RAW_SCORE", "RISK_VETO"}
+        for stage in execution.stage_results
+    )
+
+
+def test_upstream_selection_percentile_mismatch_stops_before_framework_execution(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research = payload["research"]
+    assert isinstance(research, dict)
+    screening = FrozenDualTargetScreening.model_validate(research["screening"])
+    changed_screening = screening.model_copy(
+        update={
+            "positive_percentiles": {
+                **screening.positive_percentiles,
+                screening.selected_member_ids[0]: Decimal("61"),
+            }
+        }
+    )
+    changed_screening = FrozenDualTargetScreening.model_validate(
+        changed_screening.model_copy(
+            update={"output_sha256": screening_output_sha256(changed_screening)}
+        ).model_dump(mode="python")
+    )
+    research["screening"] = changed_screening.model_dump(mode="json")
+    research["selection_fingerprint"] = selection_binding_sha256(
+        research["selection_object_id"],
+        research["selection_event_id"],
+        datetime.fromisoformat(research["cutoff_at"]),
+        changed_screening,
+    )
+    payload["input"]["research"] = research
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    assert execution.framework_run_status == "CREATED"
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_SELECTION_PERCENTILE_MISMATCH" in stage.reasons
         for stage in execution.stage_results
     )
     assert not any(

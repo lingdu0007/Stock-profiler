@@ -67,6 +67,8 @@ def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> Resear
         selected_member_ids=ids,
         positive_scores={security_id: Decimal("0.6") for security_id in ids},
         terminal_scores={security_id: Decimal("0.7") for security_id in ids},
+        positive_percentiles={security_id: Decimal("60") for security_id in ids},
+        terminal_percentiles={security_id: Decimal("70") for security_id in ids},
         positive_head_version="synthetic-positive-head-v1",
         terminal_head_version="synthetic-terminal-head-v1",
         output_sha256="",
@@ -120,7 +122,7 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.probability is None
     assert raw_score.model_version == "elastic-net-logistic-z20-v1"
     assert raw_score.interaction_terms == ()
-    assert raw_score.z20 == Decimal("-0.038")
+    assert raw_score.z20 == Decimal("33.127")
 
 
 def test_raw_score_does_not_change_when_research_text_changes() -> None:
@@ -134,6 +136,74 @@ def test_raw_score_does_not_change_when_research_text_changes() -> None:
     )
 
     assert freeze_raw_score(command, changed_member) == original
+
+
+def test_raw_score_uses_frozen_percentiles_not_screening_head_scores() -> None:
+    command = _command()
+    original = freeze_raw_score(command, command.members[0])
+    changed_screening = command.screening.model_copy(
+        update={
+            "positive_scores": {
+                security_id: Decimal("0.9")
+                for security_id in command.screening.universe_security_ids
+            },
+            "terminal_scores": {
+                security_id: Decimal("0.1")
+                for security_id in command.screening.universe_security_ids
+            },
+        }
+    )
+    changed_screening = FrozenDualTargetScreening.model_validate(
+        changed_screening.model_copy(
+            update={"output_sha256": screening_output_sha256(changed_screening)}
+        ).model_dump(mode="python")
+    )
+    changed_command = command.model_copy(
+        update={
+            "screening": changed_screening,
+            "selection_fingerprint": selection_binding_sha256(
+                command.selection_object_id,
+                command.selection_event_id,
+                command.cutoff_at,
+                changed_screening,
+            ),
+        }
+    )
+
+    assert freeze_raw_score(changed_command, changed_command.members[0]) == original
+
+
+def test_raw_score_changes_when_a_frozen_percentile_changes() -> None:
+    command = _command()
+    original = freeze_raw_score(command, command.members[0])
+    changed_percentiles = command.screening.model_copy(
+        update={
+            "positive_percentiles": {
+                **command.screening.positive_percentiles,
+                command.members[0].security_id: Decimal("61"),
+            }
+        }
+    )
+    changed_percentiles = FrozenDualTargetScreening.model_validate(
+        changed_percentiles.model_copy(
+            update={"output_sha256": screening_output_sha256(changed_percentiles)}
+        ).model_dump(mode="python")
+    )
+    changed_command = command.model_copy(
+        update={
+            "screening": changed_percentiles,
+            "selection_fingerprint": selection_binding_sha256(
+                command.selection_object_id,
+                command.selection_event_id,
+                command.cutoff_at,
+                changed_percentiles,
+            ),
+        }
+    )
+
+    assert freeze_raw_score(changed_command, changed_command.members[0]).z20 == (
+        original.z20 + Decimal("0.15")
+    )
 
 
 def test_screening_output_hash_rejects_a_changed_score() -> None:

@@ -108,6 +108,8 @@ class FrozenDualTargetScreening(ResearchContract):
     selected_member_ids: tuple[str, ...] = Field(min_length=10, max_length=10)
     positive_scores: dict[str, Decimal]
     terminal_scores: dict[str, Decimal]
+    positive_percentiles: dict[str, Decimal]
+    terminal_percentiles: dict[str, Decimal]
     positive_head_version: str = Field(min_length=1)
     terminal_head_version: str = Field(min_length=1)
     output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -122,13 +124,28 @@ class FrozenDualTargetScreening(ResearchContract):
             raise ValueError("screening output must contain exactly ten selected members")
         if not selected_ids.issubset(universe_ids):
             raise ValueError("selected screening members must belong to the full domain")
-        if set(self.positive_scores) != universe_ids or set(self.terminal_scores) != universe_ids:
-            raise ValueError("both screening targets must cover the full domain")
+        if (
+            set(self.positive_scores) != universe_ids
+            or set(self.terminal_scores) != universe_ids
+            or set(self.positive_percentiles) != universe_ids
+            or set(self.terminal_percentiles) != universe_ids
+        ):
+            raise ValueError("screening targets and percentiles must cover the full domain")
         if any(
             not value.is_finite()
-            for value in (*self.positive_scores.values(), *self.terminal_scores.values())
+            for value in (
+                *self.positive_scores.values(),
+                *self.terminal_scores.values(),
+                *self.positive_percentiles.values(),
+                *self.terminal_percentiles.values(),
+            )
         ):
-            raise ValueError("screening scores must be finite")
+            raise ValueError("screening scores and percentiles must be finite")
+        if any(
+            value < 0 or value > 100
+            for value in (*self.positive_percentiles.values(), *self.terminal_percentiles.values())
+        ):
+            raise ValueError("screening percentiles must be between zero and one hundred")
         if self.output_sha256 != screening_output_sha256(self):
             raise ValueError("screening output hash does not match canonical output")
         return self
@@ -417,8 +434,8 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
     if member.security_id not in command.screening.selected_member_ids:
         raise ValueError("raw score member is outside the fixed-ten cohort")
     structured_inputs = {
-        "screening_positive_prior": command.screening.positive_scores[member.security_id],
-        "screening_terminal_prior": command.screening.terminal_scores[member.security_id],
+        "screening_positive_prior": command.screening.positive_percentiles[member.security_id],
+        "screening_terminal_prior": command.screening.terminal_percentiles[member.security_id],
         **member.structured_signals,
     }
     try:

@@ -158,6 +158,23 @@ def _validate_research_selection_event(
         or source_terminal_scores != command.screening.terminal_scores
     ):
         raise ValueError("RESEARCH_SELECTION_SCREENING_MISMATCH")
+    source_ranking = tuple(source_outcome.ranking)
+    source_ranking_ids = tuple(rank.security_id for rank in source_ranking)
+    if len(source_ranking_ids) != len(set(source_ranking_ids)) or set(source_ranking_ids) != set(
+        command.screening.universe_security_ids
+    ):
+        raise ValueError("RESEARCH_SELECTION_RANKING_UNIVERSE_MISMATCH")
+    source_positive_percentiles = {
+        rank.security_id: rank.positive_percentile for rank in source_ranking
+    }
+    source_terminal_percentiles = {
+        rank.security_id: rank.terminal_percentile for rank in source_ranking
+    }
+    if (
+        source_positive_percentiles != command.screening.positive_percentiles
+        or source_terminal_percentiles != command.screening.terminal_percentiles
+    ):
+        raise ValueError("RESEARCH_SELECTION_PERCENTILE_MISMATCH")
 
 
 async def execute_research_risk_journey(
@@ -225,7 +242,7 @@ async def execute_research_risk_journey(
             raw_score_error_code=str(error),
         )
     risk_run = await execute_risk(research_run, risk_plan)
-    if risk_run.status == "SUCCEEDED" and risk_run.output is not None:
+    if risk_run.status in {"SUCCEEDED", "REJECTED"} and risk_run.output is not None:
         try:
             risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
         except ValueError:
@@ -1549,7 +1566,13 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation(framework.raw_score_error_code),
         )
-    if envelope.risk_veto is None or framework.risk_run_status != "SUCCEEDED":
+    if (
+        envelope.risk_veto is None
+        or framework.risk_run_status not in {"SUCCEEDED", "REJECTED"}
+        or (
+            framework.risk_run_status == "REJECTED" and envelope.risk_veto.disposition != "REJECTED"
+        )
+    ):
         return closed(
             research=research_stage,
             risk=StageResult(
