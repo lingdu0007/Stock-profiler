@@ -40,6 +40,7 @@ __all__ = (
     "freeze_raw_score",
     "freeze_research",
     "prepare_research_risk_plan",
+    "validate_research_draft",
 )
 
 
@@ -50,9 +51,9 @@ def prepare_research_risk_plan(
     tool_evidence: tuple[ResearchToolEvidence, ...],
 ) -> ResearchRiskPlan:
     """Calculate and bind the immutable inputs consumed by the risk Run."""
-    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
-    _validate_tool_evidence(command, tool_evidence_refs, tool_evidence)
+    validate_research_draft(command, draft, tool_evidence)
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     member_handoffs = _member_handoffs_for_command(command)
     fingerprint = handoff_fingerprint(
         command,
@@ -172,6 +173,7 @@ def freeze_research(
         risk_output_contract_version=RISK_OUTPUT_CONTRACT_VERSION,
         screening_strategy_version=command.screening.strategy_version,
         screening_snapshot_id=command.screening.snapshot_id,
+        selection_fingerprint=command.selection_fingerprint,
         raw_scores=raw_scores,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
@@ -208,6 +210,7 @@ def _validate_draft_against_command(
         framework.tool_evidence_refs,
         framework.tool_evidence,
     )
+    validate_research_draft(command, framework.draft, tool_evidence)
     member_handoffs = _validate_member_handoffs(command, framework.member_handoffs)
     expected_fingerprint = handoff_fingerprint(
         command,
@@ -219,21 +222,35 @@ def _validate_draft_against_command(
     )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
-    expected = {member.security_id: member for member in command.members}
-    actual = {member.security_id: member for member in framework.draft.members}
-    if set(expected) != set(actual):
-        raise ValueError("research draft must cover exactly the fixed-ten cohort")
-    if tuple(actual) != tuple(expected):
-        raise ValueError("research draft must preserve the frozen selected cohort order")
-    for security_id, source in expected.items():
-        draft = actual[security_id]
-        if (
-            draft.research_id != source.research_id
-            or draft.knowledge_cutoff != source.knowledge_cutoff
-            or tuple(draft.evidence_refs)
-            != tuple(evidence.evidence_id for evidence in source.evidence)
-        ):
+    return None
+
+
+def validate_research_draft(
+    command: ResearchCommand,
+    draft: ResearchDraft,
+    tool_evidence: tuple[ResearchToolEvidence, ...],
+) -> None:
+    """Validate research provenance before raw-score or risk work can begin."""
+    tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
+    _validate_tool_evidence(command, tool_evidence_refs, tool_evidence)
+    expected = tuple((member.security_id, member.research_id) for member in command.members)
+    actual = tuple((member.security_id, member.research_id) for member in draft.members)
+    if actual != expected:
+        raise ValueError(
+            "research draft must preserve the frozen selected cohort identities and order"
+        )
+    tool_refs = set(tool_evidence_refs)
+    for source, candidate in zip(command.members, draft.members, strict=True):
+        required_refs = tuple(evidence.evidence_id for evidence in source.evidence)
+        candidate_refs = tuple(candidate.evidence_refs)
+        if len(set(candidate_refs)) != len(candidate_refs):
+            raise ValueError("research draft evidence references must be unique")
+        if tuple(ref for ref in candidate_refs if ref in set(required_refs)) != required_refs:
             raise ValueError("research draft lost immutable member provenance")
+        if not set(candidate_refs).issubset(set(required_refs) | tool_refs):
+            raise ValueError("research draft cited unavailable evidence")
+        if candidate.knowledge_cutoff != source.knowledge_cutoff:
+            raise ValueError("research draft changed the frozen knowledge cutoff")
 
 
 def _validate_tool_evidence(

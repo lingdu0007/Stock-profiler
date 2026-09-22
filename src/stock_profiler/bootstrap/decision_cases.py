@@ -92,6 +92,7 @@ class _FrozenFramework:
         case: FrozenDecisionCase,
         research_run: FrameworkRunResult,
         risk_plan: ResearchRiskPlan,
+        record_transition: FrameworkTransitionRecorder,
         *,
         record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult:
@@ -100,6 +101,7 @@ class _FrozenFramework:
             self.runtime,
             research_run,
             risk_plan,
+            record_transition,
             record_auxiliary_run_reservation=record_auxiliary_run_reservation,
             clock=self.clock,
         )

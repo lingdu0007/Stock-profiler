@@ -8,6 +8,7 @@ import pytest
 
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
+    RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     ResearchCommand,
@@ -17,14 +18,16 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchMemberHandoff,
     ResearchMemberInput,
+    ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
     freeze_raw_score,
     handoff_fingerprint,
     screening_output_sha256,
+    selection_binding_sha256,
 )
-from stock_profiler.modules.research.service import freeze_research
+from stock_profiler.modules.research.service import freeze_research, validate_research_draft
 
 
 def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> ResearchCommand:
@@ -40,7 +43,11 @@ def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> Resear
                     source="fictional-certified-feed",
                     reference=f"synthetic://evidence/{index:02}",
                     statement="A fictional structured fact is available at the cutoff.",
+                    acquired_at=cutoff,
+                    validated_at=cutoff,
                     knowledge_cutoff=cutoff,
+                    semantic_version="fictional-certified-feed-v1",
+                    validation_status="VALIDATED",
                 ),
             ),
             structured_signals={
@@ -76,6 +83,12 @@ def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> Resear
         seed=1616,
         selection_object_id="selection-object-1616",
         selection_event_id="selection-event-1616",
+        selection_fingerprint=selection_binding_sha256(
+            "selection-object-1616",
+            "selection-event-1616",
+            cutoff,
+            screening,
+        ),
         cutoff_at=cutoff,
         knowledge_cutoff=cutoff,
         purpose="SYNTHETIC",
@@ -160,6 +173,51 @@ def test_research_command_rejects_a_reordered_frozen_cohort() -> None:
 
     with pytest.raises(ValueError, match="preserve"):
         ResearchCommand.model_validate(payload)
+
+
+def test_research_command_rejects_a_changed_selection_binding() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["selection_event_id"] = "substituted-selection-event"
+
+    with pytest.raises(ValueError, match="selection binding"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_research_draft_can_cite_validated_tool_evidence() -> None:
+    command = _command()
+    tool_evidence = ResearchToolEvidence(
+        evidence_id="announcement:synthetic-security-00",
+        source="fictional-announcement-feed",
+        reference="synthetic://announcement/00",
+        statement="A fictional announcement is available at the cutoff.",
+        acquired_at=command.knowledge_cutoff,
+        validated_at=command.knowledge_cutoff,
+        knowledge_cutoff=command.knowledge_cutoff,
+        semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+        validation_status="VALIDATED",
+    )
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=(
+                    tuple(evidence.evidence_id for evidence in member.evidence)
+                    + (tool_evidence.evidence_id,)
+                    if member is command.members[0]
+                    else tuple(evidence.evidence_id for evidence in member.evidence)
+                ),
+                thesis="The fictional thesis is bounded by the frozen evidence.",
+                bull_case="The fictional upside case remains conditional.",
+                bear_case="The fictional downside case remains explicit.",
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in command.members
+        ),
+    )
+
+    validate_research_draft(command, draft, (tool_evidence,))
 
 
 def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> None:

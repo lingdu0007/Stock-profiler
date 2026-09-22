@@ -76,6 +76,7 @@ from stock_profiler.modules.research.contracts import (
 from stock_profiler.modules.research.service import (
     freeze_research,
     prepare_research_risk_plan,
+    validate_research_draft,
 )
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -119,6 +120,14 @@ async def execute_research_risk_journey(
             error_code="RESEARCH_OUTPUT_INVALID",
         )
     tool_evidence = research_run.research_tool_evidence
+    try:
+        validate_research_draft(command, draft, tool_evidence)
+    except ValueError:
+        return replace(
+            research_run,
+            status="FAILED",
+            error_code="RESEARCH_PROVENANCE_INVALID",
+        )
     if command.failure_mode == "RAW_SCORE":
         return replace(
             research_run,
@@ -479,6 +488,31 @@ def _run_frozen_decision_case(
                         )
 
                     if execution_case.research is not None:
+                        async def execute_risk(
+                            research_run: FrameworkRunResult,
+                            risk_plan: ResearchRiskPlan,
+                        ) -> FrameworkRunResult:
+                            async def record_risk_transition(
+                                transition: FrameworkRunTransition,
+                            ) -> None:
+                                await _record_framework_transition(
+                                    ledger,
+                                    execution_case,
+                                    transition,
+                                    framework_run_id=risk_plan.risk_run_id,
+                                    phase="RISK_FRAMEWORK_RUN",
+                                )
+
+                            return await framework_adapter.execute_research_risk_run(
+                                execution_case,
+                                research_run,
+                                risk_plan,
+                                record_risk_transition,
+                                record_auxiliary_run_reservation=(
+                                    record_auxiliary_run_reservation
+                                ),
+                            )
+
                         framework = asyncio.run(
                             execute_research_risk_journey(
                                 execution_case,
@@ -486,16 +520,7 @@ def _run_frozen_decision_case(
                                     execution_case,
                                     record_transition,
                                 ),
-                                execute_risk=lambda research_run, risk_plan: (
-                                    framework_adapter.execute_research_risk_run(
-                                        execution_case,
-                                        research_run,
-                                        risk_plan,
-                                        record_auxiliary_run_reservation=(
-                                            record_auxiliary_run_reservation
-                                        ),
-                                    )
-                                ),
+                                execute_risk=execute_risk,
                             )
                         )
                     else:
@@ -552,14 +577,17 @@ async def _record_framework_transition(
     ledger: DecisionLedger[Transaction],
     case: FrozenDecisionCase,
     transition: FrameworkRunTransition,
+    *,
+    framework_run_id: str | None = None,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> None:
     """Commit each already-durable M-Agent transition before more framework work begins."""
     with ledger.serialize_case_execution() as connection:
         ledger.record_stage_result(
             connection,
             case=case,
-            stage_result=_framework_transition_stage_result(transition),
-            framework_run_id=case.framework_run_id,
+            stage_result=_framework_transition_stage_result(transition, phase=phase),
+            framework_run_id=framework_run_id or case.framework_run_id,
             allow_repeated_occurrence=transition.status in {"RUNNING", "WAITING"},
         )
 
@@ -576,7 +604,10 @@ async def _record_auxiliary_run_reservation(
             connection,
             framework_run_id=framework_run_id,
         )
-        if any(stage_result.phase == "RISK_FRAMEWORK_RUN" for stage_result in history):
+        if any(
+            stage_result.phase in {"AUXILIARY_RUN_RESERVATION", "RISK_FRAMEWORK_RUN"}
+            for stage_result in history
+        ):
             return False
         ledger.record_stage_result(
             connection,

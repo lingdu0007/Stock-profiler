@@ -115,6 +115,7 @@ class FrozenFramework(Protocol):
         case: FrozenDecisionCase,
         research_run: FrameworkRunResult,
         risk_plan: ResearchRiskPlan,
+        record_transition: FrameworkTransitionRecorder,
         *,
         record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult: ...

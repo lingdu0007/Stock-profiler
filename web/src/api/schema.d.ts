@@ -2586,6 +2586,11 @@ export interface components {
         };
         /** ResearchEvidence */
         ResearchEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
             /** Evidence Id */
             evidence_id: string;
             /**
@@ -2595,10 +2600,22 @@ export interface components {
             knowledge_cutoff: string;
             /** Reference */
             reference: string;
+            /** Semantic Version */
+            semantic_version: string;
             /** Source */
             source: string;
             /** Statement */
             statement: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+            /**
+             * Validation Status
+             * @constant
+             */
+            validation_status: "VALIDATED";
         };
         /**
          * ResearchHandoff
@@ -2675,6 +2692,8 @@ export interface components {
             security_ids: string[];
             /** Selection Event Id */
             selection_event_id: string;
+            /** Selection Fingerprint */
+            selection_fingerprint: string;
             /** Selection Object Id */
             selection_object_id: string;
             /** Targets */

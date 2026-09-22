@@ -6379,6 +6379,11 @@
       "ResearchEvidence": {
         "additionalProperties": false,
         "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
           "evidence_id": {
             "minLength": 1,
             "title": "Evidence Id",
@@ -6394,6 +6399,11 @@
             "title": "Reference",
             "type": "string"
           },
+          "semantic_version": {
+            "minLength": 1,
+            "title": "Semantic Version",
+            "type": "string"
+          },
           "source": {
             "minLength": 1,
             "title": "Source",
@@ -6403,9 +6413,29 @@
             "minLength": 1,
             "title": "Statement",
             "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          },
+          "validation_status": {
+            "const": "VALIDATED",
+            "title": "Validation Status",
+            "type": "string"
           }
         },
-        "required": ["evidence_id", "source", "reference", "statement", "knowledge_cutoff"],
+        "required": [
+          "evidence_id",
+          "source",
+          "reference",
+          "statement",
+          "acquired_at",
+          "validated_at",
+          "knowledge_cutoff",
+          "semantic_version",
+          "validation_status"
+        ],
         "title": "ResearchEvidence",
         "type": "object"
       },
@@ -6547,6 +6577,10 @@
             "title": "Selection Event Id",
             "type": "string"
           },
+          "selection_fingerprint": {
+            "title": "Selection Fingerprint",
+            "type": "string"
+          },
           "selection_object_id": {
             "title": "Selection Object Id",
             "type": "string"
@@ -6574,6 +6608,7 @@
           "scope",
           "selection_object_id",
           "selection_event_id",
+          "selection_fingerprint",
           "security_ids",
           "targets",
           "cutoff_at",

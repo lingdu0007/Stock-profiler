@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
@@ -8,6 +9,7 @@ from typing import Literal
 import pytest
 from m_agent.runtime import StepType, ToolRequest, parse_stage_result
 
+import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     RESEARCH_DEFINITION_INSTRUCTIONS,
     _read_announcement_tool,
@@ -65,6 +67,7 @@ from stock_profiler.modules.research.contracts import (
     handoff_fingerprint,
     risk_run_id_for,
     screening_output_sha256,
+    selection_binding_sha256,
 )
 from stock_profiler.modules.research.service import freeze_research
 
@@ -86,7 +89,11 @@ def research_command(
                     source="fictional-certified-feed",
                     reference=f"synthetic://evidence/{index:02}",
                     statement="A fictional structured fact is available at the cutoff.",
+                    acquired_at=cutoff,
+                    validated_at=cutoff,
                     knowledge_cutoff=cutoff,
+                    semantic_version="fictional-certified-feed-v1",
+                    validation_status="VALIDATED",
                 ),
             ),
             structured_signals={
@@ -122,6 +129,12 @@ def research_command(
         seed=1616,
         selection_object_id="selection-object-1616",
         selection_event_id="selection-event-1616",
+        selection_fingerprint=selection_binding_sha256(
+            "selection-object-1616",
+            "selection-event-1616",
+            cutoff,
+            screening,
+        ),
         cutoff_at=cutoff,
         knowledge_cutoff=cutoff,
         purpose="SYNTHETIC",
@@ -455,7 +468,17 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
                 )
             )
         }
+        risk_phases = {
+            row.phase
+            for row in connection.execute(
+                DECISION_STAGE_EVENTS.select().where(
+                    (DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id)
+                    & (DECISION_STAGE_EVENTS.c.framework_run_id == risk_run_id)
+                )
+            )
+        }
     assert {case.framework_run_id, risk_run_id}.issubset(recorded_run_ids)
+    assert "RISK_FRAMEWORK_RUN" in risk_phases
 
 
 def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None:
@@ -491,6 +514,43 @@ def test_risk_handoff_preserves_each_member_evidence_and_flags(
         .statement.startswith("A fictional structured fact")
     )
     assert research.handoff.member_handoffs[0].risk_flags == ("LIQUIDITY_WARNING",)
+
+
+def test_invalid_research_provenance_stops_before_raw_score_and_risk(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+    invalid_draft = _draft(command).model_dump(mode="json")
+    invalid_draft["members"][0]["evidence_refs"] = ["invented-evidence"]
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_model_response",
+        lambda _: json.dumps(invalid_draft, ensure_ascii=True, separators=(",", ":")),
+    )
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_PROVENANCE_INVALID" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+    with initialize_runtime_storage(migrated_settings).engine.connect() as connection:
+        recorded_run_ids = {
+            row.framework_run_id
+            for row in connection.execute(
+                DECISION_STAGE_EVENTS.select().where(
+                    DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id
+                )
+            )
+        }
+    assert recorded_run_ids == {case.framework_run_id}
 
 
 def test_research_context_stages_have_distinct_frozen_roles(

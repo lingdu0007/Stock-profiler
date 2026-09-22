@@ -76,7 +76,11 @@ class ResearchEvidence(ResearchContract):
     source: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
+    acquired_at: AwareDatetime
+    validated_at: AwareDatetime
     knowledge_cutoff: AwareDatetime
+    semantic_version: str = Field(min_length=1)
+    validation_status: Literal["VALIDATED"]
 
 
 class ResearchToolEvidence(ResearchContract):
@@ -151,6 +155,13 @@ class ResearchMemberInput(ResearchContract):
             raise ValueError("research evidence identities must be unique per member")
         if any(evidence.knowledge_cutoff != self.knowledge_cutoff for evidence in self.evidence):
             raise ValueError("research evidence and member knowledge cutoffs must agree")
+        if any(
+            evidence.acquired_at > evidence.validated_at
+            or evidence.validated_at > self.knowledge_cutoff
+            or evidence.validation_status != "VALIDATED"
+            for evidence in self.evidence
+        ):
+            raise ValueError("research evidence must be validated and available by the cutoff")
         return self
 
 
@@ -172,6 +183,7 @@ class ResearchCommand(ResearchContract):
     seed: int
     selection_object_id: str = Field(min_length=1)
     selection_event_id: str = Field(min_length=1)
+    selection_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     cutoff_at: AwareDatetime
     knowledge_cutoff: AwareDatetime
     purpose: Literal["SYNTHETIC"]
@@ -192,6 +204,13 @@ class ResearchCommand(ResearchContract):
             raise ValueError("research identities must be independent and unique")
         if self.cutoff_at != self.knowledge_cutoff:
             raise ValueError("research cutoff and knowledge cutoff must agree")
+        if self.selection_fingerprint != selection_binding_sha256(
+            self.selection_object_id,
+            self.selection_event_id,
+            self.cutoff_at,
+            self.screening,
+        ):
+            raise ValueError("research selection binding does not match its frozen screening")
         if tuple(security_ids) != tuple(self.screening.selected_member_ids):
             raise ValueError("research members must preserve the frozen selected cohort order")
         if any(member.knowledge_cutoff != self.knowledge_cutoff for member in self.members):
@@ -333,6 +352,7 @@ class ResearchHandoff(ResearchContract):
     scope: Literal["D0_SYNTHETIC_RESEARCH_ONLY"]
     selection_object_id: str
     selection_event_id: str
+    selection_fingerprint: str
     security_ids: tuple[str, ...] = Field(min_length=10, max_length=10)
     targets: tuple[str, ...] = Field(min_length=2, max_length=2)
     cutoff_at: AwareDatetime
@@ -440,6 +460,24 @@ def screening_output_sha256(screening: FrozenDualTargetScreening) -> str:
             separators=(",", ":"),
             sort_keys=True,
         ).encode()
+    ).hexdigest()
+
+
+def selection_binding_sha256(
+    selection_object_id: str,
+    selection_event_id: str,
+    cutoff_at: AwareDatetime,
+    screening: FrozenDualTargetScreening,
+) -> str:
+    """Bind the upstream selection identity to its ordered screening artifact."""
+    payload = {
+        "selection_object_id": selection_object_id,
+        "selection_event_id": selection_event_id,
+        "cutoff_at": cutoff_at.isoformat(),
+        "screening": screening.model_dump(mode="json"),
+    }
+    return sha256(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
     ).hexdigest()
 
 
