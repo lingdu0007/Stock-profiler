@@ -281,6 +281,13 @@ class RiskMemberVeto(ResearchContract):
     gates: tuple[RiskGate, ...] = Field(min_length=1)
     reasons: tuple[str, ...] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_disposition_against_gates(self) -> RiskMemberVeto:
+        expected = "REJECTED" if any(gate.status == "FAILED" for gate in self.gates) else "ACCEPTED"
+        if self.disposition != expected:
+            raise ValueError("risk member disposition must match its gates")
+        return self
+
 
 class RiskVetoDraft(ResearchContract):
     """Typed output of the independent risk Definition and Run."""

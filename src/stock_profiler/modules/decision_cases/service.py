@@ -263,6 +263,7 @@ async def execute_research_risk_journey(
         ).model_dump_json(),
         risk_run_id=risk_run.run_id,
         risk_run_status=risk_run.status,
+        risk_waiting_reason=risk_run.waiting_reason,
         risk_run_error_code=risk_run.error_code,
         risk_transitions=risk_run.transitions,
         risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
@@ -1493,6 +1494,8 @@ def _commit_research_framework_result(
             business_commit_status="NOT_ATTEMPTED",
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
+    if framework.status == "WAITING":
+        return closed()
     if framework.status != "SUCCEEDED":
         return closed(
             research=StageResult(
@@ -1566,6 +1569,17 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation(framework.raw_score_error_code),
         )
+    raw_score_stage = StageResult(
+        phase="RAW_SCORE",
+        status="SUCCEEDED",
+        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
+        reasons=("RAW_SCORE_FROZEN",),
+    )
+    if framework.risk_run_status == "WAITING":
+        return closed(
+            research=research_stage,
+            raw_score=raw_score_stage,
+        )
     if (
         envelope.risk_veto is None
         or framework.risk_run_status not in {"SUCCEEDED", "REJECTED"}
@@ -1575,6 +1589,7 @@ def _commit_research_framework_result(
     ):
         return closed(
             research=research_stage,
+            raw_score=raw_score_stage,
             risk=StageResult(
                 phase="RISK_VETO",
                 status="FAILED",
@@ -1604,6 +1619,7 @@ def _commit_research_framework_result(
                 gate_results=(GateResult(gate_id="RESEARCH_PROVENANCE", status="FAILED"),),
                 reasons=(str(error),),
             ),
+            raw_score=raw_score_stage,
             risk=StageResult(
                 phase="RISK_VETO",
                 status="FAILED",
@@ -1645,12 +1661,6 @@ def _commit_research_framework_result(
         reasons=research_outcome.risk_veto.reasons
         if research_outcome.risk_veto is not None
         else ("RISK_VETO_MISSING",),
-    )
-    raw_score_stage = StageResult(
-        phase="RAW_SCORE",
-        status="SUCCEEDED",
-        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
-        reasons=("RAW_SCORE_FROZEN",),
     )
     record(research_stage)
     record(raw_score_stage)
@@ -2015,7 +2025,7 @@ def _framework_stage_results_for_auxiliary_run(
     return _framework_stage_results_for_run(
         status=framework.risk_run_status,
         error_code=framework.risk_run_error_code,
-        waiting_reason=None,
+        waiting_reason=framework.risk_waiting_reason,
         transitions=framework.risk_transitions,
         phase="RISK_FRAMEWORK_RUN",
     )

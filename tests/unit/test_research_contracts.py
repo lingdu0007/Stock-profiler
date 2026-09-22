@@ -368,6 +368,33 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
     assert outcome.handoff.risk_run_id == "risk-run-1616"
     assert outcome.handoff.actionable is False
 
+    contradictory_member = risk.member_vetoes[0].model_copy(update={"disposition": "ACCEPTED"})
+    contradictory_risk = risk.model_copy(
+        update={
+            "member_vetoes": (contradictory_member, *risk.member_vetoes[1:]),
+        }
+    )
+    with pytest.raises(ValueError, match="risk member disposition"):
+        freeze_research(
+            command,
+            ResearchFrameworkOutput(
+                research_run_id="research-run-1616",
+                risk_run_id="risk-run-1616",
+                draft=draft,
+                risk_veto=contradictory_risk,
+                raw_scores=raw_scores,
+                member_handoffs=tuple(
+                    ResearchMemberHandoff(
+                        security_id=member.security_id,
+                        research_id=member.research_id,
+                        evidence=member.evidence,
+                        risk_flags=member.risk_flags,
+                    )
+                    for member in command.members
+                ),
+            ),
+        )
+
     with pytest.raises(ValueError, match="order"):
         freeze_research(
             command,

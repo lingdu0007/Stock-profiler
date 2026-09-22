@@ -320,4 +320,10 @@ def _validate_risk_member_vetoes(
     actual = tuple((member.security_id, member.research_id) for member in vetoes)
     if actual != expected:
         raise ValueError("risk veto member identities or order do not match the research cohort")
+    for veto in vetoes:
+        expected_disposition = (
+            "REJECTED" if any(gate.status == "FAILED" for gate in veto.gates) else "ACCEPTED"
+        )
+        if veto.disposition != expected_disposition:
+            raise ValueError("risk member disposition must match its gates")
     return vetoes

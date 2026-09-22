@@ -10,6 +10,7 @@ import pytest
 from m_agent.runtime import PolicyAction, PolicyGate, StepType, ToolRequest, parse_stage_result
 
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
+import stock_profiler.bootstrap.decision_cases as case_bootstrap
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     RESEARCH_DEFINITION_INSTRUCTIONS,
     _read_announcement_tool,
@@ -857,6 +858,82 @@ def test_rejected_risk_run_does_not_fabricate_member_verdicts(
     assert envelope.risk_veto is None
 
 
+def test_research_waiting_is_saved_without_a_research_failure(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    async def waiting_research_run(*_: object, **__: object) -> FrameworkRunResult:
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="WAITING",
+            output=None,
+            waiting_reason="RESEARCH_WAITING_FOR_RECOVERY",
+        )
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_run", waiting_research_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert execution.framework_run_status == "WAITING"
+    assert any(
+        stage.phase == "FRAMEWORK_RUN"
+        and stage.status == "WAITING"
+        and "RESEARCH_WAITING_FOR_RECOVERY" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase == "RESEARCH" for stage in execution.stage_results)
+
+
+def test_risk_waiting_preserves_raw_score_without_a_risk_failure(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    async def waiting_risk_run(
+        _: object,
+        runtime: object,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
+        *args: object,
+        **kwargs: object,
+    ) -> FrameworkRunResult:
+        del runtime, research_run, args, kwargs
+        return FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="WAITING",
+            output=None,
+            waiting_reason="RISK_WAITING_FOR_RECOVERY",
+        )
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_risk_run", waiting_risk_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RISK_FRAMEWORK_RUN"
+        and stage.status == "WAITING"
+        and "RISK_WAITING_FOR_RECOVERY" in stage.reasons
+        for stage in execution.stage_results
+    ), [
+        (stage.phase, stage.status, stage.reasons)
+        for stage in execution.stage_results
+        if stage.phase == "RISK_FRAMEWORK_RUN"
+    ]
+    assert any(
+        stage.phase == "RESEARCH" and stage.status == "SUCCEEDED"
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RAW_SCORE" and stage.status == "SUCCEEDED"
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
+    assert not any(stage.phase == "HOST_VALIDATION" for stage in execution.stage_results)
+
+
 def test_pending_risk_reservation_can_be_reused_after_creation_gap(
     migrated_settings: Settings,
 ) -> None:
@@ -1031,6 +1108,10 @@ def test_risk_run_failure_is_saved_without_fabricating_a_veto(
     )
 
     assert execution.report is None
+    assert any(
+        stage.phase == "RAW_SCORE" and stage.status == "SUCCEEDED"
+        for stage in execution.stage_results
+    )
     assert any(
         stage.phase == "RISK_VETO" and stage.status == "FAILED" for stage in execution.stage_results
     )
