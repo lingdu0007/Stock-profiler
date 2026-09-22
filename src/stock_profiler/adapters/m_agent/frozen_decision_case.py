@@ -9,7 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from importlib.metadata import version
-from typing import cast
+from typing import Literal, cast
 
 from m_agent.adapters import (
     DeterministicContextProvider,
@@ -107,6 +107,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchDataManifest,
     ResearchDraft,
     ResearchRiskPlan,
+    ResearchStageArtifact,
     ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
@@ -217,12 +218,14 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         runtime: RuntimeStorage | None = None,
         run_id: str | None = None,
         expected_security_ids: tuple[str, ...] = (),
+        expected_evidence_ids: tuple[str, ...] = (),
         fail: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
         self._run_id = run_id
         self._expected_security_ids = expected_security_ids
+        self._expected_evidence_ids = expected_evidence_ids
         self._fail = fail
         self._failure_code: str | None = None
 
@@ -286,10 +289,62 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         except ValueError as error:
             raise RuntimeError("RESEARCH_TOOL_OUTCOME_INVALID") from error
         stage_id = RESEARCH_STAGE_IDS[active_stage_index]
+        security_ids: list[str] = []
+        evidence_ids: list[str] = []
+        for output_item in previous.output_items:
+            try:
+                previous_payload = json.loads(output_item.item.content)
+            except json.JSONDecodeError as error:
+                raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID") from error
+            if "stage_artifact" in previous_payload:
+                previous_artifact = ResearchStageArtifact.model_validate(
+                    previous_payload["stage_artifact"]
+                )
+                security_ids.extend(previous_artifact.security_ids)
+                evidence_ids.extend(previous_artifact.evidence_ids)
+                continue
+            security_id = previous_payload.get("security_id")
+            if isinstance(security_id, str):
+                security_ids.append(security_id)
+            for evidence in previous_payload.get("evidence", ()):
+                evidence_id = evidence.get("evidence_id")
+                if isinstance(evidence_id, str):
+                    evidence_ids.append(evidence_id)
+        if tool_outcome.result is not None:
+            try:
+                tool_evidence = ResearchToolEvidence.model_validate_json(tool_outcome.result)
+            except ValueError as error:
+                raise RuntimeError("RESEARCH_TOOL_OUTCOME_INVALID") from error
+            evidence_ids.append(tool_evidence.evidence_id)
+        if not security_ids:
+            security_ids.extend(self._expected_security_ids)
+        if not evidence_ids:
+            evidence_ids.extend(self._expected_evidence_ids)
+        stage_artifact = ResearchStageArtifact(
+            stage_id=cast(Literal["analyze", "bull-bear", "draft"], stage_id),
+            source_stage_id=cast(
+                Literal["collect", "analyze", "bull-bear"],
+                previous.stage_id,
+            ),
+            security_ids=tuple(dict.fromkeys(security_ids)),
+            evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+            summary=f"Synthetic {stage_id} stage consumed the prior frozen stage.",
+            bull_case=(
+                "The synthetic evidence supports a conditional upside case."
+                if stage_id in {"bull-bear", "draft"}
+                else None
+            ),
+            bear_case=(
+                "The synthetic evidence preserves a conditional downside case."
+                if stage_id in {"bull-bear", "draft"}
+                else None
+            ),
+        )
         content = json.dumps(
             {
                 "stage": stage_id,
                 "source_stage": previous.stage_id,
+                "stage_artifact": stage_artifact.model_dump(mode="json"),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
                 ),
@@ -337,9 +392,24 @@ def _validate_research_context_items(
         )
         if set(manifest_evidence_ids) != set(evidence_ids):
             raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: evidence coverage")
+        incomplete_data_types = tuple(
+            entry.data_type for entry in manifest.entries if entry.completeness != "COMPLETE"
+        )
+        if incomplete_data_types:
+            raise ValueError(
+                "RESEARCH_REQUIRED_FACTS_INCOMPLETE: " + ",".join(incomplete_data_types)
+            )
         actual_security_ids.append(security_id)
     if tuple(actual_security_ids) != expected_security_ids:
         raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: security coverage")
+
+
+def _json_object(content: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[misc]
@@ -381,6 +451,16 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         self.call_count += 1
         self._last_request = request
         stage_index = len(request.tool_outcomes)
+        if stage_index:
+            expected_stage_id = ("analyze", "bull-bear", "draft")[stage_index - 1]
+            staged_artifacts = tuple(
+                ResearchStageArtifact.model_validate(payload["stage_artifact"])
+                for item in request.context_items
+                if (payload := _json_object(item.content)) is not None
+                if "stage_artifact" in payload
+            )
+            if not any(artifact.stage_id == expected_stage_id for artifact in staged_artifacts):
+                raise RuntimeError(f"RESEARCH_STAGE_ARTIFACT_MISSING:{expected_stage_id}")
         if stage_index < len(self._stage_tool_calls):
             return ModelResponse(tool_calls=(self._stage_tool_calls[stage_index],))
         return ModelResponse(content=self._responses[0])
@@ -518,6 +598,9 @@ def _research_definition(
             runtime=runtime,
             run_id=run_id,
             expected_security_ids=tuple(member.security_id for member in command.members),
+            expected_evidence_ids=tuple(
+                evidence.evidence_id for member in command.members for evidence in member.evidence
+            ),
             fail=command.failure_mode == "DATA",
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),

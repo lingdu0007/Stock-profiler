@@ -63,11 +63,7 @@ def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
                     provider_id="synthetic-required-fact-provider",
                     provider_version="synthetic-required-fact-provider-v1",
                     completeness="COMPLETE",
-                    event_status=(
-                        "VERIFIED_EMPTY"
-                        if data_type == "INSTITUTIONAL_ACTIVITY" and index == 0
-                        else "PRESENT"
-                    ),
+                    event_status="PRESENT",
                     evidence_ids=(evidence[position].evidence_id,),
                     knowledge_cutoff=cutoff,
                 )
@@ -264,7 +260,7 @@ def test_research_command_rejects_a_non_ten_or_incomplete_cohort() -> None:
         ResearchCommand.model_validate(payload)
 
 
-def test_research_command_requires_complete_data_manifest_for_each_member() -> None:
+def test_research_command_preserves_unavailable_data_for_failure_handling() -> None:
     payload = _command().model_dump(mode="json")
     payload["members"][0]["data_manifest"]["entries"] = payload["members"][0]["data_manifest"][
         "entries"
@@ -275,9 +271,22 @@ def test_research_command_requires_complete_data_manifest_for_each_member() -> N
 
     payload = _command().model_dump(mode="json")
     payload["members"][0]["data_manifest"]["entries"][1]["completeness"] = "INCOMPLETE"
+    payload["members"][0]["data_manifest"]["entries"][1]["event_status"] = "UNAVAILABLE"
 
-    with pytest.raises(ValueError, match="must be complete"):
+    command = ResearchCommand.model_validate(payload)
+    assert command.members[0].data_manifest.entries[1].completeness == "INCOMPLETE"
+
+
+def test_verified_empty_institutional_activity_requires_zero_signals() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["data_manifest"]["entries"][2]["event_status"] = "VERIFIED_EMPTY"
+
+    with pytest.raises(ValueError, match="verified-empty institutional activity"):
         ResearchCommand.model_validate(payload)
+
+    payload["members"][0]["structured_signals"]["institutional_net_buy_ratio"] = "0"
+    payload["members"][0]["structured_signals"]["institutional_listing_frequency"] = "0"
+    ResearchCommand.model_validate(payload)
 
 
 def test_research_command_rejects_a_reordered_frozen_cohort() -> None:

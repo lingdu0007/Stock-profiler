@@ -170,14 +170,16 @@ class ResearchDataManifestEntry(ResearchContract):
     provider_id: str = Field(min_length=1)
     provider_version: str = Field(min_length=1)
     completeness: Literal["COMPLETE", "INCOMPLETE"]
-    event_status: Literal["PRESENT", "VERIFIED_EMPTY"]
+    event_status: Literal["PRESENT", "VERIFIED_EMPTY", "UNAVAILABLE"]
     evidence_ids: tuple[str, ...] = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
 
     @model_validator(mode="after")
     def validate_availability(self) -> ResearchDataManifestEntry:
-        if self.completeness != "COMPLETE":
-            raise ValueError("research data manifest entries must be complete")
+        if self.completeness == "INCOMPLETE" and self.event_status != "UNAVAILABLE":
+            raise ValueError("incomplete research data manifest entries must be unavailable")
+        if self.completeness == "COMPLETE" and self.event_status == "UNAVAILABLE":
+            raise ValueError("complete research data manifest entries cannot be unavailable")
         if self.event_status == "VERIFIED_EMPTY" and self.data_type != "INSTITUTIONAL_ACTIVITY":
             raise ValueError("only institutional activity may use a verified-empty event status")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
@@ -198,6 +200,31 @@ class ResearchDataManifest(ResearchContract):
             raise ValueError(
                 "research data manifest must contain the required research data types exactly once"
             )
+        return self
+
+
+class ResearchStageArtifact(ResearchContract):
+    """Typed intermediate evidence passed between staged research phases."""
+
+    stage_id: Literal["analyze", "bull-bear", "draft"]
+    source_stage_id: Literal["collect", "analyze", "bull-bear"]
+    security_ids: tuple[str, ...] = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    bull_case: str | None = None
+    bear_case: str | None = None
+
+    @model_validator(mode="after")
+    def validate_stage_progression(self) -> ResearchStageArtifact:
+        expected_source = {
+            "analyze": "collect",
+            "bull-bear": "analyze",
+            "draft": "bull-bear",
+        }[self.stage_id]
+        if self.source_stage_id != expected_source:
+            raise ValueError("research stage artifact source does not match its stage")
+        if self.stage_id in {"bull-bear", "draft"} and (not self.bull_case or not self.bear_case):
+            raise ValueError("research debate artifacts require both bull and bear cases")
         return self
 
 
@@ -238,6 +265,19 @@ class ResearchMemberInput(ResearchContract):
             raise ValueError("research data manifest and member knowledge cutoffs must agree")
         if any(evidence.knowledge_cutoff != self.knowledge_cutoff for evidence in self.evidence):
             raise ValueError("research evidence and member knowledge cutoffs must agree")
+        if any(
+            entry.completeness == "COMPLETE" and entry.event_status == "VERIFIED_EMPTY"
+            for entry in self.data_manifest.entries
+        ) and any(
+            self.structured_signals[signal_id] != Decimal("0")
+            for signal_id in (
+                "institutional_net_buy_ratio",
+                "institutional_listing_frequency",
+            )
+        ):
+            raise ValueError(
+                "verified-empty institutional activity requires zero institutional signals"
+            )
         if any(
             evidence.acquired_at > evidence.validated_at
             or evidence.validated_at > self.knowledge_cutoff
@@ -508,6 +548,8 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
     """Compute z20 only from structured screening priors and eleven signals."""
     if member.security_id not in command.screening.selected_member_ids:
         raise ValueError("raw score member is outside the fixed-ten cohort")
+    if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries):
+        raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
     structured_inputs = {
         "screening_positive_prior": command.screening.positive_percentiles[member.security_id],
         "screening_terminal_prior": command.screening.terminal_percentiles[member.security_id],

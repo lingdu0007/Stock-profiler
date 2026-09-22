@@ -78,6 +78,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchMemberHandoff,
     ResearchMemberInput,
     ResearchRiskPlan,
+    ResearchStageArtifact,
     ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
@@ -127,11 +128,7 @@ def research_command(
                         provider_id="synthetic-required-fact-provider",
                         provider_version="synthetic-required-fact-provider-v1",
                         completeness="COMPLETE",
-                        event_status=(
-                            "VERIFIED_EMPTY"
-                            if data_type == "INSTITUTIONAL_ACTIVITY" and index == 0
-                            else "PRESENT"
-                        ),
+                        event_status="PRESENT",
                         evidence_ids=(f"{data_type.lower()}-evidence-{index:02}",),
                         knowledge_cutoff=cutoff,
                     )
@@ -670,6 +667,20 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
         result for result in context_results if result.stage_id == "draft" and result.output_items
     )
     assert draft_context.output_items[0].item.metadata["source_stage"] == "bull-bear"
+    stage_artifacts = {
+        result.stage_id: ResearchStageArtifact.model_validate(
+            json.loads(result.output_items[0].item.content)["stage_artifact"]
+        )
+        for result in context_results
+        if result.stage_id in {"analyze", "bull-bear", "draft"} and result.output_items
+    }
+    assert stage_artifacts["analyze"].source_stage_id == "collect"
+    assert stage_artifacts["bull-bear"].source_stage_id == "analyze"
+    assert stage_artifacts["draft"].source_stage_id == "bull-bear"
+    assert stage_artifacts["bull-bear"].bull_case is not None
+    assert stage_artifacts["bull-bear"].bear_case is not None
+    assert stage_artifacts["draft"].bull_case is not None
+    assert stage_artifacts["draft"].bear_case is not None
     assert execution.report.result.research.handoff.evidence_ids[-3:] == (
         "announcement:synthetic-security-00",
         "announcement:synthetic-security-01",
@@ -794,6 +805,29 @@ def test_incomplete_provider_manifest_fails_research_before_downstream_stages(
         and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
         for stage in execution.stage_results
     ), [(stage.phase, stage.status, stage.reasons) for stage in execution.stage_results]
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
+def test_incomplete_member_manifest_is_saved_as_research_data_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    research_payload["members"][0]["data_manifest"]["entries"][1]["completeness"] = "INCOMPLETE"
+    research_payload["members"][0]["data_manifest"]["entries"][1]["event_status"] = "UNAVAILABLE"
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
+        for stage in execution.stage_results
+    )
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
