@@ -208,6 +208,30 @@ def _research_data_gate_results(
     )
 
 
+def _raw_score_model_evidence_gate_results(command: ResearchCommand) -> tuple[GateResult, ...]:
+    """Persist each frozen raw-score waterline result before the aggregate failure."""
+    model = command.raw_score_model
+    return (
+        GateResult(
+            gate_id="RAW_SCORE_MATURE_MONTHS",
+            status="PASSED" if model.mature_months >= 60 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_TRAINING_RECORD_COUNT",
+            status="PASSED" if model.training_record_count >= 500 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_POSITIVE_CLASS",
+            status="PASSED" if model.positive_record_count >= 50 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_NEGATIVE_CLASS",
+            status="PASSED" if model.negative_record_count >= 50 else "FAILED",
+        ),
+        GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),
+    )
+
+
 async def execute_research_risk_journey(
     case: FrozenDecisionCase,
     *,
@@ -1593,12 +1617,17 @@ def _commit_research_framework_result(
             validation=_failed_host_validation("RAW_SCORE_NOT_AVAILABLE"),
         )
     if framework.raw_score_error_code is not None:
+        raw_score_gate_results = (
+            _raw_score_model_evidence_gate_results(command)
+            if framework.raw_score_error_code == "RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"
+            else (GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),)
+        )
         return closed(
             research=research_stage,
             raw_score=StageResult(
                 phase="RAW_SCORE",
                 status="FAILED",
-                gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),),
+                gate_results=raw_score_gate_results,
                 reasons=(framework.raw_score_error_code,),
             ),
             validation=_failed_host_validation(framework.raw_score_error_code),

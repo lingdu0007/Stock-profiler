@@ -145,10 +145,32 @@ class RawScoreFeatureTransform(ResearchContract):
         return self
 
 
+class RawScoreTrainingCohort(ResearchContract):
+    """Frozen historical fixed-ten cohort and its successful research members."""
+
+    cohort_id: str = Field(min_length=1)
+    month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    member_security_ids: tuple[str, ...] = Field(min_length=10, max_length=10)
+    completed_research_ids: dict[str, str] = Field(min_length=1)
+    research_definition_id: str = Field(min_length=1)
+    research_definition_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_members(self) -> RawScoreTrainingCohort:
+        if len(set(self.member_security_ids)) != len(self.member_security_ids):
+            raise ValueError("frozen training cohort member identities must be unique")
+        if not set(self.completed_research_ids).issubset(self.member_security_ids):
+            raise ValueError("completed research members must belong to the frozen cohort")
+        if len(set(self.completed_research_ids.values())) != len(self.completed_research_ids):
+            raise ValueError("completed research identities must be unique")
+        return self
+
+
 class RawScoreTrainingRecord(ResearchContract):
     """Frozen evidence that one historical raw-score label is eligible."""
 
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    cohort_id: str = Field(min_length=1)
     security_id: str = Field(min_length=1)
     research_id: str = Field(min_length=1)
     selection_cutoff_at: AwareDatetime
@@ -172,6 +194,7 @@ class RawScoreModelSnapshot(ResearchContract):
     training_months: tuple[str, ...] = Field(min_length=1)
     label_watermark_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     label_watermark_at: AwareDatetime
+    training_cohorts: tuple[RawScoreTrainingCohort, ...] = Field(min_length=1)
     training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
@@ -218,6 +241,34 @@ class RawScoreModelSnapshot(ResearchContract):
         ]
         if len(set(security_month_keys)) != len(security_month_keys):
             raise ValueError("raw-score training records must have unique security-month evidence")
+        cohorts_by_id = {cohort.cohort_id: cohort for cohort in self.training_cohorts}
+        if len(cohorts_by_id) != len(self.training_cohorts):
+            raise ValueError("raw-score training cohorts must have unique identities")
+        if {cohort.month for cohort in self.training_cohorts} != set(self.training_months):
+            raise ValueError("raw-score training cohorts must cover every training month")
+        if len({cohort.month for cohort in self.training_cohorts}) != len(self.training_cohorts):
+            raise ValueError("raw-score training cohorts must have one cohort per month")
+        records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
+        for record in self.training_records:
+            cohort = cohorts_by_id.get(record.cohort_id)
+            if cohort is None:
+                raise ValueError("raw-score training record must bind to a frozen cohort")
+            if record.month != cohort.month:
+                raise ValueError("raw-score training record month must match its frozen cohort")
+            if record.security_id not in cohort.completed_research_ids:
+                raise ValueError("raw-score training record must bind to a frozen cohort member")
+            if cohort.completed_research_ids[record.security_id] != record.research_id:
+                raise ValueError("raw-score training record research identity is not frozen")
+            records_by_cohort.setdefault(record.cohort_id, []).append(record)
+        for cohort in self.training_cohorts:
+            actual_members = {
+                record.security_id for record in records_by_cohort.get(cohort.cohort_id, ())
+            }
+            if actual_members != set(cohort.completed_research_ids):
+                raise ValueError(
+                    "raw-score training records must include every successful "
+                    "frozen research member"
+                )
         record_keys = [
             (record.month, record.security_id, record.research_id)
             for record in self.training_records
@@ -337,7 +388,8 @@ def _raw_score_month_end(month: str) -> datetime:
 
 def _frozen_raw_score_training_records(
     training_months: tuple[str, ...],
-) -> tuple[RawScoreTrainingRecord, ...]:
+) -> tuple[tuple[RawScoreTrainingCohort, ...], tuple[RawScoreTrainingRecord, ...]]:
+    cohorts: list[RawScoreTrainingCohort] = []
     records: list[RawScoreTrainingRecord] = []
     record_index = 0
     for month_index, month in enumerate(training_months):
@@ -347,12 +399,32 @@ def _frozen_raw_score_training_records(
             selection_cutoff_at,
             RAW_SCORE_LABEL_HORIZON_MONTHS,
         )
-        for _ in range(record_count):
+        cohort_id = f"synthetic-training-cohort-{month}"
+        member_security_ids = tuple(
+            f"synthetic-training-security-{month_index * 10 + member_index:04}"
+            for member_index in range(10)
+        )
+        completed_research_ids = {
+            security_id: f"synthetic-training-research-{month_index * 10 + member_index:04}"
+            for member_index, security_id in enumerate(member_security_ids[:record_count])
+        }
+        cohorts.append(
+            RawScoreTrainingCohort(
+                cohort_id=cohort_id,
+                month=month,
+                member_security_ids=member_security_ids,
+                completed_research_ids=completed_research_ids,
+                research_definition_id=RESEARCH_DEFINITION_ID,
+                research_definition_version=RESEARCH_DEFINITION_VERSION,
+            )
+        )
+        for security_id, research_id in completed_research_ids.items():
             records.append(
                 RawScoreTrainingRecord(
                     month=month,
-                    security_id=f"synthetic-training-security-{record_index:04}",
-                    research_id=f"synthetic-training-research-{record_index:04}",
+                    cohort_id=cohort_id,
+                    security_id=security_id,
+                    research_id=research_id,
                     selection_cutoff_at=selection_cutoff_at,
                     terminal_label=record_index % 2 == 0,
                     label_available_at=label_available_at,
@@ -360,13 +432,13 @@ def _frozen_raw_score_training_records(
                 )
             )
             record_index += 1
-    return tuple(records)
+    return tuple(cohorts), tuple(records)
 
 
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
     training_months = _training_month_sequence(2036, 12, 60)
-    training_records = _frozen_raw_score_training_records(training_months)
+    training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
     return RawScoreModelSnapshot(
         algorithm="ELASTIC_NET_LOGISTIC",
         model_version=RAW_SCORE_MODEL_VERSION,
@@ -380,6 +452,7 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_months=training_months,
         label_watermark_month="2042-05",
         label_watermark_at=max(record.label_available_at for record in training_records),
+        training_cohorts=training_cohorts,
         training_records=training_records,
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
@@ -550,6 +623,93 @@ class ResearchStageArtifact(ResearchContract):
         return self
 
 
+class ResearchStructuredFacts(ResearchContract):
+    """Cutoff-bound source facts from which raw-score signals are calculated."""
+
+    revenue_growth_current: Decimal | None
+    revenue_growth_prior: Decimal | None
+    quarter_profit_improvement: Decimal | None
+    average_total_assets: Decimal | None
+    operating_cash_flow_ttm: Decimal | None
+    working_capital_pressure_current: Decimal | None
+    working_capital_pressure_prior: Decimal | None
+    leverage_ratio_current: Decimal | None
+    leverage_ratio_prior: Decimal | None
+    stock_return_20d: Decimal | None
+    industry_return_20d: Decimal | None
+    downside_semivariance_60d: Decimal | None
+    max_drawdown_60d: Decimal | None
+    turnover_change: Decimal | None
+    institutional_net_buy_ratio: Decimal | None
+    institutional_listing_frequency: Decimal | None
+
+    @model_validator(mode="after")
+    def validate_facts(self) -> ResearchStructuredFacts:
+        values = self.model_dump(mode="python").values()
+        if any(value is not None and not value.is_finite() for value in values):
+            raise ValueError("structured source facts must be finite")
+        if self.average_total_assets is not None and self.average_total_assets <= 0:
+            raise ValueError("structured source facts require positive average total assets")
+        return self
+
+
+def _structured_difference(
+    current: Decimal | None,
+    prior: Decimal | None,
+) -> Decimal | None:
+    if current is None or prior is None:
+        return None
+    return current - prior
+
+
+def _structured_ratio(
+    numerator: Decimal | None,
+    denominator: Decimal | None,
+) -> Decimal | None:
+    if numerator is None or denominator is None:
+        return None
+    if denominator <= 0:
+        raise ValueError("structured source facts require positive average total assets")
+    return numerator / denominator
+
+
+def calculate_structured_signals(
+    facts: ResearchStructuredFacts,
+) -> dict[str, Decimal | None]:
+    """Calculate the frozen raw-score signals from named source facts."""
+    return {
+        "single_quarter_revenue_acceleration": _structured_difference(
+            facts.revenue_growth_current,
+            facts.revenue_growth_prior,
+        ),
+        "asset_normalized_quarter_profit_improvement": _structured_ratio(
+            facts.quarter_profit_improvement,
+            facts.average_total_assets,
+        ),
+        "operating_cash_flow_return_on_assets": _structured_ratio(
+            facts.operating_cash_flow_ttm,
+            facts.average_total_assets,
+        ),
+        "working_capital_pressure_change": _structured_difference(
+            facts.working_capital_pressure_current,
+            facts.working_capital_pressure_prior,
+        ),
+        "leverage_ratio_change": _structured_difference(
+            facts.leverage_ratio_current,
+            facts.leverage_ratio_prior,
+        ),
+        "industry_relative_return_20d": _structured_difference(
+            facts.stock_return_20d,
+            facts.industry_return_20d,
+        ),
+        "downside_semivariance_60d": facts.downside_semivariance_60d,
+        "max_drawdown_60d": facts.max_drawdown_60d,
+        "turnover_change": facts.turnover_change,
+        "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
+        "institutional_listing_frequency": facts.institutional_listing_frequency,
+    }
+
+
 class ResearchMemberInput(ResearchContract):
     """Structured, cutoff-bound facts for one member of the research cohort."""
 
@@ -558,20 +718,18 @@ class ResearchMemberInput(ResearchContract):
     knowledge_cutoff: AwareDatetime
     evidence: tuple[ResearchEvidence, ...] = Field(min_length=1)
     data_manifest: ResearchDataManifest
-    structured_signals: dict[str, Decimal | None]
+    structured_facts: ResearchStructuredFacts
+    structured_signals: dict[str, Decimal | None] = Field(default_factory=dict)
     risk_flags: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_member_facts(self) -> ResearchMemberInput:
-        if set(self.structured_signals) != set(RAW_SCORE_FEATURE_IDS):
-            raise ValueError("structured research facts must contain all eleven raw-score signals")
-        if any(
-            value is not None and not value.is_finite()
-            for value in self.structured_signals.values()
-        ):
-            raise ValueError("structured research signals must be finite")
+        derived_signals = calculate_structured_signals(self.structured_facts)
+        if self.structured_signals and self.structured_signals != derived_signals:
+            raise ValueError("structured signals must match the deterministic feature calculator")
+        object.__setattr__(self, "structured_signals", derived_signals)
         if all(entry.completeness == "COMPLETE" for entry in self.data_manifest.entries) and any(
-            value is None for value in self.structured_signals.values()
+            value is None for value in derived_signals.values()
         ):
             raise ValueError("complete research data requires every raw-score signal")
         evidence_ids = [evidence.evidence_id for evidence in self.evidence]
@@ -598,7 +756,7 @@ class ResearchMemberInput(ResearchContract):
             entry.completeness == "COMPLETE" and entry.event_status == "VERIFIED_EMPTY"
             for entry in self.data_manifest.entries
         ) and any(
-            self.structured_signals[signal_id] != Decimal("0")
+            derived_signals[signal_id] != Decimal("0")
             for signal_id in (
                 "institutional_net_buy_ratio",
                 "institutional_listing_frequency",
@@ -922,7 +1080,8 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         raise ValueError("raw score member is outside the fixed-ten cohort")
     if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
-    if any(value is None for value in member.structured_signals.values()):
+    structured_signals = calculate_structured_signals(member.structured_facts)
+    if any(value is None for value in structured_signals.values()):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
     model = command.raw_score_model
     if not model.has_sufficient_training_evidence:
@@ -931,9 +1090,7 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         "screening_positive_prior": command.screening.positive_percentiles[member.security_id],
         "screening_terminal_prior": command.screening.terminal_percentiles[member.security_id],
         **{
-            signal_id: value
-            for signal_id, value in member.structured_signals.items()
-            if value is not None
+            signal_id: value for signal_id, value in structured_signals.items() if value is not None
         },
     }
     try:
@@ -946,7 +1103,7 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
                         value,
                         model.transformations[signal_id],
                     )
-                    for signal_id, value in member.structured_signals.items()
+                    for signal_id, value in structured_signals.items()
                     if value is not None
                 },
             }

@@ -562,6 +562,7 @@ def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]
                         evidence.model_dump(mode="json") for evidence in member.evidence
                     ),
                     "data_manifest": member.data_manifest.model_dump(mode="json"),
+                    "structured_facts": member.structured_facts.model_dump(mode="json"),
                     "structured_signals": member.model_dump(mode="json")["structured_signals"],
                     "risk_flags": member.risk_flags,
                 },

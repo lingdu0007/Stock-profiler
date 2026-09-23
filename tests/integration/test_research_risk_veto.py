@@ -69,7 +69,6 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
-    RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_MODEL_ADAPTER_ID,
@@ -93,10 +92,12 @@ from stock_profiler.modules.research.contracts import (
     ResearchMemberInput,
     ResearchRiskPlan,
     ResearchStageArtifact,
+    ResearchStructuredFacts,
     ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    calculate_structured_signals,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
@@ -105,6 +106,28 @@ from stock_profiler.modules.research.contracts import (
     selection_binding_sha256,
 )
 from stock_profiler.modules.research.service import freeze_research
+
+
+def _structured_facts(index: int) -> ResearchStructuredFacts:
+    signal_value = Decimal(index + 1) / Decimal(100)
+    return ResearchStructuredFacts(
+        revenue_growth_current=signal_value,
+        revenue_growth_prior=Decimal("0"),
+        quarter_profit_improvement=signal_value,
+        average_total_assets=Decimal("1"),
+        operating_cash_flow_ttm=signal_value,
+        working_capital_pressure_current=signal_value,
+        working_capital_pressure_prior=Decimal("0"),
+        leverage_ratio_current=signal_value,
+        leverage_ratio_prior=Decimal("0"),
+        stock_return_20d=signal_value,
+        industry_return_20d=Decimal("0"),
+        downside_semivariance_60d=signal_value,
+        max_drawdown_60d=signal_value,
+        turnover_change=signal_value,
+        institutional_net_buy_ratio=signal_value,
+        institutional_listing_frequency=signal_value,
+    )
 
 
 def research_command(
@@ -151,9 +174,8 @@ def research_command(
                     for data_type in RESEARCH_REQUIRED_DATA_TYPES
                 ),
             ),
-            structured_signals={
-                signal_id: Decimal(index + 1) / Decimal(100) for signal_id in RAW_SCORE_FEATURE_IDS
-            },
+            structured_facts=_structured_facts(index),
+            structured_signals=calculate_structured_signals(_structured_facts(index)),
             risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
         )
         for index in range(10)
@@ -1023,9 +1045,16 @@ def test_missing_structured_signal_is_saved_as_research_data_failure(
     assert isinstance(research_payload, dict)
     research_payload["members"][0]["data_manifest"]["entries"][3]["completeness"] = "INCOMPLETE"
     research_payload["members"][0]["data_manifest"]["entries"][3]["event_status"] = "UNAVAILABLE"
-    research_payload["members"][0]["structured_signals"]["operating_cash_flow_return_on_assets"] = (
-        None
-    )
+    research_payload["members"][0]["structured_facts"]["operating_cash_flow_ttm"] = None
+    research_payload["members"][0]["structured_signals"] = {
+        signal_id: None if value is None else str(value)
+        for signal_id, value in calculate_structured_signals(
+            ResearchStructuredFacts.model_validate(
+                research_payload["members"][0]["structured_facts"]
+            )
+        ).items()
+    }
+    payload["research"] = research_payload
     payload["input"]["research"] = research_payload
 
     execution = run_frozen_decision_case(migrated_settings, payload)
@@ -1394,6 +1423,9 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
     training_records = [
         record for record in model_payload["training_records"] if record["month"] != last_month
     ]
+    training_cohorts = [
+        cohort for cohort in model_payload["training_cohorts"] if cohort["month"] != last_month
+    ]
     training_months = [month for month in model_payload["training_months"] if month != last_month]
     positive_record_count = sum(record["terminal_label"] for record in training_records)
     model_payload.update(
@@ -1410,6 +1442,7 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
             "positive_record_count": positive_record_count,
             "negative_record_count": len(training_records) - positive_record_count,
             "training_records": training_records,
+            "training_cohorts": training_cohorts,
         }
     )
     model = RawScoreModelSnapshot.model_validate(model_payload)
@@ -1438,6 +1471,14 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
         and "RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT" in stage.reasons
         for stage in execution.stage_results
     )
+    raw_score_stage = next(stage for stage in execution.stage_results if stage.phase == "RAW_SCORE")
+    assert {gate.gate_id: gate.status for gate in raw_score_stage.gate_results} == {
+        "RAW_SCORE_MATURE_MONTHS": "FAILED",
+        "RAW_SCORE_TRAINING_RECORD_COUNT": "FAILED",
+        "RAW_SCORE_POSITIVE_CLASS": "PASSED",
+        "RAW_SCORE_NEGATIVE_CLASS": "PASSED",
+        "STRUCTURED_Z20": "FAILED",
+    }
     assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
 
 

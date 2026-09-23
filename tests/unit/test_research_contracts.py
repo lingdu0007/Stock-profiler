@@ -22,10 +22,12 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchMemberHandoff,
     ResearchMemberInput,
+    ResearchStructuredFacts,
     ResearchToolEvidence,
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    calculate_structured_signals,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
@@ -36,6 +38,25 @@ from stock_profiler.modules.research.service import freeze_research, validate_re
 
 
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
+    signal_value = Decimal(index + 1) / Decimal(10)
+    structured_facts = ResearchStructuredFacts(
+        revenue_growth_current=signal_value,
+        revenue_growth_prior=Decimal("0"),
+        quarter_profit_improvement=signal_value,
+        average_total_assets=Decimal("1"),
+        operating_cash_flow_ttm=signal_value,
+        working_capital_pressure_current=signal_value,
+        working_capital_pressure_prior=Decimal("0"),
+        leverage_ratio_current=signal_value,
+        leverage_ratio_prior=Decimal("0"),
+        stock_return_20d=signal_value,
+        industry_return_20d=Decimal("0"),
+        downside_semivariance_60d=signal_value,
+        max_drawdown_60d=signal_value,
+        turnover_change=signal_value,
+        institutional_net_buy_ratio=signal_value,
+        institutional_listing_frequency=signal_value,
+    )
     evidence = tuple(
         ResearchEvidence(
             evidence_id=f"{data_type.lower()}-evidence-{index:02}",
@@ -72,9 +93,8 @@ def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
                 for position, data_type in enumerate(RESEARCH_REQUIRED_DATA_TYPES)
             ),
         ),
-        structured_signals={
-            signal_id: Decimal(index + 1) / Decimal(10) for signal_id in RAW_SCORE_FEATURE_IDS
-        },
+        structured_facts=structured_facts,
+        structured_signals=calculate_structured_signals(structured_facts),
         risk_flags=("LIQUIDITY_WARNING",) if index == 0 else (),
     )
 
@@ -267,6 +287,24 @@ def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_raw_score_snapshot_rejects_record_outside_frozen_training_cohort() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_records"][0]["security_id"] = (
+        "synthetic-training-security-outside-cohort"
+    )
+
+    with pytest.raises(ValueError, match="frozen cohort"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_research_signals_must_match_deterministic_source_facts() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["structured_facts"]["stock_return_20d"] = "9"
+
+    with pytest.raises(ValueError, match="deterministic feature calculator"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:
     with pytest.raises(ValueError, match="clip bounds"):
         RawScoreFeatureTransform(
@@ -413,7 +451,13 @@ def test_research_command_allows_missing_signal_when_its_manifest_is_unavailable
     payload = _command().model_dump(mode="json")
     payload["members"][0]["data_manifest"]["entries"][3]["completeness"] = "INCOMPLETE"
     payload["members"][0]["data_manifest"]["entries"][3]["event_status"] = "UNAVAILABLE"
-    payload["members"][0]["structured_signals"]["operating_cash_flow_return_on_assets"] = None
+    payload["members"][0]["structured_facts"]["operating_cash_flow_ttm"] = None
+    payload["members"][0]["structured_signals"] = {
+        signal_id: None if value is None else str(value)
+        for signal_id, value in calculate_structured_signals(
+            ResearchStructuredFacts.model_validate(payload["members"][0]["structured_facts"])
+        ).items()
+    }
 
     command = ResearchCommand.model_validate(payload)
 
@@ -429,8 +473,14 @@ def test_verified_empty_institutional_activity_requires_zero_signals() -> None:
     with pytest.raises(ValueError, match="verified-empty institutional activity"):
         ResearchCommand.model_validate(payload)
 
-    payload["members"][0]["structured_signals"]["institutional_net_buy_ratio"] = "0"
-    payload["members"][0]["structured_signals"]["institutional_listing_frequency"] = "0"
+    payload["members"][0]["structured_facts"]["institutional_net_buy_ratio"] = "0"
+    payload["members"][0]["structured_facts"]["institutional_listing_frequency"] = "0"
+    payload["members"][0]["structured_signals"] = {
+        signal_id: None if value is None else str(value)
+        for signal_id, value in calculate_structured_signals(
+            ResearchStructuredFacts.model_validate(payload["members"][0]["structured_facts"])
+        ).items()
+    }
     ResearchCommand.model_validate(payload)
 
 
