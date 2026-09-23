@@ -6,7 +6,7 @@ import json
 import re
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
@@ -50,6 +50,7 @@ RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
+_RAW_SCORE_DECIMAL_CONTEXT = Context(prec=38)
 _RAW_SCORE_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 RAW_SCORE_INTERACTION_TERMS: tuple[str, ...] = ()
 RAW_SCORE_FEATURE_IDS: tuple[str, ...] = (
@@ -157,6 +158,11 @@ class RawScoreTrainingCohort(ResearchContract):
 
     @model_validator(mode="after")
     def validate_members(self) -> RawScoreTrainingCohort:
+        if (
+            self.research_definition_id != RESEARCH_DEFINITION_ID
+            or self.research_definition_version != RESEARCH_DEFINITION_VERSION
+        ):
+            raise ValueError("raw-score training cohort must use the supported research Definition")
         if len(set(self.member_security_ids)) != len(self.member_security_ids):
             raise ValueError("frozen training cohort member identities must be unique")
         if not set(self.completed_research_ids).issubset(self.member_security_ids):
@@ -174,6 +180,7 @@ class RawScoreTrainingRecord(ResearchContract):
     security_id: str = Field(min_length=1)
     research_id: str = Field(min_length=1)
     selection_cutoff_at: AwareDatetime
+    evaluation_entry_at: AwareDatetime
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
@@ -298,11 +305,14 @@ class RawScoreModelSnapshot(ResearchContract):
         ):
             raise ValueError("raw-score training record cutoff does not match its month")
         if any(
-            _raw_score_add_months(
-                record.selection_cutoff_at,
-                RAW_SCORE_LABEL_HORIZON_MONTHS,
-            )
-            > record.label_available_at
+            record.evaluation_entry_at <= record.selection_cutoff_at
+            for record in self.training_records
+        ):
+            raise ValueError("raw-score evaluation entry must follow the selection cutoff")
+        if any(record.evaluation_entry_at.weekday() >= 5 for record in self.training_records):
+            raise ValueError("raw-score evaluation entry must be a synthetic trading day")
+        if any(
+            _raw_score_label_available_at(record.evaluation_entry_at) > record.label_available_at
             for record in self.training_records
         ):
             raise ValueError("raw-score training record label maturity is incomplete")
@@ -386,6 +396,27 @@ def _raw_score_month_end(month: str) -> datetime:
     )
 
 
+def _raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
+    """Return the first synthetic weekday session after the frozen cutoff."""
+    candidate = selection_cutoff_at.replace(
+        hour=16,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ) + timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _raw_score_label_available_at(evaluation_entry_at: datetime) -> datetime:
+    """Apply the six-month horizon and roll a weekend target back to Friday."""
+    candidate = _raw_score_add_months(evaluation_entry_at, RAW_SCORE_LABEL_HORIZON_MONTHS)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
 def _frozen_raw_score_training_records(
     training_months: tuple[str, ...],
 ) -> tuple[tuple[RawScoreTrainingCohort, ...], tuple[RawScoreTrainingRecord, ...]]:
@@ -395,10 +426,8 @@ def _frozen_raw_score_training_records(
     for month_index, month in enumerate(training_months):
         record_count = 9 if month_index < 20 else 8
         selection_cutoff_at = _raw_score_month_end(month)
-        label_available_at = _raw_score_add_months(
-            selection_cutoff_at,
-            RAW_SCORE_LABEL_HORIZON_MONTHS,
-        )
+        evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
+        label_available_at = _raw_score_label_available_at(evaluation_entry_at)
         cohort_id = f"synthetic-training-cohort-{month}"
         member_security_ids = tuple(
             f"synthetic-training-security-{month_index * 10 + member_index:04}"
@@ -426,6 +455,7 @@ def _frozen_raw_score_training_records(
                     security_id=security_id,
                     research_id=research_id,
                     selection_cutoff_at=selection_cutoff_at,
+                    evaluation_entry_at=evaluation_entry_at,
                     terminal_label=record_index % 2 == 0,
                     label_available_at=label_available_at,
                     source_model_version=RAW_SCORE_MODEL_VERSION,
@@ -439,6 +469,7 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
     training_months = _training_month_sequence(2036, 12, 60)
     training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
+    label_watermark_at = max(record.label_available_at for record in training_records)
     return RawScoreModelSnapshot(
         algorithm="ELASTIC_NET_LOGISTIC",
         model_version=RAW_SCORE_MODEL_VERSION,
@@ -450,8 +481,8 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_window_start_month="2036-12",
         training_window_end_month="2041-11",
         training_months=training_months,
-        label_watermark_month="2042-05",
-        label_watermark_at=max(record.label_available_at for record in training_records),
+        label_watermark_month=label_watermark_at.strftime("%Y-%m"),
+        label_watermark_at=label_watermark_at,
         training_cohorts=training_cohorts,
         training_records=training_records,
         normalization_snapshot_id="synthetic-normalization-v1",
@@ -603,6 +634,7 @@ class ResearchStageArtifact(ResearchContract):
 
     stage_id: Literal["analyze", "bull-bear", "draft"]
     source_stage_id: Literal["collect", "analyze", "bull-bear"]
+    input_item_ids: tuple[str, ...] = Field(min_length=1)
     security_ids: tuple[str, ...] = Field(min_length=1)
     evidence_ids: tuple[str, ...] = Field(min_length=1)
     summary: str = Field(min_length=1)
@@ -618,6 +650,8 @@ class ResearchStageArtifact(ResearchContract):
         }[self.stage_id]
         if self.source_stage_id != expected_source:
             raise ValueError("research stage artifact source does not match its stage")
+        if len(set(self.input_item_ids)) != len(self.input_item_ids):
+            raise ValueError("research stage artifact input identities must be unique")
         if self.stage_id in {"bull-bear", "draft"} and (not self.bull_case or not self.bear_case):
             raise ValueError("research debate artifacts require both bull and bear cases")
         return self
@@ -677,37 +711,41 @@ def calculate_structured_signals(
     facts: ResearchStructuredFacts,
 ) -> dict[str, Decimal | None]:
     """Calculate the frozen raw-score signals from named source facts."""
-    return {
-        "single_quarter_revenue_acceleration": _structured_difference(
-            facts.revenue_growth_current,
-            facts.revenue_growth_prior,
-        ),
-        "asset_normalized_quarter_profit_improvement": _structured_ratio(
-            facts.quarter_profit_improvement,
-            facts.average_total_assets,
-        ),
-        "operating_cash_flow_return_on_assets": _structured_ratio(
-            facts.operating_cash_flow_ttm,
-            facts.average_total_assets,
-        ),
-        "working_capital_pressure_change": _structured_difference(
-            facts.working_capital_pressure_current,
-            facts.working_capital_pressure_prior,
-        ),
-        "leverage_ratio_change": _structured_difference(
-            facts.leverage_ratio_current,
-            facts.leverage_ratio_prior,
-        ),
-        "industry_relative_return_20d": _structured_difference(
-            facts.stock_return_20d,
-            facts.industry_return_20d,
-        ),
-        "downside_semivariance_60d": facts.downside_semivariance_60d,
-        "max_drawdown_60d": facts.max_drawdown_60d,
-        "turnover_change": facts.turnover_change,
-        "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
-        "institutional_listing_frequency": facts.institutional_listing_frequency,
-    }
+    with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
+        return {
+            "single_quarter_revenue_acceleration": _structured_difference(
+                facts.revenue_growth_current,
+                facts.revenue_growth_prior,
+            ),
+            "asset_normalized_quarter_profit_improvement": _structured_ratio(
+                facts.quarter_profit_improvement,
+                facts.average_total_assets,
+            ),
+            "operating_cash_flow_return_on_assets": _structured_ratio(
+                facts.operating_cash_flow_ttm,
+                facts.average_total_assets,
+            ),
+            "working_capital_pressure_change": _structured_ratio(
+                _structured_difference(
+                    facts.working_capital_pressure_current,
+                    facts.working_capital_pressure_prior,
+                ),
+                facts.average_total_assets,
+            ),
+            "leverage_ratio_change": _structured_difference(
+                facts.leverage_ratio_current,
+                facts.leverage_ratio_prior,
+            ),
+            "industry_relative_return_20d": _structured_difference(
+                facts.stock_return_20d,
+                facts.industry_return_20d,
+            ),
+            "downside_semivariance_60d": facts.downside_semivariance_60d,
+            "max_drawdown_60d": facts.max_drawdown_60d,
+            "turnover_change": facts.turnover_change,
+            "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
+            "institutional_listing_frequency": facts.institutional_listing_frequency,
+        }
 
 
 class ResearchMemberInput(ResearchContract):
@@ -1094,7 +1132,7 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         },
     }
     try:
-        with localcontext(Context(prec=38)):
+        with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
             transformed_inputs = {
                 "screening_positive_prior": structured_inputs["screening_positive_prior"],
                 "screening_terminal_prior": structured_inputs["screening_terminal_prior"],

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from typing import Literal
 
 import pytest
@@ -100,7 +100,7 @@ def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
 
 
 def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> ResearchCommand:
-    cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
+    cutoff = datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)
     members = tuple(_member_input(index, cutoff) for index in range(10))
     ids = tuple(member.security_id for member in members)
     screening = FrozenDualTargetScreening.model_construct(
@@ -172,8 +172,12 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.training_window_month_count == 60
     assert raw_score.training_window_start_month == "2036-12"
     assert raw_score.training_window_end_month == "2041-11"
-    assert raw_score.label_watermark_month == "2042-05"
+    assert raw_score.label_watermark_month == "2042-06"
     assert len(command.raw_score_model.training_records) == 500
+    assert all(
+        record.selection_cutoff_at < record.evaluation_entry_at
+        for record in command.raw_score_model.training_records
+    )
     assert (
         max(record.label_available_at for record in command.raw_score_model.training_records)
         == command.raw_score_model.label_watermark_at
@@ -236,7 +240,7 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
     assert len(snapshot.training_months) == 60
     assert snapshot.training_months[0] == snapshot.training_window_start_month
     assert snapshot.training_months[-1] == snapshot.training_window_end_month
-    assert snapshot.label_watermark_month == "2042-05"
+    assert snapshot.label_watermark_month == "2042-06"
     assert snapshot.training_window_policy == "EXPANDING_60_TO_119_ROLLING_120"
 
     payload = _command().model_dump(mode="json")
@@ -251,12 +255,12 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
 
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_records"][-1]["label_available_at"] = (
-        "2042-06-01T00:00:00+00:00"
+        "2042-07-01T16:00:00+00:00"
     )
     payload["raw_score_model"].update(
         {
-            "label_watermark_month": "2042-06",
-            "label_watermark_at": "2042-06-01T00:00:00+00:00",
+            "label_watermark_month": "2042-07",
+            "label_watermark_at": "2042-07-01T16:00:00+00:00",
         }
     )
     with pytest.raises(ValueError, match="research cutoff"):
@@ -266,7 +270,7 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_records"][0]["label_available_at"] = (
-        "2037-01-01T00:00:00+00:00"
+        "2037-06-30T16:00:00+00:00"
     )
     with pytest.raises(ValueError, match="maturity"):
         ResearchCommand.model_validate(payload)
@@ -297,12 +301,66 @@ def test_raw_score_snapshot_rejects_record_outside_frozen_training_cohort() -> N
         ResearchCommand.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("research_definition_id", "synthetic-monthly-research-other"),
+        ("research_definition_version", "3.0.0"),
+    ),
+)
+def test_raw_score_snapshot_requires_compatible_research_definition(
+    field: str,
+    value: str,
+) -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_cohorts"][0][field] = value
+
+    with pytest.raises(ValueError, match="supported research Definition"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_research_signals_must_match_deterministic_source_facts() -> None:
     payload = _command().model_dump(mode="json")
     payload["members"][0]["structured_facts"]["stock_return_20d"] = "9"
 
     with pytest.raises(ValueError, match="deterministic feature calculator"):
         ResearchCommand.model_validate(payload)
+
+
+def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:
+    facts = _member_input(0, datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)).structured_facts
+    facts = facts.model_copy(
+        update={
+            "working_capital_pressure_current": Decimal("30"),
+            "working_capital_pressure_prior": Decimal("10"),
+            "average_total_assets": Decimal("100"),
+        }
+    )
+
+    with localcontext(Context(prec=38)):
+        assert calculate_structured_signals(facts)["working_capital_pressure_change"] == Decimal(
+            "0.2"
+        )
+
+
+def test_structured_signal_calculation_is_independent_of_ambient_decimal_precision() -> None:
+    facts = _member_input(0, datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)).structured_facts
+    facts = facts.model_copy(
+        update={
+            "quarter_profit_improvement": Decimal("1"),
+            "average_total_assets": Decimal("7"),
+            "operating_cash_flow_ttm": Decimal("1"),
+            "working_capital_pressure_current": Decimal("30"),
+            "working_capital_pressure_prior": Decimal("10"),
+        }
+    )
+
+    with localcontext(Context(prec=6)):
+        low_precision = calculate_structured_signals(facts)
+    with localcontext(Context(prec=50)):
+        high_precision = calculate_structured_signals(facts)
+
+    assert low_precision == high_precision
 
 
 def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:

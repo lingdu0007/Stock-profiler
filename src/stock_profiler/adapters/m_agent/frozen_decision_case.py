@@ -308,7 +308,10 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         if not previous_results:
             raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
         previous = max(previous_results, key=lambda result: result.boundary)
+        if not previous.output_items:
+            raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
         stage_id = RESEARCH_STAGE_IDS[active_stage_index]
+        input_item_ids = tuple(item.item.item_id for item in previous.output_items)
         security_ids: list[str] = []
         evidence_ids: list[str] = []
         for output_item in previous.output_items:
@@ -330,16 +333,15 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 evidence_id = evidence.get("evidence_id")
                 if isinstance(evidence_id, str):
                     evidence_ids.append(evidence_id)
-        if not security_ids:
-            security_ids.extend(self._expected_security_ids)
-        if not evidence_ids:
-            evidence_ids.extend(self._expected_evidence_ids)
+        if not security_ids or not evidence_ids:
+            raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
         stage_artifact = ResearchStageArtifact(
             stage_id=cast(Literal["analyze", "bull-bear", "draft"], stage_id),
             source_stage_id=cast(
                 Literal["collect", "analyze", "bull-bear"],
                 previous.stage_id,
             ),
+            input_item_ids=input_item_ids,
             security_ids=tuple(dict.fromkeys(security_ids)),
             evidence_ids=tuple(dict.fromkeys(evidence_ids)),
             summary=f"Synthetic {stage_id} stage consumed the prior frozen stage.",
@@ -358,6 +360,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
             {
                 "stage": stage_id,
                 "source_stage": previous.stage_id,
+                "input_item_ids": input_item_ids,
                 "stage_artifact": stage_artifact.model_dump(mode="json"),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
@@ -457,7 +460,12 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
 
     deterministic = True
 
-    def __init__(self, draft_response: str) -> None:
+    def __init__(
+        self,
+        draft_response: str,
+        *,
+        command: ResearchCommand | None = None,
+    ) -> None:
         capabilities = ModelCapabilities(
             tool_calling=ToolCallingMode.NATIVE,
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
@@ -469,6 +477,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
             ),
         )
         super().__init__(responses=(draft_response,), capabilities=capabilities)
+        self._command = command
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
@@ -494,7 +503,45 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                             ),
                         )
                     )
-        return ModelResponse(content=self._responses[0])
+        if self._command is None:
+            return ModelResponse(content=self._responses[0])
+        draft_artifact: ResearchStageArtifact | None = None
+        for item in request.context_items:
+            payload = _json_object(item.content)
+            if not payload or payload.get("stage") != "draft":
+                continue
+            try:
+                candidate = ResearchStageArtifact.model_validate(payload["stage_artifact"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID") from error
+            input_item_ids = payload.get("input_item_ids")
+            context_item_ids = {context_item.item_id for context_item in request.context_items}
+            if (
+                candidate.stage_id != "draft"
+                or item.metadata.get("source_stage") != "bull-bear"
+                or not isinstance(input_item_ids, list)
+                or tuple(input_item_ids) != candidate.input_item_ids
+                or not set(candidate.input_item_ids).issubset(context_item_ids)
+                or set(candidate.security_ids)
+                != {member.security_id for member in self._command.members}
+                or set(candidate.evidence_ids)
+                != {
+                    evidence.evidence_id
+                    for member in self._command.members
+                    for evidence in member.evidence
+                }
+            ):
+                raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID")
+            draft_artifact = candidate
+            break
+        if draft_artifact is None:
+            raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
+        return ModelResponse(
+            content=_research_model_response(
+                self._command,
+                draft_artifact=draft_artifact,
+            )
+        )
 
 
 def _read_announcement_tool(
@@ -619,7 +666,10 @@ def _research_definition(
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
     assert command is not None
-    adapter = _StagedResearchModelAdapter(_research_model_response(command))
+    adapter = _StagedResearchModelAdapter(
+        _research_model_response(command),
+        command=command,
+    )
     return AgentDefinition.for_adapter(
         definition_id=RESEARCH_DEFINITION_ID,
         version=RESEARCH_DEFINITION_VERSION,
@@ -734,7 +784,26 @@ def _risk_definition(
     )
 
 
-def _research_model_response(command: ResearchCommand) -> str:
+def _research_model_response(
+    command: ResearchCommand,
+    *,
+    draft_artifact: ResearchStageArtifact | None = None,
+) -> str:
+    draft_summary = (
+        draft_artifact.summary
+        if draft_artifact is not None
+        else "The fictional thesis is bounded by the frozen evidence."
+    )
+    bull_case = (
+        draft_artifact.bull_case
+        if draft_artifact is not None and draft_artifact.bull_case is not None
+        else "The fictional upside case remains conditional."
+    )
+    bear_case = (
+        draft_artifact.bear_case
+        if draft_artifact is not None and draft_artifact.bear_case is not None
+        else "The fictional downside case remains explicit."
+    )
     members = []
     for member in command.members:
         members.append(
@@ -742,9 +811,13 @@ def _research_model_response(command: ResearchCommand) -> str:
                 "security_id": member.security_id,
                 "research_id": member.research_id,
                 "evidence_refs": [evidence.evidence_id for evidence in member.evidence],
-                "thesis": "The fictional thesis is bounded by the frozen evidence.",
-                "bull_case": "The fictional upside case remains conditional.",
-                "bear_case": "The fictional downside case remains explicit.",
+                "thesis": (
+                    f"Synthetic draft stage consumed: {draft_summary}"
+                    if draft_artifact is not None
+                    else draft_summary
+                ),
+                "bull_case": bull_case,
+                "bear_case": bear_case,
                 "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
             }
         )

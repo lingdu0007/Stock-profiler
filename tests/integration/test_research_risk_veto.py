@@ -136,7 +136,7 @@ def research_command(
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
     risk_rejected_member_ids: tuple[str, ...] = (),
 ) -> ResearchCommand:
-    cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
+    cutoff = datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)
     members = tuple(
         ResearchMemberInput(
             security_id=f"synthetic-security-{index:02}",
@@ -386,9 +386,12 @@ def _draft(command: ResearchCommand) -> ResearchDraft:
                 security_id=member.security_id,
                 research_id=member.research_id,
                 evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
-                thesis="The fictional thesis is bounded by the frozen evidence.",
-                bull_case="The fictional upside case remains conditional.",
-                bear_case="The fictional downside case remains explicit.",
+                thesis=(
+                    "Synthetic draft stage consumed: "
+                    "Synthetic draft stage consumed the prior frozen stage."
+                ),
+                bull_case="The synthetic evidence supports a conditional upside case.",
+                bear_case="The synthetic evidence preserves a conditional downside case.",
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -544,7 +547,7 @@ def _case(
         case_id="research-case-1616",
         business_identity="synthetic-research-1616",
         knowledge_cutoff=command.knowledge_cutoff.isoformat(),
-        report_generated_at="2042-06-01T00:04:00+00:00",
+        report_generated_at="2042-07-01T00:04:00+00:00",
         evidence_clock=EvidenceClock(
             fact_effective_at=command.cutoff_at.isoformat(),
             source_published_at=command.cutoff_at.isoformat(),
@@ -718,6 +721,19 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert stage_artifacts["bull-bear"].bear_case is not None
     assert stage_artifacts["draft"].bull_case is not None
     assert stage_artifacts["draft"].bear_case is not None
+    collect_context = next(result for result in context_results if result.stage_id == "collect")
+    analyze_context = next(result for result in context_results if result.stage_id == "analyze")
+    bull_bear_context = next(result for result in context_results if result.stage_id == "bull-bear")
+    assert stage_artifacts["analyze"].input_item_ids == tuple(
+        item.item.item_id for item in collect_context.output_items
+    )
+    assert stage_artifacts["bull-bear"].input_item_ids == (
+        analyze_context.output_items[0].item.item_id,
+    )
+    assert stage_artifacts["draft"].input_item_ids == (
+        bull_bear_context.output_items[0].item.item_id,
+    )
+    assert "Synthetic draft stage consumed" in execution.report.result.research.members[0].thesis
     assert execution.report.result.research.handoff.evidence_ids[-1:] == (
         "announcement:synthetic-security-00",
     )
@@ -797,6 +813,22 @@ def test_research_model_can_skip_exploration_and_binds_tool_calls_to_context() -
     response = asyncio.run(adapter.generate(exploration))
     assert len(response.tool_calls) == 1
     assert json.loads(response.tool_calls[0].arguments)["security_id"] == "renamed-security"
+
+
+def test_research_model_requires_the_frozen_draft_stage_input() -> None:
+    adapter = frozen_decision_case._StagedResearchModelAdapter(
+        "{}",
+        command=research_command(risk_scenario="ACCEPT"),
+    )
+    request = ModelRequest(
+        input="{}",
+        instructions="",
+        context_items=(),
+        structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+    )
+
+    with pytest.raises(RuntimeError, match="RESEARCH_STAGE_INPUT_UNAVAILABLE"):
+        asyncio.run(adapter.generate(request))
 
 
 def test_risk_framework_rejection_is_driven_by_typed_veto_not_scenario() -> None:
@@ -933,7 +965,7 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
     monkeypatch.setattr(
         frozen_decision_case,
         "_research_model_response",
-        lambda _: json.dumps(invalid_draft, ensure_ascii=True, separators=(",", ":")),
+        lambda _, **__: json.dumps(invalid_draft, ensure_ascii=True, separators=(",", ":")),
     )
     execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
 
