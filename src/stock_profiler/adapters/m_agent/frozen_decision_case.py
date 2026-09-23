@@ -125,6 +125,8 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    decode_legacy_research_member_input,
+    decode_legacy_research_tool_evidence,
     research_evidence_payload,
 )
 
@@ -384,6 +386,21 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 if stage_id in {"bull-bear", "draft"}
                 else None
             ),
+            catalysts=(
+                ("A fictional catalyst remains conditional.",)
+                if stage_id == "draft"
+                else ()
+            ),
+            falsification_conditions=(
+                ("A frozen downside fact would falsify the thesis.",)
+                if stage_id == "draft"
+                else ()
+            ),
+            unknowns=(
+                ("Future external evidence remains unresolved.",)
+                if stage_id == "draft"
+                else ()
+            ),
         )
         content = json.dumps(
             {
@@ -433,24 +450,11 @@ def _validate_research_context_items(
             security_id = payload["security_id"]
             evidence_ids = tuple(evidence["evidence_id"] for evidence in payload["evidence"])
             manifest = ResearchDataManifest.model_validate(payload["data_manifest"])
-            member_payload = payload
-            if legacy:
-                member_payload = dict(payload)
-                member_payload["evidence"] = [
-                    (
-                        {
-                            **evidence,
-                            "evidence_contract_version": evidence.get(
-                                "evidence_contract_version",
-                                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
-                            ),
-                        }
-                        if isinstance(evidence, dict)
-                        else evidence
-                    )
-                    for evidence in payload["evidence"]
-                ]
-            delivered_member = ResearchMemberInput.model_validate(member_payload)
+            delivered_member = (
+                decode_legacy_research_member_input(payload)
+                if legacy
+                else ResearchMemberInput.model_validate(payload)
+            )
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: malformed item") from error
         expected_member = expected_members_by_security_id.get(security_id)
@@ -675,26 +679,31 @@ def _read_announcement_tool(
                 "INVALID_SECURITY_ID",
                 "announcement lookup requires one security_id",
             )
-        evidence = ResearchToolEvidence(
-            evidence_id=f"announcement:{security_id}",
-            source="synthetic-announcement-feed",
-            reference=f"synthetic://announcement/{security_id}",
-            statement=(
+        evidence_payload = {
+            "evidence_id": f"announcement:{security_id}",
+            "source": "synthetic-announcement-feed",
+            "reference": f"synthetic://announcement/{security_id}",
+            "statement": (
                 f"Synthetic announcement evidence announcement:{security_id} "
                 "is read-only and contains no trade instruction."
             ),
-            evidence_contract_version=(
+            "evidence_contract_version": (
                 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
                 if legacy
                 else RESEARCH_EVIDENCE_CONTRACT_VERSION
             ),
-            effective_at=None if legacy else default_cutoff,
-            source_published_at=None if legacy else default_cutoff,
-            acquired_at=default_cutoff,
-            validated_at=default_cutoff,
-            knowledge_cutoff=default_cutoff,
-            semantic_version=semantic_version,
-            validation_status="VALIDATED",
+            "effective_at": None if legacy else default_cutoff,
+            "source_published_at": None if legacy else default_cutoff,
+            "acquired_at": default_cutoff,
+            "validated_at": default_cutoff,
+            "knowledge_cutoff": default_cutoff,
+            "semantic_version": semantic_version,
+            "validation_status": "VALIDATED",
+        }
+        evidence = (
+            decode_legacy_research_tool_evidence(evidence_payload)
+            if legacy
+            else ResearchToolEvidence.model_validate(evidence_payload)
         )
         payload = research_evidence_payload(evidence, legacy=legacy)
         return ToolOutcome.success(
@@ -970,6 +979,22 @@ def _research_model_response(
         if draft_artifact is not None and draft_artifact.bear_case is not None
         else "The fictional downside case remains explicit."
     )
+    catalysts = (
+        draft_artifact.catalysts
+        if draft_artifact is not None and draft_artifact.catalysts
+        else ("A fictional catalyst remains conditional.",)
+    )
+    falsification_conditions = (
+        draft_artifact.falsification_conditions
+        if draft_artifact is not None and draft_artifact.falsification_conditions
+        else ("A frozen downside fact would falsify the thesis.",)
+    )
+    unknowns = (
+        draft_artifact.unknowns
+        if draft_artifact is not None and draft_artifact.unknowns
+        else ("Future external evidence remains unresolved.",)
+    )
+
     def member_payload(source: ResearchMemberInput) -> dict[str, object]:
         return {
             "security_id": source.security_id,
@@ -982,6 +1007,9 @@ def _research_model_response(
             ),
             "bull_case": bull_case,
             "bear_case": bear_case,
+            "catalysts": catalysts,
+            "falsification_conditions": falsification_conditions,
+            "unknowns": unknowns,
             "knowledge_cutoff": source.knowledge_cutoff.isoformat(),
         }
 
@@ -1443,8 +1471,15 @@ async def execute_research_run(
         aggregate_status = "SUCCEEDED"
     error_codes = tuple(result.error_code for result in member_run_result if result.error_code)
     if aggregate_status != "SUCCEEDED":
+        aggregate_run_id = (
+            failed_results[0].run_id
+            if failed_results
+            else waiting_results[0].run_id
+            if waiting_results
+            else case.framework_run_id
+        )
         return FrameworkRunResult(
-            run_id=case.framework_run_id,
+            run_id=aggregate_run_id,
             status=aggregate_status,
             output=None,
             run_existed_before=all_runs_existed,
@@ -1611,14 +1646,11 @@ async def _research_tool_evidence(
             continue
         try:
             payload = json.loads(outcome.result)
-            if not isinstance(payload, dict):
-                raise ValueError("research Tool evidence must be a JSON object")
-            if legacy:
-                payload.setdefault(
-                    "evidence_contract_version",
-                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
-                )
-            evidence = ResearchToolEvidence.model_validate(payload)
+            evidence = (
+                decode_legacy_research_tool_evidence(payload)
+                if legacy
+                else ResearchToolEvidence.model_validate(payload)
+            )
         except ValueError as error:
             raise ValueError("research Tool evidence is not structured") from error
         if evidence.evidence_id not in {item.evidence_id for item in evidence_items}:

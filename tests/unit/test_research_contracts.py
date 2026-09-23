@@ -10,6 +10,7 @@ from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
@@ -352,6 +353,17 @@ def test_research_evidence_without_a_version_cannot_skip_clock_validation() -> N
         ResearchCommand.model_validate(payload)
 
 
+def test_current_research_evidence_cannot_use_legacy_version_to_skip_cutoff_validation() -> None:
+    payload = _command().model_dump(mode="json")
+    evidence = payload["members"][0]["evidence"][0]
+    evidence["evidence_contract_version"] = RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+    evidence["acquired_at"] = "2042-07-01T00:00:00Z"
+    evidence["validated_at"] = "2042-07-01T00:00:00Z"
+
+    with pytest.raises(ValueError, match="available by the cutoff|historical"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_legacy_research_evidence_decodes_without_new_clock_fields() -> None:
     payload = _command().model_dump(mode="json")
     evidence = payload["members"][0]["evidence"][0]
@@ -361,6 +373,25 @@ def test_legacy_research_evidence_decodes_without_new_clock_fields() -> None:
 
     with pytest.raises(ValueError, match="all evidence clocks"):
         ResearchCommand.model_validate(payload)
+
+
+def test_research_draft_requires_catalysts_falsification_conditions_and_unknowns() -> None:
+    draft_member = {
+        "security_id": "synthetic-security-00",
+        "research_id": "research-00",
+        "evidence_refs": ["daily_market-evidence-00"],
+        "thesis": "Synthetic thesis.",
+        "bull_case": "Synthetic bull case.",
+        "bear_case": "Synthetic bear case.",
+        "knowledge_cutoff": "2042-06-30T23:59:59Z",
+    }
+    draft_payload = {
+        "contract_version": "1.0.0",
+        "members": [draft_member for _ in range(10)],
+    }
+
+    with pytest.raises(ValueError):
+        ResearchDraft.model_validate(draft_payload)
 
 
 def test_raw_score_training_rejects_mixed_research_definition_versions() -> None:
@@ -632,6 +663,9 @@ def test_research_draft_can_cite_validated_tool_evidence() -> None:
                 thesis="The fictional thesis is bounded by the frozen evidence.",
                 bull_case="The fictional upside case remains conditional.",
                 bear_case="The fictional downside case remains explicit.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -657,6 +691,9 @@ def test_research_draft_rejects_provider_and_tool_evidence_identity_collision() 
                 thesis="The fictional thesis is bounded by the frozen evidence.",
                 bull_case="The fictional upside case remains conditional.",
                 bear_case="The fictional downside case remains explicit.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -693,6 +730,9 @@ def test_research_freeze_binds_typed_draft_raw_scores_and_independent_risk() -> 
                 thesis="The fictional thesis is bounded by the frozen evidence.",
                 bull_case="The fictional upside case remains conditional.",
                 bear_case="The fictional downside case remains explicit.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -820,6 +860,9 @@ def test_research_freeze_honors_an_independent_rejection_without_command_overrid
                 thesis="The fictional thesis is bounded by the frozen evidence.",
                 bull_case="The fictional upside case remains conditional.",
                 bear_case="The fictional downside case remains explicit.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -891,6 +934,9 @@ def test_research_freeze_requires_the_raw_scores_seen_by_risk() -> None:
                 thesis="The fictional thesis is bounded by the frozen evidence.",
                 bull_case="The fictional upside case remains conditional.",
                 bear_case="The fictional downside case remains explicit.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members

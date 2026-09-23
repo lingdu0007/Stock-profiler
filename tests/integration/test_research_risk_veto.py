@@ -102,6 +102,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     calculate_structured_signals,
+    decode_legacy_research_framework_output,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
@@ -398,6 +399,9 @@ def _draft(command: ResearchCommand) -> ResearchDraft:
                 ),
                 bull_case="The synthetic evidence supports a conditional upside case.",
                 bear_case="The synthetic evidence preserves a conditional downside case.",
+                catalysts=("A fictional catalyst remains conditional.",),
+                falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+                unknowns=("Future external evidence remains unresolved.",),
                 knowledge_cutoff=member.knowledge_cutoff,
             )
             for member in command.members
@@ -832,7 +836,44 @@ def test_each_fixed_ten_member_has_its_own_durable_research_run(
                 )
             )
         }
+        mapped_run_ids = DecisionLedger(runtime.engine).mapped_framework_run_ids(connection)
     assert set(member_run_ids).issubset(recorded_member_run_ids)
+    assert set(member_run_ids).issubset(mapped_run_ids)
+
+
+def test_failed_member_does_not_relabel_a_successful_member_run(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    research_payload["members"][1]["data_manifest"]["entries"][0].update(
+        completeness="INCOMPLETE",
+        event_status="UNAVAILABLE",
+    )
+    payload["input"]["research"] = research_payload
+    failed_case = FrozenDecisionCase.model_validate(payload)
+    runtime = initialize_runtime_storage(migrated_settings)
+
+    result = asyncio.run(frozen_decision_case.execute_research_run(failed_case, runtime))
+
+    first_run = asyncio.run(runtime.run_store.get_run(failed_case.framework_run_id))
+    failed_member_run_id = frozen_decision_case._research_member_run_id(
+        failed_case,
+        1,
+        failed_case.research.members[1],  # type: ignore[union-attr]
+    )
+    failed_member_run = asyncio.run(runtime.run_store.get_run(failed_member_run_id))
+    assert first_run is not None
+    assert failed_member_run is not None
+    assert first_run.status.value == "SUCCEEDED"
+    assert failed_member_run.status.value == "FAILED"
+    assert result.status == "FAILED"
+    assert result.run_id == failed_member_run_id
+    assert next(
+        member for member in result.research_member_runs if member.run_id == failed_member_run_id
+    ).status == "FAILED"
 
 
 def test_partial_member_research_recovery_creates_missing_member_runs(
@@ -972,6 +1013,12 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     payload["version_bundle"]["agent_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
     payload["version_bundle"]["routing_policy_version"] = RESEARCH_LEGACY_ROUTING_POLICY_VERSION
     payload["version_bundle"]["output_contract_version"] = RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    original_legacy_input = json.dumps(
+        payload["input"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     legacy_case = FrozenDecisionCase.model_validate(payload)
     runtime = initialize_runtime_storage(migrated_settings)
     definition = frozen_decision_case._legacy_research_definition(
@@ -996,6 +1043,9 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
         )
     )
     assert created.status == "SUCCEEDED"
+    stored_legacy_run = asyncio.run(runtime.run_store.get_run(legacy_case.framework_run_id))
+    assert stored_legacy_run is not None
+    assert stored_legacy_run.input == original_legacy_input
 
     recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))
 
@@ -1020,7 +1070,7 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     )
     assert journey.status == "SUCCEEDED"
     assert journey.output is not None
-    legacy_envelope = ResearchFrameworkOutput.model_validate_json(journey.output)
+    legacy_envelope = decode_legacy_research_framework_output(json.loads(journey.output))
     assert legacy_envelope.risk_run_id is not None
     risk_run = asyncio.run(runtime.run_store.get_run(legacy_envelope.risk_run_id))
     assert risk_run is not None

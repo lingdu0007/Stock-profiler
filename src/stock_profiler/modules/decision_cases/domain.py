@@ -61,11 +61,12 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
     RESEARCH_LEGACY_DEFINITION_VERSION,
-    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
     ResearchOutcome,
+    decode_legacy_research_command,
+    decode_legacy_research_outcome,
 )
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
@@ -493,6 +494,29 @@ class FormalReport(FrozenContract):
         default=None, exclude_if=lambda value: value is None
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def decode_legacy_research_evidence(cls, value: Any) -> Any:
+        """Decode historical research evidence before projecting a persisted report."""
+        if not isinstance(value, dict):
+            return value
+        version_bundle = value.get("version_bundle")
+        if not isinstance(version_bundle, dict) or (
+            version_bundle.get("agent_definition_version")
+            != RESEARCH_LEGACY_DEFINITION_VERSION
+            or version_bundle.get("output_contract_version")
+            != RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+        ):
+            return value
+        result = value.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("research"), dict):
+            return value
+        payload = dict(value)
+        normalized_result = dict(result)
+        normalized_result["research"] = decode_legacy_research_outcome(result["research"])
+        payload["result"] = normalized_result
+        return payload
+
     def with_publication_history(self, event_stages: tuple[StageResult, ...]) -> FormalReport:
         """Retain closed gates and correction recovery without replacing saved facts."""
         final_stage = self.stage_results[-1]
@@ -723,49 +747,26 @@ class FrozenDecisionCase(FrozenContract):
         ):
             return value
 
-        def normalize_research_payload(payload: object) -> object:
-            if not isinstance(payload, dict):
-                return payload
-            members = payload.get("members")
-            if not isinstance(members, (list, tuple)):
-                return payload
-            normalized = dict(payload)
-            normalized_members: list[object] = []
-            for member in members:
-                if not isinstance(member, dict):
-                    normalized_members.append(member)
-                    continue
-                normalized_member = dict(member)
-                evidence_items = normalized_member.get("evidence")
-                if isinstance(evidence_items, (list, tuple)):
-                    normalized_member["evidence"] = [
-                        (
-                            {
-                                **evidence,
-                                "evidence_contract_version": evidence.get(
-                                    "evidence_contract_version",
-                                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
-                                ),
-                            }
-                            if isinstance(evidence, dict)
-                            else evidence
-                        )
-                        for evidence in evidence_items
-                    ]
-                normalized_members.append(normalized_member)
-            normalized["members"] = normalized_members
-            return normalized
-
         payload = dict(value)
-        payload["research"] = normalize_research_payload(payload.get("research"))
-        input_payload = payload.get("input")
-        if isinstance(input_payload, dict):
-            normalized_input = dict(input_payload)
-            if "research" in normalized_input:
-                normalized_input["research"] = normalize_research_payload(
-                    normalized_input["research"]
+        research_payload = payload.get("research")
+        if isinstance(research_payload, dict):
+            payload["research"] = decode_legacy_research_command(research_payload)
+        expected_result = payload.get("expected_external_result")
+        if (
+            isinstance(expected_result, dict)
+            and isinstance(version_bundle, dict)
+            and version_bundle.get("agent_definition_version")
+            == RESEARCH_LEGACY_DEFINITION_VERSION
+            and version_bundle.get("output_contract_version")
+            == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+        ):
+            expected_research = expected_result.get("research")
+            if isinstance(expected_research, dict):
+                normalized_expected_result = dict(expected_result)
+                normalized_expected_result["research"] = decode_legacy_research_outcome(
+                    expected_research
                 )
-            payload["input"] = normalized_input
+                payload["expected_external_result"] = normalized_expected_result
         return payload
 
     @model_validator(mode="after")
@@ -796,7 +797,15 @@ class FrozenDecisionCase(FrozenContract):
             if not research_input_matches and isinstance(research_input, dict):
                 try:
                     research_input_matches = (
-                        ResearchCommand.model_validate(research_input) == self.research
+                        (
+                            decode_legacy_research_command(research_input)
+                            if self.version_bundle.agent_definition_version
+                            == RESEARCH_LEGACY_DEFINITION_VERSION
+                            and self.version_bundle.output_contract_version
+                            == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                            else ResearchCommand.model_validate(research_input)
+                        )
+                        == self.research
                     )
                 except ValueError:
                     research_input_matches = False
@@ -1051,6 +1060,14 @@ class FrozenDecisionCase(FrozenContract):
             # Research handoffs contain the Run IDs that are derived from this
             # identity; exclude the expected host result to avoid a circular ID.
             payload.pop("expected_external_result", None)
+            if (
+                self.version_bundle.agent_definition_version
+                == RESEARCH_LEGACY_DEFINITION_VERSION
+                and self.version_bundle.output_contract_version
+                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                and isinstance(self.input.get("research"), dict)
+            ):
+                payload["research"] = self.input["research"]
         return _fingerprint(payload)
 
     @property
@@ -1404,7 +1421,15 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
         and (
             has_complete_synthetic_input(case.input)
-            or has_complete_research_synthetic_input(case.input)
+            or has_complete_research_synthetic_input(
+                case.input,
+                legacy=(
+                    case.version_bundle.agent_definition_version
+                    == RESEARCH_LEGACY_DEFINITION_VERSION
+                    and case.version_bundle.output_contract_version
+                    == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                ),
+            )
         )
     )
     if not recorded_reasons:
@@ -1576,24 +1601,40 @@ def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
     return synthetic_outcome_code_from_input(value) is not None
 
 
-def has_complete_research_synthetic_input(value: dict[str, Any]) -> bool:
+def has_complete_research_synthetic_input(
+    value: dict[str, Any],
+    *,
+    legacy: bool = False,
+) -> bool:
     """Recognize a structurally complete fixed-ten research input."""
     payload = value.get("research")
     if not isinstance(payload, dict):
         return False
     try:
-        ResearchCommand.model_validate(payload)
+        (
+            decode_legacy_research_command(payload)
+            if legacy
+            else ResearchCommand.model_validate(payload)
+        )
     except ValueError:
         return False
     return True
 
 
-def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
+def synthetic_outcome_code_from_input(
+    value: dict[str, Any],
+    *,
+    legacy: bool = False,
+) -> str | None:
     """Read the explicit synthetic scenario without consulting expected output."""
     if "research" in value:
-        if not has_complete_research_synthetic_input(value):
+        if not has_complete_research_synthetic_input(value, legacy=legacy):
             return None
-        research = ResearchCommand.model_validate(value["research"])
+        research = (
+            decode_legacy_research_command(value["research"])
+            if legacy
+            else ResearchCommand.model_validate(value["research"])
+        )
         if research.failure_mode == "DATA":
             return "RESEARCH_DATA_FAILED"
         if research.failure_mode == "RAW_SCORE":

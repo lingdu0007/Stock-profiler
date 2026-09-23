@@ -6,13 +6,23 @@ import json
 import re
 from calendar import monthrange
 from collections.abc import Callable
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictBool,
+    model_validator,
+)
 
 RESEARCH_CONTRACT_VERSION = "1.0.0"
 RESEARCH_DEFINITION_ID = "synthetic-monthly-research"
@@ -34,6 +44,10 @@ RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
 RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v2"
 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION: Literal["1.0.0"] = "1.0.0"
 RESEARCH_EVIDENCE_CONTRACT_VERSION: Literal["2.0.0"] = "2.0.0"
+_LEGACY_RESEARCH_EVIDENCE_DECODING: ContextVar[bool] = ContextVar(
+    "legacy_research_evidence_decoding",
+    default=False,
+)
 ResearchDataType = Literal[
     "DAILY_MARKET",
     "MONEY_FLOW",
@@ -140,7 +154,7 @@ class RawScoreCalculationError(ValueError):
 class ResearchContract(BaseModel):
     """Reject unversioned research fields and mutable contract payloads."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="never")
 
 
 def _validate_evidence_clocks(
@@ -561,10 +575,22 @@ class ResearchEvidence(ResearchContract):
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
+    _legacy_decoded: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchEvidence:
+        if (
+            self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+            and not _LEGACY_RESEARCH_EVIDENCE_DECODING.get()
+            and not self._legacy_decoded
+        ):
+            raise ValueError("legacy research evidence requires a historical case boundary")
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
+            if self.acquired_at is not None and self.validated_at is not None and (
+                self.acquired_at > self.validated_at
+                or self.validated_at > self.knowledge_cutoff
+            ):
+                raise ValueError("research evidence must be available by the knowledge cutoff")
             return self
         if (
             self.effective_at is None
@@ -597,10 +623,22 @@ class ResearchToolEvidence(ResearchContract):
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
+    _legacy_decoded: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchToolEvidence:
+        if (
+            self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+            and not _LEGACY_RESEARCH_EVIDENCE_DECODING.get()
+            and not self._legacy_decoded
+        ):
+            raise ValueError("legacy research Tool evidence requires a historical case boundary")
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
+            if self.acquired_at is not None and self.validated_at is not None and (
+                self.acquired_at > self.validated_at
+                or self.validated_at > self.knowledge_cutoff
+            ):
+                raise ValueError("research Tool evidence must be available by the knowledge cutoff")
             return self
         if (
             self.effective_at is None
@@ -735,6 +773,9 @@ class ResearchStageArtifact(ResearchContract):
     summary: str = Field(min_length=1)
     bull_case: str | None = None
     bear_case: str | None = None
+    catalysts: tuple[str, ...] = ()
+    falsification_conditions: tuple[str, ...] = ()
+    unknowns: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_stage_progression(self) -> ResearchStageArtifact:
@@ -749,6 +790,14 @@ class ResearchStageArtifact(ResearchContract):
             raise ValueError("research stage artifact input identities must be unique")
         if self.stage_id in {"bull-bear", "draft"} and (not self.bull_case or not self.bear_case):
             raise ValueError("research debate artifacts require both bull and bear cases")
+        if self.stage_id == "draft" and (
+            not self.catalysts
+            or not self.falsification_conditions
+            or not self.unknowns
+        ):
+            raise ValueError(
+                "research draft artifacts require catalysts, falsification, and unknowns"
+            )
         return self
 
 
@@ -880,6 +929,7 @@ class ResearchMemberInput(ResearchContract):
     structured_facts: ResearchStructuredFacts
     structured_signals: dict[str, Decimal | None] = Field(default_factory=dict)
     risk_flags: tuple[str, ...] = ()
+    _legacy_decoded: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def validate_member_facts(self) -> ResearchMemberInput:
@@ -947,6 +997,15 @@ class ResearchMemberInput(ResearchContract):
             for evidence in self.evidence
         ):
             raise ValueError("research evidence must be validated and available by the cutoff")
+        if (
+            any(
+                evidence.evidence_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION
+                for evidence in self.evidence
+            )
+            and not _LEGACY_RESEARCH_EVIDENCE_DECODING.get()
+            and not self._legacy_decoded
+        ):
+            raise ValueError("current research members require the current evidence contract")
         return self
 
 
@@ -979,6 +1038,7 @@ class ResearchCommand(ResearchContract):
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE"
     risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT"
     risk_rejected_member_ids: tuple[str, ...] = ()
+    _legacy_decoded: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def validate_fixed_ten_contract(self) -> ResearchCommand:
@@ -1021,7 +1081,104 @@ class ResearchCommand(ResearchContract):
         ]
         if len(set(evidence_ids)) != len(evidence_ids):
             raise ValueError("research evidence identities must be globally unique")
+        if (
+            any(
+                evidence.evidence_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION
+                for member in self.members
+                for evidence in member.evidence
+            )
+            and not _LEGACY_RESEARCH_EVIDENCE_DECODING.get()
+            and not self._legacy_decoded
+        ):
+            raise ValueError("current research commands require the current evidence contract")
         return self
+
+
+def decode_legacy_research_command(value: object) -> ResearchCommand:
+    """Decode historical evidence only at an explicit frozen-case boundary."""
+    if isinstance(value, ResearchCommand):
+        return value
+    if not isinstance(value, dict):
+        raise ValueError("legacy research command must be an object")
+    payload = deepcopy(value)
+    members = payload.get("members")
+    if not isinstance(members, (list, tuple)):
+        raise ValueError("legacy research command members must be a list")
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("legacy research member must be an object")
+        evidence_items = member.get("evidence")
+        if not isinstance(evidence_items, (list, tuple)):
+            raise ValueError("legacy research member evidence must be a list")
+        for evidence in evidence_items:
+            if not isinstance(evidence, dict):
+                raise ValueError("legacy research evidence must be an object")
+            evidence.setdefault(
+                "evidence_contract_version",
+                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+            )
+    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    try:
+        command = ResearchCommand.model_validate(payload)
+        object.__setattr__(command, "_legacy_decoded", True)
+        for member in command.members:
+            object.__setattr__(member, "_legacy_decoded", True)
+            for evidence in member.evidence:
+                object.__setattr__(evidence, "_legacy_decoded", True)
+        return command
+    finally:
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
+def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
+    """Decode one historical Provider payload at an explicit Run boundary."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research member must be an object")
+    payload = deepcopy(value)
+    evidence_items = payload.get("evidence")
+    if not isinstance(evidence_items, (list, tuple)):
+        raise ValueError("legacy research member evidence must be a list")
+    payload["evidence"] = [
+        (
+            {
+                **evidence,
+                "evidence_contract_version": evidence.get(
+                    "evidence_contract_version",
+                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                ),
+            }
+            if isinstance(evidence, dict)
+            else evidence
+        )
+        for evidence in evidence_items
+    ]
+    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    try:
+        member = ResearchMemberInput.model_validate(payload)
+        object.__setattr__(member, "_legacy_decoded", True)
+        for evidence in member.evidence:
+            object.__setattr__(evidence, "_legacy_decoded", True)
+        return member
+    finally:
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
+def decode_legacy_research_tool_evidence(value: object) -> ResearchToolEvidence:
+    """Decode historical Tool evidence only for a historical Run checkpoint."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research Tool evidence must be an object")
+    payload = deepcopy(value)
+    payload.setdefault(
+        "evidence_contract_version",
+        RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+    )
+    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    try:
+        evidence = ResearchToolEvidence.model_validate(payload)
+        object.__setattr__(evidence, "_legacy_decoded", True)
+        return evidence
+    finally:
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
 
 
 class ResearchDraftMember(ResearchContract):
@@ -1033,6 +1190,9 @@ class ResearchDraftMember(ResearchContract):
     thesis: str = Field(min_length=1)
     bull_case: str = Field(min_length=1)
     bear_case: str = Field(min_length=1)
+    catalysts: tuple[str, ...] = Field(min_length=1)
+    falsification_conditions: tuple[str, ...] = Field(min_length=1)
+    unknowns: tuple[str, ...] = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
 
 
@@ -1149,6 +1309,66 @@ class ResearchFrameworkOutput(ResearchContract):
     member_handoffs: tuple[ResearchMemberHandoff, ...] = ()
 
 
+def decode_legacy_research_framework_output(value: object) -> ResearchFrameworkOutput:
+    """Decode a historical research envelope without changing its serialized identity."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research framework output must be an object")
+    payload = deepcopy(value)
+    tool_evidence = payload.get("tool_evidence")
+    if isinstance(tool_evidence, (list, tuple)):
+        payload["tool_evidence"] = [
+            (
+                {
+                    **evidence,
+                    "evidence_contract_version": evidence.get(
+                        "evidence_contract_version",
+                        RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                    ),
+                }
+                if isinstance(evidence, dict)
+                else evidence
+            )
+            for evidence in tool_evidence
+        ]
+    member_handoffs = payload.get("member_handoffs")
+    if isinstance(member_handoffs, (list, tuple)):
+        normalized_handoffs: list[object] = []
+        for handoff in member_handoffs:
+            if not isinstance(handoff, dict):
+                normalized_handoffs.append(handoff)
+                continue
+            normalized_handoff = dict(handoff)
+            evidence_items = normalized_handoff.get("evidence")
+            if isinstance(evidence_items, (list, tuple)):
+                normalized_handoff["evidence"] = [
+                    (
+                        {
+                            **evidence,
+                            "evidence_contract_version": evidence.get(
+                                "evidence_contract_version",
+                                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                            ),
+                        }
+                        if isinstance(evidence, dict)
+                        else evidence
+                    )
+                    for evidence in evidence_items
+                ]
+            normalized_handoffs.append(normalized_handoff)
+        payload["member_handoffs"] = normalized_handoffs
+    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    try:
+        output = ResearchFrameworkOutput.model_validate(payload)
+        for tool_evidence in output.tool_evidence:
+            object.__setattr__(tool_evidence, "_legacy_decoded", True)
+        for handoff in output.member_handoffs:
+            for member_evidence in handoff.evidence:
+                object.__setattr__(member_evidence, "_legacy_decoded", True)
+        return output
+    finally:
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
 @dataclass(frozen=True)
 class ResearchRiskPlan:
     """Pure, immutable input plan for the independent risk Definition."""
@@ -1238,6 +1458,9 @@ class ResearchMemberResult(ResearchContract):
     thesis: str
     bull_case: str
     bear_case: str
+    catalysts: tuple[str, ...] = Field(min_length=1)
+    falsification_conditions: tuple[str, ...] = Field(min_length=1)
+    unknowns: tuple[str, ...] = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
 
 
@@ -1252,6 +1475,88 @@ class ResearchOutcome(ResearchContract):
     handoff: ResearchHandoff
     reasons: tuple[str, ...] = Field(min_length=1)
     actionable: Literal[False] = False
+
+
+def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
+    """Decode historical outcome evidence at the frozen case boundary."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research outcome must be an object")
+    payload = deepcopy(value)
+    tool_evidence = payload.get("tool_evidence")
+    if isinstance(tool_evidence, (list, tuple)):
+        payload["tool_evidence"] = [
+            (
+                {
+                    **evidence,
+                    "evidence_contract_version": evidence.get(
+                        "evidence_contract_version",
+                        RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                    ),
+                }
+                if isinstance(evidence, dict)
+                else evidence
+            )
+            for evidence in tool_evidence
+        ]
+    handoff = payload.get("handoff")
+    if isinstance(handoff, dict):
+        normalized_handoff = dict(handoff)
+        member_handoffs = normalized_handoff.get("member_handoffs")
+        if isinstance(member_handoffs, (list, tuple)):
+            normalized_members: list[object] = []
+            for member in member_handoffs:
+                if not isinstance(member, dict):
+                    normalized_members.append(member)
+                    continue
+                normalized_member = dict(member)
+                evidence_items = normalized_member.get("evidence")
+                if isinstance(evidence_items, (list, tuple)):
+                    normalized_member["evidence"] = [
+                        (
+                            {
+                                **evidence,
+                                "evidence_contract_version": evidence.get(
+                                    "evidence_contract_version",
+                                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                                ),
+                            }
+                            if isinstance(evidence, dict)
+                            else evidence
+                        )
+                        for evidence in evidence_items
+                    ]
+                normalized_members.append(normalized_member)
+            normalized_handoff["member_handoffs"] = normalized_members
+        handoff_tool_evidence = normalized_handoff.get("tool_evidence")
+        if isinstance(handoff_tool_evidence, (list, tuple)):
+            normalized_handoff["tool_evidence"] = [
+                (
+                    {
+                        **evidence,
+                        "evidence_contract_version": evidence.get(
+                            "evidence_contract_version",
+                            RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                        ),
+                    }
+                    if isinstance(evidence, dict)
+                    else evidence
+                )
+                for evidence in handoff_tool_evidence
+            ]
+        payload["handoff"] = normalized_handoff
+    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    try:
+        outcome = ResearchOutcome.model_validate(payload)
+        for tool_evidence in outcome.tool_evidence:
+            object.__setattr__(tool_evidence, "_legacy_decoded", True)
+        for handoff_tool_evidence in outcome.handoff.tool_evidence:
+            object.__setattr__(handoff_tool_evidence, "_legacy_decoded", True)
+        for member in outcome.handoff.member_handoffs:
+            for member_evidence in member.evidence:
+                object.__setattr__(member_evidence, "_legacy_decoded", True)
+        return outcome
+    finally:
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
 
 
 def _transform_raw_score_feature(
@@ -1408,6 +1713,10 @@ def _research_member_handoff_fingerprint_payload(
     payload = member.model_dump(mode="json")
     if legacy:
         payload.pop("research_run_id", None)
+        for evidence in payload["evidence"]:
+            evidence.pop("evidence_contract_version", None)
+            evidence.pop("effective_at", None)
+            evidence.pop("source_published_at", None)
     return payload
 
 
@@ -1491,6 +1800,9 @@ def research_member_results(draft: ResearchDraft) -> tuple[ResearchMemberResult,
             thesis=member.thesis,
             bull_case=member.bull_case,
             bear_case=member.bear_case,
+            catalysts=member.catalysts,
+            falsification_conditions=member.falsification_conditions,
+            unknowns=member.unknowns,
             knowledge_cutoff=member.knowledge_cutoff,
         )
         for member in draft.members

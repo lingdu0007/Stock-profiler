@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -76,6 +77,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchRiskPlan,
     RiskVetoDraft,
+    decode_legacy_research_framework_output,
 )
 from stock_profiler.modules.research.service import (
     freeze_research,
@@ -1625,7 +1627,7 @@ def _commit_research_framework_result(
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
 
-    if framework.run_id != execution_case.framework_run_id:
+    if framework.run_id != execution_case.framework_run_id and framework.status != "FAILED":
         return _unpublished_execution(
             execution_case,
             framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
@@ -1679,8 +1681,17 @@ def _commit_research_framework_result(
             )
         )
     try:
-        envelope = ResearchFrameworkOutput.model_validate_json(framework.output)
-    except ValidationError:
+        envelope = (
+            decode_legacy_research_framework_output(json.loads(framework.output))
+            if (
+                execution_case.version_bundle.agent_definition_version
+                == RESEARCH_LEGACY_DEFINITION_VERSION
+                and execution_case.version_bundle.output_contract_version
+                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+            )
+            else ResearchFrameworkOutput.model_validate_json(framework.output)
+        )
+    except (ValidationError, json.JSONDecodeError, ValueError):
         return closed(
             validation=_failed_host_validation("RESEARCH_OUTPUT_CONTRACT_INVALID"),
             research=StageResult(
@@ -2149,6 +2160,12 @@ def _unpublished_execution(
 def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunResult) -> StageResult:
     """Save the framework state before evaluating any host-owned result."""
     if framework.run_id != case.framework_run_id:
+        if case.research is not None and framework.status == "FAILED":
+            return _framework_status_stage_result(
+                status=framework.status,
+                error_code=framework.error_code,
+                waiting_reason=framework.waiting_reason,
+            )
         return StageResult(
             phase="FRAMEWORK_RUN",
             status="FAILED",
