@@ -10,6 +10,7 @@ from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
     RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_PRIOR_DEFINITION_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
@@ -367,6 +368,21 @@ def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     assert decoded.raw_score_model.training_cohorts == ()
     assert decoded.raw_score_model.training_records == ()
     assert decoded.raw_score_model.label_watermark_at is not None
+
+
+def test_legacy_research_command_preserves_existing_training_provenance() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+
+    decoded = decode_legacy_research_command(payload)
+
+    assert len(decoded.raw_score_model.training_cohorts) == 60
+    assert len(decoded.raw_score_model.training_records) == 500
+    assert (
+        decoded.raw_score_model.training_cohorts[0].research_definition_version
+        == RESEARCH_LEGACY_DEFINITION_VERSION
+    )
 
 
 def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:

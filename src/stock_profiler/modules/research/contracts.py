@@ -1320,8 +1320,8 @@ def _legacy_raw_score_model_payload(value: object) -> RawScoreModelSnapshot:
     payload = dict(legacy_model.__dict__)
     payload.update(
         label_watermark_at=label_watermark_at,
-        training_cohorts=(),
-        training_records=(),
+        training_cohorts=legacy_model.training_cohorts,
+        training_records=legacy_model.training_records,
     )
     return RawScoreModelSnapshot.model_construct(**payload)
 
@@ -1944,23 +1944,14 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     if not isinstance(value, dict):
         raise ValueError("legacy research outcome must be an object")
     payload = deepcopy(value)
+
+    def normalize_raw_scores(value: object) -> object:
+        if not isinstance(value, (list, tuple)):
+            return value
+        return [_legacy_raw_score_payload(raw_score) for raw_score in value]
+
     raw_scores = payload.get("raw_scores")
-    if isinstance(raw_scores, (list, tuple)):
-        normalized_raw_scores: list[object] = []
-        for raw_score in raw_scores:
-            if not isinstance(raw_score, dict):
-                normalized_raw_scores.append(raw_score)
-                continue
-            normalized_raw_score = dict(raw_score)
-            if "label_watermark_at" not in normalized_raw_score:
-                label_watermark_month = normalized_raw_score.get("label_watermark_month")
-                if not isinstance(label_watermark_month, str):
-                    raise ValueError("legacy raw score is missing its label watermark month")
-                normalized_raw_score["label_watermark_at"] = _raw_score_month_end(
-                    label_watermark_month
-                ).isoformat()
-            normalized_raw_scores.append(normalized_raw_score)
-        payload["raw_scores"] = normalized_raw_scores
+    payload["raw_scores"] = normalize_raw_scores(raw_scores)
     members = payload.get("members")
     if isinstance(members, (list, tuple)):
         normalized_members: list[object] = []
@@ -2002,6 +1993,9 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     handoff = payload.get("handoff")
     if isinstance(handoff, dict):
         normalized_handoff = dict(handoff)
+        normalized_handoff["raw_scores"] = normalize_raw_scores(
+            normalized_handoff.get("raw_scores")
+        )
         member_handoffs = normalized_handoff.get("member_handoffs")
         if isinstance(member_handoffs, (list, tuple)):
             normalized_handoff_members: list[object] = []
@@ -2059,6 +2053,18 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
         return outcome
     finally:
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
+def _legacy_raw_score_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+    if "label_watermark_at" not in normalized:
+        label_watermark_month = normalized.get("label_watermark_month")
+        if not isinstance(label_watermark_month, str):
+            raise ValueError("legacy raw score is missing its label watermark month")
+        normalized["label_watermark_at"] = _raw_score_month_end(label_watermark_month).isoformat()
+    return normalized
 
 
 def decode_historical_research_outcome(value: object) -> ResearchOutcome:

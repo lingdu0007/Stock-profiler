@@ -111,6 +111,7 @@ from stock_profiler.modules.research.contracts import (
     calculate_structured_signals,
     decode_historical_research_framework_output,
     decode_legacy_research_framework_output,
+    decode_legacy_research_outcome,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
@@ -1676,6 +1677,34 @@ def test_current_research_event_keeps_strict_evidence_validation(
         match="current research Tool evidence requires all evidence clocks",
     ):
         _decode_research_event_payload(event_payload)
+
+
+def test_legacy_research_outcome_recovers_handoff_raw_score_watermarks(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is not None
+    research = execution.report.result.research
+    assert research is not None
+    payload = cast(dict[str, object], research.model_dump(mode="json"))
+    raw_scores = payload["raw_scores"]
+    assert isinstance(raw_scores, list)
+    handoff = payload["handoff"]
+    assert isinstance(handoff, dict)
+    handoff_raw_scores = handoff["raw_scores"]
+    assert isinstance(handoff_raw_scores, list)
+
+    for raw_score in (*raw_scores, *handoff_raw_scores):
+        assert isinstance(raw_score, dict)
+        raw_score.pop("label_watermark_at", None)
+
+    decoded = decode_legacy_research_outcome(payload)
+
+    assert decoded.raw_scores is not None
+    assert all(score.label_watermark_at is not None for score in decoded.raw_scores)
+    assert all(score.label_watermark_at is not None for score in decoded.handoff.raw_scores)
 
 
 def test_risk_handoff_preserves_each_member_evidence_and_flags(
