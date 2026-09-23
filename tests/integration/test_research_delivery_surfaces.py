@@ -13,14 +13,14 @@ from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.cli import main
 
 
-def test_cli_runs_and_replays_the_ticket16_research_case(
+def test_cli_runs_and_replays_the_research_rejection_case(
     migrated_settings: Settings,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _case(migrated_settings)
-    case_path = tmp_path / "ticket16-research-case.json"
+    case_path = tmp_path / "research-rejection-case.json"
     case_path.write_text(json.dumps(case.model_dump(mode="json")), encoding="utf-8")
     monkeypatch.setattr("stock_profiler.entrypoints.cli.load_settings", lambda: migrated_settings)
 
@@ -62,7 +62,7 @@ def test_cli_runs_and_replays_the_ticket16_research_case(
     assert replay == first
 
 
-def test_authenticated_api_projects_the_ticket16_research_report(
+def test_authenticated_api_projects_the_research_rejection_report(
     migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     case = _case(migrated_settings, user_id="stock-profiler-single-user")

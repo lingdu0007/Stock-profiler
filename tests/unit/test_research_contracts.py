@@ -12,6 +12,7 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_REQUIRED_DATA_TYPES,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
+    RawScoreFeatureTransform,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -149,21 +150,62 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.training_window_id == "synthetic-training-window-60m"
     assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
     assert raw_score.interaction_terms == ()
-    assert raw_score.z20 == Decimal("33.159")
+    assert raw_score.z20 == Decimal("33.127")
+    assert raw_score.transformed_inputs["working_capital_pressure_change"] == Decimal("-0.1")
+    assert raw_score.feature_transformations["working_capital_pressure_change"].reverse is True
 
 
 def test_raw_score_model_snapshot_requires_the_frozen_training_waterline() -> None:
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["mature_months"] = 59
 
-    with pytest.raises(ValueError, match="greater than or equal to 60"):
-        ResearchCommand.model_validate(payload)
+    command = ResearchCommand.model_validate(payload)
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"):
+        freeze_raw_score(command, command.members[0])
 
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_record_count"] = 499
+    payload["raw_score_model"]["positive_record_count"] = 249
 
-    with pytest.raises(ValueError, match="greater than or equal to 500"):
+    command = ResearchCommand.model_validate(payload)
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"):
+        freeze_raw_score(command, command.members[0])
+
+
+def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> None:
+    snapshot = frozen_raw_score_model_snapshot()
+
+    assert set(snapshot.transformations) == set(RAW_SCORE_FEATURE_IDS)
+    assert snapshot.transformations["working_capital_pressure_change"].reverse is True
+    assert snapshot.transformations["turnover_change"].reverse is False
+    assert snapshot.l1_ratio == Decimal("0.25")
+    assert snapshot.l2_ratio == Decimal("0.75")
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["l1_ratio"] = "1"
+    payload["raw_score_model"]["l2_ratio"] = "0"
+    with pytest.raises(ValueError, match="25% L1 and 75% L2"):
         ResearchCommand.model_validate(payload)
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["coefficients"]["turnover_change"] = "-0.02"
+    payload["raw_score_model"]["coefficients"]["institutional_listing_frequency"] = "-0.03"
+    ResearchCommand.model_validate(payload)
+
+    payload["raw_score_model"]["coefficients"]["institutional_net_buy_ratio"] = "-0.03"
+    with pytest.raises(ValueError, match="non-negative"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:
+    with pytest.raises(ValueError, match="clip bounds"):
+        RawScoreFeatureTransform(
+            lower_clip=Decimal("1"),
+            upper_clip=Decimal("1"),
+            median=Decimal("1"),
+            iqr=Decimal("1"),
+            reverse=False,
+        )
 
 
 def test_raw_score_does_not_change_when_research_text_changes() -> None:
@@ -258,11 +300,13 @@ def test_screening_output_hash_rejects_a_changed_score() -> None:
 
 def test_raw_score_arithmetic_failure_is_a_scoped_domain_failure() -> None:
     command = _command()
+    coefficients = dict(command.raw_score_model.coefficients)
+    coefficients["single_quarter_revenue_acceleration"] = Decimal("1e1000002")
+    model = command.raw_score_model.model_copy(update={"coefficients": coefficients})
+    command = command.model_copy(update={"raw_score_model": model})
     member = command.members[0].model_copy(
         update={
-            "structured_signals": {
-                signal_id: Decimal("1e1000002") for signal_id in RAW_SCORE_FEATURE_IDS
-            }
+            "structured_signals": {signal_id: Decimal("0.1") for signal_id in RAW_SCORE_FEATURE_IDS}
         }
     )
 

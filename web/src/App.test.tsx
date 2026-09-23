@@ -45,7 +45,7 @@ describe("App", () => {
     );
   });
 
-  it("renders the Ticket 16 research rejection projection and its durable stages", async () => {
+  it("renders the research rejection projection and its durable stages", async () => {
     const researchReport = {
       ...report,
       result: {

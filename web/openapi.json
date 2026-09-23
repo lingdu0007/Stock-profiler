@@ -5770,6 +5770,13 @@
             "title": "Contributions",
             "type": "object"
           },
+          "feature_transformations": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RawScoreFeatureTransform"
+            },
+            "title": "Feature Transformations",
+            "type": "object"
+          },
           "interaction_terms": {
             "default": [],
             "items": {
@@ -5809,6 +5816,11 @@
             "title": "Normalization Snapshot Id",
             "type": "string"
           },
+          "penalty_strength": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Penalty Strength",
+            "type": "string"
+          },
           "positive_record_count": {
             "title": "Positive Record Count",
             "type": "integer"
@@ -5846,6 +5858,14 @@
             "title": "Training Window Id",
             "type": "string"
           },
+          "transformed_inputs": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Transformed Inputs",
+            "type": "object"
+          },
           "z20": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Z20",
@@ -5866,13 +5886,49 @@
           "negative_record_count",
           "intercept",
           "structured_inputs",
+          "transformed_inputs",
           "coefficients",
+          "feature_transformations",
           "contributions",
           "z20",
           "l1_ratio",
-          "l2_ratio"
+          "l2_ratio",
+          "penalty_strength"
         ],
         "title": "RawScore",
+        "type": "object"
+      },
+      "RawScoreFeatureTransform": {
+        "additionalProperties": false,
+        "description": "Frozen winsorization and robust-standardization parameters for one signal.",
+        "properties": {
+          "iqr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iqr",
+            "type": "string"
+          },
+          "lower_clip": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Clip",
+            "type": "string"
+          },
+          "median": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Median",
+            "type": "string"
+          },
+          "reverse": {
+            "title": "Reverse",
+            "type": "boolean"
+          },
+          "upper_clip": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Clip",
+            "type": "string"
+          }
+        },
+        "required": ["lower_clip", "upper_clip", "median", "iqr", "reverse"],
+        "title": "RawScoreFeatureTransform",
         "type": "object"
       },
       "ReauthenticationVerificationDto": {

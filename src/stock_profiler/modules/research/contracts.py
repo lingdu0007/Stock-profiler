@@ -76,6 +76,17 @@ RAW_SCORE_INPUT_IDS: tuple[str, ...] = (
     "screening_terminal_prior",
     *RAW_SCORE_FEATURE_IDS,
 )
+RAW_SCORE_UNCONSTRAINED_FEATURE_IDS = frozenset(
+    {"turnover_change", "institutional_listing_frequency"}
+)
+RAW_SCORE_REVERSED_FEATURE_IDS = frozenset(
+    {
+        "working_capital_pressure_change",
+        "leverage_ratio_change",
+        "downside_semivariance_60d",
+        "max_drawdown_60d",
+    }
+)
 
 
 class RawScoreCalculationError(ValueError):
@@ -88,6 +99,29 @@ class ResearchContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class RawScoreFeatureTransform(ResearchContract):
+    """Frozen winsorization and robust-standardization parameters for one signal."""
+
+    lower_clip: Decimal
+    upper_clip: Decimal
+    median: Decimal
+    iqr: Decimal
+    reverse: bool
+
+    @model_validator(mode="after")
+    def validate_parameters(self) -> RawScoreFeatureTransform:
+        parameters = (self.lower_clip, self.upper_clip, self.median, self.iqr)
+        if any(not value.is_finite() for value in parameters):
+            raise ValueError("raw-score feature transform parameters must be finite")
+        if self.lower_clip >= self.upper_clip or not (
+            self.lower_clip <= self.median <= self.upper_clip
+        ):
+            raise ValueError("raw-score feature transform clip bounds are invalid")
+        if self.iqr <= 0:
+            raise ValueError("raw-score feature transform IQR must be positive")
+        return self
+
+
 class RawScoreModelSnapshot(ResearchContract):
     """Frozen synthetic model metadata and parameter snapshot for uncalibrated z20."""
 
@@ -96,29 +130,53 @@ class RawScoreModelSnapshot(ResearchContract):
     target: Literal["SIX_MONTH_TERMINAL_20_PERCENT"]
     training_window_id: str = Field(min_length=1)
     normalization_snapshot_id: str = Field(min_length=1)
-    mature_months: int = Field(ge=60)
-    training_record_count: int = Field(ge=500)
-    positive_record_count: int = Field(ge=50)
-    negative_record_count: int = Field(ge=50)
+    mature_months: int = Field(ge=0)
+    training_record_count: int = Field(ge=0)
+    positive_record_count: int = Field(ge=0)
+    negative_record_count: int = Field(ge=0)
     intercept: Decimal
     coefficients: dict[str, Decimal]
+    transformations: dict[str, RawScoreFeatureTransform]
     interaction_terms: tuple[str, ...] = ()
     l1_ratio: Decimal
     l2_ratio: Decimal
+    penalty_strength: Decimal
 
     @model_validator(mode="after")
     def validate_training_snapshot(self) -> RawScoreModelSnapshot:
         if self.positive_record_count + self.negative_record_count != self.training_record_count:
             raise ValueError("raw-score training records must equal the two class counts")
-        if self.l1_ratio < 0 or self.l2_ratio < 0 or self.l1_ratio + self.l2_ratio != Decimal("1"):
-            raise ValueError("raw-score Elastic Net ratios must sum to one")
+        if self.l1_ratio != RAW_SCORE_L1_RATIO or self.l2_ratio != RAW_SCORE_L2_RATIO:
+            raise ValueError("raw-score Elastic Net must use 25% L1 and 75% L2")
+        if not self.penalty_strength.is_finite() or self.penalty_strength <= 0:
+            raise ValueError("raw-score penalty strength must be positive and finite")
         if self.interaction_terms:
             raise ValueError("raw-score model snapshot must not contain interaction terms")
         if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
             raise ValueError("raw-score model snapshot must cover the registered inputs")
-        if any(not value.is_finite() or value < 0 for value in self.coefficients.values()):
-            raise ValueError("raw-score coefficients must be finite and non-negative")
+        if set(self.transformations) != set(RAW_SCORE_FEATURE_IDS):
+            raise ValueError("raw-score model snapshot must cover every feature transform")
+        if any(
+            not value.is_finite() or (value < 0 and key not in RAW_SCORE_UNCONSTRAINED_FEATURE_IDS)
+            for key, value in self.coefficients.items()
+        ):
+            raise ValueError(
+                "raw-score coefficients must be finite and non-negative "
+                "except for unconstrained features"
+            )
+        if not self.intercept.is_finite():
+            raise ValueError("raw-score intercept must be finite")
         return self
+
+    @property
+    def has_sufficient_training_evidence(self) -> bool:
+        """Whether this frozen model is allowed to produce a new sample-out score."""
+        return (
+            self.mature_months >= 60
+            and self.training_record_count >= 500
+            and self.positive_record_count >= 50
+            and self.negative_record_count >= 50
+        )
 
 
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
@@ -135,9 +193,20 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         negative_record_count=250,
         intercept=RAW_SCORE_INTERCEPT,
         coefficients=dict(RAW_SCORE_COEFFICIENTS),
+        transformations={
+            feature_id: RawScoreFeatureTransform(
+                lower_clip=Decimal("-3"),
+                upper_clip=Decimal("3"),
+                median=Decimal("0"),
+                iqr=Decimal("1"),
+                reverse=feature_id in RAW_SCORE_REVERSED_FEATURE_IDS,
+            )
+            for feature_id in RAW_SCORE_FEATURE_IDS
+        },
         interaction_terms=RAW_SCORE_INTERACTION_TERMS,
         l1_ratio=RAW_SCORE_L1_RATIO,
         l2_ratio=RAW_SCORE_L2_RATIO,
+        penalty_strength=Decimal("1"),
     )
 
 
@@ -503,13 +572,16 @@ class RawScore(ResearchContract):
     negative_record_count: int
     intercept: Decimal
     structured_inputs: dict[str, Decimal]
+    transformed_inputs: dict[str, Decimal]
     coefficients: dict[str, Decimal]
+    feature_transformations: dict[str, RawScoreFeatureTransform]
     contributions: dict[str, Decimal]
     z20: Decimal
     probability: None = None
     interaction_terms: tuple[str, ...] = ()
     l1_ratio: Decimal
     l2_ratio: Decimal
+    penalty_strength: Decimal
 
 
 class ResearchFrameworkOutput(ResearchContract):
@@ -617,6 +689,16 @@ class ResearchOutcome(ResearchContract):
     actionable: Literal[False] = False
 
 
+def _transform_raw_score_feature(
+    value: Decimal,
+    transform: RawScoreFeatureTransform,
+) -> Decimal:
+    """Apply the frozen clip, robust scale, and direction before scoring."""
+    clipped = min(max(value, transform.lower_clip), transform.upper_clip)
+    normalized = (clipped - transform.median) / transform.iqr
+    return -normalized if transform.reverse else normalized
+
+
 def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> RawScore:
     """Compute z20 only from structured screening priors and eleven signals."""
     if member.security_id not in command.screening.selected_member_ids:
@@ -625,6 +707,9 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
     if any(value is None for value in member.structured_signals.values()):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
+    model = command.raw_score_model
+    if not model.has_sufficient_training_evidence:
+        raise RawScoreCalculationError("RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT")
     structured_inputs = {
         "screening_positive_prior": command.screening.positive_percentiles[member.security_id],
         "screening_terminal_prior": command.screening.terminal_percentiles[member.security_id],
@@ -634,11 +719,22 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
             if value is not None
         },
     }
-    model = command.raw_score_model
     try:
         with localcontext(Context(prec=38)):
+            transformed_inputs = {
+                "screening_positive_prior": structured_inputs["screening_positive_prior"],
+                "screening_terminal_prior": structured_inputs["screening_terminal_prior"],
+                **{
+                    signal_id: _transform_raw_score_feature(
+                        value,
+                        model.transformations[signal_id],
+                    )
+                    for signal_id, value in member.structured_signals.items()
+                    if value is not None
+                },
+            }
             contributions = {
-                key: structured_inputs[key] * model.coefficients[key] for key in structured_inputs
+                key: transformed_inputs[key] * model.coefficients[key] for key in transformed_inputs
             }
             z20 = model.intercept + sum(contributions.values(), Decimal("0"))
             if not z20.is_finite() or any(
@@ -661,12 +757,15 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         negative_record_count=model.negative_record_count,
         intercept=model.intercept,
         structured_inputs=structured_inputs,
+        transformed_inputs=transformed_inputs,
         coefficients=dict(model.coefficients),
+        feature_transformations=dict(model.transformations),
         contributions=contributions,
         z20=z20,
         interaction_terms=model.interaction_terms,
         l1_ratio=model.l1_ratio,
         l2_ratio=model.l2_ratio,
+        penalty_strength=model.penalty_strength,
     )
 
 

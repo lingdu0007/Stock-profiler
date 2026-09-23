@@ -2355,6 +2355,10 @@ export interface components {
             contributions: {
                 [key: string]: string;
             };
+            /** Feature Transformations */
+            feature_transformations: {
+                [key: string]: components["schemas"]["RawScoreFeatureTransform"];
+            };
             /**
              * Interaction Terms
              * @default []
@@ -2374,6 +2378,8 @@ export interface components {
             negative_record_count: number;
             /** Normalization Snapshot Id */
             normalization_snapshot_id: string;
+            /** Penalty Strength */
+            penalty_strength: string;
             /** Positive Record Count */
             positive_record_count: number;
             /** Probability */
@@ -2395,8 +2401,28 @@ export interface components {
             training_record_count: number;
             /** Training Window Id */
             training_window_id: string;
+            /** Transformed Inputs */
+            transformed_inputs: {
+                [key: string]: string;
+            };
             /** Z20 */
             z20: string;
+        };
+        /**
+         * RawScoreFeatureTransform
+         * @description Frozen winsorization and robust-standardization parameters for one signal.
+         */
+        RawScoreFeatureTransform: {
+            /** Iqr */
+            iqr: string;
+            /** Lower Clip */
+            lower_clip: string;
+            /** Median */
+            median: string;
+            /** Reverse */
+            reverse: boolean;
+            /** Upper Clip */
+            upper_clip: string;
         };
         /**
          * ReauthenticationVerificationDto

@@ -1204,6 +1204,46 @@ def test_research_provider_failure_closes_without_raw_score_or_risk_run(
     assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
 
 
+def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    assert case.research is not None
+    model = case.research.raw_score_model.model_copy(
+        update={
+            "mature_months": 59,
+            "training_record_count": 499,
+            "positive_record_count": 249,
+        }
+    )
+    case = case.model_copy(
+        update={
+            "input": {
+                **case.input,
+                "research": {
+                    **case.input["research"],
+                    "raw_score_model": model.model_dump(mode="json"),
+                },
+            },
+            "research": case.research.model_copy(update={"raw_score_model": model}),
+        }
+    )
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        case.model_dump(mode="json"),
+    )
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RAW_SCORE"
+        and stage.status == "FAILED"
+        and "RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
+
+
 def test_research_output_contract_failure_is_saved_as_research_failure(
     migrated_settings: Settings,
 ) -> None:
