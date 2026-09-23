@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
@@ -39,9 +40,14 @@ RESEARCH_REQUIRED_DATA_TYPES: tuple[ResearchDataType, ...] = (
 
 RAW_SCORE_MODEL_VERSION = "elastic-net-logistic-z20-v1"
 RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL_20_PERCENT"
+RAW_SCORE_TRAINING_WINDOW_POLICY: Literal[
+    "EXPANDING_60_TO_119_ROLLING_120"
+] = "EXPANDING_60_TO_119_ROLLING_120"
+RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
+_RAW_SCORE_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 RAW_SCORE_INTERACTION_TERMS: tuple[str, ...] = ()
 RAW_SCORE_FEATURE_IDS: tuple[str, ...] = (
     "single_quarter_revenue_acceleration",
@@ -129,6 +135,13 @@ class RawScoreModelSnapshot(ResearchContract):
     model_version: str = Field(min_length=1)
     target: Literal["SIX_MONTH_TERMINAL_20_PERCENT"]
     training_window_id: str = Field(min_length=1)
+    training_window_policy: Literal["EXPANDING_60_TO_119_ROLLING_120"]
+    training_window_kind: Literal["EXPANDING", "ROLLING_120"]
+    training_window_month_count: int = Field(ge=1, le=120)
+    training_window_start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    training_window_end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    training_months: tuple[str, ...] = Field(min_length=1)
+    label_watermark_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)
@@ -150,8 +163,30 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score Elastic Net must use 25% L1 and 75% L2")
         if self.model_version != RAW_SCORE_MODEL_VERSION:
             raise ValueError("unsupported raw-score model version")
-        if not self.penalty_strength.is_finite() or self.penalty_strength <= 0:
-            raise ValueError("raw-score penalty strength must be positive and finite")
+        if self.penalty_strength != RAW_SCORE_PENALTY_STRENGTH:
+            raise ValueError("raw-score penalty strength is frozen for this model version")
+        if self.training_window_policy != RAW_SCORE_TRAINING_WINDOW_POLICY:
+            raise ValueError("unsupported raw-score training window policy")
+        if any(not _RAW_SCORE_MONTH_PATTERN.fullmatch(month) for month in self.training_months):
+            raise ValueError("raw-score training months must use YYYY-MM")
+        if self.training_window_month_count != len(self.training_months):
+            raise ValueError("raw-score training window month count does not match months")
+        month_indexes = tuple(
+            int(month[:4]) * 12 + int(month[5:]) for month in self.training_months
+        )
+        if any(
+            current_month != previous_month + 1
+            for previous_month, current_month in zip(
+                month_indexes, month_indexes[1:], strict=False
+            )
+        ):
+            raise ValueError("raw-score training months must be consecutive")
+        if (
+            self.training_months[0] != self.training_window_start_month
+            or self.training_months[-1] != self.training_window_end_month
+            or self.label_watermark_month != self.training_window_end_month
+        ):
+            raise ValueError("raw-score training window dates do not match the watermark")
         if self.interaction_terms:
             raise ValueError("raw-score model snapshot must not contain interaction terms")
         if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
@@ -176,6 +211,20 @@ class RawScoreModelSnapshot(ResearchContract):
             )
         if not self.intercept.is_finite():
             raise ValueError("raw-score intercept must be finite")
+        if self.has_sufficient_training_evidence:
+            if self.mature_months >= 120:
+                if (
+                    self.training_window_kind != "ROLLING_120"
+                    or self.training_window_month_count != 120
+                ):
+                    raise ValueError(
+                        "raw-score mature window must use the 120-month rolling policy"
+                    )
+            elif (
+                self.training_window_kind != "EXPANDING"
+                or self.training_window_month_count != self.mature_months
+            ):
+                raise ValueError("raw-score mature window must use the expanding policy")
         return self
 
     @property
@@ -189,13 +238,28 @@ class RawScoreModelSnapshot(ResearchContract):
         )
 
 
+def _training_month_sequence(start_year: int, start_month: int, count: int) -> tuple[str, ...]:
+    start_index = start_year * 12 + start_month - 1
+    return tuple(
+        f"{month_index // 12:04}-{month_index % 12 + 1:02}"
+        for month_index in range(start_index, start_index + count)
+    )
+
+
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
     return RawScoreModelSnapshot(
         algorithm="ELASTIC_NET_LOGISTIC",
         model_version=RAW_SCORE_MODEL_VERSION,
         target=RAW_SCORE_TARGET,
-        training_window_id="synthetic-training-window-60m",
+        training_window_id="synthetic-training-window-expanding-60m",
+        training_window_policy=RAW_SCORE_TRAINING_WINDOW_POLICY,
+        training_window_kind="EXPANDING",
+        training_window_month_count=60,
+        training_window_start_month="2037-06",
+        training_window_end_month="2042-05",
+        training_months=_training_month_sequence(2037, 6, 60),
+        label_watermark_month="2042-05",
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
         training_record_count=500,
@@ -216,7 +280,7 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         interaction_terms=RAW_SCORE_INTERACTION_TERMS,
         l1_ratio=RAW_SCORE_L1_RATIO,
         l2_ratio=RAW_SCORE_L2_RATIO,
-        penalty_strength=Decimal("1"),
+        penalty_strength=RAW_SCORE_PENALTY_STRENGTH,
     )
 
 
@@ -575,6 +639,13 @@ class RawScore(ResearchContract):
     algorithm: Literal["ELASTIC_NET_LOGISTIC"]
     model_version: str
     training_window_id: str
+    training_window_policy: Literal["EXPANDING_60_TO_119_ROLLING_120"]
+    training_window_kind: Literal["EXPANDING", "ROLLING_120"]
+    training_window_month_count: int
+    training_window_start_month: str
+    training_window_end_month: str
+    training_months: tuple[str, ...]
+    label_watermark_month: str
     normalization_snapshot_id: str
     mature_months: int
     training_record_count: int
@@ -760,6 +831,13 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         algorithm=model.algorithm,
         model_version=model.model_version,
         training_window_id=model.training_window_id,
+        training_window_policy=model.training_window_policy,
+        training_window_kind=model.training_window_kind,
+        training_window_month_count=model.training_window_month_count,
+        training_window_start_month=model.training_window_start_month,
+        training_window_end_month=model.training_window_end_month,
+        training_months=model.training_months,
+        label_watermark_month=model.label_watermark_month,
         normalization_snapshot_id=model.normalization_snapshot_id,
         mature_months=model.mature_months,
         training_record_count=model.training_record_count,

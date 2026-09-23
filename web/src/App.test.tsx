@@ -52,7 +52,112 @@ describe("App", () => {
         ...report.result,
         outcome_code: "RESEARCH_REJECTED",
         summary: "Synthetic fixed-ten research was rejected by independent risk.",
-        key_reasons: ["INDEPENDENT_RISK_VETO"]
+        key_reasons: ["INDEPENDENT_RISK_VETO"],
+        research: {
+          actionable: false,
+          disposition: "REJECTED",
+          reasons: ["INDEPENDENT_RISK_VETO"],
+          members: [
+            {
+              security_id: "synthetic-security-00",
+              research_id: "research-00",
+              evidence_refs: ["financial-statements-evidence-00"],
+              thesis: "The fictional thesis is bounded by the frozen evidence.",
+              bull_case: "The fictional upside case remains conditional.",
+              bear_case: "The fictional downside case remains explicit.",
+              knowledge_cutoff: "2042-05-31T23:59:59Z"
+            }
+          ],
+          raw_scores: [
+            {
+              security_id: "synthetic-security-00",
+              research_id: "research-00",
+              target: "SIX_MONTH_TERMINAL_20_PERCENT",
+              algorithm: "ELASTIC_NET_LOGISTIC",
+              model_version: "elastic-net-logistic-z20-v1",
+              training_window_id: "synthetic-training-window-expanding-60m",
+              training_window_policy: "EXPANDING_60_TO_119_ROLLING_120",
+              training_window_kind: "EXPANDING",
+              training_window_month_count: 60,
+              training_window_start_month: "2037-06",
+              training_window_end_month: "2042-05",
+              training_months: ["2037-06", "2042-05"],
+              label_watermark_month: "2042-05",
+              normalization_snapshot_id: "synthetic-normalization-v1",
+              mature_months: 60,
+              training_record_count: 500,
+              positive_record_count: 250,
+              negative_record_count: 250,
+              intercept: "-0.4",
+              structured_inputs: {},
+              transformed_inputs: {},
+              coefficients: {},
+              feature_transformations: {},
+              contributions: {},
+              z20: "1.25",
+              l1_ratio: "0.25",
+              l2_ratio: "0.75",
+              penalty_strength: "1"
+            }
+          ],
+          tool_evidence: [],
+          handoff: {
+            contract_version: "1.0.0",
+            scope: "D0_SYNTHETIC_RESEARCH_ONLY",
+            selection_object_id: "selection-object-1616",
+            selection_event_id: "selection-event-1616",
+            security_ids: ["synthetic-security-00"],
+            targets: ["SIX_MONTH_POSITIVE_RETURN", "SIX_MONTH_TERMINAL_20_PERCENT"],
+            cutoff_at: "2042-05-31T23:59:59Z",
+            knowledge_cutoff: "2042-05-31T23:59:59Z",
+            evidence_ids: ["financial-statements-evidence-00"],
+            research_run_id: "research-run-1616",
+            risk_run_id: "risk-run-1616",
+            research_definition_id: "synthetic-monthly-research",
+            research_definition_version: "2.0.0",
+            risk_definition_id: "synthetic-independent-risk-veto",
+            risk_definition_version: "1.0.0",
+            research_model_adapter_id: "m-agent-deterministic-research-adapter",
+            risk_model_adapter_id: "m-agent-deterministic-risk-adapter",
+            research_routing_policy_version: "monthly-research-risk-veto-v1",
+            research_output_contract_id: "synthetic-monthly-research-draft",
+            research_output_contract_version: "1.0.0",
+            risk_output_contract_id: "synthetic-independent-risk-veto",
+            risk_output_contract_version: "1.0.0",
+            screening_strategy_version: "synthetic-dual-head-strategy-v1",
+            screening_snapshot_id: "synthetic-dual-head-snapshot-v1",
+            selection_fingerprint: "a".repeat(64),
+            raw_scores: [],
+            tool_evidence: [],
+            member_handoffs: [],
+            risk_veto: {
+              run_id: "risk-run-1616",
+              definition_id: "synthetic-independent-risk-veto",
+              definition_version: "1.0.0",
+              disposition: "REJECTED",
+              gates: [{ gate_id: "SYNTHETIC_RISK_VETO", status: "FAILED" }],
+              reasons: ["INDEPENDENT_RISK_VETO"],
+              member_vetoes: []
+            }
+          },
+          risk_veto: {
+            run_id: "risk-run-1616",
+            definition_id: "synthetic-independent-risk-veto",
+            definition_version: "1.0.0",
+            disposition: "REJECTED",
+            gates: [{ gate_id: "SYNTHETIC_RISK_VETO", status: "FAILED" }],
+            reasons: ["INDEPENDENT_RISK_VETO"],
+            member_vetoes: [
+              {
+                security_id: "synthetic-security-00",
+                research_id: "research-00",
+                disposition: "REJECTED",
+                gates: [{ gate_id: "SYNTHETIC_MEMBER_RISK", status: "FAILED" }],
+                reasons: ["LIQUIDITY_WARNING"]
+              }
+            ]
+          }
+        }
       },
       stage_results: [
         { phase: "RESEARCH", status: "SUCCEEDED", reasons: [], gate_results: [] },
@@ -80,6 +185,12 @@ describe("App", () => {
     expect(screen.getByRole("region", { name: "Key reasons" })).toHaveTextContent(
       "INDEPENDENT_RISK_VETO"
     );
+    const research = screen.getByRole("region", { name: "Research evidence" });
+    expect(research).toHaveTextContent("synthetic-security-00");
+    expect(research).toHaveTextContent("The fictional thesis is bounded by the frozen evidence.");
+    expect(research).toHaveTextContent("1.25");
+    expect(research).toHaveTextContent("risk-run-1616");
+    expect(research).toHaveTextContent("LIQUIDITY_WARNING");
     const stages = screen.getByRole("region", { name: "Decision stages" });
     expect(stages).toHaveTextContent("RESEARCH");
     expect(stages).toHaveTextContent("RISK_VETO");

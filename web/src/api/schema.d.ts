@@ -2370,6 +2370,8 @@ export interface components {
             l1_ratio: string;
             /** L2 Ratio */
             l2_ratio: string;
+            /** Label Watermark Month */
+            label_watermark_month: string;
             /** Mature Months */
             mature_months: number;
             /** Model Version */
@@ -2397,10 +2399,28 @@ export interface components {
              * @constant
              */
             target: "SIX_MONTH_TERMINAL_20_PERCENT";
+            /** Training Months */
+            training_months: string[];
             /** Training Record Count */
             training_record_count: number;
+            /** Training Window End Month */
+            training_window_end_month: string;
             /** Training Window Id */
             training_window_id: string;
+            /**
+             * Training Window Kind
+             * @enum {string}
+             */
+            training_window_kind: "EXPANDING" | "ROLLING_120";
+            /** Training Window Month Count */
+            training_window_month_count: number;
+            /**
+             * Training Window Policy
+             * @constant
+             */
+            training_window_policy: "EXPANDING_60_TO_119_ROLLING_120";
+            /** Training Window Start Month */
+            training_window_start_month: string;
             /** Transformed Inputs */
             transformed_inputs: {
                 [key: string]: string;

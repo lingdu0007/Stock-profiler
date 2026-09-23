@@ -5800,6 +5800,10 @@
             "title": "L2 Ratio",
             "type": "string"
           },
+          "label_watermark_month": {
+            "title": "Label Watermark Month",
+            "type": "string"
+          },
           "mature_months": {
             "title": "Mature Months",
             "type": "integer"
@@ -5850,12 +5854,41 @@
             "title": "Target",
             "type": "string"
           },
+          "training_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Training Months",
+            "type": "array"
+          },
           "training_record_count": {
             "title": "Training Record Count",
             "type": "integer"
           },
+          "training_window_end_month": {
+            "title": "Training Window End Month",
+            "type": "string"
+          },
           "training_window_id": {
             "title": "Training Window Id",
+            "type": "string"
+          },
+          "training_window_kind": {
+            "enum": ["EXPANDING", "ROLLING_120"],
+            "title": "Training Window Kind",
+            "type": "string"
+          },
+          "training_window_month_count": {
+            "title": "Training Window Month Count",
+            "type": "integer"
+          },
+          "training_window_policy": {
+            "const": "EXPANDING_60_TO_119_ROLLING_120",
+            "title": "Training Window Policy",
+            "type": "string"
+          },
+          "training_window_start_month": {
+            "title": "Training Window Start Month",
             "type": "string"
           },
           "transformed_inputs": {
@@ -5879,6 +5912,13 @@
           "algorithm",
           "model_version",
           "training_window_id",
+          "training_window_policy",
+          "training_window_kind",
+          "training_window_month_count",
+          "training_window_start_month",
+          "training_window_end_month",
+          "training_months",
+          "label_watermark_month",
           "normalization_snapshot_id",
           "mature_months",
           "training_record_count",

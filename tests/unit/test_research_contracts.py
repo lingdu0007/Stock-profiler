@@ -147,7 +147,12 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.target == "SIX_MONTH_TERMINAL_20_PERCENT"
     assert raw_score.probability is None
     assert raw_score.model_version == "elastic-net-logistic-z20-v1"
-    assert raw_score.training_window_id == "synthetic-training-window-60m"
+    assert raw_score.training_window_id == "synthetic-training-window-expanding-60m"
+    assert raw_score.training_window_kind == "EXPANDING"
+    assert raw_score.training_window_month_count == 60
+    assert raw_score.training_window_start_month == "2037-06"
+    assert raw_score.training_window_end_month == "2042-05"
+    assert raw_score.label_watermark_month == "2042-05"
     assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
     assert raw_score.interaction_terms == ()
     assert raw_score.z20 == Decimal("33.127")
@@ -199,6 +204,25 @@ def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> N
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["transformations"]["downside_semivariance_60d"]["reverse"] = False
     with pytest.raises(ValueError, match="direction"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None:
+    snapshot = frozen_raw_score_model_snapshot()
+
+    assert len(snapshot.training_months) == 60
+    assert snapshot.training_months[0] == snapshot.training_window_start_month
+    assert snapshot.training_months[-1] == snapshot.label_watermark_month
+    assert snapshot.training_window_policy == "EXPANDING_60_TO_119_ROLLING_120"
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["mature_months"] = 121
+    with pytest.raises(ValueError, match="120-month rolling"):
+        ResearchCommand.model_validate(payload)
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["penalty_strength"] = "999"
+    with pytest.raises(ValueError, match="penalty strength"):
         ResearchCommand.model_validate(payload)
 
 
