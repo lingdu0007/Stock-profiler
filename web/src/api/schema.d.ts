@@ -2654,16 +2654,16 @@ export interface components {
         };
         /** ResearchEvidence */
         ResearchEvidence: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
             /**
-             * Acquired At
-             * Format: date-time
+             * Evidence Contract Version
+             * @default 2.0.0
+             * @enum {string}
              */
-            acquired_at: string;
-            /**
-             * Effective At
-             * Format: date-time
-             */
-            effective_at: string;
+            evidence_contract_version: "1.0.0" | "2.0.0";
             /** Evidence Id */
             evidence_id: string;
             /**
@@ -2677,18 +2677,12 @@ export interface components {
             semantic_version: string;
             /** Source */
             source: string;
-            /**
-             * Source Published At
-             * Format: date-time
-             */
-            source_published_at: string;
+            /** Source Published At */
+            source_published_at?: string | null;
             /** Statement */
             statement: string;
-            /**
-             * Validated At
-             * Format: date-time
-             */
-            validated_at: string;
+            /** Validated At */
+            validated_at?: string | null;
             /**
              * Validation Status
              * @constant
@@ -2861,16 +2855,16 @@ export interface components {
          * @description Structured provenance emitted by the allowlisted exploratory Tool.
          */
         ResearchToolEvidence: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
             /**
-             * Acquired At
-             * Format: date-time
+             * Evidence Contract Version
+             * @default 2.0.0
+             * @enum {string}
              */
-            acquired_at: string;
-            /**
-             * Effective At
-             * Format: date-time
-             */
-            effective_at: string;
+            evidence_contract_version: "1.0.0" | "2.0.0";
             /** Evidence Id */
             evidence_id: string;
             /**
@@ -2884,18 +2878,12 @@ export interface components {
             semantic_version: string;
             /** Source */
             source: string;
-            /**
-             * Source Published At
-             * Format: date-time
-             */
-            source_published_at: string;
+            /** Source Published At */
+            source_published_at?: string | null;
             /** Statement */
             statement: string;
-            /**
-             * Validated At
-             * Format: date-time
-             */
-            validated_at: string;
+            /** Validated At */
+            validated_at?: string | null;
             /**
              * Validation Status
              * @constant

@@ -8,6 +8,12 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
+    RESEARCH_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_LEGACY_ROUTING_POLICY_VERSION,
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
@@ -44,18 +50,33 @@ __all__ = (
 )
 
 
+def _research_tool_payload(
+    evidence: ResearchToolEvidence,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    payload = evidence.model_dump(mode="json", exclude_none=legacy)
+    if legacy:
+        payload.pop("evidence_contract_version", None)
+    return payload
+
+
 def prepare_research_risk_plan(
     command: ResearchCommand,
     research_run_id: str,
     draft: ResearchDraft,
     tool_evidence: tuple[ResearchToolEvidence, ...],
     research_run_ids: tuple[str, ...] = (),
+    legacy: bool = False,
 ) -> ResearchRiskPlan:
     """Calculate and bind the immutable inputs consumed by the risk Run."""
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
     validate_research_draft(command, draft, tool_evidence)
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
-    member_handoffs = _member_handoffs_for_command(command, research_run_ids)
+    member_handoffs = _member_handoffs_for_command(
+        command,
+        () if legacy else research_run_ids,
+    )
     fingerprint = handoff_fingerprint(
         command,
         draft,
@@ -63,6 +84,7 @@ def prepare_research_risk_plan(
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
+        legacy=legacy,
     )
     risk_run_id = risk_run_id_for(
         research_run_id,
@@ -71,18 +93,27 @@ def prepare_research_risk_plan(
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
+        legacy=legacy,
     )
+    risk_payload: dict[str, object] = {
+        "handoff_fingerprint": fingerprint,
+        "research_run_id": research_run_id,
+        "draft": draft.model_dump(mode="json"),
+        "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
+        "tool_evidence_refs": tool_evidence_refs,
+        "tool_evidence": tuple(
+            _research_tool_payload(evidence, legacy=legacy)
+            for evidence in tool_evidence
+        ),
+        "member_handoffs": tuple(
+            member.model_dump(mode="json", exclude={"research_run_id"} if legacy else None)
+            for member in member_handoffs
+        ),
+    }
+    if not legacy:
+        risk_payload["research_run_ids"] = research_run_ids
     input_payload = json.dumps(
-        {
-            "handoff_fingerprint": fingerprint,
-            "research_run_id": research_run_id,
-            "research_run_ids": research_run_ids,
-            "draft": draft.model_dump(mode="json"),
-            "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
-            "tool_evidence_refs": tool_evidence_refs,
-            "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
-            "member_handoffs": tuple(member.model_dump(mode="json") for member in member_handoffs),
-        },
+        risk_payload,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
@@ -95,13 +126,15 @@ def prepare_research_risk_plan(
         risk_run_id=risk_run_id,
         handoff_fingerprint=fingerprint,
         input_payload=input_payload,
-        research_run_ids=research_run_ids,
+        research_run_ids=() if legacy else research_run_ids,
     )
 
 
 def freeze_research(
     command: ResearchCommand,
     framework: ResearchFrameworkOutput,
+    *,
+    legacy: bool = False,
 ) -> ResearchOutcome:
     """Freeze research text, calculate structured z20 scores, and honor risk veto."""
     risk_veto_draft = framework.risk_veto
@@ -122,7 +155,7 @@ def freeze_research(
         command,
         framework.member_handoffs,
     )
-    _validate_draft_against_command(command, framework)
+    _validate_draft_against_command(command, framework, legacy=legacy)
     if risk_veto_draft.disposition == "REJECTED" and not any(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
     ):
@@ -164,14 +197,24 @@ def freeze_research(
         research_run_id=framework.research_run_id,
         risk_run_id=risk_run_id,
         research_definition_id=RESEARCH_DEFINITION_ID,
-        research_definition_version=RESEARCH_DEFINITION_VERSION,
+        research_definition_version=(
+            RESEARCH_LEGACY_DEFINITION_VERSION if legacy else RESEARCH_DEFINITION_VERSION
+        ),
         risk_definition_id=RISK_DEFINITION_ID,
         risk_definition_version=RISK_DEFINITION_VERSION,
         research_model_adapter_id=RESEARCH_MODEL_ADAPTER_ID,
         risk_model_adapter_id=RISK_MODEL_ADAPTER_ID,
-        research_routing_policy_version=RESEARCH_ROUTING_POLICY_VERSION,
+        research_routing_policy_version=(
+            RESEARCH_LEGACY_ROUTING_POLICY_VERSION
+            if legacy
+            else RESEARCH_ROUTING_POLICY_VERSION
+        ),
         research_output_contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
-        research_output_contract_version=RESEARCH_OUTPUT_CONTRACT_VERSION,
+        research_output_contract_version=(
+            RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+            if legacy
+            else RESEARCH_OUTPUT_CONTRACT_VERSION
+        ),
         risk_output_contract_id=RISK_OUTPUT_CONTRACT_ID,
         risk_output_contract_version=RISK_OUTPUT_CONTRACT_VERSION,
         screening_strategy_version=command.screening.strategy_version,
@@ -180,7 +223,7 @@ def freeze_research(
         raw_scores=raw_scores,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
-        research_run_ids=framework.research_run_ids,
+        research_run_ids=() if legacy else framework.research_run_ids,
         risk_veto=risk_veto,
     )
     return ResearchOutcome(
@@ -201,6 +244,8 @@ def freeze_research(
 def _validate_draft_against_command(
     command: ResearchCommand,
     framework: ResearchFrameworkOutput,
+    *,
+    legacy: bool = False,
 ) -> None:
     """Reject a draft that loses evidence identity or invents a cohort member."""
     if framework.research_run_id == framework.risk_run_id:
@@ -223,6 +268,7 @@ def _validate_draft_against_command(
         tool_evidence_refs=framework.tool_evidence_refs,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
+        legacy=legacy,
     )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
@@ -276,11 +322,19 @@ def _validate_tool_evidence(
         raise ValueError("research evidence identity collision between Provider and Tool")
     for item in evidence:
         if (
-            item.semantic_version != RESEARCH_ANNOUNCEMENT_TOOL_VERSION
+            item.validation_status != "VALIDATED"
+            or item.knowledge_cutoff != command.knowledge_cutoff
+        ):
+            raise ValueError("research Tool evidence is not bound to the frozen cutoff")
+        if item.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
+            if item.semantic_version != RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION:
+                raise ValueError("research Tool evidence is not bound to its legacy tool version")
+            continue
+        if (
+            item.evidence_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION
+            or item.semantic_version != RESEARCH_ANNOUNCEMENT_TOOL_VERSION
             or item.acquired_at != command.knowledge_cutoff
             or item.validated_at != command.knowledge_cutoff
-            or item.knowledge_cutoff != command.knowledge_cutoff
-            or item.validation_status != "VALIDATED"
         ):
             raise ValueError("research Tool evidence is not bound to the frozen cutoff")
     return evidence

@@ -16,18 +16,24 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, mo
 
 RESEARCH_CONTRACT_VERSION = "1.0.0"
 RESEARCH_DEFINITION_ID = "synthetic-monthly-research"
-RESEARCH_DEFINITION_VERSION = "2.0.0"
+RESEARCH_LEGACY_DEFINITION_VERSION = "2.0.0"
+RESEARCH_DEFINITION_VERSION = "3.0.0"
 RESEARCH_MODEL_ADAPTER_ID = "m-agent-deterministic-research-adapter"
-RESEARCH_ROUTING_POLICY_VERSION = "monthly-research-risk-veto-v1"
+RESEARCH_LEGACY_ROUTING_POLICY_VERSION = "monthly-research-risk-veto-v1"
+RESEARCH_ROUTING_POLICY_VERSION = "monthly-research-risk-veto-v2"
 RESEARCH_OUTPUT_CONTRACT_ID = "synthetic-monthly-research-draft"
-RESEARCH_OUTPUT_CONTRACT_VERSION = "1.0.0"
+RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION = "1.0.0"
+RESEARCH_OUTPUT_CONTRACT_VERSION = "2.0.0"
 RISK_DEFINITION_ID = "synthetic-independent-risk-veto"
 RISK_DEFINITION_VERSION = "1.0.0"
 RISK_MODEL_ADAPTER_ID = "m-agent-deterministic-risk-adapter"
 RISK_OUTPUT_CONTRACT_ID = "synthetic-independent-risk-veto"
 RISK_OUTPUT_CONTRACT_VERSION = "1.0.0"
 RESEARCH_SCOPE: Literal["D0_SYNTHETIC_RESEARCH_ONLY"] = "D0_SYNTHETIC_RESEARCH_ONLY"
-RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
+RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
+RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v2"
+RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION: Literal["1.0.0"] = "1.0.0"
+RESEARCH_EVIDENCE_CONTRACT_VERSION: Literal["2.0.0"] = "2.0.0"
 ResearchDataType = Literal[
     "DAILY_MARKET",
     "MONEY_FLOW",
@@ -187,7 +193,11 @@ class RawScoreTrainingCohort(ResearchContract):
     def validate_members(self) -> RawScoreTrainingCohort:
         if (
             self.research_definition_id != RESEARCH_DEFINITION_ID
-            or self.research_definition_version != RESEARCH_DEFINITION_VERSION
+            or self.research_definition_version
+            not in {
+                RESEARCH_LEGACY_DEFINITION_VERSION,
+                RESEARCH_DEFINITION_VERSION,
+            }
         ):
             raise ValueError("raw-score training cohort must use the supported research Definition")
         if len(set(self.member_security_ids)) != len(self.member_security_ids):
@@ -541,16 +551,36 @@ class ResearchEvidence(ResearchContract):
     source: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
-    effective_at: AwareDatetime
-    source_published_at: AwareDatetime
-    acquired_at: AwareDatetime
-    validated_at: AwareDatetime
+    evidence_contract_version: Literal["1.0.0", "2.0.0"] = RESEARCH_EVIDENCE_CONTRACT_VERSION
+    effective_at: AwareDatetime | None = None
+    source_published_at: AwareDatetime | None = None
+    acquired_at: AwareDatetime | None = None
+    validated_at: AwareDatetime | None = None
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
 
+    @model_validator(mode="before")
+    @classmethod
+    def mark_legacy_clock_payload(cls, value: object) -> object:
+        if isinstance(value, dict) and "evidence_contract_version" not in value and (
+            "effective_at" not in value or "source_published_at" not in value
+        ):
+            value = dict(value)
+            value["evidence_contract_version"] = RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+        return value
+
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchEvidence:
+        if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
+            return self
+        if (
+            self.effective_at is None
+            or self.source_published_at is None
+            or self.acquired_at is None
+            or self.validated_at is None
+        ):
+            raise ValueError("current research evidence requires all evidence clocks")
         _validate_evidence_clocks(
             source_published_at=self.source_published_at,
             acquired_at=self.acquired_at,
@@ -567,16 +597,36 @@ class ResearchToolEvidence(ResearchContract):
     source: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
-    effective_at: AwareDatetime
-    source_published_at: AwareDatetime
-    acquired_at: AwareDatetime
-    validated_at: AwareDatetime
+    evidence_contract_version: Literal["1.0.0", "2.0.0"] = RESEARCH_EVIDENCE_CONTRACT_VERSION
+    effective_at: AwareDatetime | None = None
+    source_published_at: AwareDatetime | None = None
+    acquired_at: AwareDatetime | None = None
+    validated_at: AwareDatetime | None = None
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
 
+    @model_validator(mode="before")
+    @classmethod
+    def mark_legacy_clock_payload(cls, value: object) -> object:
+        if isinstance(value, dict) and "evidence_contract_version" not in value and (
+            "effective_at" not in value or "source_published_at" not in value
+        ):
+            value = dict(value)
+            value["evidence_contract_version"] = RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+        return value
+
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchToolEvidence:
+        if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
+            return self
+        if (
+            self.effective_at is None
+            or self.source_published_at is None
+            or self.acquired_at is None
+            or self.validated_at is None
+        ):
+            raise ValueError("current research Tool evidence requires all evidence clocks")
         _validate_evidence_clocks(
             source_published_at=self.source_published_at,
             acquired_at=self.acquired_at,
@@ -756,44 +806,54 @@ def _structured_ratio(
     return numerator / denominator
 
 
+def _structured_signal_calculators(
+    facts: ResearchStructuredFacts,
+) -> dict[str, Callable[[], Decimal | None]]:
+    """Define each signal formula once for strict and failure-tolerant evaluation."""
+    return {
+        "single_quarter_revenue_acceleration": lambda: _structured_difference(
+            facts.revenue_growth_current,
+            facts.revenue_growth_prior,
+        ),
+        "asset_normalized_quarter_profit_improvement": lambda: _structured_ratio(
+            facts.quarter_profit_improvement,
+            facts.average_total_assets,
+        ),
+        "operating_cash_flow_return_on_assets": lambda: _structured_ratio(
+            facts.operating_cash_flow_ttm,
+            facts.average_total_assets,
+        ),
+        "working_capital_pressure_change": lambda: _structured_ratio(
+            _structured_difference(
+                facts.working_capital_pressure_current,
+                facts.working_capital_pressure_prior,
+            ),
+            facts.average_total_assets,
+        ),
+        "leverage_ratio_change": lambda: _structured_difference(
+            facts.leverage_ratio_current,
+            facts.leverage_ratio_prior,
+        ),
+        "industry_relative_return_20d": lambda: _structured_difference(
+            facts.stock_return_20d,
+            facts.industry_return_20d,
+        ),
+        "downside_semivariance_60d": lambda: facts.downside_semivariance_60d,
+        "max_drawdown_60d": lambda: facts.max_drawdown_60d,
+        "turnover_change": lambda: facts.turnover_change,
+        "institutional_net_buy_ratio": lambda: facts.institutional_net_buy_ratio,
+        "institutional_listing_frequency": lambda: facts.institutional_listing_frequency,
+    }
+
+
 def calculate_structured_signals(
     facts: ResearchStructuredFacts,
 ) -> dict[str, Decimal | None]:
     """Calculate the frozen raw-score signals from named source facts."""
     with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
         return {
-            "single_quarter_revenue_acceleration": _structured_difference(
-                facts.revenue_growth_current,
-                facts.revenue_growth_prior,
-            ),
-            "asset_normalized_quarter_profit_improvement": _structured_ratio(
-                facts.quarter_profit_improvement,
-                facts.average_total_assets,
-            ),
-            "operating_cash_flow_return_on_assets": _structured_ratio(
-                facts.operating_cash_flow_ttm,
-                facts.average_total_assets,
-            ),
-            "working_capital_pressure_change": _structured_ratio(
-                _structured_difference(
-                    facts.working_capital_pressure_current,
-                    facts.working_capital_pressure_prior,
-                ),
-                facts.average_total_assets,
-            ),
-            "leverage_ratio_change": _structured_difference(
-                facts.leverage_ratio_current,
-                facts.leverage_ratio_prior,
-            ),
-            "industry_relative_return_20d": _structured_difference(
-                facts.stock_return_20d,
-                facts.industry_return_20d,
-            ),
-            "downside_semivariance_60d": facts.downside_semivariance_60d,
-            "max_drawdown_60d": facts.max_drawdown_60d,
-            "turnover_change": facts.turnover_change,
-            "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
-            "institutional_listing_frequency": facts.institutional_listing_frequency,
+            signal_id: calculate()
+            for signal_id, calculate in _structured_signal_calculators(facts).items()
         }
 
 
@@ -810,50 +870,8 @@ def _calculate_structured_signals_with_failures(
 
     with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
         return {
-            "single_quarter_revenue_acceleration": safe(
-                lambda: _structured_difference(
-                    facts.revenue_growth_current,
-                    facts.revenue_growth_prior,
-                )
-            ),
-            "asset_normalized_quarter_profit_improvement": safe(
-                lambda: _structured_ratio(
-                    facts.quarter_profit_improvement,
-                    facts.average_total_assets,
-                )
-            ),
-            "operating_cash_flow_return_on_assets": safe(
-                lambda: _structured_ratio(
-                    facts.operating_cash_flow_ttm,
-                    facts.average_total_assets,
-                )
-            ),
-            "working_capital_pressure_change": safe(
-                lambda: _structured_ratio(
-                    _structured_difference(
-                        facts.working_capital_pressure_current,
-                        facts.working_capital_pressure_prior,
-                    ),
-                    facts.average_total_assets,
-                )
-            ),
-            "leverage_ratio_change": safe(
-                lambda: _structured_difference(
-                    facts.leverage_ratio_current,
-                    facts.leverage_ratio_prior,
-                )
-            ),
-            "industry_relative_return_20d": safe(
-                lambda: _structured_difference(
-                    facts.stock_return_20d,
-                    facts.industry_return_20d,
-                )
-            ),
-            "downside_semivariance_60d": facts.downside_semivariance_60d,
-            "max_drawdown_60d": facts.max_drawdown_60d,
-            "turnover_change": facts.turnover_change,
-            "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
-            "institutional_listing_frequency": facts.institutional_listing_frequency,
+            signal_id: safe(calculate)
+            for signal_id, calculate in _structured_signal_calculators(facts).items()
         }
 
 
@@ -918,9 +936,20 @@ class ResearchMemberInput(ResearchContract):
                 "verified-empty institutional activity requires zero institutional signals"
             )
         if any(
-            evidence.acquired_at > evidence.validated_at
-            or evidence.validated_at > self.knowledge_cutoff
+            evidence.evidence_contract_version not in {
+                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                RESEARCH_EVIDENCE_CONTRACT_VERSION,
+            }
             or evidence.validation_status != "VALIDATED"
+            or (
+                evidence.evidence_contract_version == RESEARCH_EVIDENCE_CONTRACT_VERSION
+                and (
+                    evidence.acquired_at is None
+                    or evidence.validated_at is None
+                    or evidence.acquired_at > evidence.validated_at
+                    or evidence.validated_at > self.knowledge_cutoff
+                )
+            )
             for evidence in self.evidence
         ):
             raise ValueError("research evidence must be validated and available by the cutoff")
@@ -1349,6 +1378,45 @@ def selection_binding_sha256(
     ).hexdigest()
 
 
+def _research_command_fingerprint_payload(
+    command: ResearchCommand,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    payload = command.model_dump(mode="json")
+    if legacy:
+        for member in payload["members"]:
+            for evidence in member["evidence"]:
+                evidence.pop("evidence_contract_version", None)
+                evidence.pop("effective_at", None)
+                evidence.pop("source_published_at", None)
+    return payload
+
+
+def _research_tool_evidence_fingerprint_payload(
+    evidence: ResearchToolEvidence,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    payload = evidence.model_dump(mode="json")
+    if legacy:
+        payload.pop("evidence_contract_version", None)
+        payload.pop("effective_at", None)
+        payload.pop("source_published_at", None)
+    return payload
+
+
+def _research_member_handoff_fingerprint_payload(
+    member: ResearchMemberHandoff,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    payload = member.model_dump(mode="json")
+    if legacy:
+        payload.pop("research_run_id", None)
+    return payload
+
+
 def handoff_fingerprint(
     command: ResearchCommand,
     draft: ResearchDraft,
@@ -1357,10 +1425,11 @@ def handoff_fingerprint(
     tool_evidence_refs: tuple[str, ...] = (),
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
     member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
+    legacy: bool = False,
 ) -> str:
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
-        "command": command.model_dump(mode="json"),
+        "command": _research_command_fingerprint_payload(command, legacy=legacy),
         "draft": draft.model_dump(mode="json"),
         "raw_scores": (
             tuple(score.model_dump(mode="json") for score in raw_scores)
@@ -1368,8 +1437,14 @@ def handoff_fingerprint(
             else None
         ),
         "tool_evidence_refs": tool_evidence_refs,
-        "tool_evidence": tuple(evidence.model_dump(mode="json") for evidence in tool_evidence),
-        "member_handoffs": tuple(member.model_dump(mode="json") for member in member_handoffs),
+        "tool_evidence": tuple(
+            _research_tool_evidence_fingerprint_payload(evidence, legacy=legacy)
+            for evidence in tool_evidence
+        ),
+        "member_handoffs": tuple(
+            _research_member_handoff_fingerprint_payload(member, legacy=legacy)
+            for member in member_handoffs
+        ),
     }
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -1382,6 +1457,7 @@ def risk_run_id_for(
     tool_evidence_refs: tuple[str, ...] = (),
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
     member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
+    legacy: bool = False,
 ) -> str:
     """Derive the independent risk Run identity from the frozen research Run."""
     digest = sha256(
@@ -1396,10 +1472,12 @@ def risk_run_id_for(
                 ),
                 "tool_evidence_refs": tool_evidence_refs,
                 "tool_evidence": tuple(
-                    evidence.model_dump(mode="json") for evidence in tool_evidence
+                    _research_tool_evidence_fingerprint_payload(evidence, legacy=legacy)
+                    for evidence in tool_evidence
                 ),
                 "member_handoffs": tuple(
-                    member.model_dump(mode="json") for member in member_handoffs
+                    _research_member_handoff_fingerprint_payload(member, legacy=legacy)
+                    for member in member_handoffs
                 ),
             },
             ensure_ascii=True,

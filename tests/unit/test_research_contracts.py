@@ -9,6 +9,7 @@ import pytest
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+    RESEARCH_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
@@ -307,7 +308,7 @@ def test_raw_score_snapshot_rejects_record_outside_frozen_training_cohort() -> N
     ("field", "value"),
     (
         ("research_definition_id", "synthetic-monthly-research-other"),
-        ("research_definition_version", "3.0.0"),
+        ("research_definition_version", "4.0.0"),
     ),
 )
 def test_raw_score_snapshot_requires_compatible_research_definition(
@@ -332,11 +333,29 @@ def test_research_signals_must_match_deterministic_source_facts() -> None:
 def test_research_evidence_requires_individual_three_clock_timestamps() -> None:
     payload = _command().model_dump(mode="json")
     evidence = payload["members"][0]["evidence"][0]
+    evidence["evidence_contract_version"] = RESEARCH_EVIDENCE_CONTRACT_VERSION
     evidence.pop("effective_at", None)
     evidence.pop("source_published_at", None)
 
-    with pytest.raises(ValueError, match="effective_at|source_published_at"):
+    with pytest.raises(ValueError, match="all evidence clocks"):
         ResearchCommand.model_validate(payload)
+
+
+def test_legacy_research_evidence_decodes_without_new_clock_fields() -> None:
+    payload = _command().model_dump(mode="json")
+    evidence = payload["members"][0]["evidence"][0]
+    evidence.pop("evidence_contract_version", None)
+    evidence.pop("effective_at", None)
+    evidence.pop("source_published_at", None)
+
+    command = ResearchCommand.model_validate(payload)
+    decoded = command.members[0].evidence[0]
+
+    assert decoded.evidence_contract_version == "1.0.0"
+    assert decoded.effective_at is None
+    assert decoded.source_published_at is None
+    assert decoded.acquired_at is not None
+    assert decoded.validated_at is not None
 
 
 def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:

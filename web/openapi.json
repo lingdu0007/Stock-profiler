@@ -6518,13 +6518,33 @@
         "additionalProperties": false,
         "properties": {
           "acquired_at": {
-            "format": "date-time",
-            "title": "Acquired At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
           },
           "effective_at": {
-            "format": "date-time",
-            "title": "Effective At",
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_contract_version": {
+            "default": "2.0.0",
+            "enum": ["1.0.0", "2.0.0"],
+            "title": "Evidence Contract Version",
             "type": "string"
           },
           "evidence_id": {
@@ -6553,9 +6573,16 @@
             "type": "string"
           },
           "source_published_at": {
-            "format": "date-time",
-            "title": "Source Published At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
           },
           "statement": {
             "minLength": 1,
@@ -6563,9 +6590,16 @@
             "type": "string"
           },
           "validated_at": {
-            "format": "date-time",
-            "title": "Validated At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
           },
           "validation_status": {
             "const": "VALIDATED",
@@ -6578,10 +6612,6 @@
           "source",
           "reference",
           "statement",
-          "effective_at",
-          "source_published_at",
-          "acquired_at",
-          "validated_at",
           "knowledge_cutoff",
           "semantic_version",
           "validation_status"
@@ -6961,13 +6991,33 @@
         "description": "Structured provenance emitted by the allowlisted exploratory Tool.",
         "properties": {
           "acquired_at": {
-            "format": "date-time",
-            "title": "Acquired At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
           },
           "effective_at": {
-            "format": "date-time",
-            "title": "Effective At",
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_contract_version": {
+            "default": "2.0.0",
+            "enum": ["1.0.0", "2.0.0"],
+            "title": "Evidence Contract Version",
             "type": "string"
           },
           "evidence_id": {
@@ -6996,9 +7046,16 @@
             "type": "string"
           },
           "source_published_at": {
-            "format": "date-time",
-            "title": "Source Published At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
           },
           "statement": {
             "minLength": 1,
@@ -7006,9 +7063,16 @@
             "type": "string"
           },
           "validated_at": {
-            "format": "date-time",
-            "title": "Validated At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
           },
           "validation_status": {
             "const": "VALIDATED",
@@ -7021,10 +7085,6 @@
           "source",
           "reference",
           "statement",
-          "effective_at",
-          "source_published_at",
-          "acquired_at",
-          "validated_at",
           "knowledge_cutoff",
           "semantic_version",
           "validation_status"

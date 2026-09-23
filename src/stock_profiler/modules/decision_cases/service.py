@@ -51,6 +51,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkRunTransition,
     FrozenFramework,
     MappedDurableRunMissingError,
+    ResearchMemberRunResult,
     Transaction,
 )
 from stock_profiler.modules.portfolio.contracts import (
@@ -67,6 +68,8 @@ from stock_profiler.modules.position_management.service import reconcile as reco
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
@@ -182,11 +185,19 @@ def _validate_research_selection_event(
 def _research_data_gate_results(
     command: ResearchCommand,
     error_code: str | None,
+    member_runs: tuple[ResearchMemberRunResult, ...] = (),
 ) -> tuple[GateResult, ...]:
     """Persist each member/data-type gate when the required-facts Provider fails."""
+    member_run_gate_results = tuple(
+        GateResult(
+            gate_id=f"RESEARCH_RUN:{member.security_id}",
+            status="PASSED" if member.status == "SUCCEEDED" else "FAILED",
+        )
+        for member in member_runs
+    )
     if error_code != "RESEARCH_DATA_UNAVAILABLE" and not (error_code or "").startswith(
         "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
-    ):
+    ) and not member_run_gate_results:
         return ()
     manifest_is_detailed = error_code == "RESEARCH_REQUIRED_FACTS_INCOMPLETE" and any(
         entry.completeness != "COMPLETE"
@@ -206,7 +217,7 @@ def _research_data_gate_results(
         if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
     }
     gate_results_are_detailed = manifest_is_detailed or bool(invalid_structured_member_ids)
-    return tuple(
+    data_gate_results = tuple(
         GateResult(
             gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
             status=(
@@ -222,6 +233,7 @@ def _research_data_gate_results(
         for member in command.members
         for entry in member.data_manifest.entries
     )
+    return (*member_run_gate_results, *data_gate_results)
 
 
 def _raw_score_model_evidence_gate_results(command: ResearchCommand) -> tuple[GateResult, ...]:
@@ -253,6 +265,7 @@ async def execute_research_risk_journey(
     *,
     execute_research: Callable[[], Awaitable[FrameworkRunResult]],
     execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
+    legacy: bool = False,
 ) -> FrameworkRunResult:
     """Orchestrate typed research handoff and independent risk execution in the host."""
     command = case.research
@@ -273,6 +286,9 @@ async def execute_research_risk_journey(
             research_validation_error_code="RESEARCH_OUTPUT_INVALID",
         )
     tool_evidence = research_run.research_tool_evidence
+    research_run_ids = tuple(
+        member_run.run_id for member_run in research_run.research_member_runs
+    )
     try:
         validate_research_draft(command, draft, tool_evidence)
     except ValueError:
@@ -285,15 +301,13 @@ async def execute_research_risk_journey(
             research_run,
             output=ResearchFrameworkOutput(
                 research_run_id=research_run.run_id,
-                research_run_ids=tuple(
-                    member_run.run_id for member_run in research_run.research_member_runs
-                ),
+                research_run_ids=research_run_ids,
                 risk_run_id=None,
                 draft=draft,
                 risk_veto=None,
                 tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
                 tool_evidence=tool_evidence,
-            ).model_dump_json(),
+            ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
         )
     try:
         risk_plan = prepare_research_risk_plan(
@@ -301,22 +315,21 @@ async def execute_research_risk_journey(
             research_run.run_id,
             draft,
             tool_evidence,
-            tuple(member_run.run_id for member_run in research_run.research_member_runs),
+            research_run_ids,
+            legacy=legacy,
         )
     except RawScoreCalculationError as error:
         return replace(
             research_run,
             output=ResearchFrameworkOutput(
                 research_run_id=research_run.run_id,
-                research_run_ids=tuple(
-                    member_run.run_id for member_run in research_run.research_member_runs
-                ),
+                research_run_ids=research_run_ids,
                 risk_run_id=None,
                 draft=draft,
                 risk_veto=None,
                 tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
                 tool_evidence=tool_evidence,
-            ).model_dump_json(),
+            ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
             raw_score_error_code=str(error),
         )
     risk_run = await execute_risk(research_run, risk_plan)
@@ -331,9 +344,7 @@ async def execute_research_risk_journey(
         research_run,
         output=ResearchFrameworkOutput(
             research_run_id=research_run.run_id,
-            research_run_ids=tuple(
-                member_run.run_id for member_run in research_run.research_member_runs
-            ),
+            research_run_ids=research_run_ids,
             risk_run_id=risk_run.run_id,
             draft=draft,
             risk_veto=risk_veto,
@@ -341,7 +352,7 @@ async def execute_research_risk_journey(
             tool_evidence_refs=risk_plan.tool_evidence_refs,
             tool_evidence=risk_plan.tool_evidence,
             member_handoffs=risk_plan.member_handoffs,
-        ).model_dump_json(),
+        ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
         risk_run_id=risk_run.run_id,
         risk_run_status=risk_run.status,
         risk_waiting_reason=risk_run.waiting_reason,
@@ -765,7 +776,7 @@ async def _record_framework_transition(
             connection,
             case=case,
             stage_result=_framework_transition_stage_result(transition, phase=phase),
-            framework_run_id=framework_run_id or case.framework_run_id,
+            framework_run_id=framework_run_id or transition.run_id or case.framework_run_id,
             allow_repeated_occurrence=transition.status in {"RUNNING", "WAITING"},
         )
 
@@ -1584,10 +1595,19 @@ def _commit_research_framework_result(
                 status="FAILED",
                 gate_results=(
                     GateResult(gate_id="RESEARCH_RUN", status="FAILED"),
-                    *_research_data_gate_results(command, framework.error_code),
+                    *_research_data_gate_results(
+                        command,
+                        framework.error_code,
+                        framework.research_member_runs,
+                    ),
                 ),
                 reasons=(
                     framework.error_code or framework.waiting_reason or "RESEARCH_RUN_FAILED",
+                    *(
+                        f"{member.security_id}:{member.error_code or member.status}"
+                        for member in framework.research_member_runs
+                        if member.status != "SUCCEEDED"
+                    ),
                 ),
             )
         )
@@ -1688,7 +1708,16 @@ def _commit_research_framework_result(
             validation=_failed_host_validation("RISK_VETO_OUTPUT_INVALID"),
         )
     try:
-        research_outcome = freeze_research(command, envelope)
+        research_outcome = freeze_research(
+            command,
+            envelope,
+            legacy=(
+                execution_case.version_bundle.agent_definition_version
+                == RESEARCH_LEGACY_DEFINITION_VERSION
+                and execution_case.version_bundle.output_contract_version
+                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+            ),
+        )
     except RawScoreCalculationError as error:
         return closed(
             research=research_stage,

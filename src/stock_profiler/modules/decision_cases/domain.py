@@ -59,6 +59,9 @@ from stock_profiler.modules.qualification.contracts import (
 )
 from stock_profiler.modules.research.contracts import (
     RESEARCH_DEFINITION_ID,
+    RESEARCH_DEFINITION_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
     ResearchOutcome,
@@ -458,11 +461,11 @@ def supports_case_host_contract(case_version: str, host_version: str) -> bool:
 
 def definition_version_for_case_contract(case_version: str) -> str:
     """Keep host and framework boundary validation on the same compatibility rule."""
-    return (
-        "2.0.0"
-        if case_version in _SCOPED_CASE_CONTRACT_VERSIONS
-        else FROZEN_AGENT_DEFINITION_VERSION
-    )
+    if case_version == "research.1.0.0":
+        return RESEARCH_DEFINITION_VERSION
+    if case_version in _SCOPED_CASE_CONTRACT_VERSIONS:
+        return "2.0.0"
+    return FROZEN_AGENT_DEFINITION_VERSION
 
 
 class FormalReport(FrozenContract):
@@ -726,12 +729,22 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("selection and frozen cutoff must agree")
         if research_governed != (self.research is not None):
             raise ValueError("research requires its own frozen contract")
-        if self.research is not None and (
-            self.research.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
-            or self.research.knowledge_cutoff != datetime.fromisoformat(self.knowledge_cutoff)
-            or self.input.get("research") != self.research.model_dump(mode="json")
-        ):
-            raise ValueError("research and frozen cutoff and input must agree")
+        if self.research is not None:
+            research_input = self.input.get("research")
+            research_input_matches = research_input == self.research.model_dump(mode="json")
+            if not research_input_matches and isinstance(research_input, dict):
+                try:
+                    research_input_matches = (
+                        ResearchCommand.model_validate(research_input) == self.research
+                    )
+                except ValueError:
+                    research_input_matches = False
+            if (
+                self.research.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+                or self.research.knowledge_cutoff != datetime.fromisoformat(self.knowledge_cutoff)
+                or not research_input_matches
+            ):
+                raise ValueError("research and frozen cutoff and input must agree")
         if universe_governed != (self.universe is not None):
             raise ValueError("universe requires its own frozen contract")
         if self.universe is not None and (
@@ -902,6 +915,22 @@ class FrozenDecisionCase(FrozenContract):
         definition_version = definition_version_for_case_contract(
             self.version_bundle.case_contract_version
         )
+        allowed_definition_versions = (
+            {
+                RESEARCH_LEGACY_DEFINITION_VERSION,
+                RESEARCH_DEFINITION_VERSION,
+            }
+            if research_governed
+            else {definition_version}
+        )
+        allowed_output_contract_versions = (
+            {
+                RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+                RESEARCH_OUTPUT_CONTRACT_VERSION,
+            }
+            if research_governed
+            else {FROZEN_OUTPUT_CONTRACT_VERSION}
+        )
         if scoped != (self.access_scope is not None):
             raise ValueError("scoped cases require a scoped contract and frozen access scope")
         if scoped and (
@@ -931,8 +960,8 @@ class FrozenDecisionCase(FrozenContract):
             )
             or self.version_bundle.agent_definition_id
             != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
-            or self.version_bundle.agent_definition_version != definition_version
-            or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
+            or self.version_bundle.agent_definition_version not in allowed_definition_versions
+            or self.version_bundle.output_contract_version not in allowed_output_contract_versions
         ):
             raise ValueError("frozen version bundle does not match the supported contract")
         if (
@@ -946,13 +975,9 @@ class FrozenDecisionCase(FrozenContract):
         if (
             self.agent_definition.definition_id
             != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
-            or self.agent_definition.version != definition_version
+            or self.agent_definition.version not in allowed_definition_versions
             or self.agent_definition.output_contract.version
-            != (
-                RESEARCH_OUTPUT_CONTRACT_VERSION
-                if research_governed
-                else FROZEN_OUTPUT_CONTRACT_VERSION
-            )
+            not in allowed_output_contract_versions
         ):
             raise ValueError("frozen AgentDefinition does not match the supported contract")
         return self

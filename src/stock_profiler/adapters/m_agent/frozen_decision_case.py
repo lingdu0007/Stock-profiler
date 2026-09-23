@@ -100,6 +100,12 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_CONTRACT_VERSION,
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
+    RESEARCH_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_LEGACY_ROUTING_POLICY_VERSION,
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
@@ -111,6 +117,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchDataManifest,
     ResearchDraft,
     ResearchDraftMember,
+    ResearchEvidence,
     ResearchMemberInput,
     ResearchRiskPlan,
     ResearchStageArtifact,
@@ -153,6 +160,14 @@ RESEARCH_DEFINITION_INSTRUCTIONS = (
     "Use only the declared read-only announcement Tool for optional exploration. "
     "Return only the typed single-stock research draft. Do not output scores, probabilities, "
     "qualification, "
+    "personal quantities, order, or trading conclusions."
+)
+LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS = (
+    "Run one structured single-stock research definition across the fixed ten cohort. "
+    "Use the required structured facts delivered by Context Provider before model steps. "
+    "The explicit stages are collect, analyze, bull-bear, and draft. "
+    "Use only the declared read-only announcement Tool for optional exploration. "
+    "Return only the typed research draft. Do not output scores, probabilities, qualification, "
     "personal quantities, order, or trading conclusions."
 )
 RISK_DEFINITION_INSTRUCTIONS = (
@@ -604,8 +619,11 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
 
 def _read_announcement_tool(
     knowledge_cutoff: datetime | None = None,
+    *,
+    semantic_version: str = RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
 ) -> DeterministicTool:
     default_cutoff = knowledge_cutoff or datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
+    legacy = semantic_version == RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION
 
     def handler(request: ToolRequest) -> ToolOutcome:
         try:
@@ -633,18 +651,26 @@ def _read_announcement_tool(
                 f"Synthetic announcement evidence announcement:{security_id} "
                 "is read-only and contains no trade instruction."
             ),
-            effective_at=default_cutoff,
-            source_published_at=default_cutoff,
+            evidence_contract_version=(
+                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
+                if legacy
+                else RESEARCH_EVIDENCE_CONTRACT_VERSION
+            ),
+            effective_at=None if legacy else default_cutoff,
+            source_published_at=None if legacy else default_cutoff,
             acquired_at=default_cutoff,
             validated_at=default_cutoff,
             knowledge_cutoff=default_cutoff,
-            semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
+            semantic_version=semantic_version,
             validation_status="VALIDATED",
         )
+        payload = evidence.model_dump(mode="json", exclude_none=legacy)
+        if legacy:
+            payload.pop("evidence_contract_version", None)
         return ToolOutcome.success(
             request.call_id,
             request.tool_name,
-            evidence.model_dump_json(),
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
         )
 
     return DeterministicTool(
@@ -656,7 +682,11 @@ def _read_announcement_tool(
     )
 
 
-def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]:
+def _research_context_items(
+    command: ResearchCommand,
+    *,
+    legacy: bool = False,
+) -> tuple[ContextItem, ...]:
     return tuple(
         ContextItem(
             item_id=f"required-facts:{member.security_id}",
@@ -667,7 +697,8 @@ def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]
                     "research_id": member.research_id,
                     "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
                     "evidence": tuple(
-                        evidence.model_dump(mode="json") for evidence in member.evidence
+                        _research_evidence_payload(evidence, legacy=legacy)
+                        for evidence in member.evidence
                     ),
                     "data_manifest": member.data_manifest.model_dump(mode="json"),
                     "structured_facts": member.structured_facts.model_dump(mode="json"),
@@ -688,21 +719,32 @@ def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]
     )
 
 
-def _research_context_plan() -> ContextPlan:
+def _research_evidence_payload(
+    evidence: ResearchEvidence,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    payload = evidence.model_dump(mode="json", exclude_none=legacy)
+    if legacy:
+        payload.pop("evidence_contract_version", None)
+    return payload
+
+
+def _research_context_plan(version: str = RESEARCH_CONTRACT_VERSION) -> ContextPlan:
     return ContextPlan(
-        plan_version=RESEARCH_CONTRACT_VERSION,
+        plan_version=version,
         stages=tuple(
             ContextStage(
                 identity=ContextStageIdentity(
                     stage_id=stage_id,
                     scope=RESEARCH_STAGE_SCOPES[stage_id],
                     transform_type=ContextTransformType.PROVIDE,
-                    config_version=RESEARCH_CONTRACT_VERSION,
+                    config_version=version,
                 ),
                 config=ContextStageConfig(
                     stage_id=stage_id,
                     transform_type=ContextTransformType.PROVIDE,
-                    config_version=RESEARCH_CONTRACT_VERSION,
+                    config_version=version,
                     config={
                         "phase": stage_id,
                         "stage_order": RESEARCH_STAGE_IDS.index(stage_id),
@@ -755,6 +797,46 @@ def _research_definition(
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
         context_plan=_research_context_plan(),
+    )
+
+
+def _legacy_research_definition(
+    case: FrozenDecisionCase,
+    *,
+    runtime: RuntimeStorage | None = None,
+    run_id: str | None = None,
+) -> AgentDefinition:
+    """Reconstruct the pre-member-Run Definition for historical Run recovery."""
+    command = case.research
+    assert command is not None
+    return AgentDefinition.for_adapter(
+        definition_id=RESEARCH_DEFINITION_ID,
+        version=RESEARCH_LEGACY_DEFINITION_VERSION,
+        instructions=LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS,
+        model_adapter=_StagedResearchModelAdapter(
+            _research_model_response(command),
+            command=command,
+        ),
+        context_provider=_FrozenResearchContextProvider(
+            _research_context_items(command, legacy=True),
+            runtime=runtime,
+            run_id=run_id,
+            expected_members=command.members,
+            fail=command.failure_mode == "DATA",
+        ),
+        tools=(
+            _read_announcement_tool(
+                command.knowledge_cutoff,
+                semantic_version=RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION,
+            ),
+        ),
+        output_contract=OutputContract(
+            contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
+            version=RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+            schema=ResearchDraft.model_json_schema(),
+            structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+        ),
+        context_plan=_research_context_plan(RESEARCH_CONTRACT_VERSION),
     )
 
 
@@ -897,6 +979,20 @@ def _research_model_response(
 async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: RuntimeStorage) -> None:
     """Require the supplied original snapshot to identify an already durable Run."""
     _assert_runtime_version_bundle(case)
+    if _is_legacy_research_case(case):
+        run = await runtime.run_store.get_run(case.framework_run_id)
+        if run is None:
+            raise MappedDurableRunMissingError("original durable research Run is missing")
+        _assert_existing_run_matches_case(
+            run,
+            case,
+            _legacy_research_definition(
+                case,
+                runtime=runtime,
+                run_id=case.framework_run_id,
+            ),
+        )
+        return
     if case.research is not None:
         context_items = _research_context_items(case.research)
         for index, member in enumerate(case.research.members):
@@ -945,7 +1041,15 @@ async def find_unmapped_legacy_frozen_decision_case(
         _assert_existing_run_matches_case(
             run,
             legacy_case,
-            _frozen_definition(legacy_case),
+            (
+                _legacy_research_definition(
+                    legacy_case,
+                    runtime=runtime,
+                    run_id=legacy_case.framework_run_id,
+                )
+                if _is_legacy_research_case(legacy_case)
+                else _frozen_definition(legacy_case)
+            ),
         )
         candidates[run.run_id] = legacy_case
     if len(candidates) > 1:
@@ -1138,6 +1242,57 @@ async def execute_frozen_decision_case(
     )
 
 
+async def _execute_legacy_research_run(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    record_transition: FrameworkTransitionRecorder | None,
+    *,
+    clock: Clock | None,
+) -> FrameworkRunResult:
+    """Recover the historical aggregate research Run without rebinding its contract."""
+    command = case.research
+    assert command is not None
+    existing_research_run = await runtime.run_store.get_run(case.framework_run_id)
+    research_definition = _legacy_research_definition(
+        case,
+        runtime=runtime,
+        run_id=case.framework_run_id,
+    )
+    _assert_research_registered_capabilities(case, research_definition)
+    research_input = json.dumps(
+        case.input,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    research_run = await _execute_registered_run(
+        runtime=runtime,
+        run_id=case.framework_run_id,
+        definition=research_definition,
+        input_payload=research_input,
+        case=case,
+        record_transition=record_transition,
+        clock=clock,
+    )
+    if research_run.status != "SUCCEEDED" or research_run.output is None:
+        context_provider = research_definition.context_provider
+        if isinstance(context_provider, _FrozenResearchContextProvider):
+            failure_code = _recover_research_failure_code(
+                command,
+                research_run,
+                context_provider,
+            )
+            if failure_code is not None:
+                return replace(research_run, error_code=failure_code)
+        return research_run
+    tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
+    return replace(
+        research_run,
+        run_existed_before=existing_research_run is not None,
+        research_tool_evidence=tool_evidence,
+    )
+
+
 async def execute_research_run(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
@@ -1154,15 +1309,21 @@ async def execute_research_run(
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
         raise
 
+    if _is_legacy_research_case(case):
+        return await _execute_legacy_research_run(
+            case,
+            runtime,
+            record_transition,
+            clock=clock,
+        )
+
     context_items = _research_context_items(command)
-    allow_create = (
-        case.recovery_framework_run_id is None
-        and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
-    )
     member_results: list[ResearchMemberRunResult] = []
     member_drafts: list[ResearchDraftMember] = []
+    member_draft_indexes: list[int] = []
     member_run_ids: list[str] = []
     transitions: list[FrameworkRunTransition] = []
+    primary_transitions: list[FrameworkRunTransition] = []
     tool_evidence: list[ResearchToolEvidence] = []
     all_runs_existed = True
 
@@ -1183,6 +1344,13 @@ async def execute_research_run(
         existing_run = await runtime.run_store.get_run(run_id)
         all_runs_existed = all_runs_existed and existing_run is not None
         member_input = _research_member_input_payload(case, member)
+        allow_create = (
+            case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
+            and (
+                case.recovery_framework_run_id is None
+                or index > 0
+            )
+        )
         result = await _execute_registered_run(
             runtime=runtime,
             run_id=run_id,
@@ -1206,6 +1374,8 @@ async def execute_research_run(
                 if failure_code is not None:
                     result = replace(result, error_code=failure_code)
         transitions.extend(result.transitions)
+        if index == 0:
+            primary_transitions.extend(result.transitions)
         member_results.append(
             ResearchMemberRunResult(
                 security_id=member.security_id,
@@ -1226,6 +1396,7 @@ async def execute_research_run(
                 error_code="RESEARCH_OUTPUT_INVALID",
             )
             continue
+        member_draft_indexes.append(index)
         for evidence in await _research_tool_evidence(runtime, run_id):
             if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
                 tool_evidence.append(evidence)
@@ -1257,18 +1428,53 @@ async def execute_research_run(
             ),
             error_code=error_codes[0] if error_codes else "RESEARCH_MEMBER_RUN_FAILED",
             research_member_runs=member_run_result,
-            transitions=tuple(transitions),
+            transitions=tuple(primary_transitions),
             transitions_durably_recorded=record_transition is not None,
             research_tool_evidence=tuple(tool_evidence),
         )
-    draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
+    try:
+        draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
+    except ValueError:
+        invalid_member_indexes = {
+            index
+            for index, member_draft in zip(
+                member_draft_indexes,
+                member_drafts,
+                strict=True,
+            )
+            if (
+                member_draft.security_id != command.members[index].security_id
+                or member_draft.research_id != command.members[index].research_id
+            )
+        }
+        member_run_result = tuple(
+            replace(
+                member_result,
+                status="FAILED",
+                error_code="RESEARCH_OUTPUT_INVALID",
+            )
+            if index in invalid_member_indexes
+            else member_result
+            for index, member_result in enumerate(member_run_result)
+        )
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            run_existed_before=all_runs_existed,
+            error_code="RESEARCH_OUTPUT_INVALID",
+            research_member_runs=member_run_result,
+            transitions=tuple(primary_transitions),
+            transitions_durably_recorded=record_transition is not None,
+            research_tool_evidence=tuple(tool_evidence),
+        )
     return FrameworkRunResult(
         run_id=case.framework_run_id,
         status="SUCCEEDED",
         output=draft.model_dump_json(),
         run_existed_before=all_runs_existed,
         research_member_runs=member_run_result,
-        transitions=tuple(transitions),
+        transitions=tuple(primary_transitions),
         transitions_durably_recorded=record_transition is not None,
         research_tool_evidence=tuple(tool_evidence),
     )
@@ -1334,6 +1540,7 @@ async def execute_research_decision_case(
 
     return await execute_research_risk_journey(
         case,
+        legacy=_is_legacy_research_case(case),
         execute_research=lambda: execute_research_run(
             case,
             runtime,
@@ -1419,6 +1626,8 @@ async def _execute_registered_run(
     collected_status_count = 0
 
     async def observe(transition: FrameworkRunTransition) -> None:
+        if transition.run_id != run_id:
+            transition = replace(transition, run_id=run_id)
         transitions.append(transition)
         if record_transition is not None:
             await record_transition(transition)
@@ -1628,6 +1837,37 @@ def _assert_research_registered_capabilities(
         raise ValueError("undeclared research framework capability")
 
 
+def _is_legacy_research_case(case: FrozenDecisionCase) -> bool:
+    return (
+        case.research is not None
+        and case.version_bundle.agent_definition_version == RESEARCH_LEGACY_DEFINITION_VERSION
+        and case.version_bundle.output_contract_version
+        == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    )
+
+
+def _research_definition_for_case(
+    case: FrozenDecisionCase,
+    *,
+    runtime: RuntimeStorage | None = None,
+    run_id: str | None = None,
+    member: ResearchMemberInput | None = None,
+    context_items: tuple[ContextItem, ...] | None = None,
+) -> AgentDefinition:
+    """Rebuild the exact research Definition family named by a frozen case."""
+    if _is_legacy_research_case(case):
+        if member is not None or context_items is not None:
+            raise ValueError("legacy research cases do not have member-scoped Runs")
+        return _legacy_research_definition(case, runtime=runtime, run_id=run_id)
+    return _research_definition(
+        case,
+        runtime=runtime,
+        run_id=run_id,
+        member=member,
+        context_items=context_items,
+    )
+
+
 def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentDefinition) -> None:
     """No request, session, or definition metadata can install an executable extension."""
     if (
@@ -1650,7 +1890,7 @@ def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentD
 def frozen_capability_inventory(case: FrozenDecisionCase) -> CapabilityInventory:
     _assert_runtime_version_bundle(case)
     if case.research is not None:
-        definition = _research_definition(case)
+        definition = _research_definition_for_case(case)
         _assert_research_registered_capabilities(case, definition)
     else:
         definition = _frozen_definition(case)
@@ -1724,6 +1964,30 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     bundle = case.version_bundle
     definition_version = definition_version_for_case_contract(bundle.case_contract_version)
     if case.research is not None:
+        legacy = _is_legacy_research_case(case)
+        expected_definition_version = (
+            RESEARCH_LEGACY_DEFINITION_VERSION if legacy else RESEARCH_DEFINITION_VERSION
+        )
+        expected_output_contract_version = (
+            RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+            if legacy
+            else RESEARCH_OUTPUT_CONTRACT_VERSION
+        )
+        expected_routing_policy_version = (
+            RESEARCH_LEGACY_ROUTING_POLICY_VERSION
+            if legacy
+            else RESEARCH_ROUTING_POLICY_VERSION
+        )
+        expected_instructions = (
+            LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS
+            if legacy
+            else RESEARCH_DEFINITION_INSTRUCTIONS
+        )
+        expected_output_schema = (
+            ResearchDraft.model_json_schema()
+            if legacy
+            else ResearchDraftMember.model_json_schema()
+        )
         if (
             not supports_case_host_contract(
                 bundle.case_contract_version,
@@ -1731,18 +1995,18 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
             )
             or not supports_report_projection_contract(bundle.report_projection_contract_version)
             or bundle.agent_definition_id != RESEARCH_DEFINITION_ID
-            or bundle.agent_definition_version != definition_version
-            or bundle.output_contract_version != RESEARCH_OUTPUT_CONTRACT_VERSION
+            or bundle.agent_definition_version != expected_definition_version
+            or bundle.output_contract_version != expected_output_contract_version
             or bundle.model_adapter_id != RESEARCH_MODEL_ADAPTER_ID
-            or bundle.routing_policy_version != RESEARCH_ROUTING_POLICY_VERSION
+            or bundle.routing_policy_version != expected_routing_policy_version
             or case.agent_definition.definition_id != RESEARCH_DEFINITION_ID
-            or case.agent_definition.version != definition_version
+            or case.agent_definition.version != expected_definition_version
             or case.agent_definition.model_adapter_id != RESEARCH_MODEL_ADAPTER_ID
-            or case.agent_definition.instructions != RESEARCH_DEFINITION_INSTRUCTIONS
+            or case.agent_definition.instructions != expected_instructions
             or case.agent_definition.output_contract.contract_id != RESEARCH_OUTPUT_CONTRACT_ID
-            or case.agent_definition.output_contract.version != RESEARCH_OUTPUT_CONTRACT_VERSION
+            or case.agent_definition.output_contract.version != expected_output_contract_version
             or case.agent_definition.output_contract.json_schema
-            != ResearchDraftMember.model_json_schema()
+            != expected_output_schema
         ):
             raise ValueError("research version bundle is not supported by this runtime")
         if version(

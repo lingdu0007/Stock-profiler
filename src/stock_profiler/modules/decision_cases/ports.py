@@ -64,6 +64,7 @@ class BusinessObjectMapping:
 class FrameworkRunTransition:
     status: FrameworkRunStatus
     reason: str
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)

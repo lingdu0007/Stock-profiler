@@ -71,6 +71,10 @@ from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_DEFINITION_ID,
+    RESEARCH_DEFINITION_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_LEGACY_ROUTING_POLICY_VERSION,
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
@@ -522,7 +526,7 @@ def _case(
     )
     definition = FrozenAgentDefinition(
         definition_id=RESEARCH_DEFINITION_ID,
-        version="2.0.0",
+        version=RESEARCH_DEFINITION_VERSION,
         instructions=RESEARCH_DEFINITION_INSTRUCTIONS,
         model_adapter_id=RESEARCH_MODEL_ADAPTER_ID,
         output_contract=FrozenOutputContract(
@@ -537,7 +541,7 @@ def _case(
         host_application_version=settings.configuration_version,
         host_source_sha=settings.source_sha,
         agent_definition_id=RESEARCH_DEFINITION_ID,
-        agent_definition_version="2.0.0",
+        agent_definition_version=RESEARCH_DEFINITION_VERSION,
         model_adapter_id=RESEARCH_MODEL_ADAPTER_ID,
         routing_policy_version=RESEARCH_ROUTING_POLICY_VERSION,
         output_contract_version=RESEARCH_OUTPUT_CONTRACT_VERSION,
@@ -819,6 +823,160 @@ def test_each_fixed_ten_member_has_its_own_durable_research_run(
         collect = next(result for result in context_results if result.stage_id == "collect")
         assert len(collect.output_items) == 1
         assert json.loads(collect.output_items[0].item.content)["security_id"] == member.security_id
+    with runtime.engine.connect() as connection:
+        recorded_member_run_ids = {
+            row.framework_run_id
+            for row in connection.execute(
+                DECISION_STAGE_EVENTS.select().where(
+                    DECISION_STAGE_EVENTS.c.business_object_id == case.business_object_id
+                )
+            )
+        }
+    assert set(member_run_ids).issubset(recorded_member_run_ids)
+
+
+def test_partial_member_research_recovery_creates_missing_member_runs(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+    runtime = initialize_runtime_storage(migrated_settings)
+    first_member = command.members[0]
+    first_run_id = frozen_decision_case._research_member_run_id(case, 0, first_member)
+    first_context = tuple(
+        item
+        for item in frozen_decision_case._research_context_items(command)
+        if item.item_id == f"required-facts:{first_member.security_id}"
+    )
+    first_definition = frozen_decision_case._research_definition(
+        case,
+        runtime=runtime,
+        run_id=first_run_id,
+        member=first_member,
+        context_items=first_context,
+    )
+    first_result = asyncio.run(
+        frozen_decision_case._execute_registered_run(
+            runtime=runtime,
+            run_id=first_run_id,
+            definition=first_definition,
+            input_payload=frozen_decision_case._research_member_input_payload(
+                case,
+                first_member,
+            ),
+            case=None,
+            record_transition=None,
+            clock=None,
+        )
+    )
+    assert first_result.status == "SUCCEEDED"
+
+    recovery_case = case.model_copy(update={"recovery_framework_run_id": case.framework_run_id})
+    recovered = asyncio.run(frozen_decision_case.execute_research_run(recovery_case, runtime))
+
+    assert recovered.status == "SUCCEEDED"
+    assert len(recovered.research_member_runs) == 10
+    assert all(member.status == "SUCCEEDED" for member in recovered.research_member_runs)
+    for member_run in recovered.research_member_runs:
+        assert asyncio.run(runtime.run_store.get_run(member_run.run_id)) is not None
+
+
+def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
+    migrated_settings: Settings,
+) -> None:
+    current_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = current_case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    for member in research_payload["members"]:
+        for evidence in member["evidence"]:
+            evidence.pop("evidence_contract_version", None)
+            evidence.pop("effective_at", None)
+            evidence.pop("source_published_at", None)
+    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    payload["input"]["research"] = research_payload
+    payload["agent_definition"]["version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    payload["agent_definition"]["instructions"] = (
+        frozen_decision_case.LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS
+    )
+    payload["agent_definition"]["output_contract"]["version"] = (
+        RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    )
+    payload["agent_definition"]["output_contract"]["json_schema"] = (
+        ResearchDraft.model_json_schema()
+    )
+    payload["version_bundle"]["agent_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    payload["version_bundle"]["routing_policy_version"] = RESEARCH_LEGACY_ROUTING_POLICY_VERSION
+    payload["version_bundle"]["output_contract_version"] = RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    legacy_case = FrozenDecisionCase.model_validate(payload)
+    runtime = initialize_runtime_storage(migrated_settings)
+    definition = frozen_decision_case._legacy_research_definition(
+        legacy_case,
+        runtime=runtime,
+        run_id=legacy_case.framework_run_id,
+    )
+    created = asyncio.run(
+        frozen_decision_case._execute_registered_run(
+            runtime=runtime,
+            run_id=legacy_case.framework_run_id,
+            definition=definition,
+            input_payload=json.dumps(
+                legacy_case.input,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            case=legacy_case,
+            record_transition=None,
+            clock=None,
+        )
+    )
+    assert created.status == "SUCCEEDED"
+
+    recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))
+
+    assert recovered.status == "SUCCEEDED"
+    assert recovered.run_id == legacy_case.framework_run_id
+    assert recovered.run_existed_before is True
+    assert recovered.output is not None
+    assert ResearchDraft.model_validate_json(recovered.output).contract_version == "1.0.0"
+    assert frozen_decision_case.frozen_capability_inventory(legacy_case).definition_version == (
+        RESEARCH_LEGACY_DEFINITION_VERSION
+    )
+
+    async def reserve_risk_run(_: str) -> bool:
+        return True
+
+    journey = asyncio.run(
+        frozen_decision_case.execute_research_decision_case(
+            legacy_case,
+            runtime,
+            record_auxiliary_run_reservation=reserve_risk_run,
+        )
+    )
+    assert journey.status == "SUCCEEDED"
+    assert journey.output is not None
+    legacy_envelope = ResearchFrameworkOutput.model_validate_json(journey.output)
+    assert legacy_envelope.risk_run_id is not None
+    risk_run = asyncio.run(runtime.run_store.get_run(legacy_envelope.risk_run_id))
+    assert risk_run is not None
+    assert risk_run.input is not None
+    legacy_risk_input = json.loads(risk_run.input)
+    assert "research_run_ids" not in legacy_risk_input
+    assert "research_run_id" not in legacy_risk_input["member_handoffs"][0]
+    legacy_command = legacy_case.research
+    assert legacy_command is not None
+    legacy_outcome = freeze_research(legacy_command, legacy_envelope, legacy=True)
+    assert (
+        legacy_outcome.handoff.research_definition_version
+        == RESEARCH_LEGACY_DEFINITION_VERSION
+    )
+    assert (
+        legacy_outcome.handoff.research_output_contract_version
+        == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    )
 
 
 def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None:
@@ -1061,7 +1219,11 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
                 )
             )
         }
-    assert recorded_run_ids == {case.framework_run_id}
+    expected_member_run_ids = {
+        frozen_decision_case._research_member_run_id(case, index, member)
+        for index, member in enumerate(command.members)
+    }
+    assert recorded_run_ids == {case.framework_run_id, *expected_member_run_ids}
 
 
 def test_incomplete_provider_manifest_fails_research_before_downstream_stages(
@@ -1177,8 +1339,47 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
         if gate.gate_id.startswith("RESEARCH_DATA:")
     }
     assert len(recovered_data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
-    assert recovered_research_stages[-1].reasons == ("RESEARCH_REQUIRED_FACTS_INCOMPLETE",)
+    assert recovered_research_stages[-1].reasons == (
+        "RESEARCH_REQUIRED_FACTS_INCOMPLETE",
+        "synthetic-security-00:RESEARCH_REQUIRED_FACTS_INCOMPLETE",
+    )
     assert recovered_data_gates == data_gates
+
+
+def test_duplicate_member_research_output_is_recorded_as_output_contract_failure(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_model_response = frozen_decision_case._research_model_response
+
+    def duplicate_member_response(
+        model_command: ResearchCommand,
+        **kwargs: Any,
+    ) -> str:
+        payload = json.loads(original_model_response(model_command, **kwargs))
+        member = kwargs.get("member")
+        if (
+            isinstance(member, ResearchMemberInput)
+            and member.security_id == "synthetic-security-01"
+        ):
+            payload["security_id"] = "synthetic-security-00"
+            payload["research_id"] = "research-00"
+        return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_model_response",
+        duplicate_member_response,
+    )
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_OUTPUT_INVALID" in research_stage.reasons
+    assert "synthetic-security-01:RESEARCH_OUTPUT_INVALID" in research_stage.reasons
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
 def test_invalid_financial_denominator_is_saved_as_research_data_failure(
