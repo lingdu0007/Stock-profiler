@@ -6879,11 +6879,27 @@
             "title": "Bull Case",
             "type": "string"
           },
+          "catalysts": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Catalysts",
+            "type": "array"
+          },
           "evidence_refs": {
             "items": {
               "type": "string"
             },
             "title": "Evidence Refs",
+            "type": "array"
+          },
+          "falsification_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Falsification Conditions",
             "type": "array"
           },
           "knowledge_cutoff": {
@@ -6902,6 +6918,14 @@
           "thesis": {
             "title": "Thesis",
             "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Unknowns",
+            "type": "array"
           }
         },
         "required": [
@@ -6911,6 +6935,9 @@
           "thesis",
           "bull_case",
           "bear_case",
+          "catalysts",
+          "falsification_conditions",
+          "unknowns",
           "knowledge_cutoff"
         ],
         "title": "ResearchMemberResult",

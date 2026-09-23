@@ -2806,8 +2806,12 @@ export interface components {
             bear_case: string;
             /** Bull Case */
             bull_case: string;
+            /** Catalysts */
+            catalysts: string[];
             /** Evidence Refs */
             evidence_refs: string[];
+            /** Falsification Conditions */
+            falsification_conditions: string[];
             /**
              * Knowledge Cutoff
              * Format: date-time
@@ -2819,6 +2823,8 @@ export interface components {
             security_id: string;
             /** Thesis */
             thesis: string;
+            /** Unknowns */
+            unknowns: string[];
         };
         /**
          * ResearchOutcome
