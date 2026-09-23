@@ -416,6 +416,34 @@ def _validate_research_context_items(
         raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: security coverage")
 
 
+def _recover_research_failure_code(
+    command: ResearchCommand,
+    research_run: FrameworkRunResult,
+    context_provider: _FrozenResearchContextProvider,
+) -> str | None:
+    """Recover frozen data-failure identity after a terminal Run restart.
+
+    M-Agent intentionally redacts unknown Provider exception codes in durable
+    attempts. The immutable command is still sufficient to replay the
+    required-facts validation without consulting transient Provider state.
+    """
+    known_codes = {"RESEARCH_DATA_UNAVAILABLE", "RESEARCH_REQUIRED_FACTS_INCOMPLETE"}
+    for code in (context_provider.failure_code, research_run.error_code):
+        if code in known_codes:
+            return code
+    if command.failure_mode == "DATA":
+        return "RESEARCH_DATA_UNAVAILABLE"
+    try:
+        _validate_research_context_items(
+            _research_context_items(command),
+            tuple(member.security_id for member in command.members),
+        )
+    except ValueError as error:
+        if str(error).startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE"):
+            return "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
+    return None
+
+
 def _json_object(content: str) -> dict[str, object] | None:
     try:
         payload = json.loads(content)
@@ -991,13 +1019,14 @@ async def execute_research_run(
     )
     if research_run.status != "SUCCEEDED" or research_run.output is None:
         context_provider = research_definition.context_provider
-        if (
-            isinstance(context_provider, _FrozenResearchContextProvider)
-            and context_provider.failure_code is not None
-        ):
-            return replace(research_run, error_code=context_provider.failure_code)
-        if command.failure_mode == "DATA":
-            return replace(research_run, error_code="RESEARCH_DATA_UNAVAILABLE")
+        if isinstance(context_provider, _FrozenResearchContextProvider):
+            failure_code = _recover_research_failure_code(
+                command,
+                research_run,
+                context_provider,
+            )
+            if failure_code is not None:
+                return replace(research_run, error_code=failure_code)
         return research_run
     tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
     return replace(

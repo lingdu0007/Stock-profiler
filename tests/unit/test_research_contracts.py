@@ -257,6 +257,16 @@ def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:
+    payload = _command().model_dump(mode="json")
+    first_record = payload["raw_score_model"]["training_records"][0]
+    second_record = payload["raw_score_model"]["training_records"][1]
+    second_record["security_id"] = first_record["security_id"]
+
+    with pytest.raises(ValueError, match="security-month"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:
     with pytest.raises(ValueError, match="clip bounds"):
         RawScoreFeatureTransform(

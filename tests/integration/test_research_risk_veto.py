@@ -995,6 +995,24 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
     assert sum(status == "PASSED" for status in data_gates.values()) == (len(data_gates) - 1)
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
+    recovered = run_frozen_decision_case(migrated_settings, payload)
+
+    assert recovered.report is None
+    recovered_research_stages = tuple(
+        stage
+        for stage in recovered.stage_results
+        if stage.phase == "RESEARCH" and stage.status == "FAILED"
+    )
+    assert recovered_research_stages
+    recovered_data_gates = {
+        gate.gate_id: gate.status
+        for gate in recovered_research_stages[-1].gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:")
+    }
+    assert len(recovered_data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
+    assert recovered_research_stages[-1].reasons == ("RESEARCH_REQUIRED_FACTS_INCOMPLETE",)
+    assert recovered_data_gates == data_gates
+
 
 def test_missing_structured_signal_is_saved_as_research_data_failure(
     migrated_settings: Settings,

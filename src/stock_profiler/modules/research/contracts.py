@@ -213,6 +213,11 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score training window dates do not match the months")
         if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
             raise ValueError("raw-score label watermark date does not match its month")
+        security_month_keys = [
+            (record.month, record.security_id) for record in self.training_records
+        ]
+        if len(set(security_month_keys)) != len(security_month_keys):
+            raise ValueError("raw-score training records must have unique security-month evidence")
         record_keys = [
             (record.month, record.security_id, record.research_id)
             for record in self.training_records
