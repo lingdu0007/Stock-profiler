@@ -23,6 +23,7 @@ from m_agent.runtime import (
     ToolRequest,
     parse_stage_result,
 )
+from sqlalchemy import select
 
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 import stock_profiler.bootstrap.decision_cases as case_bootstrap
@@ -33,6 +34,7 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
 )
 from stock_profiler.adapters.persistence.decision_ledger import (
     DECISION_STAGE_EVENTS,
+    FORMAL_REPORTS,
     DecisionLedger,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
@@ -1176,6 +1178,19 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
         execution.report.result.research.handoff.research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
     )
+    with runtime.engine.connect() as connection:
+        stored_payload = json.loads(
+            connection.execute(
+                select(FORMAL_REPORTS.c.report_payload).where(
+                    FORMAL_REPORTS.c.report_version_id == execution.report.report_version_id
+                )
+            ).scalar_one()
+        )
+    stored_member = stored_payload["result"]["research"]["members"][0]
+    assert all(
+        field_name not in stored_member
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
 
 
 def test_historical_current_member_research_runs_are_recovered_without_rebinding(
@@ -1383,6 +1398,48 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
+    )
+
+
+def test_historical_current_definition_accepts_the_later_prior_member_schema(
+    migrated_settings: Settings,
+) -> None:
+    current_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = current_case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["input"]["research"] = research_payload
+    payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["agent_definition"]["output_contract"]["version"] = (
+        RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    )
+    payload["version_bundle"]["agent_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["version_bundle"]["output_contract_version"] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_definition_version"
+    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_output_contract_version"
+    ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+
+    historical_case = FrozenDecisionCase.model_validate(payload)
+    runtime = initialize_runtime_storage(migrated_settings)
+    definition = frozen_decision_case._research_definition(
+        historical_case,
+        runtime=runtime,
+        run_id=historical_case.framework_run_id,
+        historical=True,
+    )
+
+    assert (
+        definition.output_contract.schema_definition
+        == ResearchDraftMember.model_json_schema()
+    )
+    assert (
+        frozen_decision_case.frozen_capability_inventory(historical_case).definition_version
+        == RESEARCH_PRIOR_DEFINITION_VERSION
     )
 
 

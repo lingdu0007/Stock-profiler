@@ -282,6 +282,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         fail: bool = False,
         legacy: bool = False,
         historical: bool = False,
+        historical_with_debate_fields: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
@@ -290,6 +291,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         self._fail = fail
         self._legacy = legacy
         self._historical = historical
+        self._historical_with_debate_fields = historical_with_debate_fields
         self._failure_code: str | None = None
 
     @property
@@ -421,7 +423,8 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 "input_item_ids": input_item_ids,
                 "stage_artifact": research_stage_artifact_payload(
                     stage_artifact,
-                    legacy=self._legacy or self._historical,
+                    legacy=self._legacy
+                    or (self._historical and not self._historical_with_debate_fields),
                 ),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
@@ -580,6 +583,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         member: ResearchMemberInput | None = None,
         legacy: bool = False,
         historical: bool = False,
+        historical_with_debate_fields: bool = False,
     ) -> None:
         capabilities = ModelCapabilities(
             tool_calling=ToolCallingMode.NATIVE,
@@ -596,6 +600,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         self._member = member
         self._legacy = legacy
         self._historical = historical
+        self._historical_with_debate_fields = historical_with_debate_fields
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
@@ -674,6 +679,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 member=self._member,
                 legacy=self._legacy,
                 historical=self._historical,
+                historical_with_debate_fields=self._historical_with_debate_fields,
             )
         )
 
@@ -813,6 +819,16 @@ def _research_context_plan() -> ContextPlan:
     )
 
 
+def _historical_research_draft_has_debate_fields(case: FrozenDecisionCase) -> bool:
+    """Accept either persisted prior-current research member schema."""
+    schema = case.agent_definition.output_contract.json_schema
+    if schema == ResearchDraftMember.model_json_schema():
+        return True
+    if schema == historical_research_draft_member_json_schema():
+        return False
+    raise ValueError("historical research output schema is not supported by this runtime")
+
+
 def _research_definition(
     case: FrozenDecisionCase,
     *,
@@ -825,12 +841,21 @@ def _research_definition(
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
     assert command is not None
+    historical_with_debate_fields = (
+        historical and _historical_research_draft_has_debate_fields(case)
+    )
     adapter = _StagedResearchModelAdapter(
-        _research_model_response(command, member=member),
+        _research_model_response(
+            command,
+            member=member,
+            historical=historical,
+            historical_with_debate_fields=historical_with_debate_fields,
+        ),
         command=command,
         member=member,
         legacy=False,
         historical=historical,
+        historical_with_debate_fields=historical_with_debate_fields,
     )
     expected_members = (member,) if member is not None else command.members
     return AgentDefinition.for_adapter(
@@ -848,6 +873,7 @@ def _research_definition(
             fail=command.failure_mode == "DATA",
             legacy=False,
             historical=historical,
+            historical_with_debate_fields=historical_with_debate_fields,
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),
         output_contract=OutputContract(
@@ -858,7 +884,11 @@ def _research_definition(
                 else RESEARCH_OUTPUT_CONTRACT_VERSION
             ),
             schema=(
-                historical_research_draft_member_json_schema()
+                (
+                    ResearchDraftMember.model_json_schema()
+                    if historical_with_debate_fields
+                    else historical_research_draft_member_json_schema()
+                )
                 if historical
                 else ResearchDraftMember.model_json_schema()
             ),
@@ -1005,6 +1035,7 @@ def _research_model_response(
     member: ResearchMemberInput | None = None,
     legacy: bool = False,
     historical: bool = False,
+    historical_with_debate_fields: bool = False,
 ) -> str:
     draft_summary = (
         draft_artifact.summary
@@ -1051,7 +1082,7 @@ def _research_model_response(
             "bear_case": bear_case,
             "knowledge_cutoff": source.knowledge_cutoff.isoformat(),
         }
-        if not legacy and not historical:
+        if not legacy and (not historical or historical_with_debate_fields):
             payload.update(
                 {
                     "catalysts": catalysts,
@@ -2149,7 +2180,11 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
             legacy_research_draft_json_schema()
             if legacy
             else (
-                historical_research_draft_member_json_schema()
+                (
+                    ResearchDraftMember.model_json_schema()
+                    if _historical_research_draft_has_debate_fields(case)
+                    else historical_research_draft_member_json_schema()
+                )
                 if historical
                 else ResearchDraftMember.model_json_schema()
             )

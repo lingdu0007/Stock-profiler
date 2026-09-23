@@ -31,6 +31,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     calculate_structured_signals,
+    decode_historical_research_command,
     decode_historical_research_draft,
     decode_legacy_research_framework_output,
     freeze_raw_score,
@@ -314,6 +315,39 @@ def test_raw_score_snapshot_must_follow_the_mature_window_for_the_cutoff() -> No
         ResearchCommand.model_validate(payload)
 
 
+def test_historical_research_command_preserves_its_original_mature_window() -> None:
+    payload = _command().model_dump(mode="json")
+    historical_cutoff = datetime(2042, 7, 31, 23, 59, 59, tzinfo=UTC)
+    old_cutoff = "2042-06-30T23:59:59Z"
+    new_cutoff = historical_cutoff.isoformat().replace("+00:00", "Z")
+
+    def replace_cutoff(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: replace_cutoff(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace_cutoff(item) for item in value]
+        return new_cutoff if value == old_cutoff else value
+
+    payload = cast(dict[str, object], replace_cutoff(payload))
+    screening = FrozenDualTargetScreening.model_validate(payload["screening"])
+    payload["selection_fingerprint"] = selection_binding_sha256(
+        cast(str, payload["selection_object_id"]),
+        cast(str, payload["selection_event_id"]),
+        historical_cutoff,
+        screening,
+    )
+    raw_score_model = cast(dict[str, object], payload["raw_score_model"])
+    training_cohorts = cast(list[dict[str, object]], raw_score_model["training_cohorts"])
+    for cohort in training_cohorts:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+
+    decoded = decode_historical_research_command(payload)
+
+    assert decoded.cutoff_at == historical_cutoff
+    assert decoded.raw_score_model.training_months[-1] == "2041-11"
+    assert decoded.raw_score_model.training_window_month_count == 60
+
+
 def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:
     payload = _command().model_dump(mode="json")
     first_record = payload["raw_score_model"]["training_records"][0]
@@ -482,6 +516,9 @@ def test_historical_current_draft_decodes_without_erasing_current_evidence_contr
                 "thesis": "The historical current thesis is bounded by frozen evidence.",
                 "bull_case": "The historical current upside case remains conditional.",
                 "bear_case": "The historical current downside case remains explicit.",
+                "catalysts": ["The historical catalyst remains explicit."],
+                "falsification_conditions": ["The historical falsifier remains explicit."],
+                "unknowns": ["The historical unknown remains explicit."],
                 "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
             }
             for member in command.members
@@ -490,11 +527,11 @@ def test_historical_current_draft_decodes_without_erasing_current_evidence_contr
 
     decoded = decode_historical_research_draft(payload)
 
-    assert decoded.members[0].catalysts == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+    assert decoded.members[0].catalysts == ("The historical catalyst remains explicit.",)
     assert decoded.members[0].falsification_conditions == (
-        "HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",
+        "The historical falsifier remains explicit.",
     )
-    assert decoded.members[0].unknowns == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+    assert decoded.members[0].unknowns == ("The historical unknown remains explicit.",)
 
 
 def test_current_research_command_does_not_accept_the_prior_definition_version() -> None:

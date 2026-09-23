@@ -72,7 +72,9 @@ from stock_profiler.modules.research.contracts import (
     decode_historical_research_outcome,
     decode_legacy_research_command,
     decode_legacy_research_outcome,
+    historical_research_draft_member_json_schema,
     research_contract_mode_for_versions,
+    research_outcome_payload,
 )
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
@@ -705,6 +707,30 @@ class DecisionEventFact(FrozenContract):
         return stored_report_payload(self, report_version_id)
 
 
+def _stored_result_payload(event: DecisionEventFact) -> dict[str, object]:
+    result_payload = event.result.model_dump(mode="json")
+    research = event.result.research
+    research_mode = research_contract_mode_for_case(event.case)
+    if research is not None and research_mode is not None:
+        result_payload["research"] = research_outcome_payload(
+            research,
+            legacy=research_mode == "legacy",
+            historical_without_debate_fields=(
+                research_mode == "historical"
+                and event.case.agent_definition.output_contract.json_schema
+                == historical_research_draft_member_json_schema()
+            ),
+        )
+    return result_payload
+
+
+def stored_decision_event_payload(event: DecisionEventFact) -> dict[str, object]:
+    """Serialize an append-only event without expanding a historical research shape."""
+    payload = event.model_dump(mode="json")
+    payload["result"] = _stored_result_payload(event)
+    return payload
+
+
 def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> dict[str, object]:
     """Frozen v1/v2 storage contract, shared by publication and integrity validation."""
     payload: dict[str, object] = {
@@ -719,7 +745,7 @@ def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> d
         "knowledge_cutoff": event.case.knowledge_cutoff,
         "evidence_clock": event.case.evidence_clock.model_dump(mode="json"),
         "version_bundle": event.case.version_bundle.model_dump(mode="json"),
-        "result": event.result.model_dump(mode="json"),
+        "result": _stored_result_payload(event),
         "stage_results": [
             *(stage.model_dump(mode="json") for stage in event.stage_results),
             {

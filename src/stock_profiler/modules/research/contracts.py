@@ -1182,7 +1182,12 @@ class ResearchCommand(ResearchContract):
             mature_months[-120:] if len(mature_months) >= 120 else mature_months
         )
         expected_window_kind = "ROLLING_120" if len(mature_months) >= 120 else "EXPANDING"
-        if self.raw_score_model.has_sufficient_training_evidence:
+        if (
+            self.raw_score_model.has_sufficient_training_evidence
+            and not self._legacy_decoded
+            and not self._historical_decoded
+            and _RESEARCH_DEFINITION_VERSION_OVERRIDE.get() is None
+        ):
             if not expected_training_months:
                 raise ValueError("raw-score mature training window does not reach the cutoff")
             if (
@@ -1431,7 +1436,7 @@ def legacy_research_draft_json_schema() -> dict[str, object]:
 
 
 def historical_research_draft_member_json_schema() -> dict[str, object]:
-    """Return the prior current per-member schema without the later debate fields."""
+    """Return the prior current per-member schema before debate fields were added."""
     schema = deepcopy(ResearchDraftMember.model_json_schema())
     for field_name in ("catalysts", "falsification_conditions", "unknowns"):
         properties = schema.get("properties")
@@ -1445,6 +1450,25 @@ def historical_research_draft_member_json_schema() -> dict[str, object]:
             if field_name not in {"catalysts", "falsification_conditions", "unknowns"}
         ]
     return schema
+
+
+def _historical_draft_has_debate_fields(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    members = value.get("members")
+    if not isinstance(members, (list, tuple)):
+        return False
+    debate_fields = ("catalysts", "falsification_conditions", "unknowns")
+    member_has_fields: list[bool] = []
+    for member in members:
+        if not isinstance(member, dict):
+            return False
+        member_has_fields.append(all(field in member for field in debate_fields))
+    if all(member_has_fields):
+        return True
+    if not any(member_has_fields):
+        return False
+    raise ValueError("historical research draft members must use one consistent schema")
 
 
 def decode_legacy_research_draft(value: object) -> ResearchDraft:
@@ -1473,14 +1497,22 @@ def decode_legacy_research_draft(value: object) -> ResearchDraft:
 
 
 def decode_historical_research_draft(value: object) -> ResearchDraft:
-    """Decode the prior current draft while preserving its current evidence boundary."""
+    """Decode either prior current draft shape at an explicit recovery boundary."""
+    if _historical_draft_has_debate_fields(value):
+        return ResearchDraft.model_validate(value)
     return decode_legacy_research_draft(value)
 
 
 def decode_historical_research_draft_member(value: object) -> ResearchDraftMember:
-    """Decode one prior current member output and mark newly added fields as unavailable."""
+    """Decode one prior current member output in either persisted schema shape."""
     if not isinstance(value, dict):
         raise ValueError("historical research draft member must be an object")
+    debate_fields = ("catalysts", "falsification_conditions", "unknowns")
+    present = [field in value for field in debate_fields]
+    if all(present):
+        return ResearchDraftMember.model_validate(value)
+    if any(present):
+        raise ValueError("historical research draft members must use one consistent schema")
     member = LegacyResearchDraftMember.model_validate(value)
     return ResearchDraftMember(
         security_id=member.security_id,
@@ -1622,12 +1654,19 @@ class ResearchFrameworkOutput(ResearchContract):
 
 def decode_legacy_research_framework_output(value: object) -> ResearchFrameworkOutput:
     """Decode a historical research envelope without changing its serialized identity."""
+    return _decode_research_framework_output(value, decode_legacy_research_draft)
+
+
+def _decode_research_framework_output(
+    value: object,
+    draft_decoder: Callable[[object], ResearchDraft],
+) -> ResearchFrameworkOutput:
     if not isinstance(value, dict):
         raise ValueError("legacy research framework output must be an object")
     payload = deepcopy(value)
     draft = payload.get("draft")
     if isinstance(draft, dict):
-        payload["draft"] = decode_legacy_research_draft(draft).model_dump(mode="python")
+        payload["draft"] = draft_decoder(draft).model_dump(mode="python")
     tool_evidence = payload.get("tool_evidence")
     if isinstance(tool_evidence, (list, tuple)):
         payload["tool_evidence"] = [
@@ -1684,8 +1723,8 @@ def decode_legacy_research_framework_output(value: object) -> ResearchFrameworkO
 
 
 def decode_historical_research_framework_output(value: object) -> ResearchFrameworkOutput:
-    """Decode the prior current envelope without downgrading current evidence clocks."""
-    return decode_legacy_research_framework_output(value)
+    """Decode the prior current envelope in either persisted draft schema shape."""
+    return _decode_research_framework_output(value, decode_historical_research_draft)
 
 
 @dataclass(frozen=True)
@@ -1794,6 +1833,7 @@ class ResearchOutcome(ResearchContract):
     handoff: ResearchHandoff
     reasons: tuple[str, ...] = Field(min_length=1)
     actionable: Literal[False] = False
+    _persisted_payload: dict[str, object] | None = PrivateAttr(default=None)
 
 
 def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
@@ -1888,6 +1928,7 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
     try:
         outcome = ResearchOutcome.model_validate(payload)
+        object.__setattr__(outcome, "_persisted_payload", deepcopy(value))
         for tool_evidence in outcome.tool_evidence:
             object.__setattr__(tool_evidence, "_legacy_decoded", True)
         for handoff_tool_evidence in outcome.handoff.tool_evidence:
@@ -1903,6 +1944,52 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
 def decode_historical_research_outcome(value: object) -> ResearchOutcome:
     """Decode the prior current outcome while retaining current evidence clocks."""
     return decode_legacy_research_outcome(value)
+
+
+def _legacy_evidence_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    payload = {key: item for key, item in value.items() if item is not None}
+    payload.pop("evidence_contract_version", None)
+    return payload
+
+
+def research_outcome_payload(
+    outcome: ResearchOutcome,
+    *,
+    legacy: bool = False,
+    historical_without_debate_fields: bool = False,
+) -> dict[str, object]:
+    """Serialize a research outcome without rewriting a decoded persisted shape."""
+    if outcome._persisted_payload is not None:
+        return deepcopy(outcome._persisted_payload)
+    payload = outcome.model_dump(mode="json")
+    if not (legacy or historical_without_debate_fields):
+        return payload
+    for member in payload.get("members", ()):
+        if isinstance(member, dict):
+            for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+                member.pop(field_name, None)
+    if legacy:
+        payload["tool_evidence"] = [
+            _legacy_evidence_payload(evidence) for evidence in payload.get("tool_evidence", ())
+        ]
+        handoff = payload.get("handoff")
+        if isinstance(handoff, dict):
+            handoff["tool_evidence"] = [
+                _legacy_evidence_payload(evidence) for evidence in handoff.get("tool_evidence", ())
+            ]
+            member_handoffs = handoff.get("member_handoffs")
+            if isinstance(member_handoffs, list):
+                for member_handoff in member_handoffs:
+                    if not isinstance(member_handoff, dict):
+                        continue
+                    member_handoff.pop("research_run_id", None)
+                    member_handoff["evidence"] = [
+                        _legacy_evidence_payload(evidence)
+                        for evidence in member_handoff.get("evidence", ())
+                    ]
+    return payload
 
 
 def _transform_raw_score_feature(

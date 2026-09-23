@@ -27,6 +27,7 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttemptStatus,
     ResultAccessScope,
     StageResult,
+    stored_decision_event_payload,
     stored_report_payload,
 )
 from stock_profiler.modules.decision_cases.ports import (
@@ -58,9 +59,9 @@ from stock_profiler.modules.position_management.history import (
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
-    RESEARCH_LEGACY_DEFINITION_VERSION,
-    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    decode_historical_research_outcome,
     decode_legacy_research_outcome,
+    research_contract_mode_for_versions,
 )
 
 METADATA = MetaData()
@@ -117,7 +118,7 @@ DECISION_NOTIFICATION_ATTEMPTS = Table(
 )
 
 
-def _decode_legacy_research_event_payload(
+def _decode_research_event_payload(
     payload: dict[str, object],
 ) -> dict[str, object]:
     """Decode historical research evidence only at the persisted event boundary."""
@@ -125,11 +126,15 @@ def _decode_legacy_research_event_payload(
     if not isinstance(case_payload, dict):
         return payload
     version_bundle = case_payload.get("version_bundle")
-    if not isinstance(version_bundle, dict) or (
-        version_bundle.get("agent_definition_version") != RESEARCH_LEGACY_DEFINITION_VERSION
-        or version_bundle.get("output_contract_version")
-        != RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-    ):
+    if not isinstance(version_bundle, dict):
+        return payload
+    definition_version = version_bundle.get("agent_definition_version")
+    output_contract_version = version_bundle.get("output_contract_version")
+    if not isinstance(definition_version, str) or not isinstance(output_contract_version, str):
+        return payload
+    try:
+        mode = research_contract_mode_for_versions(definition_version, output_contract_version)
+    except ValueError:
         return payload
     result_payload = payload.get("result")
     if not isinstance(result_payload, dict):
@@ -139,7 +144,11 @@ def _decode_legacy_research_event_payload(
         return payload
     normalized = dict(payload)
     normalized_result = dict(result_payload)
-    normalized_result["research"] = decode_legacy_research_outcome(research_payload)
+    normalized_result["research"] = (
+        decode_legacy_research_outcome(research_payload)
+        if mode == "legacy"
+        else decode_historical_research_outcome(research_payload)
+    )
     normalized["result"] = normalized_result
     return normalized
 
@@ -753,7 +762,7 @@ class DecisionLedger:
             if not isinstance(event_payload, dict):
                 raise ValueError("stored decision event must be an object")
             fact = DecisionEventFact.model_validate(
-                _decode_legacy_research_event_payload(event_payload)
+                _decode_research_event_payload(event_payload)
             )
         except (ValidationError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise DecisionEventCommitError("stored decision event is invalid") from error
@@ -1101,7 +1110,7 @@ class DecisionLedger:
                     business_object_id=case.business_object_id,
                     framework_run_id=framework_run_id,
                     corrects_event_id=corrects_event_id,
-                    event_payload=fact.model_dump_json(),
+                    event_payload=_canonical_json(stored_decision_event_payload(fact)),
                     committed_at=fact.committed_at,
                 )
             )
