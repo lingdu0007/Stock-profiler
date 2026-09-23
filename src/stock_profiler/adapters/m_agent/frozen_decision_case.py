@@ -126,8 +126,11 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     decode_legacy_research_member_input,
+    decode_legacy_research_stage_artifact,
     decode_legacy_research_tool_evidence,
+    legacy_research_draft_json_schema,
     research_evidence_payload,
+    research_stage_artifact_payload,
 )
 
 READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset()
@@ -351,8 +354,10 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
             except json.JSONDecodeError as error:
                 raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID") from error
             if "stage_artifact" in previous_payload:
-                previous_artifact = ResearchStageArtifact.model_validate(
-                    previous_payload["stage_artifact"]
+                previous_artifact = (
+                    decode_legacy_research_stage_artifact(previous_payload["stage_artifact"])
+                    if self._legacy
+                    else ResearchStageArtifact.model_validate(previous_payload["stage_artifact"])
                 )
                 security_ids.extend(previous_artifact.security_ids)
                 evidence_ids.extend(previous_artifact.evidence_ids)
@@ -407,7 +412,10 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 "stage": stage_id,
                 "source_stage": previous.stage_id,
                 "input_item_ids": input_item_ids,
-                "stage_artifact": stage_artifact.model_dump(mode="json"),
+                "stage_artifact": research_stage_artifact_payload(
+                    stage_artifact,
+                    legacy=self._legacy,
+                ),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
                 ),
@@ -563,6 +571,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         *,
         command: ResearchCommand | None = None,
         member: ResearchMemberInput | None = None,
+        legacy: bool = False,
     ) -> None:
         capabilities = ModelCapabilities(
             tool_calling=ToolCallingMode.NATIVE,
@@ -577,6 +586,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         super().__init__(responses=(draft_response,), capabilities=capabilities)
         self._command = command
         self._member = member
+        self._legacy = legacy
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
@@ -610,7 +620,11 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
             if not payload or payload.get("stage") != "draft":
                 continue
             try:
-                candidate = ResearchStageArtifact.model_validate(payload["stage_artifact"])
+                candidate = (
+                    decode_legacy_research_stage_artifact(payload["stage_artifact"])
+                    if self._legacy
+                    else ResearchStageArtifact.model_validate(payload["stage_artifact"])
+                )
             except (KeyError, TypeError, ValueError) as error:
                 raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID") from error
             input_item_ids = payload.get("input_item_ids")
@@ -649,6 +663,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 self._command,
                 draft_artifact=draft_artifact,
                 member=self._member,
+                legacy=self._legacy,
             )
         )
 
@@ -803,6 +818,7 @@ def _research_definition(
         _research_model_response(command, member=member),
         command=command,
         member=member,
+        legacy=False,
     )
     expected_members = (member,) if member is not None else command.members
     return AgentDefinition.for_adapter(
@@ -843,8 +859,9 @@ def _legacy_research_definition(
         version=RESEARCH_LEGACY_DEFINITION_VERSION,
         instructions=LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS,
         model_adapter=_StagedResearchModelAdapter(
-            _research_model_response(command),
+            _research_model_response(command, legacy=True),
             command=command,
+            legacy=True,
         ),
         context_provider=_FrozenResearchContextProvider(
             _research_context_items(command, legacy=True),
@@ -863,7 +880,7 @@ def _legacy_research_definition(
         output_contract=OutputContract(
             contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
             version=RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
-            schema=ResearchDraft.model_json_schema(),
+            schema=legacy_research_draft_json_schema(),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
         context_plan=_research_context_plan(),
@@ -963,6 +980,7 @@ def _research_model_response(
     *,
     draft_artifact: ResearchStageArtifact | None = None,
     member: ResearchMemberInput | None = None,
+    legacy: bool = False,
 ) -> str:
     draft_summary = (
         draft_artifact.summary
@@ -996,7 +1014,7 @@ def _research_model_response(
     )
 
     def member_payload(source: ResearchMemberInput) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "security_id": source.security_id,
             "research_id": source.research_id,
             "evidence_refs": [evidence.evidence_id for evidence in source.evidence],
@@ -1007,11 +1025,17 @@ def _research_model_response(
             ),
             "bull_case": bull_case,
             "bear_case": bear_case,
-            "catalysts": catalysts,
-            "falsification_conditions": falsification_conditions,
-            "unknowns": unknowns,
             "knowledge_cutoff": source.knowledge_cutoff.isoformat(),
         }
+        if not legacy:
+            payload.update(
+                {
+                    "catalysts": catalysts,
+                    "falsification_conditions": falsification_conditions,
+                    "unknowns": unknowns,
+                }
+            )
+        return payload
 
     if member is not None:
         response = member_payload(member)
@@ -1302,6 +1326,8 @@ async def _execute_legacy_research_run(
     command = case.research
     assert command is not None
     existing_research_run = await runtime.run_store.get_run(case.framework_run_id)
+    if existing_research_run is None:
+        raise MappedDurableRunMissingError("original durable research Run is missing") from None
     research_definition = _legacy_research_definition(
         case,
         runtime=runtime,
@@ -1342,7 +1368,7 @@ async def _execute_legacy_research_run(
     )
     return replace(
         research_run,
-        run_existed_before=existing_research_run is not None,
+        run_existed_before=True,
         research_tool_evidence=tool_evidence,
     )
 
@@ -1709,6 +1735,10 @@ async def _execute_registered_run(
             "CREATED": "FRAMEWORK_RUN_CREATED",
             "RUNNING": "FRAMEWORK_RUN_STARTED",
             "WAITING": "FRAMEWORK_RUN_WAITING",
+            "SUCCEEDED": "FRAMEWORK_RUN_SUCCEEDED",
+            "REJECTED": "FRAMEWORK_RUN_REJECTED",
+            "FAILED": "FRAMEWORK_RUN_FAILED",
+            "CANCELLED": "FRAMEWORK_RUN_CANCELLED",
         }
         for status in status_collector.statuses[collected_status_count:]:
             reason = status_reasons.get(status)
@@ -2040,7 +2070,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
             else RESEARCH_DEFINITION_INSTRUCTIONS
         )
         expected_output_schema = (
-            ResearchDraft.model_json_schema()
+            legacy_research_draft_json_schema()
             if legacy
             else ResearchDraftMember.model_json_schema()
         )

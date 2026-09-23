@@ -44,6 +44,7 @@ RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
 RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v2"
 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION: Literal["1.0.0"] = "1.0.0"
 RESEARCH_EVIDENCE_CONTRACT_VERSION: Literal["2.0.0"] = "2.0.0"
+LEGACY_RESEARCH_MISSING_TEXT = "HISTORICAL_CONTRACT_FIELD_NOT_RECORDED"
 _LEGACY_RESEARCH_EVIDENCE_DECODING: ContextVar[bool] = ContextVar(
     "legacy_research_evidence_decoding",
     default=False,
@@ -801,6 +802,36 @@ class ResearchStageArtifact(ResearchContract):
         return self
 
 
+def decode_legacy_research_stage_artifact(value: object) -> ResearchStageArtifact:
+    """Decode a pre-v1.0.0 stage artifact without rewriting its stored payload."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research stage artifact must be an object")
+    payload = deepcopy(value)
+    if payload.get("stage_id") == "draft":
+        payload.setdefault("catalysts", (LEGACY_RESEARCH_MISSING_TEXT,))
+        payload.setdefault("falsification_conditions", (LEGACY_RESEARCH_MISSING_TEXT,))
+        payload.setdefault("unknowns", (LEGACY_RESEARCH_MISSING_TEXT,))
+    else:
+        payload.setdefault("catalysts", ())
+        payload.setdefault("falsification_conditions", ())
+        payload.setdefault("unknowns", ())
+    return ResearchStageArtifact.model_validate(payload)
+
+
+def research_stage_artifact_payload(
+    artifact: ResearchStageArtifact,
+    *,
+    legacy: bool = False,
+) -> dict[str, object]:
+    """Serialize a stage artifact using the exact current or historical field set."""
+    payload = artifact.model_dump(mode="json")
+    if legacy:
+        payload.pop("catalysts", None)
+        payload.pop("falsification_conditions", None)
+        payload.pop("unknowns", None)
+    return payload
+
+
 class ResearchStructuredFacts(ResearchContract):
     """Cutoff-bound source facts from which raw-score signals are calculated."""
 
@@ -1091,6 +1122,24 @@ class ResearchCommand(ResearchContract):
             and not self._legacy_decoded
         ):
             raise ValueError("current research commands require the current evidence contract")
+        evidence_contract_versions = {
+            evidence.evidence_contract_version
+            for member in self.members
+            for evidence in member.evidence
+        }
+        if evidence_contract_versions == {RESEARCH_EVIDENCE_CONTRACT_VERSION}:
+            expected_definition_version = RESEARCH_DEFINITION_VERSION
+        elif evidence_contract_versions == {RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION}:
+            expected_definition_version = RESEARCH_LEGACY_DEFINITION_VERSION
+        else:
+            raise ValueError("research evidence contracts must use one Definition version")
+        if any(
+            cohort.research_definition_version != expected_definition_version
+            for cohort in self.raw_score_model.training_cohorts
+        ):
+            raise ValueError(
+                "raw-score training cohorts must match the executing research Definition"
+            )
         return self
 
 
@@ -1196,6 +1245,33 @@ class ResearchDraftMember(ResearchContract):
     knowledge_cutoff: AwareDatetime
 
 
+class LegacyResearchDraftMember(ResearchContract):
+    """The only per-stock content the research model may produce."""
+
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
+    evidence_refs: tuple[str, ...] = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    bull_case: str = Field(min_length=1)
+    bear_case: str = Field(min_length=1)
+    knowledge_cutoff: AwareDatetime
+
+
+class LegacyResearchDraft(ResearchContract):
+    """Typed research text; it deliberately has no score, probability, or action."""
+
+    contract_version: Literal["1.0.0"]
+    members: tuple[LegacyResearchDraftMember, ...] = Field(min_length=10, max_length=10)
+
+    @model_validator(mode="after")
+    def validate_draft_members(self) -> LegacyResearchDraft:
+        if len({member.security_id for member in self.members}) != 10:
+            raise ValueError("research draft must contain ten unique securities")
+        if len({member.research_id for member in self.members}) != 10:
+            raise ValueError("research draft must contain ten unique research identities")
+        return self
+
+
 class ResearchDraft(ResearchContract):
     """Typed research text; it deliberately has no score, probability, or action."""
 
@@ -1209,6 +1285,81 @@ class ResearchDraft(ResearchContract):
         if len({member.research_id for member in self.members}) != 10:
             raise ValueError("research draft must contain ten unique research identities")
         return self
+
+
+def legacy_research_draft_json_schema() -> dict[str, object]:
+    """Return the historical schema with the original persisted model names."""
+    schema = LegacyResearchDraft.model_json_schema()
+    definitions = schema.get("$defs")
+    if not isinstance(definitions, dict):
+        raise ValueError("legacy research draft schema is missing its member definition")
+    member_schema = definitions.pop("LegacyResearchDraftMember")
+    if not isinstance(member_schema, dict):
+        raise ValueError("legacy research draft member schema is invalid")
+    member_schema["title"] = "ResearchDraftMember"
+    definitions["ResearchDraftMember"] = member_schema
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise ValueError("legacy research draft schema is missing its properties")
+    members_schema = properties.get("members")
+    if not isinstance(members_schema, dict):
+        raise ValueError("legacy research draft schema is missing its members")
+    items = members_schema.get("items")
+    if not isinstance(items, dict):
+        raise ValueError("legacy research draft schema is missing its member reference")
+    items["$ref"] = "#/$defs/ResearchDraftMember"
+    schema["title"] = "ResearchDraft"
+    return schema
+
+
+def decode_legacy_research_draft(value: object) -> ResearchDraft:
+    """Decode the historical draft into the current typed draft at a compatibility boundary."""
+    if not isinstance(value, dict):
+        raise ValueError("legacy research draft must be an object")
+    legacy_draft = LegacyResearchDraft.model_validate(value)
+    return ResearchDraft(
+        contract_version=legacy_draft.contract_version,
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=member.evidence_refs,
+                thesis=member.thesis,
+                bull_case=member.bull_case,
+                bear_case=member.bear_case,
+                catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
+                falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
+                unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in legacy_draft.members
+        ),
+    )
+
+
+def research_draft_payload(
+    draft: ResearchDraft,
+    *,
+    legacy: bool = False,
+) -> dict[str, object]:
+    """Serialize draft content using the exact current or historical field set."""
+    if not legacy:
+        return draft.model_dump(mode="json")
+    return LegacyResearchDraft(
+        contract_version=draft.contract_version,
+        members=tuple(
+            LegacyResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=member.evidence_refs,
+                thesis=member.thesis,
+                bull_case=member.bull_case,
+                bear_case=member.bear_case,
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in draft.members
+        ),
+    ).model_dump(mode="json")
 
 
 class RiskGate(ResearchContract):
@@ -1314,6 +1465,9 @@ def decode_legacy_research_framework_output(value: object) -> ResearchFrameworkO
     if not isinstance(value, dict):
         raise ValueError("legacy research framework output must be an object")
     payload = deepcopy(value)
+    draft = payload.get("draft")
+    if isinstance(draft, dict):
+        payload["draft"] = decode_legacy_research_draft(draft).model_dump(mode="python")
     tool_evidence = payload.get("tool_evidence")
     if isinstance(tool_evidence, (list, tuple)):
         payload["tool_evidence"] = [
@@ -1482,6 +1636,28 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     if not isinstance(value, dict):
         raise ValueError("legacy research outcome must be an object")
     payload = deepcopy(value)
+    members = payload.get("members")
+    if isinstance(members, (list, tuple)):
+        normalized_members: list[object] = []
+        for member in members:
+            if not isinstance(member, dict):
+                normalized_members.append(member)
+                continue
+            normalized_member = dict(member)
+            normalized_member.setdefault(
+                "catalysts",
+                (LEGACY_RESEARCH_MISSING_TEXT,),
+            )
+            normalized_member.setdefault(
+                "falsification_conditions",
+                (LEGACY_RESEARCH_MISSING_TEXT,),
+            )
+            normalized_member.setdefault(
+                "unknowns",
+                (LEGACY_RESEARCH_MISSING_TEXT,),
+            )
+            normalized_members.append(normalized_member)
+        payload["members"] = normalized_members
     tool_evidence = payload.get("tool_evidence")
     if isinstance(tool_evidence, (list, tuple)):
         payload["tool_evidence"] = [
@@ -1503,10 +1679,10 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
         normalized_handoff = dict(handoff)
         member_handoffs = normalized_handoff.get("member_handoffs")
         if isinstance(member_handoffs, (list, tuple)):
-            normalized_members: list[object] = []
+            normalized_handoff_members: list[object] = []
             for member in member_handoffs:
                 if not isinstance(member, dict):
-                    normalized_members.append(member)
+                    normalized_handoff_members.append(member)
                     continue
                 normalized_member = dict(member)
                 evidence_items = normalized_member.get("evidence")
@@ -1525,8 +1701,8 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
                         )
                         for evidence in evidence_items
                     ]
-                normalized_members.append(normalized_member)
-            normalized_handoff["member_handoffs"] = normalized_members
+                normalized_handoff_members.append(normalized_member)
+            normalized_handoff["member_handoffs"] = normalized_handoff_members
         handoff_tool_evidence = normalized_handoff.get("tool_evidence")
         if isinstance(handoff_tool_evidence, (list, tuple)):
             normalized_handoff["tool_evidence"] = [
@@ -1710,6 +1886,15 @@ def _research_member_handoff_fingerprint_payload(
     *,
     legacy: bool,
 ) -> dict[str, object]:
+    return research_member_handoff_payload(member, legacy=legacy)
+
+
+def research_member_handoff_payload(
+    member: ResearchMemberHandoff,
+    *,
+    legacy: bool = False,
+) -> dict[str, object]:
+    """Serialize a member handoff using the exact current or historical field set."""
     payload = member.model_dump(mode="json")
     if legacy:
         payload.pop("research_run_id", None)
@@ -1733,7 +1918,7 @@ def handoff_fingerprint(
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
         "command": _research_command_fingerprint_payload(command, legacy=legacy),
-        "draft": draft.model_dump(mode="json"),
+        "draft": research_draft_payload(draft, legacy=legacy),
         "raw_scores": (
             tuple(score.model_dump(mode="json") for score in raw_scores)
             if raw_scores is not None
@@ -1767,7 +1952,7 @@ def risk_run_id_for(
         json.dumps(
             {
                 "research_run_id": research_run_id,
-                "draft": draft.model_dump(mode="json"),
+                "draft": research_draft_payload(draft, legacy=legacy),
                 "raw_scores": (
                     tuple(score.model_dump(mode="json") for score in raw_scores)
                     if raw_scores is not None

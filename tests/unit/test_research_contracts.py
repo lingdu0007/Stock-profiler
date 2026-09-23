@@ -30,6 +30,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     calculate_structured_signals,
+    decode_legacy_research_framework_output,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
@@ -400,6 +401,45 @@ def test_raw_score_training_rejects_mixed_research_definition_versions() -> None
 
     with pytest.raises(ValueError, match="same research Definition"):
         ResearchCommand.model_validate(payload)
+
+
+def test_raw_score_training_definition_matches_the_executing_research_definition() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = "2.0.0"
+
+    with pytest.raises(ValueError, match="match the executing research Definition"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_legacy_framework_output_decodes_the_historical_draft_shape() -> None:
+    command = _command()
+    payload = {
+        "research_run_id": "research-run-legacy",
+        "draft": {
+            "contract_version": "1.0.0",
+            "members": [
+                {
+                    "security_id": member.security_id,
+                    "research_id": member.research_id,
+                    "evidence_refs": [evidence.evidence_id for evidence in member.evidence],
+                    "thesis": "The historical thesis is bounded by frozen evidence.",
+                    "bull_case": "The historical upside case remains conditional.",
+                    "bear_case": "The historical downside case remains explicit.",
+                    "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+                }
+                for member in command.members
+            ],
+        },
+    }
+
+    decoded = decode_legacy_research_framework_output(payload)
+
+    assert decoded.draft.members[0].catalysts == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+    assert decoded.draft.members[0].falsification_conditions == (
+        "HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",
+    )
+    assert decoded.draft.members[0].unknowns == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
 
 
 def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:

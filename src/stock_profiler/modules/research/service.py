@@ -37,7 +37,9 @@ from stock_profiler.modules.research.contracts import (
     RiskVetoOutcome,
     freeze_raw_score,
     handoff_fingerprint,
+    research_draft_payload,
     research_evidence_payload,
+    research_member_handoff_payload,
     research_member_results,
     risk_run_id_for,
 )
@@ -88,7 +90,7 @@ def prepare_research_risk_plan(
     risk_payload: dict[str, object] = {
         "handoff_fingerprint": fingerprint,
         "research_run_id": research_run_id,
-        "draft": draft.model_dump(mode="json"),
+        "draft": research_draft_payload(draft, legacy=legacy),
         "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(
@@ -96,7 +98,7 @@ def prepare_research_risk_plan(
             for evidence in tool_evidence
         ),
         "member_handoffs": tuple(
-            member.model_dump(mode="json", exclude={"research_run_id"} if legacy else None)
+            research_member_handoff_payload(member, legacy=legacy)
             for member in member_handoffs
         ),
     }

@@ -77,7 +77,11 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchRiskPlan,
     RiskVetoDraft,
+    decode_legacy_research_draft,
     decode_legacy_research_framework_output,
+    research_draft_payload,
+    research_evidence_payload,
+    research_member_handoff_payload,
 )
 from stock_profiler.modules.research.service import (
     freeze_research,
@@ -281,7 +285,11 @@ async def execute_research_risk_journey(
             research_validation_error_code="RESEARCH_OUTPUT_MISSING",
         )
     try:
-        draft = ResearchDraft.model_validate_json(research_run.output)
+        draft = (
+            decode_legacy_research_draft(json.loads(research_run.output))
+            if legacy
+            else ResearchDraft.model_validate_json(research_run.output)
+        )
     except ValueError:
         return replace(
             research_run,
@@ -301,15 +309,18 @@ async def execute_research_risk_journey(
     if command.failure_mode == "RAW_SCORE":
         return replace(
             research_run,
-            output=ResearchFrameworkOutput(
-                research_run_id=research_run.run_id,
-                research_run_ids=research_run_ids,
-                risk_run_id=None,
-                draft=draft,
-                risk_veto=None,
-                tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
-                tool_evidence=tool_evidence,
-            ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
+            output=_research_framework_output_json(
+                ResearchFrameworkOutput(
+                    research_run_id=research_run.run_id,
+                    research_run_ids=research_run_ids,
+                    risk_run_id=None,
+                    draft=draft,
+                    risk_veto=None,
+                    tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                    tool_evidence=tool_evidence,
+                ),
+                legacy=legacy,
+            ),
         )
     try:
         risk_plan = prepare_research_risk_plan(
@@ -323,15 +334,18 @@ async def execute_research_risk_journey(
     except RawScoreCalculationError as error:
         return replace(
             research_run,
-            output=ResearchFrameworkOutput(
-                research_run_id=research_run.run_id,
-                research_run_ids=research_run_ids,
-                risk_run_id=None,
-                draft=draft,
-                risk_veto=None,
-                tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
-                tool_evidence=tool_evidence,
-            ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
+            output=_research_framework_output_json(
+                ResearchFrameworkOutput(
+                    research_run_id=research_run.run_id,
+                    research_run_ids=research_run_ids,
+                    risk_run_id=None,
+                    draft=draft,
+                    risk_veto=None,
+                    tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                    tool_evidence=tool_evidence,
+                ),
+                legacy=legacy,
+            ),
             raw_score_error_code=str(error),
         )
     risk_run = await execute_risk(research_run, risk_plan)
@@ -344,17 +358,20 @@ async def execute_research_risk_journey(
         risk_veto = None
     return replace(
         research_run,
-        output=ResearchFrameworkOutput(
-            research_run_id=research_run.run_id,
-            research_run_ids=research_run_ids,
-            risk_run_id=risk_run.run_id,
-            draft=draft,
-            risk_veto=risk_veto,
-            raw_scores=risk_plan.raw_scores,
-            tool_evidence_refs=risk_plan.tool_evidence_refs,
-            tool_evidence=risk_plan.tool_evidence,
-            member_handoffs=risk_plan.member_handoffs,
-        ).model_dump_json(exclude={"research_run_ids"} if legacy else None),
+        output=_research_framework_output_json(
+            ResearchFrameworkOutput(
+                research_run_id=research_run.run_id,
+                research_run_ids=research_run_ids,
+                risk_run_id=risk_run.run_id,
+                draft=draft,
+                risk_veto=risk_veto,
+                raw_scores=risk_plan.raw_scores,
+                tool_evidence_refs=risk_plan.tool_evidence_refs,
+                tool_evidence=risk_plan.tool_evidence,
+                member_handoffs=risk_plan.member_handoffs,
+            ),
+            legacy=legacy,
+        ),
         risk_run_id=risk_run.run_id,
         risk_run_status=risk_run.status,
         risk_waiting_reason=risk_run.waiting_reason,
@@ -362,6 +379,28 @@ async def execute_research_risk_journey(
         risk_transitions=risk_run.transitions,
         risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
     )
+
+
+def _research_framework_output_json(
+    output: ResearchFrameworkOutput,
+    *,
+    legacy: bool,
+) -> str:
+    """Serialize the framework envelope without expanding a historical contract."""
+    payload = output.model_dump(
+        mode="json",
+        exclude={"research_run_ids"} if legacy else None,
+    )
+    if legacy:
+        payload["draft"] = research_draft_payload(output.draft, legacy=True)
+        payload["tool_evidence"] = tuple(
+            research_evidence_payload(evidence, legacy=True) for evidence in output.tool_evidence
+        )
+        payload["member_handoffs"] = tuple(
+            research_member_handoff_payload(handoff, legacy=True)
+            for handoff in output.member_handoffs
+        )
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
 def replay_default_frozen_decision_case(
@@ -1627,7 +1666,10 @@ def _commit_research_framework_result(
             stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
         )
 
-    if framework.run_id != execution_case.framework_run_id and framework.status != "FAILED":
+    if framework.run_id != execution_case.framework_run_id and framework.status not in {
+        "FAILED",
+        "WAITING",
+    }:
         return _unpublished_execution(
             execution_case,
             framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
@@ -2160,7 +2202,7 @@ def _unpublished_execution(
 def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunResult) -> StageResult:
     """Save the framework state before evaluating any host-owned result."""
     if framework.run_id != case.framework_run_id:
-        if case.research is not None and framework.status == "FAILED":
+        if case.research is not None and framework.status in {"FAILED", "WAITING"}:
             return _framework_status_stage_result(
                 status=framework.status,
                 error_code=framework.error_code,
@@ -2258,6 +2300,10 @@ def _framework_transition_stage_result(
         "CREATED": "RUN_CREATED",
         "RUNNING": "RUN_ACTIVE",
         "WAITING": "RUN_RECOVERABLE",
+        "SUCCEEDED": "RUN_SUCCEEDED",
+        "REJECTED": "RUN_REJECTED",
+        "FAILED": "RUN_FAILED",
+        "CANCELLED": "RUN_CANCELLED",
     }.get(transition.status, "RUN_RECOVERABLE")
     return StageResult(
         phase=phase,

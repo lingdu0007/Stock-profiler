@@ -65,6 +65,7 @@ from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError,
     FrameworkRunResult,
     MappedDurableRunMissingError,
+    ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
 from stock_profiler.modules.research import service as research_service
@@ -837,8 +838,21 @@ def test_each_fixed_ten_member_has_its_own_durable_research_run(
             )
         }
         mapped_run_ids = DecisionLedger(runtime.engine).mapped_framework_run_ids(connection)
+        member_terminal_statuses = {
+            member_run_id: DecisionLedger(runtime.engine)
+            .get_stage_results(
+                case.business_object_id,
+                connection,
+                framework_run_id=member_run_id,
+            )[-1]
+            .status
+            for member_run_id in member_run_ids
+        }
     assert set(member_run_ids).issubset(recorded_member_run_ids)
     assert set(member_run_ids).issubset(mapped_run_ids)
+    assert member_terminal_statuses == {
+        member_run_id: "SUCCEEDED" for member_run_id in member_run_ids
+    }
 
 
 def test_failed_member_does_not_relabel_a_successful_member_run(
@@ -1007,12 +1021,26 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     payload["agent_definition"]["output_contract"]["version"] = (
         RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
     )
-    payload["agent_definition"]["output_contract"]["json_schema"] = (
-        ResearchDraft.model_json_schema()
-    )
+    legacy_output_schema = ResearchDraft.model_json_schema()
+    legacy_member_schema = legacy_output_schema["$defs"]["ResearchDraftMember"]
+    for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+        legacy_member_schema["properties"].pop(field_name, None)
+    legacy_member_schema["required"] = [
+        "security_id",
+        "research_id",
+        "evidence_refs",
+        "thesis",
+        "bull_case",
+        "bear_case",
+        "knowledge_cutoff",
+    ]
+    payload["agent_definition"]["output_contract"]["json_schema"] = legacy_output_schema
     payload["version_bundle"]["agent_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
     payload["version_bundle"]["routing_policy_version"] = RESEARCH_LEGACY_ROUTING_POLICY_VERSION
     payload["version_bundle"]["output_contract_version"] = RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    for member in payload["expected_external_result"]["research"]["members"]:
+        for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+            member.pop(field_name, None)
     original_legacy_input = json.dumps(
         payload["input"],
         ensure_ascii=True,
@@ -1021,6 +1049,9 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     )
     legacy_case = FrozenDecisionCase.model_validate(payload)
     runtime = initialize_runtime_storage(migrated_settings)
+    with pytest.raises(MappedDurableRunMissingError, match="original durable research Run"):
+        asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))
+
     definition = frozen_decision_case._legacy_research_definition(
         legacy_case,
         runtime=runtime,
@@ -1046,6 +1077,22 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     stored_legacy_run = asyncio.run(runtime.run_store.get_run(legacy_case.framework_run_id))
     assert stored_legacy_run is not None
     assert stored_legacy_run.input == original_legacy_input
+    legacy_stage_artifacts = [
+        json.loads(output_item.item.content)["stage_artifact"]
+        for checkpoint in asyncio.run(
+            runtime.run_store.get_checkpoints(legacy_case.framework_run_id)
+        )
+        if checkpoint.step_type is StepType.CONTEXT
+        if (stage_result := parse_stage_result(checkpoint.output)) is not None
+        for output_item in stage_result.output_items
+        if "stage_artifact" in json.loads(output_item.item.content)
+    ]
+    assert legacy_stage_artifacts
+    assert all(
+        field_name not in artifact
+        for artifact in legacy_stage_artifacts
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
 
     recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))
 
@@ -1053,7 +1100,12 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert recovered.run_id == legacy_case.framework_run_id
     assert recovered.run_existed_before is True
     assert recovered.output is not None
-    assert ResearchDraft.model_validate_json(recovered.output).contract_version == "1.0.0"
+    recovered_payload = json.loads(recovered.output)
+    assert all(
+        field_name not in member
+        for member in recovered_payload["members"]
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
     assert frozen_decision_case.frozen_capability_inventory(legacy_case).definition_version == (
         RESEARCH_LEGACY_DEFINITION_VERSION
     )
@@ -1077,7 +1129,21 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert risk_run.input is not None
     legacy_risk_input = json.loads(risk_run.input)
     assert "research_run_ids" not in legacy_risk_input
+    assert all(
+        field_name not in member
+        for member in legacy_risk_input["draft"]["members"]
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
     assert "research_run_id" not in legacy_risk_input["member_handoffs"][0]
+    assert all(
+        field_name not in evidence
+        for evidence in legacy_risk_input["member_handoffs"][0]["evidence"]
+        for field_name in (
+            "evidence_contract_version",
+            "effective_at",
+            "source_published_at",
+        )
+    )
     legacy_command = legacy_case.research
     assert legacy_command is not None
     legacy_outcome = freeze_research(legacy_command, legacy_envelope, legacy=True)
@@ -1828,6 +1894,57 @@ def test_research_waiting_is_saved_without_a_research_failure(
         for stage in execution.stage_results
     )
     assert not any(stage.phase == "RESEARCH" for stage in execution.stage_results)
+
+
+def test_later_member_waiting_preserves_the_research_waiting_state(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+    waiting_index = 1
+    waiting_run_id = frozen_decision_case._research_member_run_id(
+        case,
+        waiting_index,
+        command.members[waiting_index],
+    )
+
+    async def waiting_member_research_run(*_: object, **__: object) -> FrameworkRunResult:
+        return FrameworkRunResult(
+            run_id=waiting_run_id,
+            status="WAITING",
+            output=None,
+            waiting_reason="RESEARCH_MEMBER_RUN_WAITING",
+            research_member_runs=tuple(
+                ResearchMemberRunResult(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    run_id=(
+                        waiting_run_id
+                        if index == waiting_index
+                        else frozen_decision_case._research_member_run_id(case, index, member)
+                    ),
+                    status="WAITING" if index == waiting_index else "SUCCEEDED",
+                )
+                for index, member in enumerate(command.members)
+            ),
+        )
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_run", waiting_member_research_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert execution.framework_run_status == "WAITING"
+    assert any(
+        stage.phase == "FRAMEWORK_RUN"
+        and stage.status == "WAITING"
+        and "RESEARCH_MEMBER_RUN_WAITING" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(
+        stage.phase == "RESEARCH" and stage.status == "FAILED" for stage in execution.stage_results
+    )
 
 
 def test_risk_waiting_preserves_raw_score_without_a_risk_failure(
