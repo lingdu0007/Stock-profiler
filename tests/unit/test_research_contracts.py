@@ -65,6 +65,8 @@ def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
             statement=(
                 f"A fictional structured fact is available at the cutoff for {data_type.lower()}."
             ),
+            effective_at=cutoff,
+            source_published_at=cutoff,
             acquired_at=cutoff,
             validated_at=cutoff,
             knowledge_cutoff=cutoff,
@@ -327,6 +329,16 @@ def test_research_signals_must_match_deterministic_source_facts() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_research_evidence_requires_individual_three_clock_timestamps() -> None:
+    payload = _command().model_dump(mode="json")
+    evidence = payload["members"][0]["evidence"][0]
+    evidence.pop("effective_at", None)
+    evidence.pop("source_published_at", None)
+
+    with pytest.raises(ValueError, match="effective_at|source_published_at"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:
     facts = _member_input(0, datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)).structured_facts
     facts = facts.model_copy(
@@ -565,6 +577,8 @@ def test_research_draft_can_cite_validated_tool_evidence() -> None:
         source="fictional-announcement-feed",
         reference="synthetic://announcement/00",
         statement="A fictional announcement is available at the cutoff.",
+        effective_at=command.knowledge_cutoff,
+        source_published_at=command.knowledge_cutoff,
         acquired_at=command.knowledge_cutoff,
         validated_at=command.knowledge_cutoff,
         knowledge_cutoff=command.knowledge_cutoff,
@@ -621,6 +635,8 @@ def test_research_draft_rejects_provider_and_tool_evidence_identity_collision() 
         source="fictional-announcement-feed",
         reference="synthetic://announcement/synthetic-security-00",
         statement="A fictional announcement is available at the cutoff.",
+        effective_at=command.knowledge_cutoff,
+        source_published_at=command.knowledge_cutoff,
         acquired_at=command.knowledge_cutoff,
         validated_at=command.knowledge_cutoff,
         knowledge_cutoff=command.knowledge_cutoff,

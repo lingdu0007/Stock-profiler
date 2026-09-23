@@ -67,6 +67,17 @@ class FrameworkRunTransition:
 
 
 @dataclass(frozen=True)
+class ResearchMemberRunResult:
+    """Durable per-member research Run identity and terminal observation."""
+
+    security_id: str
+    research_id: str
+    run_id: str
+    status: FrameworkRunStatus
+    error_code: str | None = None
+
+
+@dataclass(frozen=True)
 class FrameworkRunResult:
     run_id: str
     status: FrameworkRunStatus
@@ -82,6 +93,7 @@ class FrameworkRunResult:
     risk_transitions_durably_recorded: bool = False
     research_validation_error_code: str | None = None
     raw_score_error_code: str | None = None
+    research_member_runs: tuple[ResearchMemberRunResult, ...] = ()
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
     research_tool_evidence: tuple[ResearchToolEvidence, ...] = ()

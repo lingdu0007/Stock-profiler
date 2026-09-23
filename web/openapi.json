@@ -6522,6 +6522,11 @@
             "title": "Acquired At",
             "type": "string"
           },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
           "evidence_id": {
             "minLength": 1,
             "title": "Evidence Id",
@@ -6547,6 +6552,11 @@
             "title": "Source",
             "type": "string"
           },
+          "source_published_at": {
+            "format": "date-time",
+            "title": "Source Published At",
+            "type": "string"
+          },
           "statement": {
             "minLength": 1,
             "title": "Statement",
@@ -6568,6 +6578,8 @@
           "source",
           "reference",
           "statement",
+          "effective_at",
+          "source_published_at",
           "acquired_at",
           "validated_at",
           "knowledge_cutoff",
@@ -6654,6 +6666,14 @@
           "research_run_id": {
             "title": "Research Run Id",
             "type": "string"
+          },
+          "research_run_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Research Run Ids",
+            "type": "array"
           },
           "risk_definition_id": {
             "title": "Risk Definition Id",
@@ -6788,6 +6808,17 @@
             "minLength": 1,
             "title": "Research Id",
             "type": "string"
+          },
+          "research_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Run Id"
           },
           "risk_flags": {
             "default": [],
@@ -6934,6 +6965,11 @@
             "title": "Acquired At",
             "type": "string"
           },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
           "evidence_id": {
             "pattern": "^announcement:.+",
             "title": "Evidence Id",
@@ -6959,6 +6995,11 @@
             "title": "Source",
             "type": "string"
           },
+          "source_published_at": {
+            "format": "date-time",
+            "title": "Source Published At",
+            "type": "string"
+          },
           "statement": {
             "minLength": 1,
             "title": "Statement",
@@ -6980,6 +7021,8 @@
           "source",
           "reference",
           "statement",
+          "effective_at",
+          "source_published_at",
           "acquired_at",
           "validated_at",
           "knowledge_cutoff",

@@ -8,6 +8,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from importlib.metadata import version
 from typing import Literal, cast
 
@@ -81,6 +82,7 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.ports import (
     AuxiliaryRunReservationRecorder,
+    ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.ports import FrameworkRunResult as FrameworkRunResult
 from stock_profiler.modules.decision_cases.ports import (
@@ -108,6 +110,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchCommand,
     ResearchDataManifest,
     ResearchDraft,
+    ResearchDraftMember,
     ResearchMemberInput,
     ResearchRiskPlan,
     ResearchStageArtifact,
@@ -144,11 +147,12 @@ DEFAULT_SYNTHETIC_MODEL_RESPONSE = (
     '"summary":"Synthetic D0 decision case completed under the frozen contract."}'
 )
 RESEARCH_DEFINITION_INSTRUCTIONS = (
-    "Run one structured single-stock research definition across the fixed ten cohort. "
+    "Run one structured single-stock research definition for the assigned fixed-ten member. "
     "Use the required structured facts delivered by Context Provider before model steps. "
     "The explicit stages are collect, analyze, bull-bear, and draft. "
     "Use only the declared read-only announcement Tool for optional exploration. "
-    "Return only the typed research draft. Do not output scores, probabilities, qualification, "
+    "Return only the typed single-stock research draft. Do not output scores, probabilities, "
+    "qualification, "
     "personal quantities, order, or trading conclusions."
 )
 RISK_DEFINITION_INSTRUCTIONS = (
@@ -432,6 +436,9 @@ def _recover_research_failure_code(
     command: ResearchCommand,
     research_run: FrameworkRunResult,
     context_provider: _FrozenResearchContextProvider,
+    *,
+    expected_members: tuple[ResearchMemberInput, ...] | None = None,
+    context_items: tuple[ContextItem, ...] | None = None,
 ) -> str | None:
     """Recover frozen data-failure identity after a terminal Run restart.
 
@@ -447,13 +454,43 @@ def _recover_research_failure_code(
         return "RESEARCH_DATA_UNAVAILABLE"
     try:
         _validate_research_context_items(
-            _research_context_items(command),
-            command.members,
+            context_items if context_items is not None else _research_context_items(command),
+            expected_members if expected_members is not None else command.members,
         )
     except ValueError as error:
         if str(error).startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE"):
             return "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
     return None
+
+
+def _research_member_run_id(
+    case: FrozenDecisionCase,
+    index: int,
+    member: ResearchMemberInput,
+) -> str:
+    """Keep the host mapping as the first member Run and hash the others."""
+    if index == 0:
+        return case.framework_run_id
+    digest = sha256(
+        f"{case.framework_run_id}:{member.security_id}:{member.research_id}".encode()
+    ).hexdigest()
+    return f"research-member-run-{digest}"
+
+
+def _research_member_input_payload(
+    case: FrozenDecisionCase,
+    member: ResearchMemberInput,
+) -> str:
+    """Bind each durable member Run to the complete frozen case and member identity."""
+    return json.dumps(
+        {
+            "case_input": case.input,
+            "member": member.model_dump(mode="json"),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _json_object(content: str) -> dict[str, object] | None:
@@ -474,6 +511,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         draft_response: str,
         *,
         command: ResearchCommand | None = None,
+        member: ResearchMemberInput | None = None,
     ) -> None:
         capabilities = ModelCapabilities(
             tool_calling=ToolCallingMode.NATIVE,
@@ -487,6 +525,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         )
         super().__init__(responses=(draft_response,), capabilities=capabilities)
         self._command = command
+        self._member = member
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
@@ -532,11 +571,20 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 or tuple(input_item_ids) != candidate.input_item_ids
                 or not set(candidate.input_item_ids).issubset(context_item_ids)
                 or set(candidate.security_ids)
-                != {member.security_id for member in self._command.members}
+                != {
+                    self._member.security_id
+                    if self._member is not None
+                    else member.security_id
+                    for member in self._command.members
+                }
                 or set(candidate.evidence_ids)
                 != {
                     evidence.evidence_id
-                    for member in self._command.members
+                    for member in (
+                        (self._member,)
+                        if self._member is not None
+                        else self._command.members
+                    )
                     for evidence in member.evidence
                 }
             ):
@@ -549,6 +597,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
             content=_research_model_response(
                 self._command,
                 draft_artifact=draft_artifact,
+                member=self._member,
             )
         )
 
@@ -584,6 +633,8 @@ def _read_announcement_tool(
                 f"Synthetic announcement evidence announcement:{security_id} "
                 "is read-only and contains no trade instruction."
             ),
+            effective_at=default_cutoff,
+            source_published_at=default_cutoff,
             acquired_at=default_cutoff,
             validated_at=default_cutoff,
             knowledge_cutoff=default_cutoff,
@@ -672,31 +723,35 @@ def _research_definition(
     *,
     runtime: RuntimeStorage | None = None,
     run_id: str | None = None,
+    member: ResearchMemberInput | None = None,
+    context_items: tuple[ContextItem, ...] | None = None,
 ) -> AgentDefinition:
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
     assert command is not None
     adapter = _StagedResearchModelAdapter(
-        _research_model_response(command),
+        _research_model_response(command, member=member),
         command=command,
+        member=member,
     )
+    expected_members = (member,) if member is not None else command.members
     return AgentDefinition.for_adapter(
         definition_id=RESEARCH_DEFINITION_ID,
         version=RESEARCH_DEFINITION_VERSION,
         instructions=RESEARCH_DEFINITION_INSTRUCTIONS,
         model_adapter=adapter,
         context_provider=_FrozenResearchContextProvider(
-            _research_context_items(command),
+            context_items if context_items is not None else _research_context_items(command),
             runtime=runtime,
             run_id=run_id,
-            expected_members=command.members,
+            expected_members=expected_members,
             fail=command.failure_mode == "DATA",
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),
         output_contract=OutputContract(
             contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
             version=RESEARCH_OUTPUT_CONTRACT_VERSION,
-            schema=ResearchDraft.model_json_schema(),
+            schema=ResearchDraftMember.model_json_schema(),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
         context_plan=_research_context_plan(),
@@ -795,6 +850,7 @@ def _research_model_response(
     command: ResearchCommand,
     *,
     draft_artifact: ResearchStageArtifact | None = None,
+    member: ResearchMemberInput | None = None,
 ) -> str:
     draft_summary = (
         draft_artifact.summary
@@ -811,24 +867,28 @@ def _research_model_response(
         if draft_artifact is not None and draft_artifact.bear_case is not None
         else "The fictional downside case remains explicit."
     )
-    members = []
-    for member in command.members:
-        members.append(
-            {
-                "security_id": member.security_id,
-                "research_id": member.research_id,
-                "evidence_refs": [evidence.evidence_id for evidence in member.evidence],
-                "thesis": (
-                    f"Synthetic draft stage consumed: {draft_summary}"
-                    if draft_artifact is not None
-                    else draft_summary
-                ),
-                "bull_case": bull_case,
-                "bear_case": bear_case,
-                "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
-            }
-        )
-    response: dict[str, object] = {"contract_version": "1.0.0", "members": members}
+    def member_payload(source: ResearchMemberInput) -> dict[str, object]:
+        return {
+            "security_id": source.security_id,
+            "research_id": source.research_id,
+            "evidence_refs": [evidence.evidence_id for evidence in source.evidence],
+            "thesis": (
+                f"Synthetic draft stage consumed: {draft_summary}"
+                if draft_artifact is not None
+                else draft_summary
+            ),
+            "bull_case": bull_case,
+            "bear_case": bear_case,
+            "knowledge_cutoff": source.knowledge_cutoff.isoformat(),
+        }
+
+    if member is not None:
+        response = member_payload(member)
+    else:
+        response = {
+            "contract_version": "1.0.0",
+            "members": [member_payload(source) for source in command.members],
+        }
     if command.failure_mode in {"RESEARCH", "SYSTEM"}:
         response["probability"] = "0.99"
     return json.dumps(response, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
@@ -837,19 +897,37 @@ def _research_model_response(
 async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: RuntimeStorage) -> None:
     """Require the supplied original snapshot to identify an already durable Run."""
     _assert_runtime_version_bundle(case)
+    if case.research is not None:
+        context_items = _research_context_items(case.research)
+        for index, member in enumerate(case.research.members):
+            run_id = _research_member_run_id(case, index, member)
+            run = await runtime.run_store.get_run(run_id)
+            if run is None:
+                raise MappedDurableRunMissingError(
+                    "mapped research member Run is missing"
+                )
+            member_context_items = tuple(
+                item
+                for item in context_items
+                if item.item_id == f"required-facts:{member.security_id}"
+            )
+            definition = _research_definition(
+                case,
+                runtime=runtime,
+                run_id=run_id,
+                member=member,
+                context_items=member_context_items,
+            )
+            _assert_existing_run_matches_definition_input(
+                run,
+                definition,
+                _research_member_input_payload(case, member),
+            )
+        return
     run = await runtime.run_store.get_run(case.framework_run_id)
     if run is None:
         raise MappedDurableRunMissingError("original durable M-Agent Run is missing")
-    definition = (
-        _research_definition(
-            case,
-            runtime=runtime,
-            run_id=case.framework_run_id,
-        )
-        if case.research is not None
-        else _frozen_definition(case)
-    )
-    _assert_existing_run_matches_case(run, case, definition)
+    _assert_existing_run_matches_case(run, case, _frozen_definition(case))
 
 
 async def find_unmapped_legacy_frozen_decision_case(
@@ -1067,53 +1145,132 @@ async def execute_research_run(
     *,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
-    """Execute or recover only the staged research Run."""
+    """Execute or recover one staged, durable research Run per cohort member."""
     command = case.research
     assert command is not None
-    existing_research_run = await runtime.run_store.get_run(case.framework_run_id)
     try:
         _assert_runtime_version_bundle(case)
-        research_definition = _research_definition(
-            case,
-            runtime=runtime,
-            run_id=case.framework_run_id,
-        )
-        _assert_research_registered_capabilities(case, research_definition)
     except ValueError:
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
         raise
 
-    research_input = json.dumps(
-        case.input,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
+    context_items = _research_context_items(command)
+    allow_create = (
+        case.recovery_framework_run_id is None
+        and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
     )
-    research_run = await _execute_registered_run(
-        runtime=runtime,
-        run_id=case.framework_run_id,
-        definition=research_definition,
-        input_payload=research_input,
-        case=case,
-        record_transition=record_transition,
-        clock=clock,
-    )
-    if research_run.status != "SUCCEEDED" or research_run.output is None:
-        context_provider = research_definition.context_provider
-        if isinstance(context_provider, _FrozenResearchContextProvider):
-            failure_code = _recover_research_failure_code(
-                command,
-                research_run,
-                context_provider,
+    member_results: list[ResearchMemberRunResult] = []
+    member_drafts: list[ResearchDraftMember] = []
+    member_run_ids: list[str] = []
+    transitions: list[FrameworkRunTransition] = []
+    tool_evidence: list[ResearchToolEvidence] = []
+    all_runs_existed = True
+
+    for index, member in enumerate(command.members):
+        run_id = _research_member_run_id(case, index, member)
+        member_run_ids.append(run_id)
+        member_context_items = tuple(
+            item for item in context_items if item.item_id == f"required-facts:{member.security_id}"
+        )
+        research_definition = _research_definition(
+            case,
+            runtime=runtime,
+            run_id=run_id,
+            member=member,
+            context_items=member_context_items,
+        )
+        _assert_research_registered_capabilities(case, research_definition)
+        existing_run = await runtime.run_store.get_run(run_id)
+        all_runs_existed = all_runs_existed and existing_run is not None
+        member_input = _research_member_input_payload(case, member)
+        result = await _execute_registered_run(
+            runtime=runtime,
+            run_id=run_id,
+            definition=research_definition,
+            input_payload=member_input,
+            case=None,
+            record_transition=record_transition,
+            allow_create=allow_create,
+            clock=clock,
+        )
+        if result.status != "SUCCEEDED" or result.output is None:
+            context_provider = research_definition.context_provider
+            if isinstance(context_provider, _FrozenResearchContextProvider):
+                failure_code = _recover_research_failure_code(
+                    command,
+                    result,
+                    context_provider,
+                    expected_members=(member,),
+                    context_items=member_context_items,
+                )
+                if failure_code is not None:
+                    result = replace(result, error_code=failure_code)
+        transitions.extend(result.transitions)
+        member_results.append(
+            ResearchMemberRunResult(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                run_id=run_id,
+                status=result.status,
+                error_code=result.error_code,
             )
-            if failure_code is not None:
-                return replace(research_run, error_code=failure_code)
-        return research_run
-    tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
-    return replace(
-        research_run,
-        run_existed_before=existing_research_run is not None,
-        research_tool_evidence=tool_evidence,
+        )
+        if result.status != "SUCCEEDED" or result.output is None:
+            continue
+        try:
+            member_drafts.append(ResearchDraftMember.model_validate_json(result.output))
+        except ValueError:
+            member_results[-1] = replace(
+                member_results[-1],
+                status="FAILED",
+                error_code="RESEARCH_OUTPUT_INVALID",
+            )
+            continue
+        for evidence in await _research_tool_evidence(runtime, run_id):
+            if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
+                tool_evidence.append(evidence)
+
+    member_run_result = tuple(member_results)
+    failed_results = tuple(
+        result for result in member_run_result if result.status in {"FAILED", "REJECTED"}
+    )
+    waiting_results = tuple(result for result in member_run_result if result.status == "WAITING")
+    if failed_results:
+        aggregate_status: FrameworkRunStatus = "FAILED"
+    elif waiting_results:
+        aggregate_status = "WAITING"
+    else:
+        aggregate_status = "SUCCEEDED"
+    error_codes = tuple(result.error_code for result in member_run_result if result.error_code)
+    if aggregate_status != "SUCCEEDED":
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status=aggregate_status,
+            output=None,
+            run_existed_before=all_runs_existed,
+            waiting_reason=(
+                waiting_results[0].error_code
+                if waiting_results and waiting_results[0].error_code is not None
+                else "RESEARCH_MEMBER_RUN_WAITING"
+                if waiting_results
+                else None
+            ),
+            error_code=error_codes[0] if error_codes else "RESEARCH_MEMBER_RUN_FAILED",
+            research_member_runs=member_run_result,
+            transitions=tuple(transitions),
+            transitions_durably_recorded=record_transition is not None,
+            research_tool_evidence=tuple(tool_evidence),
+        )
+    draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
+    return FrameworkRunResult(
+        run_id=case.framework_run_id,
+        status="SUCCEEDED",
+        output=draft.model_dump_json(),
+        run_existed_before=all_runs_existed,
+        research_member_runs=member_run_result,
+        transitions=tuple(transitions),
+        transitions_durably_recorded=record_transition is not None,
+        research_tool_evidence=tuple(tool_evidence),
     )
 
 
@@ -1283,13 +1440,7 @@ async def _execute_registered_run(
         if case is not None:
             _assert_existing_run_matches_case(run, case, definition)
             return
-        if (
-            run.definition_id != definition.definition_id
-            or run.definition_version != definition.version
-            or run.input != input_payload
-            or run.snapshot != definition.frozen_snapshot()
-        ):
-            raise ValueError("durable auxiliary Run does not match its frozen input")
+        _assert_existing_run_matches_definition_input(run, definition, input_payload)
 
     try:
         run = await runner.get_run(run_id)
@@ -1395,13 +1546,7 @@ async def _recover_registered_run(
         if case is not None:
             _assert_existing_run_matches_case(run, case, definition)
         else:
-            if (
-                run.definition_id != definition.definition_id
-                or run.definition_version != definition.version
-                or run.input != input_payload
-                or run.snapshot != definition.frozen_snapshot()
-            ):
-                raise ValueError("durable auxiliary Run does not match its frozen input")
+            _assert_existing_run_matches_definition_input(run, definition, input_payload)
         if run.status.is_terminal or run.status.value == "WAITING":
             await observe(
                 FrameworkRunTransition(
@@ -1597,7 +1742,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
             or case.agent_definition.output_contract.contract_id != RESEARCH_OUTPUT_CONTRACT_ID
             or case.agent_definition.output_contract.version != RESEARCH_OUTPUT_CONTRACT_VERSION
             or case.agent_definition.output_contract.json_schema
-            != ResearchDraft.model_json_schema()
+            != ResearchDraftMember.model_json_schema()
         ):
             raise ValueError("research version bundle is not supported by this runtime")
         if version(
@@ -1668,6 +1813,21 @@ def _assert_existing_run_matches_case(
         raise ValueError("durable M-Agent Run does not match the frozen recovery input")
     if run.snapshot != definition.frozen_snapshot():
         raise ValueError("durable M-Agent Run does not match the frozen definition snapshot")
+
+
+def _assert_existing_run_matches_definition_input(
+    run: RunRecord,
+    definition: AgentDefinition,
+    input_payload: str,
+) -> None:
+    """Bind a member Run to the same Definition snapshot and member input."""
+    if (
+        run.definition_id != definition.definition_id
+        or run.definition_version != definition.version
+        or run.input != input_payload
+        or run.snapshot != definition.frozen_snapshot()
+    ):
+        raise ValueError("durable research member Run does not match its frozen input")
 
 
 def _deterministic_model_response(case: FrozenDecisionCase) -> str:

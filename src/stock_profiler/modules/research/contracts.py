@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from calendar import monthrange
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
@@ -66,6 +67,19 @@ RAW_SCORE_FEATURE_IDS: tuple[str, ...] = (
     "institutional_net_buy_ratio",
     "institutional_listing_frequency",
 )
+RAW_SCORE_FEATURE_DATA_TYPES: dict[str, ResearchDataType] = {
+    "single_quarter_revenue_acceleration": "FINANCIAL_STATEMENTS",
+    "asset_normalized_quarter_profit_improvement": "FINANCIAL_STATEMENTS",
+    "operating_cash_flow_return_on_assets": "FINANCIAL_STATEMENTS",
+    "working_capital_pressure_change": "FINANCIAL_STATEMENTS",
+    "leverage_ratio_change": "FINANCIAL_STATEMENTS",
+    "industry_relative_return_20d": "DAILY_MARKET",
+    "downside_semivariance_60d": "DAILY_MARKET",
+    "max_drawdown_60d": "DAILY_MARKET",
+    "turnover_change": "DAILY_MARKET",
+    "institutional_net_buy_ratio": "INSTITUTIONAL_ACTIVITY",
+    "institutional_listing_frequency": "INSTITUTIONAL_ACTIVITY",
+}
 RAW_SCORE_COEFFICIENTS: dict[str, Decimal] = {
     "screening_positive_prior": Decimal("0.15"),
     "screening_terminal_prior": Decimal("0.35"),
@@ -121,6 +135,19 @@ class ResearchContract(BaseModel):
     """Reject unversioned research fields and mutable contract payloads."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _validate_evidence_clocks(
+    *,
+    source_published_at: AwareDatetime,
+    acquired_at: AwareDatetime,
+    validated_at: AwareDatetime,
+    knowledge_cutoff: AwareDatetime,
+) -> None:
+    if source_published_at > acquired_at or acquired_at > validated_at:
+        raise ValueError("research evidence clocks must be monotonic")
+    if validated_at > knowledge_cutoff:
+        raise ValueError("research evidence must be available by the knowledge cutoff")
 
 
 class RawScoreFeatureTransform(ResearchContract):
@@ -514,11 +541,23 @@ class ResearchEvidence(ResearchContract):
     source: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
+    effective_at: AwareDatetime
+    source_published_at: AwareDatetime
     acquired_at: AwareDatetime
     validated_at: AwareDatetime
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
+
+    @model_validator(mode="after")
+    def validate_clocks(self) -> ResearchEvidence:
+        _validate_evidence_clocks(
+            source_published_at=self.source_published_at,
+            acquired_at=self.acquired_at,
+            validated_at=self.validated_at,
+            knowledge_cutoff=self.knowledge_cutoff,
+        )
+        return self
 
 
 class ResearchToolEvidence(ResearchContract):
@@ -528,11 +567,23 @@ class ResearchToolEvidence(ResearchContract):
     source: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     statement: str = Field(min_length=1)
+    effective_at: AwareDatetime
+    source_published_at: AwareDatetime
     acquired_at: AwareDatetime
     validated_at: AwareDatetime
     knowledge_cutoff: AwareDatetime
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
+
+    @model_validator(mode="after")
+    def validate_clocks(self) -> ResearchToolEvidence:
+        _validate_evidence_clocks(
+            source_published_at=self.source_published_at,
+            acquired_at=self.acquired_at,
+            validated_at=self.validated_at,
+            knowledge_cutoff=self.knowledge_cutoff,
+        )
+        return self
 
 
 class FrozenDualTargetScreening(ResearchContract):
@@ -746,6 +797,66 @@ def calculate_structured_signals(
         }
 
 
+def _calculate_structured_signals_with_failures(
+    facts: ResearchStructuredFacts,
+) -> dict[str, Decimal | None]:
+    """Keep valid signals while marking only the formulas that failed."""
+
+    def safe(calculate: Callable[[], Decimal | None]) -> Decimal | None:
+        try:
+            return calculate()
+        except (ValueError, ArithmeticError):
+            return None
+
+    with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
+        return {
+            "single_quarter_revenue_acceleration": safe(
+                lambda: _structured_difference(
+                    facts.revenue_growth_current,
+                    facts.revenue_growth_prior,
+                )
+            ),
+            "asset_normalized_quarter_profit_improvement": safe(
+                lambda: _structured_ratio(
+                    facts.quarter_profit_improvement,
+                    facts.average_total_assets,
+                )
+            ),
+            "operating_cash_flow_return_on_assets": safe(
+                lambda: _structured_ratio(
+                    facts.operating_cash_flow_ttm,
+                    facts.average_total_assets,
+                )
+            ),
+            "working_capital_pressure_change": safe(
+                lambda: _structured_ratio(
+                    _structured_difference(
+                        facts.working_capital_pressure_current,
+                        facts.working_capital_pressure_prior,
+                    ),
+                    facts.average_total_assets,
+                )
+            ),
+            "leverage_ratio_change": safe(
+                lambda: _structured_difference(
+                    facts.leverage_ratio_current,
+                    facts.leverage_ratio_prior,
+                )
+            ),
+            "industry_relative_return_20d": safe(
+                lambda: _structured_difference(
+                    facts.stock_return_20d,
+                    facts.industry_return_20d,
+                )
+            ),
+            "downside_semivariance_60d": facts.downside_semivariance_60d,
+            "max_drawdown_60d": facts.max_drawdown_60d,
+            "turnover_change": facts.turnover_change,
+            "institutional_net_buy_ratio": facts.institutional_net_buy_ratio,
+            "institutional_listing_frequency": facts.institutional_listing_frequency,
+        }
+
+
 class ResearchMemberInput(ResearchContract):
     """Structured, cutoff-bound facts for one member of the research cohort."""
 
@@ -763,9 +874,9 @@ class ResearchMemberInput(ResearchContract):
         calculation_failed = False
         try:
             derived_signals = calculate_structured_signals(self.structured_facts)
-        except ValueError:
+        except (ValueError, ArithmeticError):
             calculation_failed = True
-            derived_signals = {signal_id: None for signal_id in RAW_SCORE_FEATURE_IDS}
+            derived_signals = _calculate_structured_signals_with_failures(self.structured_facts)
         if (
             self.structured_signals
             and self.structured_signals != derived_signals
@@ -823,6 +934,7 @@ class ResearchMemberHandoff(ResearchContract):
     research_id: str = Field(min_length=1)
     evidence: tuple[ResearchEvidence, ...] = Field(min_length=1)
     risk_flags: tuple[str, ...] = ()
+    research_run_id: str | None = None
 
 
 class ResearchCommand(ResearchContract):
@@ -1004,6 +1116,7 @@ class ResearchFrameworkOutput(ResearchContract):
     """Adapter envelope joining two durable Runs without adding a business score."""
 
     research_run_id: str = Field(min_length=1)
+    research_run_ids: tuple[str, ...] = ()
     risk_run_id: str | None = None
     draft: ResearchDraft
     risk_veto: RiskVetoDraft | None = None
@@ -1024,6 +1137,7 @@ class ResearchRiskPlan:
     risk_run_id: str
     handoff_fingerprint: str
     input_payload: str
+    research_run_ids: tuple[str, ...] = ()
 
 
 class RiskVetoOutcome(ResearchContract):
@@ -1050,6 +1164,7 @@ class ResearchHandoff(ResearchContract):
     knowledge_cutoff: AwareDatetime
     evidence_ids: tuple[str, ...] = Field(min_length=10)
     research_run_id: str
+    research_run_ids: tuple[str, ...] = ()
     risk_run_id: str
     research_definition_id: str
     research_definition_version: str
@@ -1079,6 +1194,17 @@ class ResearchHandoff(ResearchContract):
             raise ValueError("research handoff must bind the two frozen screening targets")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise ValueError("research handoff evidence identities must be unique")
+        if self.research_run_ids:
+            if len(self.research_run_ids) != len(self.security_ids):
+                raise ValueError("research handoff must bind one Run to every member")
+            if len(set(self.research_run_ids)) != len(self.research_run_ids):
+                raise ValueError("research member Run identities must be unique")
+            if self.research_run_ids[0] != self.research_run_id:
+                raise ValueError("research handoff primary Run must be the first member Run")
+            if self.member_handoffs and tuple(
+                member.research_run_id for member in self.member_handoffs
+            ) != self.research_run_ids:
+                raise ValueError("research member handoffs must bind the member Run identities")
         return self
 
 

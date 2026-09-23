@@ -2659,6 +2659,11 @@ export interface components {
              * Format: date-time
              */
             acquired_at: string;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
             /** Evidence Id */
             evidence_id: string;
             /**
@@ -2672,6 +2677,11 @@ export interface components {
             semantic_version: string;
             /** Source */
             source: string;
+            /**
+             * Source Published At
+             * Format: date-time
+             */
+            source_published_at: string;
             /** Statement */
             statement: string;
             /**
@@ -2734,6 +2744,11 @@ export interface components {
             research_routing_policy_version: string;
             /** Research Run Id */
             research_run_id: string;
+            /**
+             * Research Run Ids
+             * @default []
+             */
+            research_run_ids: string[];
             /** Risk Definition Id */
             risk_definition_id: string;
             /** Risk Definition Version */
@@ -2781,6 +2796,8 @@ export interface components {
             evidence: components["schemas"]["ResearchEvidence"][];
             /** Research Id */
             research_id: string;
+            /** Research Run Id */
+            research_run_id?: string | null;
             /**
              * Risk Flags
              * @default []
@@ -2849,6 +2866,11 @@ export interface components {
              * Format: date-time
              */
             acquired_at: string;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
             /** Evidence Id */
             evidence_id: string;
             /**
@@ -2862,6 +2884,11 @@ export interface components {
             semantic_version: string;
             /** Source */
             source: string;
+            /**
+             * Source Published At
+             * Format: date-time
+             */
+            source_published_at: string;
             /** Statement */
             statement: string;
             /**

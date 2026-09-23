@@ -49,12 +49,13 @@ def prepare_research_risk_plan(
     research_run_id: str,
     draft: ResearchDraft,
     tool_evidence: tuple[ResearchToolEvidence, ...],
+    research_run_ids: tuple[str, ...] = (),
 ) -> ResearchRiskPlan:
     """Calculate and bind the immutable inputs consumed by the risk Run."""
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
     validate_research_draft(command, draft, tool_evidence)
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
-    member_handoffs = _member_handoffs_for_command(command)
+    member_handoffs = _member_handoffs_for_command(command, research_run_ids)
     fingerprint = handoff_fingerprint(
         command,
         draft,
@@ -75,6 +76,7 @@ def prepare_research_risk_plan(
         {
             "handoff_fingerprint": fingerprint,
             "research_run_id": research_run_id,
+            "research_run_ids": research_run_ids,
             "draft": draft.model_dump(mode="json"),
             "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
             "tool_evidence_refs": tool_evidence_refs,
@@ -93,6 +95,7 @@ def prepare_research_risk_plan(
         risk_run_id=risk_run_id,
         handoff_fingerprint=fingerprint,
         input_payload=input_payload,
+        research_run_ids=research_run_ids,
     )
 
 
@@ -177,6 +180,7 @@ def freeze_research(
         raw_scores=raw_scores,
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
+        research_run_ids=framework.research_run_ids,
         risk_veto=risk_veto,
     )
     return ResearchOutcome(
@@ -282,15 +286,23 @@ def _validate_tool_evidence(
     return evidence
 
 
-def _member_handoffs_for_command(command: ResearchCommand) -> tuple[ResearchMemberHandoff, ...]:
+def _member_handoffs_for_command(
+    command: ResearchCommand,
+    research_run_ids: tuple[str, ...] = (),
+) -> tuple[ResearchMemberHandoff, ...]:
+    if research_run_ids and len(research_run_ids) != len(command.members):
+        raise ValueError("research member Run identities must cover every member")
     return tuple(
         ResearchMemberHandoff(
             security_id=member.security_id,
             research_id=member.research_id,
             evidence=member.evidence,
             risk_flags=member.risk_flags,
+            research_run_id=(
+                research_run_ids[index] if research_run_ids else None
+            ),
         )
-        for member in command.members
+        for index, member in enumerate(command.members)
     )
 
 
@@ -302,15 +314,31 @@ def _validate_member_handoffs(
     if len(handoffs) != len(command.members):
         raise ValueError("research risk handoff must contain every member's evidence")
     expected = tuple(
-        (member.security_id, member.research_id, member.evidence, member.risk_flags)
+        (
+            member.security_id,
+            member.research_id,
+            member.evidence,
+            member.risk_flags,
+        )
         for member in command.members
     )
     actual = tuple(
-        (member.security_id, member.research_id, member.evidence, member.risk_flags)
+        (
+            member.security_id,
+            member.research_id,
+            member.evidence,
+            member.risk_flags,
+        )
         for member in handoffs
     )
     if actual != expected:
         raise ValueError("research risk handoff changed member order, evidence, or risk flags")
+    research_run_ids = tuple(member.research_run_id for member in handoffs)
+    if any(run_id is not None for run_id in research_run_ids) and (
+        any(run_id is None for run_id in research_run_ids)
+        or len(set(research_run_ids)) != len(research_run_ids)
+    ):
+        raise ValueError("research risk handoff has incomplete member Run identities")
     return handoffs
 
 

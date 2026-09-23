@@ -66,6 +66,7 @@ from stock_profiler.modules.position_management.concentration import assess_conc
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
+    RAW_SCORE_FEATURE_DATA_TYPES,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
@@ -198,6 +199,12 @@ def _research_data_gate_results(
         if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
         and any(value is None for value in member.structured_signals.values())
     }
+    invalid_structured_data_types = {
+        (member.security_id, RAW_SCORE_FEATURE_DATA_TYPES[signal_id])
+        for member in command.members
+        for signal_id, value in member.structured_signals.items()
+        if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
+    }
     gate_results_are_detailed = manifest_is_detailed or bool(invalid_structured_member_ids)
     return tuple(
         GateResult(
@@ -206,8 +213,7 @@ def _research_data_gate_results(
                 "FAILED"
                 if manifest_is_detailed and entry.completeness != "COMPLETE"
                 else "FAILED"
-                if member.security_id in invalid_structured_member_ids
-                and entry.data_type == "FINANCIAL_STATEMENTS"
+                if (member.security_id, entry.data_type) in invalid_structured_data_types
                 else "PASSED"
                 if gate_results_are_detailed
                 else "UNKNOWN"
@@ -279,6 +285,9 @@ async def execute_research_risk_journey(
             research_run,
             output=ResearchFrameworkOutput(
                 research_run_id=research_run.run_id,
+                research_run_ids=tuple(
+                    member_run.run_id for member_run in research_run.research_member_runs
+                ),
                 risk_run_id=None,
                 draft=draft,
                 risk_veto=None,
@@ -292,12 +301,16 @@ async def execute_research_risk_journey(
             research_run.run_id,
             draft,
             tool_evidence,
+            tuple(member_run.run_id for member_run in research_run.research_member_runs),
         )
     except RawScoreCalculationError as error:
         return replace(
             research_run,
             output=ResearchFrameworkOutput(
                 research_run_id=research_run.run_id,
+                research_run_ids=tuple(
+                    member_run.run_id for member_run in research_run.research_member_runs
+                ),
                 risk_run_id=None,
                 draft=draft,
                 risk_veto=None,
@@ -318,6 +331,9 @@ async def execute_research_risk_journey(
         research_run,
         output=ResearchFrameworkOutput(
             research_run_id=research_run.run_id,
+            research_run_ids=tuple(
+                member_run.run_id for member_run in research_run.research_member_runs
+            ),
             risk_run_id=risk_run.run_id,
             draft=draft,
             risk_veto=risk_veto,

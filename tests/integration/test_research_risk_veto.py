@@ -151,6 +151,8 @@ def research_command(
                         "A fictional structured fact is available at the cutoff "
                         f"for {data_type.lower()}."
                     ),
+                    effective_at=cutoff,
+                    source_published_at=cutoff,
                     acquired_at=cutoff,
                     validated_at=cutoff,
                     knowledge_cutoff=cutoff,
@@ -438,6 +440,8 @@ def _case(
                 f"Synthetic announcement evidence {evidence_id} is read-only "
                 "and contains no trade instruction."
             ),
+            effective_at=command.knowledge_cutoff,
+            source_published_at=command.knowledge_cutoff,
             acquired_at=command.knowledge_cutoff,
             validated_at=command.knowledge_cutoff,
             knowledge_cutoff=command.knowledge_cutoff,
@@ -524,7 +528,7 @@ def _case(
         output_contract=FrozenOutputContract(
             contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
             version=RESEARCH_OUTPUT_CONTRACT_VERSION,
-            schema=ResearchDraft.model_json_schema(),
+            schema=ResearchDraftMember.model_json_schema(),
         ),
     )
     bundle = DecisionCaseVersionBundle(
@@ -573,35 +577,53 @@ def _case(
         research=command,
         access_scope=scope,
     )
+    member_run_ids = tuple(
+        frozen_decision_case._research_member_run_id(base, index, member)
+        for index, member in enumerate(command.members)
+    )
+    member_handoffs = tuple(
+        ResearchMemberHandoff(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence=member.evidence,
+            risk_flags=member.risk_flags,
+            research_run_id=member_run_ids[index],
+        )
+        for index, member in enumerate(command.members)
+    )
     risk_run_id = risk_run_id_for(
         base.framework_run_id,
         draft,
         raw_scores=raw_scores,
         tool_evidence_refs=tool_evidence_refs,
         tool_evidence=tool_evidence,
-        member_handoffs=tuple(
-            ResearchMemberHandoff(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                evidence=member.evidence,
-                risk_flags=member.risk_flags,
-            )
-            for member in command.members
-        ),
+        member_handoffs=member_handoffs,
     )
-    assert provisional.risk_veto is not None
-    risk_veto = provisional.risk_veto.model_copy(update={"run_id": risk_run_id})
-    risk = provisional.model_copy(
+    provisional_risk = provisional_risk.model_copy(
         update={
-            "handoff": provisional.handoff.model_copy(
-                update={
-                    "research_run_id": base.framework_run_id,
-                    "risk_run_id": risk_run_id,
-                    "risk_veto": risk_veto,
-                }
-            ),
-            "risk_veto": risk_veto,
+            "handoff_fingerprint": handoff_fingerprint(
+                command,
+                draft,
+                raw_scores=raw_scores,
+                tool_evidence_refs=tool_evidence_refs,
+                tool_evidence=tool_evidence,
+                member_handoffs=member_handoffs,
+            )
         }
+    )
+    provisional = freeze_research(
+        command,
+        ResearchFrameworkOutput(
+            research_run_id=base.framework_run_id,
+            research_run_ids=member_run_ids,
+            risk_run_id=risk_run_id,
+            draft=draft,
+            risk_veto=provisional_risk,
+            raw_scores=raw_scores,
+            tool_evidence_refs=tool_evidence_refs,
+            tool_evidence=tool_evidence,
+            member_handoffs=member_handoffs,
+        ),
     )
     expected = ExternalResult(
         outcome_code="RESEARCH_REJECTED" if risk_scenario == "REJECT" else "RESEARCH_FROZEN",
@@ -610,8 +632,8 @@ def _case(
             if risk_scenario == "REJECT"
             else "Synthetic fixed-ten research and independent risk veto were frozen."
         ),
-        key_reasons=risk.reasons,
-        research=risk,
+        key_reasons=provisional.reasons,
+        research=provisional,
     )
     return base.model_copy(update={"expected_external_result": expected})
 
@@ -698,7 +720,7 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
         for result in context_results
         if result.output_items
     } == {
-        ("collect", "RUN_INPUT", 0): 10,
+        ("collect", "RUN_INPUT", 0): 1,
         ("analyze", "RUN_INPUT", 0): 1,
         ("bull-bear", "RUN_INPUT", 0): 1,
         ("draft", "RUN_INPUT", 0): 1,
@@ -757,6 +779,46 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
         }
     assert {case.framework_run_id, risk_run_id}.issubset(recorded_run_ids)
     assert "RISK_FRAMEWORK_RUN" in risk_phases
+
+
+def test_each_fixed_ten_member_has_its_own_durable_research_run(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        case.model_dump(mode="json"),
+    )
+
+    assert execution.report is not None
+    research = execution.report.result.research
+    assert research is not None
+    member_run_ids = tuple(
+        handoff.research_run_id for handoff in research.handoff.member_handoffs
+    )
+    assert len(member_run_ids) == 10
+    assert len(set(member_run_ids)) == 10
+    assert member_run_ids[0] == case.framework_run_id
+
+    runtime = initialize_runtime_storage(migrated_settings)
+    command = case.research
+    assert command is not None
+    for member, member_run_id in zip(command.members, member_run_ids, strict=True):
+        run = asyncio.run(runtime.run_store.get_run(member_run_id))
+        assert run is not None
+        assert run.definition_id == RESEARCH_DEFINITION_ID
+        assert run.input is not None
+        checkpoints = asyncio.run(runtime.run_store.get_checkpoints(member_run_id))
+        context_results = tuple(
+            result
+            for checkpoint in checkpoints
+            if checkpoint.step_type is StepType.CONTEXT
+            if (result := parse_stage_result(checkpoint.output)) is not None
+        )
+        collect = next(result for result in context_results if result.stage_id == "collect")
+        assert len(collect.output_items) == 1
+        assert json.loads(collect.output_items[0].item.content)["security_id"] == member.security_id
 
 
 def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None:
@@ -959,13 +1021,22 @@ def test_invalid_research_provenance_stops_before_raw_score_and_risk(
     case = _case(migrated_settings, risk_scenario="ACCEPT")
     command = case.research
     assert command is not None
-    invalid_draft = _draft(command).model_dump(mode="json")
-    invalid_draft["members"][0]["evidence_refs"] = ["invented-evidence"]
+    original_model_response = frozen_decision_case._research_model_response
 
     monkeypatch.setattr(
         frozen_decision_case,
         "_research_model_response",
-        lambda _, **__: json.dumps(invalid_draft, ensure_ascii=True, separators=(",", ":")),
+        lambda model_command, **kwargs: json.dumps(
+            {
+                **json.loads(original_model_response(model_command, **kwargs)),
+                "evidence_refs": ["invented-evidence"],
+            }
+            if kwargs.get("member") is not None
+            and kwargs["member"].security_id == "synthetic-security-00"
+            else json.loads(original_model_response(model_command, **kwargs)),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
     )
     execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
 
@@ -1118,8 +1189,10 @@ def test_invalid_financial_denominator_is_saved_as_research_data_failure(
     research_payload = payload["research"]
     assert isinstance(research_payload, dict)
     research_payload["members"][0]["structured_facts"]["average_total_assets"] = "0"
+    validated_member = ResearchMemberInput.model_validate(research_payload["members"][0])
     research_payload["members"][0]["structured_signals"] = {
-        signal_id: None for signal_id in research_payload["members"][0]["structured_signals"]
+        signal_id: None if value is None else str(value)
+        for signal_id, value in validated_member.structured_signals.items()
     }
     payload["research"] = research_payload
     payload["input"]["research"] = research_payload
@@ -1137,6 +1210,68 @@ def test_invalid_financial_denominator_is_saved_as_research_data_failure(
     }
     assert data_gates["RESEARCH_DATA:synthetic-security-00:FINANCIAL_STATEMENTS"] == "FAILED"
     assert sum(status == "FAILED" for status in data_gates.values()) == 1
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
+def test_missing_market_signal_is_saved_against_the_market_data_gate(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    member = research_payload["members"][0]
+    member["structured_facts"]["stock_return_20d"] = None
+    member["structured_signals"]["industry_relative_return_20d"] = None
+    payload["research"] = research_payload
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:")
+    }
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:DAILY_MARKET"] == "FAILED"
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:FINANCIAL_STATEMENTS"] == "PASSED"
+    assert sum(status == "FAILED" for status in data_gates.values()) == 1
+
+
+def test_overflowing_feature_arithmetic_is_saved_as_research_data_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    member = research_payload["members"][0]
+    member["structured_facts"]["quarter_profit_improvement"] = "1e999999"
+    member["structured_facts"]["average_total_assets"] = "1e-999999"
+    validated_member = ResearchMemberInput.model_validate(member)
+    member["structured_signals"] = {
+        signal_id: None if value is None else str(value)
+        for signal_id, value in validated_member.structured_signals.items()
+    }
+    normalized_research = ResearchCommand.model_validate(research_payload).model_dump(mode="json")
+    payload["research"] = normalized_research
+    payload["input"]["research"] = normalized_research
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in research_stage.reasons
+    assert (
+        next(
+            gate.status
+            for gate in research_stage.gate_results
+            if gate.gate_id == "RESEARCH_DATA:synthetic-security-00:FINANCIAL_STATEMENTS"
+        )
+        == "FAILED"
+    )
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
@@ -1751,6 +1886,20 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
     command = case.research
     assert command is not None
     tool_evidence_refs = ("announcement:synthetic-security-00",)
+    member_run_ids = tuple(
+        frozen_decision_case._research_member_run_id(case, index, member)
+        for index, member in enumerate(command.members)
+    )
+    member_handoffs = tuple(
+        ResearchMemberHandoff(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence=member.evidence,
+            risk_flags=member.risk_flags,
+            research_run_id=member_run_ids[index],
+        )
+        for index, member in enumerate(command.members)
+    )
     risk_run_id = risk_run_id_for(
         case.framework_run_id,
         _draft(command),
@@ -1761,27 +1910,21 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
                 evidence_id=evidence_id,
                 source="synthetic-announcement-feed",
                 reference=f"synthetic://announcement/{evidence_id.removeprefix('announcement:')}",
-                statement=(
-                    f"Synthetic announcement evidence {evidence_id} is read-only "
-                    "and contains no trade instruction."
-                ),
-                acquired_at=command.knowledge_cutoff,
-                validated_at=command.knowledge_cutoff,
-                knowledge_cutoff=command.knowledge_cutoff,
+                    statement=(
+                        f"Synthetic announcement evidence {evidence_id} is read-only "
+                        "and contains no trade instruction."
+                    ),
+                    effective_at=command.knowledge_cutoff,
+                    source_published_at=command.knowledge_cutoff,
+                    acquired_at=command.knowledge_cutoff,
+                    validated_at=command.knowledge_cutoff,
+                    knowledge_cutoff=command.knowledge_cutoff,
                 semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
                 validation_status="VALIDATED",
             )
             for evidence_id in tool_evidence_refs
         ),
-        member_handoffs=tuple(
-            ResearchMemberHandoff(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                evidence=member.evidence,
-                risk_flags=member.risk_flags,
-            )
-            for member in command.members
-        ),
+        member_handoffs=member_handoffs,
     )
     with initialize_runtime_storage(migrated_settings).engine.connect() as connection:
         recorded_run_ids = {
