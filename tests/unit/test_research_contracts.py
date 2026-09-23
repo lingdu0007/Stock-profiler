@@ -150,9 +150,14 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.training_window_id == "synthetic-training-window-expanding-60m"
     assert raw_score.training_window_kind == "EXPANDING"
     assert raw_score.training_window_month_count == 60
-    assert raw_score.training_window_start_month == "2037-06"
-    assert raw_score.training_window_end_month == "2042-05"
+    assert raw_score.training_window_start_month == "2036-12"
+    assert raw_score.training_window_end_month == "2041-11"
     assert raw_score.label_watermark_month == "2042-05"
+    assert len(command.raw_score_model.training_records) == 500
+    assert (
+        max(record.label_available_at for record in command.raw_score_model.training_records)
+        == command.raw_score_model.label_watermark_at
+    )
     assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
     assert raw_score.interaction_terms == ()
     assert raw_score.z20 == Decimal("33.127")
@@ -164,17 +169,15 @@ def test_raw_score_model_snapshot_requires_the_frozen_training_waterline() -> No
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["mature_months"] = 59
 
-    command = ResearchCommand.model_validate(payload)
-    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"):
-        freeze_raw_score(command, command.members[0])
+    with pytest.raises(ValueError, match="mature month count"):
+        ResearchCommand.model_validate(payload)
 
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_record_count"] = 499
     payload["raw_score_model"]["positive_record_count"] = 249
 
-    command = ResearchCommand.model_validate(payload)
-    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"):
-        freeze_raw_score(command, command.members[0])
+    with pytest.raises(ValueError, match="training record count"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> None:
@@ -212,12 +215,13 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
 
     assert len(snapshot.training_months) == 60
     assert snapshot.training_months[0] == snapshot.training_window_start_month
-    assert snapshot.training_months[-1] == snapshot.label_watermark_month
+    assert snapshot.training_months[-1] == snapshot.training_window_end_month
+    assert snapshot.label_watermark_month == "2042-05"
     assert snapshot.training_window_policy == "EXPANDING_60_TO_119_ROLLING_120"
 
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["mature_months"] = 121
-    with pytest.raises(ValueError, match="120-month rolling"):
+    with pytest.raises(ValueError, match="mature month count"):
         ResearchCommand.model_validate(payload)
 
     payload = _command().model_dump(mode="json")
@@ -226,17 +230,30 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
         ResearchCommand.model_validate(payload)
 
     payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_records"][-1]["label_available_at"] = (
+        "2042-06-01T00:00:00+00:00"
+    )
     payload["raw_score_model"].update(
         {
-            "training_window_start_month": "2050-01",
-            "training_window_end_month": "2054-12",
-            "training_months": [
-                f"{year:04}-{month:02}" for year in range(2050, 2055) for month in range(1, 13)
-            ],
-            "label_watermark_month": "2054-12",
+            "label_watermark_month": "2042-06",
+            "label_watermark_at": "2042-06-01T00:00:00+00:00",
         }
     )
     with pytest.raises(ValueError, match="research cutoff"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_records"][0]["label_available_at"] = (
+        "2037-01-01T00:00:00+00:00"
+    )
+    with pytest.raises(ValueError, match="maturity"):
+        ResearchCommand.model_validate(payload)
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_record_count"] += 1
+    with pytest.raises(ValueError, match="training record count"):
         ResearchCommand.model_validate(payload)
 
 

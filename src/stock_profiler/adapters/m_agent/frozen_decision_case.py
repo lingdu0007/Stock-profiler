@@ -625,35 +625,41 @@ def _risk_definition(
 ) -> AgentDefinition:
     """Register the independent risk Definition over an immutable handoff."""
     handoff = risk_plan.handoff_fingerprint
+    rejected_member_ids = (
+        {member.security_id for member in command.members}
+        if command.risk_scenario == "REJECT"
+        else set(command.risk_rejected_member_ids)
+    )
+    risk_rejected = bool(rejected_member_ids)
     risk_response = RiskVetoDraft(
         contract_version="1.0.0",
         handoff_fingerprint=handoff,
-        disposition="REJECTED" if command.risk_scenario == "REJECT" else "ACCEPTED",
+        disposition="REJECTED" if risk_rejected else "ACCEPTED",
         gates=(
             RiskGate(
                 gate_id="SYNTHETIC_RISK_VETO",
-                status="FAILED" if command.risk_scenario == "REJECT" else "PASSED",
+                status="FAILED" if risk_rejected else "PASSED",
             ),
         ),
-        reasons=(
-            "SYNTHETIC_RISK_VETO"
-            if command.risk_scenario == "REJECT"
-            else "SYNTHETIC_RISK_ACCEPTED",
-        ),
+        reasons=("SYNTHETIC_RISK_VETO" if risk_rejected else "SYNTHETIC_RISK_ACCEPTED",),
         member_vetoes=tuple(
             RiskMemberVeto(
                 security_id=member.security_id,
                 research_id=member.research_id,
-                disposition="REJECTED" if command.risk_scenario == "REJECT" else "ACCEPTED",
+                disposition=(
+                    "REJECTED" if member.security_id in rejected_member_ids else "ACCEPTED"
+                ),
                 gates=(
                     RiskGate(
                         gate_id="SYNTHETIC_RISK_VETO",
-                        status="FAILED" if command.risk_scenario == "REJECT" else "PASSED",
+                        status=(
+                            "FAILED" if member.security_id in rejected_member_ids else "PASSED"
+                        ),
                     ),
                 ),
                 reasons=(
                     "SYNTHETIC_RISK_VETO"
-                    if command.risk_scenario == "REJECT"
+                    if member.security_id in rejected_member_ids
                     else "SYNTHETIC_RISK_ACCEPTED",
                 ),
             )

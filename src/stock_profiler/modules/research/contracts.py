@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from calendar import monthrange
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 RESEARCH_CONTRACT_VERSION = "1.0.0"
 RESEARCH_DEFINITION_ID = "synthetic-monthly-research"
@@ -43,6 +45,7 @@ RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL
 RAW_SCORE_TRAINING_WINDOW_POLICY: Literal["EXPANDING_60_TO_119_ROLLING_120"] = (
     "EXPANDING_60_TO_119_ROLLING_120"
 )
+RAW_SCORE_LABEL_HORIZON_MONTHS = 6
 RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
@@ -99,6 +102,16 @@ def _raw_score_month_index(month: str) -> int:
     return int(month[:4]) * 12 + int(month[5:])
 
 
+def _raw_score_add_months(value: datetime, months: int) -> datetime:
+    month_index = value.year * 12 + value.month - 1 + months
+    year, month_zero = divmod(month_index, 12)
+    return value.replace(
+        year=year,
+        month=month_zero + 1,
+        day=min(value.day, monthrange(year, month_zero + 1)[1]),
+    )
+
+
 class RawScoreCalculationError(ValueError):
     """A structured raw-score calculation failed without a downstream result."""
 
@@ -132,6 +145,18 @@ class RawScoreFeatureTransform(ResearchContract):
         return self
 
 
+class RawScoreTrainingRecord(ResearchContract):
+    """Frozen evidence that one historical raw-score label is eligible."""
+
+    month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
+    selection_cutoff_at: AwareDatetime
+    terminal_label: StrictBool
+    label_available_at: AwareDatetime
+    source_model_version: str = Field(min_length=1)
+
+
 class RawScoreModelSnapshot(ResearchContract):
     """Frozen synthetic model metadata and parameter snapshot for uncalibrated z20."""
 
@@ -146,6 +171,8 @@ class RawScoreModelSnapshot(ResearchContract):
     training_window_end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     training_months: tuple[str, ...] = Field(min_length=1)
     label_watermark_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    label_watermark_at: AwareDatetime
+    training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)
@@ -161,8 +188,6 @@ class RawScoreModelSnapshot(ResearchContract):
 
     @model_validator(mode="after")
     def validate_training_snapshot(self) -> RawScoreModelSnapshot:
-        if self.positive_record_count + self.negative_record_count != self.training_record_count:
-            raise ValueError("raw-score training records must equal the two class counts")
         if self.l1_ratio != RAW_SCORE_L1_RATIO or self.l2_ratio != RAW_SCORE_L2_RATIO:
             raise ValueError("raw-score Elastic Net must use 25% L1 and 75% L2")
         if self.model_version != RAW_SCORE_MODEL_VERSION:
@@ -184,9 +209,55 @@ class RawScoreModelSnapshot(ResearchContract):
         if (
             self.training_months[0] != self.training_window_start_month
             or self.training_months[-1] != self.training_window_end_month
-            or self.label_watermark_month != self.training_window_end_month
         ):
-            raise ValueError("raw-score training window dates do not match the watermark")
+            raise ValueError("raw-score training window dates do not match the months")
+        if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
+            raise ValueError("raw-score label watermark date does not match its month")
+        record_keys = [
+            (record.month, record.security_id, record.research_id)
+            for record in self.training_records
+        ]
+        if len(set(record_keys)) != len(record_keys):
+            raise ValueError("raw-score training records must be unique")
+        if {record.month for record in self.training_records} != set(self.training_months):
+            raise ValueError("raw-score training records must cover every training month")
+        if self.mature_months != len(set(record.month for record in self.training_records)):
+            raise ValueError("raw-score mature month count must match training records")
+        if self.training_record_count != len(self.training_records):
+            raise ValueError("raw-score training record count does not match records")
+        if self.positive_record_count + self.negative_record_count != self.training_record_count:
+            raise ValueError("raw-score training records must equal the two class counts")
+        positive_records = sum(record.terminal_label for record in self.training_records)
+        if self.positive_record_count != positive_records:
+            raise ValueError("raw-score positive record count does not match records")
+        if self.negative_record_count != self.training_record_count - positive_records:
+            raise ValueError("raw-score negative record count does not match records")
+        if any(
+            record.source_model_version != self.model_version for record in self.training_records
+        ):
+            raise ValueError("raw-score training records must use the frozen model version")
+        if any(
+            record.selection_cutoff_at.strftime("%Y-%m") != record.month
+            for record in self.training_records
+        ):
+            raise ValueError("raw-score training record cutoff does not match its month")
+        if any(
+            _raw_score_add_months(
+                record.selection_cutoff_at,
+                RAW_SCORE_LABEL_HORIZON_MONTHS,
+            )
+            > record.label_available_at
+            for record in self.training_records
+        ):
+            raise ValueError("raw-score training record label maturity is incomplete")
+        if any(
+            record.label_available_at > self.label_watermark_at for record in self.training_records
+        ):
+            raise ValueError("raw-score training record exceeds the label availability watermark")
+        if max(record.label_available_at for record in self.training_records) != (
+            self.label_watermark_at
+        ):
+            raise ValueError("raw-score label watermark must match the latest training record")
         if self.interaction_terms:
             raise ValueError("raw-score model snapshot must not contain interaction terms")
         if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
@@ -246,8 +317,51 @@ def _training_month_sequence(start_year: int, start_month: int, count: int) -> t
     )
 
 
+def _raw_score_month_end(month: str) -> datetime:
+    year, month_number = (int(part) for part in month.split("-"))
+    return datetime(
+        year,
+        month_number,
+        monthrange(year, month_number)[1],
+        23,
+        59,
+        59,
+        tzinfo=UTC,
+    )
+
+
+def _frozen_raw_score_training_records(
+    training_months: tuple[str, ...],
+) -> tuple[RawScoreTrainingRecord, ...]:
+    records: list[RawScoreTrainingRecord] = []
+    record_index = 0
+    for month_index, month in enumerate(training_months):
+        record_count = 9 if month_index < 20 else 8
+        selection_cutoff_at = _raw_score_month_end(month)
+        label_available_at = _raw_score_add_months(
+            selection_cutoff_at,
+            RAW_SCORE_LABEL_HORIZON_MONTHS,
+        )
+        for _ in range(record_count):
+            records.append(
+                RawScoreTrainingRecord(
+                    month=month,
+                    security_id=f"synthetic-training-security-{record_index:04}",
+                    research_id=f"synthetic-training-research-{record_index:04}",
+                    selection_cutoff_at=selection_cutoff_at,
+                    terminal_label=record_index % 2 == 0,
+                    label_available_at=label_available_at,
+                    source_model_version=RAW_SCORE_MODEL_VERSION,
+                )
+            )
+            record_index += 1
+    return tuple(records)
+
+
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
+    training_months = _training_month_sequence(2036, 12, 60)
+    training_records = _frozen_raw_score_training_records(training_months)
     return RawScoreModelSnapshot(
         algorithm="ELASTIC_NET_LOGISTIC",
         model_version=RAW_SCORE_MODEL_VERSION,
@@ -256,10 +370,12 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_window_policy=RAW_SCORE_TRAINING_WINDOW_POLICY,
         training_window_kind="EXPANDING",
         training_window_month_count=60,
-        training_window_start_month="2037-06",
-        training_window_end_month="2042-05",
-        training_months=_training_month_sequence(2037, 6, 60),
+        training_window_start_month="2036-12",
+        training_window_end_month="2041-11",
+        training_months=training_months,
         label_watermark_month="2042-05",
+        label_watermark_at=max(record.label_available_at for record in training_records),
+        training_records=training_records,
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
         training_record_count=500,
@@ -523,6 +639,7 @@ class ResearchCommand(ResearchContract):
     raw_score_model: RawScoreModelSnapshot
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE"
     risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT"
+    risk_rejected_member_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_fixed_ten_contract(self) -> ResearchCommand:
@@ -547,9 +664,17 @@ class ResearchCommand(ResearchContract):
             raise ValueError("research members must preserve the frozen selected cohort order")
         if any(member.knowledge_cutoff != self.knowledge_cutoff for member in self.members):
             raise ValueError("all research members must share the frozen knowledge cutoff")
+        rejected_member_ids = set(self.risk_rejected_member_ids)
+        if len(rejected_member_ids) != len(self.risk_rejected_member_ids):
+            raise ValueError("risk rejected member identities must be unique")
+        if not rejected_member_ids.issubset(security_ids):
+            raise ValueError("risk rejected members must belong to the fixed-ten cohort")
+        if self.risk_scenario == "REJECT" and rejected_member_ids:
+            raise ValueError("risk rejected member identities require the mixed ACCEPT scenario")
         if (
             _raw_score_month_index(self.raw_score_model.label_watermark_month)
             > self.cutoff_at.year * 12 + self.cutoff_at.month
+            or self.raw_score_model.label_watermark_at > self.cutoff_at
         ):
             raise ValueError("raw-score training window must not cross research cutoff")
         evidence_ids = [
@@ -651,6 +776,7 @@ class RawScore(ResearchContract):
     training_window_end_month: str
     training_months: tuple[str, ...]
     label_watermark_month: str
+    label_watermark_at: AwareDatetime
     normalization_snapshot_id: str
     mature_months: int
     training_record_count: int
@@ -843,6 +969,7 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         training_window_end_month=model.training_window_end_month,
         training_months=model.training_months,
         label_watermark_month=model.label_watermark_month,
+        label_watermark_at=model.label_watermark_at,
         normalization_snapshot_id=model.normalization_snapshot_id,
         mature_months=model.mature_months,
         training_record_count=model.training_record_count,

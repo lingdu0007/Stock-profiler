@@ -81,6 +81,7 @@ from stock_profiler.modules.research.contracts import (
     RISK_DEFINITION_VERSION,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
+    RawScoreModelSnapshot,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -110,6 +111,7 @@ def research_command(
     *,
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
+    risk_rejected_member_ids: tuple[str, ...] = (),
 ) -> ResearchCommand:
     cutoff = datetime(2042, 5, 31, 23, 59, 59, tzinfo=UTC)
     members = tuple(
@@ -197,6 +199,7 @@ def research_command(
         members=members,
         raw_score_model=frozen_raw_score_model_snapshot(),
         risk_scenario=risk_scenario,
+        risk_rejected_member_ids=risk_rejected_member_ids,
         failure_mode=failure_mode,
     )
 
@@ -828,6 +831,56 @@ def test_risk_framework_rejection_is_driven_by_typed_veto_not_scenario() -> None
     assert asyncio.run(run()) == "REJECTED"
 
 
+def test_risk_framework_preserves_mixed_member_verdicts() -> None:
+    rejected_security_id = "synthetic-security-00"
+    command = research_command(
+        risk_scenario="ACCEPT",
+        risk_rejected_member_ids=(rejected_security_id,),
+    )
+    draft = _draft(command)
+    risk_plan = research_service.prepare_research_risk_plan(
+        command,
+        "mixed-probe-research-run",
+        draft,
+        (),
+    )
+    definition = frozen_decision_case._risk_definition(
+        command,
+        research_run_id="mixed-probe-research-run",
+        risk_plan=risk_plan,
+    )
+    payload = json.loads(definition.model_adapter._responses[0])
+
+    assert payload["disposition"] == "REJECTED"
+    assert {
+        member["security_id"]: member["disposition"] for member in payload["member_vetoes"]
+    } == {
+        member.security_id: (
+            "REJECTED" if member.security_id == rejected_security_id else "ACCEPTED"
+        )
+        for member in command.members
+    }
+
+    registry = DefinitionRegistry()
+    registry.register(definition)
+    runner = Runner(
+        registry=registry,
+        store=InMemoryRunStore(payload_codec=PlaintextPayloadCodec()),
+    )
+
+    async def run() -> str:
+        created = await runner.create_run(
+            definition.definition_id,
+            definition.version,
+            risk_plan.input_payload,
+            run_id=risk_plan.risk_run_id,
+        )
+        result = await runner.start_run(created.run_id)
+        return str(result.status.value)
+
+    assert asyncio.run(run()) == "REJECTED"
+
+
 def test_risk_handoff_preserves_each_member_evidence_and_flags(
     migrated_settings: Settings,
 ) -> None:
@@ -1318,13 +1371,30 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
     assert case.research is not None
-    model = case.research.raw_score_model.model_copy(
-        update={
-            "mature_months": 59,
-            "training_record_count": 499,
-            "positive_record_count": 249,
+    model_payload: dict[str, Any] = case.research.raw_score_model.model_dump(mode="json")
+    last_month = model_payload["training_window_end_month"]
+    training_records = [
+        record for record in model_payload["training_records"] if record["month"] != last_month
+    ]
+    training_months = [month for month in model_payload["training_months"] if month != last_month]
+    positive_record_count = sum(record["terminal_label"] for record in training_records)
+    model_payload.update(
+        {
+            "training_window_month_count": len(training_months),
+            "training_window_end_month": training_months[-1],
+            "training_months": training_months,
+            "label_watermark_at": max(record["label_available_at"] for record in training_records),
+            "label_watermark_month": max(
+                record["label_available_at"] for record in training_records
+            )[:7],
+            "mature_months": len(training_months),
+            "training_record_count": len(training_records),
+            "positive_record_count": positive_record_count,
+            "negative_record_count": len(training_records) - positive_record_count,
+            "training_records": training_records,
         }
     )
+    model = RawScoreModelSnapshot.model_validate(model_payload)
     case = case.model_copy(
         update={
             "input": {
