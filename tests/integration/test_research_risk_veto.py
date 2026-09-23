@@ -823,7 +823,7 @@ def test_risk_framework_rejection_is_driven_by_typed_veto_not_scenario() -> None
             run_id=risk_plan.risk_run_id,
         )
         result = await runner.start_run(created.run_id)
-        return result.status.value
+        return str(result.status.value)
 
     assert asyncio.run(run()) == "REJECTED"
 
