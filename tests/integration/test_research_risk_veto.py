@@ -84,6 +84,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     freeze_raw_score,
+    frozen_raw_score_model_snapshot,
     handoff_fingerprint,
     risk_run_id_for,
     screening_output_sha256,
@@ -181,6 +182,7 @@ def research_command(
         purpose="SYNTHETIC",
         screening=screening,
         members=members,
+        raw_score_model=frozen_raw_score_model_snapshot(),
         risk_scenario=risk_scenario,
         failure_mode=failure_mode,
     )
@@ -361,11 +363,12 @@ def _case(
     *,
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
+    user_id: str = "synthetic-user-1616",
 ) -> FrozenDecisionCase:
     command = research_command(risk_scenario=risk_scenario, failure_mode=failure_mode)
     scope = ResultAccessScope(
         contract_version="1.0.0",
-        user_id="synthetic-user-1616",
+        user_id=user_id,
         account_ids=("synthetic-account-4017",),
         visibility="USER",
     )
@@ -817,6 +820,32 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
     assert isinstance(research_payload, dict)
     research_payload["members"][0]["data_manifest"]["entries"][1]["completeness"] = "INCOMPLETE"
     research_payload["members"][0]["data_manifest"]["entries"][1]["event_status"] = "UNAVAILABLE"
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
+def test_missing_structured_signal_is_saved_as_research_data_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    research_payload["members"][0]["data_manifest"]["entries"][3]["completeness"] = "INCOMPLETE"
+    research_payload["members"][0]["data_manifest"]["entries"][3]["event_status"] = "UNAVAILABLE"
+    research_payload["members"][0]["structured_signals"]["operating_cash_flow_return_on_assets"] = (
+        None
+    )
     payload["input"]["research"] = research_payload
 
     execution = run_frozen_decision_case(migrated_settings, payload)

@@ -45,6 +45,48 @@ describe("App", () => {
     );
   });
 
+  it("renders the Ticket 16 research rejection projection and its durable stages", async () => {
+    const researchReport = {
+      ...report,
+      result: {
+        ...report.result,
+        outcome_code: "RESEARCH_REJECTED",
+        summary: "Synthetic fixed-ten research was rejected by independent risk.",
+        key_reasons: ["INDEPENDENT_RISK_VETO"]
+      },
+      stage_results: [
+        { phase: "RESEARCH", status: "SUCCEEDED", reasons: [], gate_results: [] },
+        {
+          phase: "RISK_VETO",
+          status: "REJECTED",
+          reasons: ["INDEPENDENT_RISK_VETO"],
+          gate_results: [{ gate_id: "SYNTHETIC_RISK_VETO", status: "FAILED" }]
+        },
+        { phase: "BUSINESS_DECISION", status: "REJECTED", reasons: [], gate_results: [] }
+      ]
+    };
+    window.history.pushState({}, "", `/reports/${researchReport.report_version_id}`);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(researchReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByText("RESEARCH_REJECTED")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Key reasons" })).toHaveTextContent(
+      "INDEPENDENT_RISK_VETO"
+    );
+    const stages = screen.getByRole("region", { name: "Decision stages" });
+    expect(stages).toHaveTextContent("RESEARCH");
+    expect(stages).toHaveTextContent("RISK_VETO");
+    expect(stages).toHaveTextContent("BUSINESS_DECISION");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the frozen portfolio authorization evidence from the committed report", async () => {
     const portfolioReport = {
       ...report,

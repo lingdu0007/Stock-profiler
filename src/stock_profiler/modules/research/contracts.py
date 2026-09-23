@@ -62,15 +62,20 @@ RAW_SCORE_COEFFICIENTS: dict[str, Decimal] = {
     "single_quarter_revenue_acceleration": Decimal("0.08"),
     "asset_normalized_quarter_profit_improvement": Decimal("0.07"),
     "operating_cash_flow_return_on_assets": Decimal("0.06"),
-    "working_capital_pressure_change": Decimal("-0.05"),
-    "leverage_ratio_change": Decimal("-0.04"),
+    "working_capital_pressure_change": Decimal("0.05"),
+    "leverage_ratio_change": Decimal("0.04"),
     "industry_relative_return_20d": Decimal("0.09"),
-    "downside_semivariance_60d": Decimal("-0.03"),
-    "max_drawdown_60d": Decimal("-0.04"),
+    "downside_semivariance_60d": Decimal("0.03"),
+    "max_drawdown_60d": Decimal("0.04"),
     "turnover_change": Decimal("0.02"),
     "institutional_net_buy_ratio": Decimal("0.05"),
     "institutional_listing_frequency": Decimal("0.06"),
 }
+RAW_SCORE_INPUT_IDS: tuple[str, ...] = (
+    "screening_positive_prior",
+    "screening_terminal_prior",
+    *RAW_SCORE_FEATURE_IDS,
+)
 
 
 class RawScoreCalculationError(ValueError):
@@ -81,6 +86,59 @@ class ResearchContract(BaseModel):
     """Reject unversioned research fields and mutable contract payloads."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RawScoreModelSnapshot(ResearchContract):
+    """Frozen synthetic model metadata and parameter snapshot for uncalibrated z20."""
+
+    algorithm: Literal["ELASTIC_NET_LOGISTIC"]
+    model_version: str = Field(min_length=1)
+    target: Literal["SIX_MONTH_TERMINAL_20_PERCENT"]
+    training_window_id: str = Field(min_length=1)
+    normalization_snapshot_id: str = Field(min_length=1)
+    mature_months: int = Field(ge=60)
+    training_record_count: int = Field(ge=500)
+    positive_record_count: int = Field(ge=50)
+    negative_record_count: int = Field(ge=50)
+    intercept: Decimal
+    coefficients: dict[str, Decimal]
+    interaction_terms: tuple[str, ...] = ()
+    l1_ratio: Decimal
+    l2_ratio: Decimal
+
+    @model_validator(mode="after")
+    def validate_training_snapshot(self) -> RawScoreModelSnapshot:
+        if self.positive_record_count + self.negative_record_count != self.training_record_count:
+            raise ValueError("raw-score training records must equal the two class counts")
+        if self.l1_ratio < 0 or self.l2_ratio < 0 or self.l1_ratio + self.l2_ratio != Decimal("1"):
+            raise ValueError("raw-score Elastic Net ratios must sum to one")
+        if self.interaction_terms:
+            raise ValueError("raw-score model snapshot must not contain interaction terms")
+        if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
+            raise ValueError("raw-score model snapshot must cover the registered inputs")
+        if any(not value.is_finite() or value < 0 for value in self.coefficients.values()):
+            raise ValueError("raw-score coefficients must be finite and non-negative")
+        return self
+
+
+def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
+    """Return the deterministic D0 model artifact without claiming live training."""
+    return RawScoreModelSnapshot(
+        algorithm="ELASTIC_NET_LOGISTIC",
+        model_version=RAW_SCORE_MODEL_VERSION,
+        target=RAW_SCORE_TARGET,
+        training_window_id="synthetic-training-window-60m",
+        normalization_snapshot_id="synthetic-normalization-v1",
+        mature_months=60,
+        training_record_count=500,
+        positive_record_count=250,
+        negative_record_count=250,
+        intercept=RAW_SCORE_INTERCEPT,
+        coefficients=dict(RAW_SCORE_COEFFICIENTS),
+        interaction_terms=RAW_SCORE_INTERACTION_TERMS,
+        l1_ratio=RAW_SCORE_L1_RATIO,
+        l2_ratio=RAW_SCORE_L2_RATIO,
+    )
 
 
 class ResearchEvidence(ResearchContract):
@@ -236,15 +294,22 @@ class ResearchMemberInput(ResearchContract):
     knowledge_cutoff: AwareDatetime
     evidence: tuple[ResearchEvidence, ...] = Field(min_length=1)
     data_manifest: ResearchDataManifest
-    structured_signals: dict[str, Decimal]
+    structured_signals: dict[str, Decimal | None]
     risk_flags: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_member_facts(self) -> ResearchMemberInput:
         if set(self.structured_signals) != set(RAW_SCORE_FEATURE_IDS):
             raise ValueError("structured research facts must contain all eleven raw-score signals")
-        if any(not value.is_finite() for value in self.structured_signals.values()):
+        if any(
+            value is not None and not value.is_finite()
+            for value in self.structured_signals.values()
+        ):
             raise ValueError("structured research signals must be finite")
+        if all(entry.completeness == "COMPLETE" for entry in self.data_manifest.entries) and any(
+            value is None for value in self.structured_signals.values()
+        ):
+            raise ValueError("complete research data requires every raw-score signal")
         evidence_ids = [evidence.evidence_id for evidence in self.evidence]
         if len(set(evidence_ids)) != len(evidence_ids):
             raise ValueError("research evidence identities must be unique per member")
@@ -312,6 +377,7 @@ class ResearchCommand(ResearchContract):
     purpose: Literal["SYNTHETIC"]
     screening: FrozenDualTargetScreening
     members: tuple[ResearchMemberInput, ...]
+    raw_score_model: RawScoreModelSnapshot
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE"
     risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT"
 
@@ -427,7 +493,14 @@ class RawScore(ResearchContract):
     security_id: str
     research_id: str
     target: Literal["SIX_MONTH_TERMINAL_20_PERCENT"]
+    algorithm: Literal["ELASTIC_NET_LOGISTIC"]
     model_version: str
+    training_window_id: str
+    normalization_snapshot_id: str
+    mature_months: int
+    training_record_count: int
+    positive_record_count: int
+    negative_record_count: int
     intercept: Decimal
     structured_inputs: dict[str, Decimal]
     coefficients: dict[str, Decimal]
@@ -550,18 +623,24 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         raise ValueError("raw score member is outside the fixed-ten cohort")
     if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
+    if any(value is None for value in member.structured_signals.values()):
+        raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
     structured_inputs = {
         "screening_positive_prior": command.screening.positive_percentiles[member.security_id],
         "screening_terminal_prior": command.screening.terminal_percentiles[member.security_id],
-        **member.structured_signals,
+        **{
+            signal_id: value
+            for signal_id, value in member.structured_signals.items()
+            if value is not None
+        },
     }
+    model = command.raw_score_model
     try:
         with localcontext(Context(prec=38)):
             contributions = {
-                key: structured_inputs[key] * RAW_SCORE_COEFFICIENTS[key]
-                for key in structured_inputs
+                key: structured_inputs[key] * model.coefficients[key] for key in structured_inputs
             }
-            z20 = RAW_SCORE_INTERCEPT + sum(contributions.values(), Decimal("0"))
+            z20 = model.intercept + sum(contributions.values(), Decimal("0"))
             if not z20.is_finite() or any(
                 not value.is_finite() for value in contributions.values()
             ):
@@ -572,15 +651,22 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
         security_id=member.security_id,
         research_id=member.research_id,
         target=RAW_SCORE_TARGET,
-        model_version=RAW_SCORE_MODEL_VERSION,
-        intercept=RAW_SCORE_INTERCEPT,
+        algorithm=model.algorithm,
+        model_version=model.model_version,
+        training_window_id=model.training_window_id,
+        normalization_snapshot_id=model.normalization_snapshot_id,
+        mature_months=model.mature_months,
+        training_record_count=model.training_record_count,
+        positive_record_count=model.positive_record_count,
+        negative_record_count=model.negative_record_count,
+        intercept=model.intercept,
         structured_inputs=structured_inputs,
-        coefficients=dict(RAW_SCORE_COEFFICIENTS),
+        coefficients=dict(model.coefficients),
         contributions=contributions,
         z20=z20,
-        interaction_terms=RAW_SCORE_INTERACTION_TERMS,
-        l1_ratio=RAW_SCORE_L1_RATIO,
-        l2_ratio=RAW_SCORE_L2_RATIO,
+        interaction_terms=model.interaction_terms,
+        l1_ratio=model.l1_ratio,
+        l2_ratio=model.l2_ratio,
     )
 
 

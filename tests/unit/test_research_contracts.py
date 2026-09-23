@@ -26,6 +26,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     freeze_raw_score,
+    frozen_raw_score_model_snapshot,
     handoff_fingerprint,
     screening_output_sha256,
     selection_binding_sha256,
@@ -119,6 +120,7 @@ def _command(*, risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT") -> Resear
         purpose="SYNTHETIC",
         screening=screening,
         members=members,
+        raw_score_model=frozen_raw_score_model_snapshot(),
         risk_scenario=risk_scenario,
     )
 
@@ -144,8 +146,24 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.target == "SIX_MONTH_TERMINAL_20_PERCENT"
     assert raw_score.probability is None
     assert raw_score.model_version == "elastic-net-logistic-z20-v1"
+    assert raw_score.training_window_id == "synthetic-training-window-60m"
+    assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
     assert raw_score.interaction_terms == ()
-    assert raw_score.z20 == Decimal("33.127")
+    assert raw_score.z20 == Decimal("33.159")
+
+
+def test_raw_score_model_snapshot_requires_the_frozen_training_waterline() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["mature_months"] = 59
+
+    with pytest.raises(ValueError, match="greater than or equal to 60"):
+        ResearchCommand.model_validate(payload)
+
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_record_count"] = 499
+
+    with pytest.raises(ValueError, match="greater than or equal to 500"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_raw_score_does_not_change_when_research_text_changes() -> None:
@@ -275,6 +293,19 @@ def test_research_command_preserves_unavailable_data_for_failure_handling() -> N
 
     command = ResearchCommand.model_validate(payload)
     assert command.members[0].data_manifest.entries[1].completeness == "INCOMPLETE"
+
+
+def test_research_command_allows_missing_signal_when_its_manifest_is_unavailable() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["data_manifest"]["entries"][3]["completeness"] = "INCOMPLETE"
+    payload["members"][0]["data_manifest"]["entries"][3]["event_status"] = "UNAVAILABLE"
+    payload["members"][0]["structured_signals"]["operating_cash_flow_return_on_assets"] = None
+
+    command = ResearchCommand.model_validate(payload)
+
+    assert command.members[0].structured_signals["operating_cash_flow_return_on_assets"] is None
+    with pytest.raises(RawScoreCalculationError, match="RESEARCH_DATA_UNAVAILABLE"):
+        freeze_raw_score(command, command.members[0])
 
 
 def test_verified_empty_institutional_activity_requires_zero_signals() -> None:

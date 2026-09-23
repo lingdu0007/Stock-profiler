@@ -5749,6 +5749,11 @@
         "additionalProperties": false,
         "description": "The structured, uncalibrated terminal-target score frozen after the cohort.",
         "properties": {
+          "algorithm": {
+            "const": "ELASTIC_NET_LOGISTIC",
+            "title": "Algorithm",
+            "type": "string"
+          },
           "coefficients": {
             "additionalProperties": {
               "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -5788,9 +5793,25 @@
             "title": "L2 Ratio",
             "type": "string"
           },
+          "mature_months": {
+            "title": "Mature Months",
+            "type": "integer"
+          },
           "model_version": {
             "title": "Model Version",
             "type": "string"
+          },
+          "negative_record_count": {
+            "title": "Negative Record Count",
+            "type": "integer"
+          },
+          "normalization_snapshot_id": {
+            "title": "Normalization Snapshot Id",
+            "type": "string"
+          },
+          "positive_record_count": {
+            "title": "Positive Record Count",
+            "type": "integer"
           },
           "probability": {
             "title": "Probability",
@@ -5817,6 +5838,14 @@
             "title": "Target",
             "type": "string"
           },
+          "training_record_count": {
+            "title": "Training Record Count",
+            "type": "integer"
+          },
+          "training_window_id": {
+            "title": "Training Window Id",
+            "type": "string"
+          },
           "z20": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Z20",
@@ -5827,7 +5856,14 @@
           "security_id",
           "research_id",
           "target",
+          "algorithm",
           "model_version",
+          "training_window_id",
+          "normalization_snapshot_id",
+          "mature_months",
+          "training_record_count",
+          "positive_record_count",
+          "negative_record_count",
           "intercept",
           "structured_inputs",
           "coefficients",

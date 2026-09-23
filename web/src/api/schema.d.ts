@@ -2342,6 +2342,11 @@ export interface components {
          * @description The structured, uncalibrated terminal-target score frozen after the cohort.
          */
         RawScore: {
+            /**
+             * Algorithm
+             * @constant
+             */
+            algorithm: "ELASTIC_NET_LOGISTIC";
             /** Coefficients */
             coefficients: {
                 [key: string]: string;
@@ -2361,8 +2366,16 @@ export interface components {
             l1_ratio: string;
             /** L2 Ratio */
             l2_ratio: string;
+            /** Mature Months */
+            mature_months: number;
             /** Model Version */
             model_version: string;
+            /** Negative Record Count */
+            negative_record_count: number;
+            /** Normalization Snapshot Id */
+            normalization_snapshot_id: string;
+            /** Positive Record Count */
+            positive_record_count: number;
             /** Probability */
             probability?: null;
             /** Research Id */
@@ -2378,6 +2391,10 @@ export interface components {
              * @constant
              */
             target: "SIX_MONTH_TERMINAL_20_PERCENT";
+            /** Training Record Count */
+            training_record_count: number;
+            /** Training Window Id */
+            training_window_id: string;
             /** Z20 */
             z20: string;
         };
