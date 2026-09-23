@@ -225,6 +225,20 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
     with pytest.raises(ValueError, match="penalty strength"):
         ResearchCommand.model_validate(payload)
 
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"].update(
+        {
+            "training_window_start_month": "2050-01",
+            "training_window_end_month": "2054-12",
+            "training_months": [
+                f"{year:04}-{month:02}" for year in range(2050, 2055) for month in range(1, 13)
+            ],
+            "label_watermark_month": "2054-12",
+        }
+    )
+    with pytest.raises(ValueError, match="research cutoff"):
+        ResearchCommand.model_validate(payload)
+
 
 def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:
     with pytest.raises(ValueError, match="clip bounds"):

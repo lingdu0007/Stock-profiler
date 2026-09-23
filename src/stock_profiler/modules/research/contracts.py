@@ -40,9 +40,9 @@ RESEARCH_REQUIRED_DATA_TYPES: tuple[ResearchDataType, ...] = (
 
 RAW_SCORE_MODEL_VERSION = "elastic-net-logistic-z20-v1"
 RAW_SCORE_TARGET: Literal["SIX_MONTH_TERMINAL_20_PERCENT"] = "SIX_MONTH_TERMINAL_20_PERCENT"
-RAW_SCORE_TRAINING_WINDOW_POLICY: Literal[
+RAW_SCORE_TRAINING_WINDOW_POLICY: Literal["EXPANDING_60_TO_119_ROLLING_120"] = (
     "EXPANDING_60_TO_119_ROLLING_120"
-] = "EXPANDING_60_TO_119_ROLLING_120"
+)
 RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
@@ -93,6 +93,10 @@ RAW_SCORE_REVERSED_FEATURE_IDS = frozenset(
         "max_drawdown_60d",
     }
 )
+
+
+def _raw_score_month_index(month: str) -> int:
+    return int(month[:4]) * 12 + int(month[5:])
 
 
 class RawScoreCalculationError(ValueError):
@@ -171,14 +175,10 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score training months must use YYYY-MM")
         if self.training_window_month_count != len(self.training_months):
             raise ValueError("raw-score training window month count does not match months")
-        month_indexes = tuple(
-            int(month[:4]) * 12 + int(month[5:]) for month in self.training_months
-        )
+        month_indexes = tuple(_raw_score_month_index(month) for month in self.training_months)
         if any(
             current_month != previous_month + 1
-            for previous_month, current_month in zip(
-                month_indexes, month_indexes[1:], strict=False
-            )
+            for previous_month, current_month in zip(month_indexes, month_indexes[1:], strict=False)
         ):
             raise ValueError("raw-score training months must be consecutive")
         if (
@@ -547,6 +547,11 @@ class ResearchCommand(ResearchContract):
             raise ValueError("research members must preserve the frozen selected cohort order")
         if any(member.knowledge_cutoff != self.knowledge_cutoff for member in self.members):
             raise ValueError("all research members must share the frozen knowledge cutoff")
+        if (
+            _raw_score_month_index(self.raw_score_model.label_watermark_month)
+            > self.cutoff_at.year * 12 + self.cutoff_at.month
+        ):
+            raise ValueError("raw-score training window must not cross research cutoff")
         evidence_ids = [
             evidence.evidence_id for member in self.members for evidence in member.evidence
         ]

@@ -42,11 +42,13 @@ from m_agent.runtime import (
     PolicyAction,
     PolicyDecision,
     PolicyGate,
+    PolicyIdentity,
+    PolicyRequest,
     Runner,
     RunNotFoundError,
+    RunPolicy,
     RunRecord,
     StaleRunVersionError,
-    StaticRunPolicy,
     StepType,
     StructuredOutputMode,
     ToolCall,
@@ -162,9 +164,9 @@ RESEARCH_STAGE_CONTRACTS = (
 )
 RESEARCH_STAGE_SCOPES = {
     "collect": ContextScope.RUN_INPUT,
-    "analyze": ContextScope.TOOL_OUTCOME,
-    "bull-bear": ContextScope.TOOL_OUTCOME,
-    "draft": ContextScope.TOOL_OUTCOME,
+    "analyze": ContextScope.RUN_INPUT,
+    "bull-bear": ContextScope.RUN_INPUT,
+    "draft": ContextScope.RUN_INPUT,
 }
 RESEARCH_TOOL_NAME = "read_announcement"
 RESEARCH_TOOL_PARAMETERS = {
@@ -204,6 +206,34 @@ class _RunStatusCollector:
             "CANCELLED",
         }:
             self.statuses.append(cast(FrameworkRunStatus, value))
+
+
+class _RiskVerdictRunPolicy(RunPolicy):  # type: ignore[misc]
+    """Make a typed risk rejection the durable Run terminal verdict."""
+
+    @property
+    def identity(self) -> PolicyIdentity:
+        return PolicyIdentity(
+            policy_id="synthetic-risk-veto",
+            version="1",
+            fingerprint="synthetic-risk-veto-verdict-v1",
+        )
+
+    def evaluate(self, request: PolicyRequest) -> PolicyDecision:
+        if request.gate is not PolicyGate.FINAL_OUTPUT:
+            return PolicyDecision(action=PolicyAction.ALLOW, reason_code="ALLOWED")
+        output = request.payload.get("output")
+        if isinstance(output, str):
+            try:
+                payload = json.loads(output)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("disposition") == "REJECTED":
+                return PolicyDecision(
+                    action=PolicyAction.REJECT,
+                    reason_code="SYNTHETIC_RISK_VETO",
+                )
+        return PolicyDecision(action=PolicyAction.ALLOW, reason_code="ALLOWED")
 
 
 class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
@@ -246,48 +276,38 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 raise RuntimeError(str(error)) from error
             return self._items
         checkpoints = await self._runtime.run_store.get_checkpoints(self._run_id)
-        tool_boundary = sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints)
-        if tool_boundary == 0:
+        stage_results = tuple(
+            result
+            for checkpoint in checkpoints
+            if checkpoint.step_type is StepType.CONTEXT
+            if (result := parse_stage_result(checkpoint.output)) is not None
+            if result.stage_id in RESEARCH_STAGE_IDS
+        )
+        completed_stage_ids = {result.stage_id for result in stage_results}
+        active_stage_index = next(
+            (
+                index
+                for index, stage_id in enumerate(RESEARCH_STAGE_IDS)
+                if stage_id not in completed_stage_ids
+            ),
+            len(RESEARCH_STAGE_IDS),
+        )
+        if active_stage_index == 0:
             try:
                 _validate_research_context_items(self._items, self._expected_security_ids)
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
                 raise RuntimeError(str(error)) from error
             return self._items
-        current_boundary_results = tuple(
-            result
-            for checkpoint in checkpoints
-            if checkpoint.step_type is StepType.CONTEXT
-            if (result := parse_stage_result(checkpoint.output)) is not None
-            if result.scope is ContextScope.TOOL_OUTCOME and result.boundary == tool_boundary
-        )
-        invocation_index = len(current_boundary_results)
-        active_stage_index = tool_boundary
-        if (
-            active_stage_index >= len(RESEARCH_STAGE_IDS)
-            or invocation_index != active_stage_index - 1
-        ):
+        if active_stage_index >= len(RESEARCH_STAGE_IDS):
             return ()
         previous_stage_id = RESEARCH_STAGE_IDS[active_stage_index - 1]
         previous_results = tuple(
-            result
-            for checkpoint in checkpoints
-            if checkpoint.step_type is StepType.CONTEXT
-            if (result := parse_stage_result(checkpoint.output)) is not None
-            if result.stage_id == previous_stage_id
+            result for result in stage_results if result.stage_id == previous_stage_id
         )
         if not previous_results:
             raise RuntimeError("RESEARCH_STAGE_INPUT_UNAVAILABLE")
         previous = max(previous_results, key=lambda result: result.boundary)
-        tool_checkpoints = tuple(
-            checkpoint for checkpoint in checkpoints if checkpoint.step_type is StepType.TOOL
-        )
-        if not tool_checkpoints:
-            raise RuntimeError("RESEARCH_TOOL_OUTCOME_UNAVAILABLE")
-        try:
-            tool_outcome = deserialize_tool_outcome(tool_checkpoints[-1].output)
-        except ValueError as error:
-            raise RuntimeError("RESEARCH_TOOL_OUTCOME_INVALID") from error
         stage_id = RESEARCH_STAGE_IDS[active_stage_index]
         security_ids: list[str] = []
         evidence_ids: list[str] = []
@@ -310,12 +330,6 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 evidence_id = evidence.get("evidence_id")
                 if isinstance(evidence_id, str):
                     evidence_ids.append(evidence_id)
-        if tool_outcome.result is not None:
-            try:
-                tool_evidence = ResearchToolEvidence.model_validate_json(tool_outcome.result)
-            except ValueError as error:
-                raise RuntimeError("RESEARCH_TOOL_OUTCOME_INVALID") from error
-            evidence_ids.append(tool_evidence.evidence_id)
         if not security_ids:
             security_ids.extend(self._expected_security_ids)
         if not evidence_ids:
@@ -348,7 +362,6 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
                 ),
-                "tool_outcome": tool_outcome.model_dump(mode="json"),
             },
             ensure_ascii=True,
             separators=(",", ":"),
@@ -356,13 +369,12 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         )
         return (
             ContextItem(
-                item_id=f"research-stage-output:{stage_id}:{tool_boundary}",
+                item_id=f"research-stage-output:{stage_id}:0",
                 source="synthetic-research-stage",
                 content=content,
                 metadata={
                     "stage": stage_id,
                     "source_stage": previous.stage_id,
-                    "tool_boundary": tool_boundary,
                     "source_item_ids": tuple(item.item.item_id for item in previous.output_items),
                 },
             ),
@@ -413,7 +425,7 @@ def _json_object(content: str) -> dict[str, object] | None:
 
 
 class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[misc]
-    """Drive the four frozen research phases through durable model/tool steps."""
+    """Drive the frozen research draft with optional evidence exploration."""
 
     deterministic = True
 
@@ -429,40 +441,31 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
             ),
         )
         super().__init__(responses=(draft_response,), capabilities=capabilities)
-        self._stage_tool_calls = tuple(
-            ToolCall(
-                call_id=f"research-stage-{stage_id}",
-                tool_name=RESEARCH_TOOL_NAME,
-                arguments=json.dumps(
-                    {"security_id": f"synthetic-security-{index:02}"},
-                    ensure_ascii=True,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-            )
-            for stage_id, index in (
-                ("collect", 0),
-                ("analyze", 1),
-                ("bull-bear", 2),
-            )
-        )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
         self._last_request = request
-        stage_index = len(request.tool_outcomes)
-        if stage_index:
-            expected_stage_id = ("analyze", "bull-bear", "draft")[stage_index - 1]
-            staged_artifacts = tuple(
-                ResearchStageArtifact.model_validate(payload["stage_artifact"])
-                for item in request.context_items
-                if (payload := _json_object(item.content)) is not None
-                if "stage_artifact" in payload
-            )
-            if not any(artifact.stage_id == expected_stage_id for artifact in staged_artifacts):
-                raise RuntimeError(f"RESEARCH_STAGE_ARTIFACT_MISSING:{expected_stage_id}")
-        if stage_index < len(self._stage_tool_calls):
-            return ModelResponse(tool_calls=(self._stage_tool_calls[stage_index],))
+        if not request.tool_outcomes:
+            for item in request.context_items:
+                payload = _json_object(item.content)
+                if not payload or not payload.get("risk_flags"):
+                    continue
+                security_id = payload.get("security_id")
+                if isinstance(security_id, str) and security_id:
+                    return ModelResponse(
+                        tool_calls=(
+                            ToolCall(
+                                call_id="research-exploration-1",
+                                tool_name=RESEARCH_TOOL_NAME,
+                                arguments=json.dumps(
+                                    {"security_id": security_id},
+                                    ensure_ascii=True,
+                                    separators=(",", ":"),
+                                    sort_keys=True,
+                                ),
+                            ),
+                        )
+                    )
         return ModelResponse(content=self._responses[0])
 
 
@@ -672,20 +675,7 @@ def _risk_definition(
         responses=(risk_response_json,),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
     )
-    risk_policy = StaticRunPolicy(
-        policy_id="synthetic-risk-veto",
-        version="1",
-        decisions=(
-            {
-                PolicyGate.FINAL_OUTPUT: PolicyDecision(
-                    action=PolicyAction.REJECT,
-                    reason_code="SYNTHETIC_RISK_VETO",
-                )
-            }
-            if command.risk_scenario == "REJECT" and command.failure_mode != "RISK"
-            else {}
-        ),
-    )
+    risk_policy = _RiskVerdictRunPolicy()
     handoff_item = ContextItem(
         item_id=f"research-handoff:{research_run_id}",
         source="immutable-research-handoff",
@@ -1320,7 +1310,7 @@ def _assert_risk_definition(definition: AgentDefinition) -> None:
         or not isinstance(definition.context_provider, DeterministicContextProvider)
         or type(definition.model_adapter) is not DeterministicModelAdapter
         or definition.model_adapters
-        or type(definition.run_policy) is not StaticRunPolicy
+        or type(definition.run_policy) is not _RiskVerdictRunPolicy
         or definition.run_policy.identity.policy_id != "synthetic-risk-veto"
         or definition.run_policy.identity.version != "1"
         or definition.compression_contract is not None

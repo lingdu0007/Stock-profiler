@@ -9,7 +9,20 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
-from m_agent.runtime import PolicyAction, PolicyGate, StepType, ToolRequest, parse_stage_result
+from m_agent.adapters import DeterministicModelAdapter, InMemoryRunStore, PlaintextPayloadCodec
+from m_agent.runtime import (
+    AgentDefinition,
+    ContextItem,
+    DefinitionRegistry,
+    ModelRequest,
+    PolicyAction,
+    PolicyGate,
+    Runner,
+    StepType,
+    StructuredOutputMode,
+    ToolRequest,
+    parse_stage_result,
+)
 
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 import stock_profiler.bootstrap.decision_cases as case_bootstrap
@@ -387,7 +400,7 @@ def _case(
     )
     _seed_selection_event(settings, selection_anchor, command.selection_event_id, selection_outcome)
     draft = _draft(command)
-    tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
+    tool_evidence_refs = ("announcement:synthetic-security-00",)
     tool_evidence = tuple(
         ResearchToolEvidence(
             evidence_id=evidence_id,
@@ -403,7 +416,7 @@ def _case(
             semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
             validation_status="VALIDATED",
         )
-        for index, evidence_id in enumerate(tool_evidence_refs)
+        for evidence_id in tool_evidence_refs
     )
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     provisional_risk = RiskVetoDraft(
@@ -599,11 +612,7 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     } == set(execution.report.result.research.handoff.security_ids)
     assert tuple(
         evidence.evidence_id for evidence in execution.report.result.research.tool_evidence
-    ) == (
-        "announcement:synthetic-security-00",
-        "announcement:synthetic-security-01",
-        "announcement:synthetic-security-02",
-    )
+    ) == ("announcement:synthetic-security-00",)
     assert execution.framework_run_status == "SUCCEEDED"
     assert {
         stage.phase: stage.status
@@ -648,8 +657,8 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
         for decision in risk_policy_decisions
     )
     checkpoints = asyncio.run(runtime.run_store.get_checkpoints(case.framework_run_id))
-    assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 4
-    assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 3
+    assert sum(checkpoint.step_type is StepType.MODEL for checkpoint in checkpoints) == 2
+    assert sum(checkpoint.step_type is StepType.TOOL for checkpoint in checkpoints) == 1
     context_results = tuple(
         result
         for checkpoint in checkpoints
@@ -662,9 +671,9 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
         if result.output_items
     } == {
         ("collect", "RUN_INPUT", 0): 10,
-        ("analyze", "TOOL_OUTCOME", 1): 1,
-        ("bull-bear", "TOOL_OUTCOME", 2): 1,
-        ("draft", "TOOL_OUTCOME", 3): 1,
+        ("analyze", "RUN_INPUT", 0): 1,
+        ("bull-bear", "RUN_INPUT", 0): 1,
+        ("draft", "RUN_INPUT", 0): 1,
     }
     draft_context = next(
         result for result in context_results if result.stage_id == "draft" and result.output_items
@@ -684,10 +693,8 @@ def test_research_run_and_risk_veto_are_durable_and_rejected_result_is_final(
     assert stage_artifacts["bull-bear"].bear_case is not None
     assert stage_artifacts["draft"].bull_case is not None
     assert stage_artifacts["draft"].bear_case is not None
-    assert execution.report.result.research.handoff.evidence_ids[-3:] == (
+    assert execution.report.result.research.handoff.evidence_ids[-1:] == (
         "announcement:synthetic-security-00",
-        "announcement:synthetic-security-01",
-        "announcement:synthetic-security-02",
     )
 
     with runtime.engine.connect() as connection:
@@ -727,6 +734,98 @@ def test_allowlisted_announcement_tool_is_read_only_and_argument_bound() -> None
     assert outcome.result is not None
     assert "announcement:synthetic-security-00" in outcome.result
     assert "trade instruction" in outcome.result
+
+
+def test_research_model_can_skip_exploration_and_binds_tool_calls_to_context() -> None:
+    adapter = frozen_decision_case._StagedResearchModelAdapter("{}")
+    no_exploration = ModelRequest(
+        input="{}",
+        instructions="",
+        context_items=(
+            ContextItem(
+                item_id="member-input",
+                source="synthetic-test",
+                content=json.dumps({"security_id": "renamed-security", "risk_flags": []}),
+            ),
+        ),
+        structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+    )
+    response = asyncio.run(adapter.generate(no_exploration))
+    assert response.tool_calls == ()
+
+    exploration = no_exploration.model_copy(
+        update={
+            "context_items": (
+                ContextItem(
+                    item_id="member-input",
+                    source="synthetic-test",
+                    content=json.dumps(
+                        {
+                            "security_id": "renamed-security",
+                            "risk_flags": ["LIQUIDITY_WARNING"],
+                        }
+                    ),
+                ),
+            )
+        }
+    )
+    response = asyncio.run(adapter.generate(exploration))
+    assert len(response.tool_calls) == 1
+    assert json.loads(response.tool_calls[0].arguments)["security_id"] == "renamed-security"
+
+
+def test_risk_framework_rejection_is_driven_by_typed_veto_not_scenario() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+    draft = _draft(command)
+    risk_plan = research_service.prepare_research_risk_plan(
+        command,
+        "probe-research-run",
+        draft,
+        (),
+    )
+    original_definition = frozen_decision_case._risk_definition(
+        command,
+        research_run_id="probe-research-run",
+        risk_plan=risk_plan,
+    )
+    payload = json.loads(original_definition.model_adapter._responses[0])
+    payload["disposition"] = "REJECTED"
+    payload["gates"][0]["status"] = "FAILED"
+    for member_veto in payload["member_vetoes"]:
+        member_veto["disposition"] = "REJECTED"
+        member_veto["gates"][0]["status"] = "FAILED"
+    adapter = DeterministicModelAdapter(
+        responses=(json.dumps(payload),),
+        capabilities=original_definition.model_adapter.capabilities,
+    )
+    definition = AgentDefinition.for_adapter(
+        definition_id=original_definition.definition_id,
+        version=original_definition.version,
+        instructions=original_definition.instructions,
+        model_adapter=adapter,
+        context_provider=original_definition.context_provider,
+        tools=(),
+        output_contract=original_definition.output_contract,
+        run_policy=original_definition.run_policy,
+    )
+    registry = DefinitionRegistry()
+    registry.register(definition)
+    runner = Runner(
+        registry=registry,
+        store=InMemoryRunStore(payload_codec=PlaintextPayloadCodec()),
+    )
+
+    async def run() -> str:
+        created = await runner.create_run(
+            definition.definition_id,
+            definition.version,
+            risk_plan.input_payload,
+            run_id=risk_plan.risk_run_id,
+        )
+        result = await runner.start_run(created.run_id)
+        return result.status.value
+
+    assert asyncio.run(run()) == "REJECTED"
 
 
 def test_risk_handoff_preserves_each_member_evidence_and_flags(
@@ -1162,9 +1261,9 @@ def test_research_context_stages_have_distinct_frozen_roles(
     )
     assert tuple(stage.identity.scope.value for stage in stages) == (
         "RUN_INPUT",
-        "TOOL_OUTCOME",
-        "TOOL_OUTCOME",
-        "TOOL_OUTCOME",
+        "RUN_INPUT",
+        "RUN_INPUT",
+        "RUN_INPUT",
     )
     assert tuple(stage.output_channels for stage in stages) == (
         ("RESEARCH_COLLECTION",),
@@ -1418,7 +1517,7 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
     assert execution.report is None
     command = case.research
     assert command is not None
-    tool_evidence_refs = tuple(f"announcement:synthetic-security-{index:02}" for index in range(3))
+    tool_evidence_refs = ("announcement:synthetic-security-00",)
     risk_run_id = risk_run_id_for(
         case.framework_run_id,
         _draft(command),
@@ -1439,7 +1538,7 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
                 semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
                 validation_status="VALIDATED",
             )
-            for index, evidence_id in enumerate(tool_evidence_refs)
+            for evidence_id in tool_evidence_refs
         ),
         member_handoffs=tuple(
             ResearchMemberHandoff(
