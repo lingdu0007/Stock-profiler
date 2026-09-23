@@ -148,6 +148,8 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score training records must equal the two class counts")
         if self.l1_ratio != RAW_SCORE_L1_RATIO or self.l2_ratio != RAW_SCORE_L2_RATIO:
             raise ValueError("raw-score Elastic Net must use 25% L1 and 75% L2")
+        if self.model_version != RAW_SCORE_MODEL_VERSION:
+            raise ValueError("unsupported raw-score model version")
         if not self.penalty_strength.is_finite() or self.penalty_strength <= 0:
             raise ValueError("raw-score penalty strength must be positive and finite")
         if self.interaction_terms:
@@ -156,6 +158,14 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score model snapshot must cover the registered inputs")
         if set(self.transformations) != set(RAW_SCORE_FEATURE_IDS):
             raise ValueError("raw-score model snapshot must cover every feature transform")
+        if {
+            feature_id
+            for feature_id, transform in self.transformations.items()
+            if transform.reverse
+        } != set(RAW_SCORE_REVERSED_FEATURE_IDS):
+            raise ValueError(
+                "raw-score feature transform directions do not match the frozen version"
+            )
         if any(
             not value.is_finite() or (value < 0 and key not in RAW_SCORE_UNCONSTRAINED_FEATURE_IDS)
             for key, value in self.coefficients.items()

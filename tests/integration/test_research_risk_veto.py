@@ -831,6 +831,16 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
         and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
         for stage in execution.stage_results
     )
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:")
+    }
+    assert len(data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:MONEY_FLOW"] == "FAILED"
+    assert sum(status == "FAILED" for status in data_gates.values()) == 1
+    assert sum(status == "PASSED" for status in data_gates.values()) == (len(data_gates) - 1)
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 

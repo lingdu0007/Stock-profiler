@@ -196,6 +196,11 @@ def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> N
     with pytest.raises(ValueError, match="non-negative"):
         ResearchCommand.model_validate(payload)
 
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["transformations"]["downside_semivariance_60d"]["reverse"] = False
+    with pytest.raises(ValueError, match="direction"):
+        ResearchCommand.model_validate(payload)
+
 
 def test_raw_score_feature_transform_rejects_invalid_frozen_parameters() -> None:
     with pytest.raises(ValueError, match="clip bounds"):

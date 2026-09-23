@@ -67,6 +67,7 @@ from stock_profiler.modules.position_management.service import reconcile as reco
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
     RawScoreCalculationError,
+    ResearchCommand,
     ResearchDraft,
     ResearchFrameworkOutput,
     ResearchRiskPlan,
@@ -175,6 +176,36 @@ def _validate_research_selection_event(
         or source_terminal_percentiles != command.screening.terminal_percentiles
     ):
         raise ValueError("RESEARCH_SELECTION_PERCENTILE_MISMATCH")
+
+
+def _research_data_gate_results(
+    command: ResearchCommand,
+    error_code: str | None,
+) -> tuple[GateResult, ...]:
+    """Persist each member/data-type gate when the required-facts Provider fails."""
+    if error_code != "RESEARCH_DATA_UNAVAILABLE" and not (error_code or "").startswith(
+        "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
+    ):
+        return ()
+    manifest_is_detailed = error_code == "RESEARCH_REQUIRED_FACTS_INCOMPLETE" and any(
+        entry.completeness != "COMPLETE"
+        for member in command.members
+        for entry in member.data_manifest.entries
+    )
+    return tuple(
+        GateResult(
+            gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
+            status=(
+                "FAILED"
+                if manifest_is_detailed and entry.completeness != "COMPLETE"
+                else "PASSED"
+                if manifest_is_detailed
+                else "UNKNOWN"
+            ),
+        )
+        for member in command.members
+        for entry in member.data_manifest.entries
+    )
 
 
 async def execute_research_risk_journey(
@@ -1501,7 +1532,10 @@ def _commit_research_framework_result(
             research=StageResult(
                 phase="RESEARCH",
                 status="FAILED",
-                gate_results=(GateResult(gate_id="RESEARCH_RUN", status="FAILED"),),
+                gate_results=(
+                    GateResult(gate_id="RESEARCH_RUN", status="FAILED"),
+                    *_research_data_gate_results(command, framework.error_code),
+                ),
                 reasons=(
                     framework.error_code or framework.waiting_reason or "RESEARCH_RUN_FAILED",
                 ),
