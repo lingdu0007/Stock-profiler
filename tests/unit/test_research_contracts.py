@@ -341,6 +341,17 @@ def test_research_evidence_requires_individual_three_clock_timestamps() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_research_evidence_without_a_version_cannot_skip_clock_validation() -> None:
+    payload = _command().model_dump(mode="json")
+    evidence = payload["members"][0]["evidence"][0]
+    evidence.pop("evidence_contract_version", None)
+    evidence.pop("effective_at", None)
+    evidence.pop("source_published_at", None)
+
+    with pytest.raises(ValueError, match="all evidence clocks"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_legacy_research_evidence_decodes_without_new_clock_fields() -> None:
     payload = _command().model_dump(mode="json")
     evidence = payload["members"][0]["evidence"][0]
@@ -348,14 +359,16 @@ def test_legacy_research_evidence_decodes_without_new_clock_fields() -> None:
     evidence.pop("effective_at", None)
     evidence.pop("source_published_at", None)
 
-    command = ResearchCommand.model_validate(payload)
-    decoded = command.members[0].evidence[0]
+    with pytest.raises(ValueError, match="all evidence clocks"):
+        ResearchCommand.model_validate(payload)
 
-    assert decoded.evidence_contract_version == "1.0.0"
-    assert decoded.effective_at is None
-    assert decoded.source_published_at is None
-    assert decoded.acquired_at is not None
-    assert decoded.validated_at is not None
+
+def test_raw_score_training_rejects_mixed_research_definition_versions() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["training_cohorts"][0]["research_definition_version"] = "2.0.0"
+
+    with pytest.raises(ValueError, match="same research Definition"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:

@@ -82,6 +82,7 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.ports import (
     AuxiliaryRunReservationRecorder,
+    ResearchMemberRunReservationRecorder,
     ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.ports import FrameworkRunResult as FrameworkRunResult
@@ -117,7 +118,6 @@ from stock_profiler.modules.research.contracts import (
     ResearchDataManifest,
     ResearchDraft,
     ResearchDraftMember,
-    ResearchEvidence,
     ResearchMemberInput,
     ResearchRiskPlan,
     ResearchStageArtifact,
@@ -125,6 +125,7 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    research_evidence_payload,
 )
 
 READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset()
@@ -269,12 +270,14 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         run_id: str | None = None,
         expected_members: tuple[ResearchMemberInput, ...] = (),
         fail: bool = False,
+        legacy: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
         self._run_id = run_id
         self._expected_members = expected_members
         self._fail = fail
+        self._legacy = legacy
         self._failure_code: str | None = None
 
     @property
@@ -288,7 +291,11 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
             raise RuntimeError("RESEARCH_DATA_UNAVAILABLE")
         if self._runtime is None or self._run_id is None:
             try:
-                _validate_research_context_items(self._items, self._expected_members)
+                _validate_research_context_items(
+                    self._items,
+                    self._expected_members,
+                    legacy=self._legacy,
+                )
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
                 raise RuntimeError(str(error)) from error
@@ -312,7 +319,11 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         )
         if active_stage_index == 0:
             try:
-                _validate_research_context_items(self._items, self._expected_members)
+                _validate_research_context_items(
+                    self._items,
+                    self._expected_members,
+                    legacy=self._legacy,
+                )
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
                 raise RuntimeError(str(error)) from error
@@ -405,6 +416,8 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
 def _validate_research_context_items(
     items: tuple[ContextItem, ...],
     expected_members: tuple[ResearchMemberInput, ...],
+    *,
+    legacy: bool = False,
 ) -> None:
     """Verify that the Provider will deliver every member's complete manifest."""
     expected_security_ids = tuple(member.security_id for member in expected_members)
@@ -420,7 +433,24 @@ def _validate_research_context_items(
             security_id = payload["security_id"]
             evidence_ids = tuple(evidence["evidence_id"] for evidence in payload["evidence"])
             manifest = ResearchDataManifest.model_validate(payload["data_manifest"])
-            delivered_member = ResearchMemberInput.model_validate(payload)
+            member_payload = payload
+            if legacy:
+                member_payload = dict(payload)
+                member_payload["evidence"] = [
+                    (
+                        {
+                            **evidence,
+                            "evidence_contract_version": evidence.get(
+                                "evidence_contract_version",
+                                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                            ),
+                        }
+                        if isinstance(evidence, dict)
+                        else evidence
+                    )
+                    for evidence in payload["evidence"]
+                ]
+            delivered_member = ResearchMemberInput.model_validate(member_payload)
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: malformed item") from error
         expected_member = expected_members_by_security_id.get(security_id)
@@ -454,6 +484,7 @@ def _recover_research_failure_code(
     *,
     expected_members: tuple[ResearchMemberInput, ...] | None = None,
     context_items: tuple[ContextItem, ...] | None = None,
+    legacy: bool = False,
 ) -> str | None:
     """Recover frozen data-failure identity after a terminal Run restart.
 
@@ -471,6 +502,7 @@ def _recover_research_failure_code(
         _validate_research_context_items(
             context_items if context_items is not None else _research_context_items(command),
             expected_members if expected_members is not None else command.members,
+            legacy=legacy,
         )
     except ValueError as error:
         if str(error).startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE"):
@@ -664,9 +696,7 @@ def _read_announcement_tool(
             semantic_version=semantic_version,
             validation_status="VALIDATED",
         )
-        payload = evidence.model_dump(mode="json", exclude_none=legacy)
-        if legacy:
-            payload.pop("evidence_contract_version", None)
+        payload = research_evidence_payload(evidence, legacy=legacy)
         return ToolOutcome.success(
             request.call_id,
             request.tool_name,
@@ -697,7 +727,7 @@ def _research_context_items(
                     "research_id": member.research_id,
                     "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
                     "evidence": tuple(
-                        _research_evidence_payload(evidence, legacy=legacy)
+                        research_evidence_payload(evidence, legacy=legacy)
                         for evidence in member.evidence
                     ),
                     "data_manifest": member.data_manifest.model_dump(mode="json"),
@@ -719,32 +749,21 @@ def _research_context_items(
     )
 
 
-def _research_evidence_payload(
-    evidence: ResearchEvidence,
-    *,
-    legacy: bool,
-) -> dict[str, object]:
-    payload = evidence.model_dump(mode="json", exclude_none=legacy)
-    if legacy:
-        payload.pop("evidence_contract_version", None)
-    return payload
-
-
-def _research_context_plan(version: str = RESEARCH_CONTRACT_VERSION) -> ContextPlan:
+def _research_context_plan() -> ContextPlan:
     return ContextPlan(
-        plan_version=version,
+        plan_version=RESEARCH_CONTRACT_VERSION,
         stages=tuple(
             ContextStage(
                 identity=ContextStageIdentity(
                     stage_id=stage_id,
                     scope=RESEARCH_STAGE_SCOPES[stage_id],
                     transform_type=ContextTransformType.PROVIDE,
-                    config_version=version,
+                    config_version=RESEARCH_CONTRACT_VERSION,
                 ),
                 config=ContextStageConfig(
                     stage_id=stage_id,
                     transform_type=ContextTransformType.PROVIDE,
-                    config_version=version,
+                    config_version=RESEARCH_CONTRACT_VERSION,
                     config={
                         "phase": stage_id,
                         "stage_order": RESEARCH_STAGE_IDS.index(stage_id),
@@ -788,6 +807,7 @@ def _research_definition(
             run_id=run_id,
             expected_members=expected_members,
             fail=command.failure_mode == "DATA",
+            legacy=False,
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),
         output_contract=OutputContract(
@@ -823,6 +843,7 @@ def _legacy_research_definition(
             run_id=run_id,
             expected_members=command.members,
             fail=command.failure_mode == "DATA",
+            legacy=True,
         ),
         tools=(
             _read_announcement_tool(
@@ -836,7 +857,7 @@ def _legacy_research_definition(
             schema=ResearchDraft.model_json_schema(),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
-        context_plan=_research_context_plan(RESEARCH_CONTRACT_VERSION),
+        context_plan=_research_context_plan(),
     )
 
 
@@ -1281,11 +1302,16 @@ async def _execute_legacy_research_run(
                 command,
                 research_run,
                 context_provider,
+                legacy=True,
             )
             if failure_code is not None:
                 return replace(research_run, error_code=failure_code)
         return research_run
-    tool_evidence = await _research_tool_evidence(runtime, research_run.run_id)
+    tool_evidence = await _research_tool_evidence(
+        runtime,
+        research_run.run_id,
+        legacy=True,
+    )
     return replace(
         research_run,
         run_existed_before=existing_research_run is not None,
@@ -1298,6 +1324,7 @@ async def execute_research_run(
     runtime: RuntimeStorage,
     record_transition: FrameworkTransitionRecorder | None = None,
     *,
+    record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
     """Execute or recover one staged, durable research Run per cohort member."""
@@ -1351,6 +1378,8 @@ async def execute_research_run(
                 or index > 0
             )
         )
+        if existing_run is None and allow_create and record_member_run_reservation is not None:
+            allow_create = await record_member_run_reservation(run_id)
         result = await _execute_registered_run(
             runtime=runtime,
             run_id=run_id,
@@ -1562,6 +1591,8 @@ async def execute_research_decision_case(
 async def _research_tool_evidence(
     runtime: RuntimeStorage,
     run_id: str,
+    *,
+    legacy: bool = False,
 ) -> tuple[ResearchToolEvidence, ...]:
     """Recover structured provenance from successful announcement checkpoints."""
     evidence_items: list[ResearchToolEvidence] = []
@@ -1579,7 +1610,15 @@ async def _research_tool_evidence(
         ):
             continue
         try:
-            evidence = ResearchToolEvidence.model_validate_json(outcome.result)
+            payload = json.loads(outcome.result)
+            if not isinstance(payload, dict):
+                raise ValueError("research Tool evidence must be a JSON object")
+            if legacy:
+                payload.setdefault(
+                    "evidence_contract_version",
+                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                )
+            evidence = ResearchToolEvidence.model_validate(payload)
         except ValueError as error:
             raise ValueError("research Tool evidence is not structured") from error
         if evidence.evidence_id not in {item.evidence_id for item in evidence_items}:
@@ -1846,26 +1885,11 @@ def _is_legacy_research_case(case: FrozenDecisionCase) -> bool:
     )
 
 
-def _research_definition_for_case(
-    case: FrozenDecisionCase,
-    *,
-    runtime: RuntimeStorage | None = None,
-    run_id: str | None = None,
-    member: ResearchMemberInput | None = None,
-    context_items: tuple[ContextItem, ...] | None = None,
-) -> AgentDefinition:
+def _research_definition_for_case(case: FrozenDecisionCase) -> AgentDefinition:
     """Rebuild the exact research Definition family named by a frozen case."""
     if _is_legacy_research_case(case):
-        if member is not None or context_items is not None:
-            raise ValueError("legacy research cases do not have member-scoped Runs")
-        return _legacy_research_definition(case, runtime=runtime, run_id=run_id)
-    return _research_definition(
-        case,
-        runtime=runtime,
-        run_id=run_id,
-        member=member,
-        context_items=context_items,
-    )
+        return _legacy_research_definition(case)
+    return _research_definition(case)
 
 
 def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentDefinition) -> None:

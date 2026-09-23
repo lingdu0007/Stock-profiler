@@ -102,6 +102,7 @@ class FrameworkRunResult:
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
 AuxiliaryRunReservationRecorder = Callable[[str], Awaitable[bool]]
+ResearchMemberRunReservationRecorder = Callable[[str], Awaitable[bool]]
 
 
 class FrozenFramework(Protocol):
@@ -123,6 +124,8 @@ class FrozenFramework(Protocol):
         self,
         case: FrozenDecisionCase,
         record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
     ) -> FrameworkRunResult: ...
 
     async def execute_research_risk_run(

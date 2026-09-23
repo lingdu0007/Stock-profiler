@@ -61,6 +61,7 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_DEFINITION_ID,
     RESEARCH_DEFINITION_VERSION,
     RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
@@ -706,6 +707,66 @@ class FrozenDecisionCase(FrozenContract):
     monitoring: MonitoringCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def decode_legacy_research_evidence(cls, value: Any) -> Any:
+        """Make the historical case boundary explicit before strict evidence decoding."""
+        if not isinstance(value, dict):
+            return value
+        version_bundle = value.get("version_bundle")
+        if not isinstance(version_bundle, dict) or (
+            version_bundle.get("agent_definition_version")
+            != RESEARCH_LEGACY_DEFINITION_VERSION
+            or version_bundle.get("output_contract_version")
+            != RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+        ):
+            return value
+
+        def normalize_research_payload(payload: object) -> object:
+            if not isinstance(payload, dict):
+                return payload
+            members = payload.get("members")
+            if not isinstance(members, (list, tuple)):
+                return payload
+            normalized = dict(payload)
+            normalized_members: list[object] = []
+            for member in members:
+                if not isinstance(member, dict):
+                    normalized_members.append(member)
+                    continue
+                normalized_member = dict(member)
+                evidence_items = normalized_member.get("evidence")
+                if isinstance(evidence_items, (list, tuple)):
+                    normalized_member["evidence"] = [
+                        (
+                            {
+                                **evidence,
+                                "evidence_contract_version": evidence.get(
+                                    "evidence_contract_version",
+                                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+                                ),
+                            }
+                            if isinstance(evidence, dict)
+                            else evidence
+                        )
+                        for evidence in evidence_items
+                    ]
+                normalized_members.append(normalized_member)
+            normalized["members"] = normalized_members
+            return normalized
+
+        payload = dict(value)
+        payload["research"] = normalize_research_payload(payload.get("research"))
+        input_payload = payload.get("input")
+        if isinstance(input_payload, dict):
+            normalized_input = dict(input_payload)
+            if "research" in normalized_input:
+                normalized_input["research"] = normalize_research_payload(
+                    normalized_input["research"]
+                )
+            payload["input"] = normalized_input
+        return payload
 
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:

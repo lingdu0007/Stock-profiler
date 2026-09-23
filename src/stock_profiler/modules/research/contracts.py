@@ -292,6 +292,8 @@ class RawScoreModelSnapshot(ResearchContract):
             raise ValueError("raw-score training cohorts must cover every training month")
         if len({cohort.month for cohort in self.training_cohorts}) != len(self.training_cohorts):
             raise ValueError("raw-score training cohorts must have one cohort per month")
+        if len({cohort.research_definition_version for cohort in self.training_cohorts}) != 1:
+            raise ValueError("raw-score training cohorts must use the same research Definition")
         records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
         for record in self.training_records:
             cohort = cohorts_by_id.get(record.cohort_id)
@@ -560,16 +562,6 @@ class ResearchEvidence(ResearchContract):
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
 
-    @model_validator(mode="before")
-    @classmethod
-    def mark_legacy_clock_payload(cls, value: object) -> object:
-        if isinstance(value, dict) and "evidence_contract_version" not in value and (
-            "effective_at" not in value or "source_published_at" not in value
-        ):
-            value = dict(value)
-            value["evidence_contract_version"] = RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
-        return value
-
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchEvidence:
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
@@ -606,16 +598,6 @@ class ResearchToolEvidence(ResearchContract):
     semantic_version: str = Field(min_length=1)
     validation_status: Literal["VALIDATED"]
 
-    @model_validator(mode="before")
-    @classmethod
-    def mark_legacy_clock_payload(cls, value: object) -> object:
-        if isinstance(value, dict) and "evidence_contract_version" not in value and (
-            "effective_at" not in value or "source_published_at" not in value
-        ):
-            value = dict(value)
-            value["evidence_contract_version"] = RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION
-        return value
-
     @model_validator(mode="after")
     def validate_clocks(self) -> ResearchToolEvidence:
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
@@ -634,6 +616,18 @@ class ResearchToolEvidence(ResearchContract):
             knowledge_cutoff=self.knowledge_cutoff,
         )
         return self
+
+
+def research_evidence_payload(
+    evidence: ResearchEvidence | ResearchToolEvidence,
+    *,
+    legacy: bool,
+) -> dict[str, object]:
+    """Serialize current or historical evidence without weakening direct decoders."""
+    payload = evidence.model_dump(mode="json", exclude_none=legacy)
+    if legacy:
+        payload.pop("evidence_contract_version", None)
+    return payload
 
 
 class FrozenDualTargetScreening(ResearchContract):

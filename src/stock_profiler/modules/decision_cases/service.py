@@ -677,6 +677,13 @@ def _run_frozen_decision_case(
                             risk_run_id,
                         )
 
+                    async def record_research_member_run_reservation(run_id: str) -> bool:
+                        return await _record_research_member_run_reservation(
+                            ledger,
+                            execution_case,
+                            run_id,
+                        )
+
                     if execution_case.research is not None:
 
                         async def execute_risk(
@@ -708,8 +715,17 @@ def _run_frozen_decision_case(
                                 execute_research=lambda: framework_adapter.execute_research_run(
                                     execution_case,
                                     record_transition,
+                                    record_member_run_reservation=(
+                                        record_research_member_run_reservation
+                                    ),
                                 ),
                                 execute_risk=execute_risk,
+                                legacy=(
+                                    execution_case.version_bundle.agent_definition_version
+                                    == RESEARCH_LEGACY_DEFINITION_VERSION
+                                    and execution_case.version_bundle.output_contract_version
+                                    == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                                ),
                             )
                         )
                     else:
@@ -805,6 +821,38 @@ async def _record_auxiliary_run_reservation(
                 status="PENDING",
                 gate_results=(GateResult(gate_id="RISK_RUN_RESERVED", status="PASSED"),),
                 reasons=("RISK_RUN_ID_RESERVED",),
+            ),
+            framework_run_id=framework_run_id,
+        )
+    return True
+
+
+async def _record_research_member_run_reservation(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+) -> bool:
+    """Reserve one member Run without allowing replacement after execution began."""
+    with ledger.serialize_case_execution() as connection:
+        history = ledger.get_stage_results(
+            case.business_object_id,
+            connection,
+            framework_run_id=framework_run_id,
+        )
+        if any(stage_result.phase == "FRAMEWORK_RUN" for stage_result in history):
+            return False
+        if any(stage_result.phase == "AUXILIARY_RUN_RESERVATION" for stage_result in history):
+            return False
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=StageResult(
+                phase="AUXILIARY_RUN_RESERVATION",
+                status="PENDING",
+                gate_results=(
+                    GateResult(gate_id="RESEARCH_MEMBER_RUN_RESERVED", status="PASSED"),
+                ),
+                reasons=("RESEARCH_MEMBER_RUN_ID_RESERVED",),
             ),
             framework_run_id=framework_run_id,
         )

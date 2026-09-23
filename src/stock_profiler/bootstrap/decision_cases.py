@@ -34,6 +34,7 @@ from stock_profiler.modules.decision_cases.ports import (
     AuxiliaryRunReservationRecorder,
     FrameworkRunResult,
     FrameworkTransitionRecorder,
+    ResearchMemberRunReservationRecorder,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
 from stock_profiler.modules.qualification.governance import InvalidGovernanceRequest
@@ -79,11 +80,14 @@ class _FrozenFramework:
         self,
         case: FrozenDecisionCase,
         record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
     ) -> FrameworkRunResult:
         return await execute_research_run(
             case,
             self.runtime,
             record_transition,
+            record_member_run_reservation=record_member_run_reservation,
             clock=self.clock,
         )
 

@@ -882,6 +882,68 @@ def test_partial_member_research_recovery_creates_missing_member_runs(
         assert asyncio.run(runtime.run_store.get_run(member_run.run_id)) is not None
 
 
+def test_reserved_missing_member_research_run_is_not_recreated(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+    runtime = initialize_runtime_storage(migrated_settings)
+    first_member = command.members[0]
+    first_run_id = frozen_decision_case._research_member_run_id(case, 0, first_member)
+    first_context = tuple(
+        item
+        for item in frozen_decision_case._research_context_items(command)
+        if item.item_id == f"required-facts:{first_member.security_id}"
+    )
+    first_definition = frozen_decision_case._research_definition(
+        case,
+        runtime=runtime,
+        run_id=first_run_id,
+        member=first_member,
+        context_items=first_context,
+    )
+    first_result = asyncio.run(
+        frozen_decision_case._execute_registered_run(
+            runtime=runtime,
+            run_id=first_run_id,
+            definition=first_definition,
+            input_payload=frozen_decision_case._research_member_input_payload(case, first_member),
+            case=None,
+            record_transition=None,
+            clock=None,
+        )
+    )
+    assert first_result.status == "SUCCEEDED"
+    reserved_run_id = frozen_decision_case._research_member_run_id(case, 1, command.members[1])
+    ledger = DecisionLedger(runtime.engine)
+    ledger.persist_business_mapping_before_framework(case)
+    assert asyncio.run(
+        decision_case_service._record_research_member_run_reservation(
+            ledger,
+            case,
+            reserved_run_id,
+        )
+    )
+
+    async def reserve_member_run(run_id: str) -> bool:
+        return await decision_case_service._record_research_member_run_reservation(
+            ledger,
+            case,
+            run_id,
+        )
+
+    recovery_case = case.model_copy(update={"recovery_framework_run_id": case.framework_run_id})
+    with pytest.raises(MappedDurableRunMissingError, match="mapped auxiliary"):
+        asyncio.run(
+            frozen_decision_case.execute_research_run(
+                recovery_case,
+                runtime,
+                record_member_run_reservation=reserve_member_run,
+            )
+        )
+
+
 def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     migrated_settings: Settings,
 ) -> None:
@@ -976,6 +1038,24 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert (
         legacy_outcome.handoff.research_output_contract_version
         == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+    )
+
+    legacy_case = legacy_case.model_copy(
+        update={
+            "expected_external_result": legacy_case.expected_external_result.model_copy(
+                update={"research": legacy_outcome}
+            )
+        }
+    )
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        legacy_case.model_dump(mode="json"),
+    )
+    assert execution.report is not None
+    assert execution.report.result.research is not None
+    assert (
+        execution.report.result.research.handoff.research_definition_version
+        == RESEARCH_LEGACY_DEFINITION_VERSION
     )
 
 

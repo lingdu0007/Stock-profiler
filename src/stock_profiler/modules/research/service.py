@@ -37,6 +37,7 @@ from stock_profiler.modules.research.contracts import (
     RiskVetoOutcome,
     freeze_raw_score,
     handoff_fingerprint,
+    research_evidence_payload,
     research_member_results,
     risk_run_id_for,
 )
@@ -48,17 +49,6 @@ __all__ = (
     "prepare_research_risk_plan",
     "validate_research_draft",
 )
-
-
-def _research_tool_payload(
-    evidence: ResearchToolEvidence,
-    *,
-    legacy: bool,
-) -> dict[str, object]:
-    payload = evidence.model_dump(mode="json", exclude_none=legacy)
-    if legacy:
-        payload.pop("evidence_contract_version", None)
-    return payload
 
 
 def prepare_research_risk_plan(
@@ -102,7 +92,7 @@ def prepare_research_risk_plan(
         "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(
-            _research_tool_payload(evidence, legacy=legacy)
+            research_evidence_payload(evidence, legacy=legacy)
             for evidence in tool_evidence
         ),
         "member_handoffs": tuple(
