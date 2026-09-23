@@ -93,7 +93,10 @@ describe("App", () => {
               transformed_inputs: {},
               coefficients: {},
               feature_transformations: {},
-              contributions: {},
+              contributions: {
+                screening_positive_prior: "0.15",
+                single_quarter_revenue_acceleration: "0.08"
+              },
               z20: "1.25",
               l1_ratio: "0.25",
               l2_ratio: "0.75",
@@ -189,6 +192,8 @@ describe("App", () => {
     expect(research).toHaveTextContent("synthetic-security-00");
     expect(research).toHaveTextContent("The fictional thesis is bounded by the frozen evidence.");
     expect(research).toHaveTextContent("1.25");
+    expect(research).toHaveTextContent("Uncalibrated raw success score");
+    expect(research).toHaveTextContent("screening_positive_prior: 0.15");
     expect(research).toHaveTextContent("risk-run-1616");
     expect(research).toHaveTextContent("LIQUIDITY_WARNING");
     const stages = screen.getByRole("region", { name: "Decision stages" });

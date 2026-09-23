@@ -283,6 +283,15 @@ function ResearchEvidence({
               {rawScore && (
                 <>
                   <Record label="Raw z20" value={rawScore.z20} />
+                  <Record label="Raw score type" value="Uncalibrated raw success score" />
+                  <Record
+                    label="Major contributions"
+                    value={
+                      Object.entries(rawScore.contributions)
+                        .map(([feature, contribution]) => `${feature}: ${contribution}`)
+                        .join(", ") || "None recorded"
+                    }
+                  />
                   <Record
                     label="Raw model"
                     value={`${rawScore.model_version} @ ${rawScore.training_window_id}`}

@@ -682,8 +682,6 @@ class ResearchStructuredFacts(ResearchContract):
         values = self.model_dump(mode="python").values()
         if any(value is not None and not value.is_finite() for value in values):
             raise ValueError("structured source facts must be finite")
-        if self.average_total_assets is not None and self.average_total_assets <= 0:
-            raise ValueError("structured source facts require positive average total assets")
         return self
 
 
@@ -762,14 +760,19 @@ class ResearchMemberInput(ResearchContract):
 
     @model_validator(mode="after")
     def validate_member_facts(self) -> ResearchMemberInput:
-        derived_signals = calculate_structured_signals(self.structured_facts)
-        if self.structured_signals and self.structured_signals != derived_signals:
+        calculation_failed = False
+        try:
+            derived_signals = calculate_structured_signals(self.structured_facts)
+        except ValueError:
+            calculation_failed = True
+            derived_signals = {signal_id: None for signal_id in RAW_SCORE_FEATURE_IDS}
+        if (
+            self.structured_signals
+            and self.structured_signals != derived_signals
+            and not calculation_failed
+        ):
             raise ValueError("structured signals must match the deterministic feature calculator")
         object.__setattr__(self, "structured_signals", derived_signals)
-        if all(entry.completeness == "COMPLETE" for entry in self.data_manifest.entries) and any(
-            value is None for value in derived_signals.values()
-        ):
-            raise ValueError("complete research data requires every raw-score signal")
         evidence_ids = [evidence.evidence_id for evidence in self.evidence]
         if len(set(evidence_ids)) != len(evidence_ids):
             raise ValueError("research evidence identities must be unique per member")

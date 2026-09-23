@@ -1017,6 +1017,48 @@ def test_incomplete_provider_manifest_fails_research_before_downstream_stages(
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
+def test_provider_missing_structured_facts_fails_research_before_downstream_stages(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_context_items = frozen_decision_case._research_context_items
+
+    def remove_structured_facts(command: ResearchCommand) -> tuple[ContextItem, ...]:
+        items = list(original_context_items(command))
+        payload = json.loads(items[0].content)
+        payload.pop("structured_facts")
+        payload.pop("structured_signals")
+        items[0] = items[0].model_copy(
+            update={
+                "content": json.dumps(
+                    payload,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            }
+        )
+        return tuple(items)
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_context_items",
+        remove_structured_facts,
+    )
+
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in stage.reasons
+        for stage in execution.stage_results
+    ), [(stage.phase, stage.status, stage.reasons) for stage in execution.stage_results]
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
 def test_incomplete_member_manifest_is_saved_as_research_data_failure(
     migrated_settings: Settings,
 ) -> None:
@@ -1066,6 +1108,36 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
     assert len(recovered_data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
     assert recovered_research_stages[-1].reasons == ("RESEARCH_REQUIRED_FACTS_INCOMPLETE",)
     assert recovered_data_gates == data_gates
+
+
+def test_invalid_financial_denominator_is_saved_as_research_data_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    research_payload["members"][0]["structured_facts"]["average_total_assets"] = "0"
+    research_payload["members"][0]["structured_signals"] = {
+        signal_id: None for signal_id in research_payload["members"][0]["structured_signals"]
+    }
+    payload["research"] = research_payload
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in research_stage.reasons
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:")
+    }
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:FINANCIAL_STATEMENTS"] == "FAILED"
+    assert sum(status == "FAILED" for status in data_gates.values()) == 1
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
 def test_missing_structured_signal_is_saved_as_research_data_failure(

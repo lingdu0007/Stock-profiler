@@ -108,6 +108,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchCommand,
     ResearchDataManifest,
     ResearchDraft,
+    ResearchMemberInput,
     ResearchRiskPlan,
     ResearchStageArtifact,
     ResearchToolEvidence,
@@ -247,15 +248,13 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         *,
         runtime: RuntimeStorage | None = None,
         run_id: str | None = None,
-        expected_security_ids: tuple[str, ...] = (),
-        expected_evidence_ids: tuple[str, ...] = (),
+        expected_members: tuple[ResearchMemberInput, ...] = (),
         fail: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
         self._run_id = run_id
-        self._expected_security_ids = expected_security_ids
-        self._expected_evidence_ids = expected_evidence_ids
+        self._expected_members = expected_members
         self._fail = fail
         self._failure_code: str | None = None
 
@@ -270,7 +269,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
             raise RuntimeError("RESEARCH_DATA_UNAVAILABLE")
         if self._runtime is None or self._run_id is None:
             try:
-                _validate_research_context_items(self._items, self._expected_security_ids)
+                _validate_research_context_items(self._items, self._expected_members)
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
                 raise RuntimeError(str(error)) from error
@@ -294,7 +293,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         )
         if active_stage_index == 0:
             try:
-                _validate_research_context_items(self._items, self._expected_security_ids)
+                _validate_research_context_items(self._items, self._expected_members)
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
                 raise RuntimeError(str(error)) from error
@@ -386,9 +385,11 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
 
 def _validate_research_context_items(
     items: tuple[ContextItem, ...],
-    expected_security_ids: tuple[str, ...],
+    expected_members: tuple[ResearchMemberInput, ...],
 ) -> None:
     """Verify that the Provider will deliver every member's complete manifest."""
+    expected_security_ids = tuple(member.security_id for member in expected_members)
+    expected_members_by_security_id = {member.security_id: member for member in expected_members}
     if len(items) != len(expected_security_ids):
         raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: member coverage")
     actual_security_ids: list[str] = []
@@ -400,8 +401,12 @@ def _validate_research_context_items(
             security_id = payload["security_id"]
             evidence_ids = tuple(evidence["evidence_id"] for evidence in payload["evidence"])
             manifest = ResearchDataManifest.model_validate(payload["data_manifest"])
+            delivered_member = ResearchMemberInput.model_validate(payload)
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: malformed item") from error
+        expected_member = expected_members_by_security_id.get(security_id)
+        if expected_member is None or delivered_member != expected_member:
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: structured fact provenance")
         manifest_evidence_ids = tuple(
             evidence_id for entry in manifest.entries for evidence_id in entry.evidence_ids
         )
@@ -414,6 +419,10 @@ def _validate_research_context_items(
             raise ValueError(
                 "RESEARCH_REQUIRED_FACTS_INCOMPLETE: " + ",".join(incomplete_data_types)
             )
+        if all(entry.completeness == "COMPLETE" for entry in manifest.entries) and any(
+            value is None for value in delivered_member.structured_signals.values()
+        ):
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: structured signals")
         actual_security_ids.append(security_id)
     if tuple(actual_security_ids) != expected_security_ids:
         raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: security coverage")
@@ -439,7 +448,7 @@ def _recover_research_failure_code(
     try:
         _validate_research_context_items(
             _research_context_items(command),
-            tuple(member.security_id for member in command.members),
+            command.members,
         )
     except ValueError as error:
         if str(error).startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE"):
@@ -605,6 +614,7 @@ def _research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]
                 {
                     "security_id": member.security_id,
                     "research_id": member.research_id,
+                    "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
                     "evidence": tuple(
                         evidence.model_dump(mode="json") for evidence in member.evidence
                     ),
@@ -679,10 +689,7 @@ def _research_definition(
             _research_context_items(command),
             runtime=runtime,
             run_id=run_id,
-            expected_security_ids=tuple(member.security_id for member in command.members),
-            expected_evidence_ids=tuple(
-                evidence.evidence_id for member in command.members for evidence in member.evidence
-            ),
+            expected_members=command.members,
             fail=command.failure_mode == "DATA",
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),

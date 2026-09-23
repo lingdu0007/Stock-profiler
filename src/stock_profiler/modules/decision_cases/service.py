@@ -192,14 +192,24 @@ def _research_data_gate_results(
         for member in command.members
         for entry in member.data_manifest.entries
     )
+    invalid_structured_member_ids = {
+        member.security_id
+        for member in command.members
+        if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
+        and any(value is None for value in member.structured_signals.values())
+    }
+    gate_results_are_detailed = manifest_is_detailed or bool(invalid_structured_member_ids)
     return tuple(
         GateResult(
             gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
             status=(
                 "FAILED"
                 if manifest_is_detailed and entry.completeness != "COMPLETE"
+                else "FAILED"
+                if member.security_id in invalid_structured_member_ids
+                and entry.data_type == "FINANCIAL_STATEMENTS"
                 else "PASSED"
-                if manifest_is_detailed
+                if gate_results_are_detailed
                 else "UNKNOWN"
             ),
         )
