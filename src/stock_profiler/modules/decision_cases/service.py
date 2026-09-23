@@ -83,6 +83,7 @@ from stock_profiler.modules.research.contracts import (
     research_draft_payload,
     research_evidence_payload,
     research_member_handoff_payload,
+    research_raw_score_payload,
 )
 from stock_profiler.modules.research.service import (
     freeze_research,
@@ -407,6 +408,9 @@ def _research_framework_output_json(
             historical=historical,
         )
     if legacy:
+        payload["raw_scores"] = tuple(
+            research_raw_score_payload(score, legacy=True) for score in output.raw_scores or ()
+        )
         payload["tool_evidence"] = tuple(
             research_evidence_payload(evidence, legacy=True) for evidence in output.tool_evidence
         )

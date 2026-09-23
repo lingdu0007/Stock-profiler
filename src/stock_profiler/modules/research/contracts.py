@@ -867,6 +867,45 @@ class ResearchDataManifest(ResearchContract):
         return self
 
 
+def _validate_research_stage_source(
+    stage_id: str,
+    source_stage_id: str,
+    bull_case: str | None,
+    bear_case: str | None,
+) -> None:
+    expected_source = {
+        "analyze": "collect",
+        "bull-bear": "analyze",
+        "draft": "bull-bear",
+    }[stage_id]
+    if source_stage_id != expected_source:
+        raise ValueError("research stage artifact source does not match its stage")
+    if stage_id in {"bull-bear", "draft"} and (not bull_case or not bear_case):
+        raise ValueError("research debate artifacts require both bull and bear cases")
+
+
+class LegacyResearchStageArtifact(ResearchContract):
+    """The original staged artifact shape without checkpoint input identities."""
+
+    stage_id: Literal["analyze", "bull-bear", "draft"]
+    source_stage_id: Literal["collect", "analyze", "bull-bear"]
+    security_ids: tuple[str, ...] = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    bull_case: str | None = None
+    bear_case: str | None = None
+
+    @model_validator(mode="after")
+    def validate_stage_progression(self) -> LegacyResearchStageArtifact:
+        _validate_research_stage_source(
+            self.stage_id,
+            self.source_stage_id,
+            self.bull_case,
+            self.bear_case,
+        )
+        return self
+
+
 class ResearchStageArtifact(ResearchContract):
     """Typed intermediate evidence passed between staged research phases."""
 
@@ -884,17 +923,14 @@ class ResearchStageArtifact(ResearchContract):
 
     @model_validator(mode="after")
     def validate_stage_progression(self) -> ResearchStageArtifact:
-        expected_source = {
-            "analyze": "collect",
-            "bull-bear": "analyze",
-            "draft": "bull-bear",
-        }[self.stage_id]
-        if self.source_stage_id != expected_source:
-            raise ValueError("research stage artifact source does not match its stage")
+        _validate_research_stage_source(
+            self.stage_id,
+            self.source_stage_id,
+            self.bull_case,
+            self.bear_case,
+        )
         if len(set(self.input_item_ids)) != len(self.input_item_ids):
             raise ValueError("research stage artifact input identities must be unique")
-        if self.stage_id in {"bull-bear", "draft"} and (not self.bull_case or not self.bear_case):
-            raise ValueError("research debate artifacts require both bull and bear cases")
         if self.stage_id == "draft" and (
             not self.catalysts
             or not self.falsification_conditions
@@ -911,6 +947,23 @@ def decode_legacy_research_stage_artifact(value: object) -> ResearchStageArtifac
     if not isinstance(value, dict):
         raise ValueError("legacy research stage artifact must be an object")
     payload = deepcopy(value)
+    if "input_item_ids" not in payload:
+        legacy_artifact = LegacyResearchStageArtifact.model_validate(payload)
+        normalized_payload = legacy_artifact.model_dump(mode="python")
+        normalized_payload["input_item_ids"] = ()
+        if legacy_artifact.stage_id == "draft":
+            normalized_payload.update(
+                catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
+                falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
+                unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
+            )
+        else:
+            normalized_payload.update(
+                catalysts=(),
+                falsification_conditions=(),
+                unknowns=(),
+            )
+        return ResearchStageArtifact.model_construct(**normalized_payload)
     if payload.get("stage_id") == "draft":
         payload.setdefault("catalysts", (LEGACY_RESEARCH_MISSING_TEXT,))
         payload.setdefault("falsification_conditions", (LEGACY_RESEARCH_MISSING_TEXT,))
@@ -926,10 +979,13 @@ def research_stage_artifact_payload(
     artifact: ResearchStageArtifact,
     *,
     legacy: bool = False,
+    historical_without_debate_fields: bool = False,
 ) -> dict[str, object]:
     """Serialize a stage artifact using the exact current or historical field set."""
     payload = artifact.model_dump(mode="json")
     if legacy:
+        payload.pop("input_item_ids", None)
+    if legacy or historical_without_debate_fields:
         payload.pop("catalysts", None)
         payload.pop("falsification_conditions", None)
         payload.pop("unknowns", None)
@@ -1741,6 +1797,18 @@ class RawScore(ResearchContract):
     penalty_strength: Decimal
 
 
+def research_raw_score_payload(
+    score: RawScore,
+    *,
+    legacy: bool = False,
+) -> dict[str, object]:
+    """Serialize one score using the exact current or legacy field set."""
+    payload = score.model_dump(mode="json")
+    if legacy:
+        payload.pop("label_watermark_at", None)
+    return payload
+
+
 class ResearchFrameworkOutput(ResearchContract):
     """Adapter envelope joining two durable Runs without adding a business score."""
 
@@ -1770,6 +1838,11 @@ def _decode_research_framework_output(
     draft = payload.get("draft")
     if isinstance(draft, dict):
         payload["draft"] = draft_decoder(draft).model_dump(mode="python")
+    raw_scores = payload.get("raw_scores")
+    if isinstance(raw_scores, (list, tuple)):
+        payload["raw_scores"] = [
+            _legacy_raw_score_payload(raw_score) for raw_score in raw_scores
+        ]
     tool_evidence = payload.get("tool_evidence")
     if isinstance(tool_evidence, (list, tuple)):
         payload["tool_evidence"] = [
@@ -2067,6 +2140,14 @@ def _legacy_raw_score_payload(value: object) -> object:
     return normalized
 
 
+def _legacy_serialized_raw_score_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+    normalized.pop("label_watermark_at", None)
+    return normalized
+
+
 def decode_historical_research_outcome(value: object) -> ResearchOutcome:
     """Decode the prior current outcome while retaining current evidence clocks."""
     return decode_legacy_research_outcome(value)
@@ -2097,11 +2178,19 @@ def research_outcome_payload(
             for field_name in ("catalysts", "falsification_conditions", "unknowns"):
                 member.pop(field_name, None)
     if legacy:
+        payload["raw_scores"] = [
+            _legacy_serialized_raw_score_payload(score)
+            for score in payload.get("raw_scores", ())
+        ]
         payload["tool_evidence"] = [
             _legacy_evidence_payload(evidence) for evidence in payload.get("tool_evidence", ())
         ]
         handoff = payload.get("handoff")
         if isinstance(handoff, dict):
+            handoff["raw_scores"] = [
+                _legacy_serialized_raw_score_payload(score)
+                for score in handoff.get("raw_scores", ())
+            ]
             handoff["tool_evidence"] = [
                 _legacy_evidence_payload(evidence) for evidence in handoff.get("tool_evidence", ())
             ]
@@ -2308,7 +2397,7 @@ def handoff_fingerprint(
             historical=historical,
         ),
         "raw_scores": (
-            tuple(score.model_dump(mode="json") for score in raw_scores)
+            tuple(research_raw_score_payload(score, legacy=legacy) for score in raw_scores)
             if raw_scores is not None
             else None
         ),
@@ -2347,7 +2436,7 @@ def risk_run_id_for(
                     historical=historical,
                 ),
                 "raw_scores": (
-                    tuple(score.model_dump(mode="json") for score in raw_scores)
+                    tuple(research_raw_score_payload(score, legacy=legacy) for score in raw_scores)
                     if raw_scores is not None
                     else None
                 ),

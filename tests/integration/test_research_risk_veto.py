@@ -1099,7 +1099,12 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert all(
         field_name not in artifact
         for artifact in legacy_stage_artifacts
-        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+        for field_name in (
+            "input_item_ids",
+            "catalysts",
+            "falsification_conditions",
+            "unknowns",
+        )
     )
 
     recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))

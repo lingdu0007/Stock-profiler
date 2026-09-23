@@ -43,6 +43,7 @@ from stock_profiler.modules.research.contracts import (
     research_evidence_payload,
     research_member_handoff_payload,
     research_member_results,
+    research_raw_score_payload,
     risk_run_id_for,
 )
 
@@ -100,7 +101,9 @@ def prepare_research_risk_plan(
             legacy=legacy,
             historical=historical,
         ),
-        "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
+        "raw_scores": tuple(
+            research_raw_score_payload(score, legacy=legacy) for score in raw_scores
+        ),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(
             research_evidence_payload(evidence, legacy=legacy)
@@ -146,7 +149,9 @@ def freeze_research(
     if framework.raw_scores is None:
         raise RawScoreCalculationError("RAW_SCORE_HANDOFF_MISSING")
     expected_raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
-    if framework.raw_scores != expected_raw_scores:
+    if tuple(
+        research_raw_score_payload(score, legacy=legacy) for score in framework.raw_scores
+    ) != tuple(research_raw_score_payload(score, legacy=legacy) for score in expected_raw_scores):
         raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH")
     tool_evidence = _validate_tool_evidence(
         command,

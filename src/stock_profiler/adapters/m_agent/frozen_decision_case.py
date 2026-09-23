@@ -423,8 +423,10 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 "input_item_ids": input_item_ids,
                 "stage_artifact": research_stage_artifact_payload(
                     stage_artifact,
-                    legacy=self._legacy
-                    or (self._historical and not self._historical_with_debate_fields),
+                    legacy=self._legacy,
+                    historical_without_debate_fields=(
+                        self._historical and not self._historical_with_debate_fields
+                    ),
                 ),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
@@ -643,12 +645,26 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 raise RuntimeError("RESEARCH_STAGE_INPUT_INVALID") from error
             input_item_ids = payload.get("input_item_ids")
             context_item_ids = {context_item.item_id for context_item in request.context_items}
+            input_identities_valid = (
+                not candidate.input_item_ids
+                and (
+                    input_item_ids is None
+                    or (
+                        isinstance(input_item_ids, list)
+                        and set(input_item_ids).issubset(context_item_ids)
+                    )
+                )
+                if self._legacy
+                else (
+                    isinstance(input_item_ids, list)
+                    and tuple(input_item_ids) == candidate.input_item_ids
+                    and set(candidate.input_item_ids).issubset(context_item_ids)
+                )
+            )
             if (
                 candidate.stage_id != "draft"
                 or item.metadata.get("source_stage") != "bull-bear"
-                or not isinstance(input_item_ids, list)
-                or tuple(input_item_ids) != candidate.input_item_ids
-                or not set(candidate.input_item_ids).issubset(context_item_ids)
+                or not input_identities_valid
                 or set(candidate.security_ids)
                 != {
                     self._member.security_id

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Context, Decimal, localcontext
+from hashlib import sha256
 from typing import Literal, cast
 
 import pytest
@@ -36,13 +38,20 @@ from stock_profiler.modules.research.contracts import (
     decode_historical_research_draft,
     decode_legacy_research_command,
     decode_legacy_research_framework_output,
+    decode_legacy_research_stage_artifact,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
+    research_draft_payload,
+    research_member_handoff_payload,
     screening_output_sha256,
     selection_binding_sha256,
 )
-from stock_profiler.modules.research.service import freeze_research, validate_research_draft
+from stock_profiler.modules.research.service import (
+    freeze_research,
+    prepare_research_risk_plan,
+    validate_research_draft,
+)
 
 
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
@@ -383,6 +392,95 @@ def test_legacy_research_command_preserves_existing_training_provenance() -> Non
         decoded.raw_score_model.training_cohorts[0].research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
     )
+
+
+def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
+    command = _command()
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The historical thesis remains bounded by frozen evidence.",
+                bull_case="The historical upside case remains conditional.",
+                bear_case="The historical downside case remains explicit.",
+                knowledge_cutoff=member.knowledge_cutoff,
+                catalysts=("A historical catalyst remains conditional.",),
+                falsification_conditions=("A historical falsifier remains explicit.",),
+                unknowns=("A historical unknown remains unresolved.",),
+            )
+            for member in command.members
+        ),
+    )
+    member_handoffs = tuple(
+        ResearchMemberHandoff(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence=member.evidence,
+            risk_flags=member.risk_flags,
+        )
+        for member in command.members
+    )
+
+    plan = prepare_research_risk_plan(
+        command,
+        "research-run-legacy",
+        draft,
+        (),
+        legacy=True,
+    )
+    risk_payload = json.loads(plan.input_payload)
+
+    assert "label_watermark_at" not in risk_payload["raw_scores"][0]
+    expected_raw_scores = tuple(
+        {
+            key: value
+            for key, value in score.model_dump(mode="json").items()
+            if key != "label_watermark_at"
+        }
+        for score in plan.raw_scores
+    )
+    expected_payload = {
+        "research_run_id": "research-run-legacy",
+        "draft": research_draft_payload(draft, legacy=True),
+        "raw_scores": expected_raw_scores,
+        "tool_evidence_refs": (),
+        "tool_evidence": (),
+        "member_handoffs": tuple(
+            research_member_handoff_payload(member, legacy=True)
+            for member in member_handoffs
+        ),
+    }
+    expected_risk_run_id = (
+        "risk-run-"
+        + sha256(
+            json.dumps(
+                expected_payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+    )
+    assert plan.risk_run_id == expected_risk_run_id
+
+
+def test_legacy_stage_artifact_decodes_without_new_input_item_ids() -> None:
+    decoded = decode_legacy_research_stage_artifact(
+        {
+            "stage_id": "analyze",
+            "source_stage_id": "collect",
+            "security_ids": ["synthetic-security-00"],
+            "evidence_ids": ["daily_market-evidence-00"],
+            "summary": "Historical analysis stage.",
+        }
+    )
+
+    assert decoded.input_item_ids == ()
+    assert decoded.security_ids == ("synthetic-security-00",)
+    assert decoded.evidence_ids == ("daily_market-evidence-00",)
 
 
 def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:
