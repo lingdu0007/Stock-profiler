@@ -110,6 +110,8 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
+    RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
@@ -125,10 +127,13 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    decode_historical_research_draft_member,
     decode_legacy_research_member_input,
     decode_legacy_research_stage_artifact,
     decode_legacy_research_tool_evidence,
+    historical_research_draft_member_json_schema,
     legacy_research_draft_json_schema,
+    research_draft_payload,
     research_evidence_payload,
     research_stage_artifact_payload,
 )
@@ -276,6 +281,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         expected_members: tuple[ResearchMemberInput, ...] = (),
         fail: bool = False,
         legacy: bool = False,
+        historical: bool = False,
     ) -> None:
         self._items = items
         self._runtime = runtime
@@ -283,6 +289,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
         self._expected_members = expected_members
         self._fail = fail
         self._legacy = legacy
+        self._historical = historical
         self._failure_code: str | None = None
 
     @property
@@ -356,7 +363,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
             if "stage_artifact" in previous_payload:
                 previous_artifact = (
                     decode_legacy_research_stage_artifact(previous_payload["stage_artifact"])
-                    if self._legacy
+                    if self._legacy or self._historical
                     else ResearchStageArtifact.model_validate(previous_payload["stage_artifact"])
                 )
                 security_ids.extend(previous_artifact.security_ids)
@@ -414,7 +421,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 "input_item_ids": input_item_ids,
                 "stage_artifact": research_stage_artifact_payload(
                     stage_artifact,
-                    legacy=self._legacy,
+                    legacy=self._legacy or self._historical,
                 ),
                 "source_items": tuple(
                     item.item.model_dump(mode="json") for item in previous.output_items
@@ -572,6 +579,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         command: ResearchCommand | None = None,
         member: ResearchMemberInput | None = None,
         legacy: bool = False,
+        historical: bool = False,
     ) -> None:
         capabilities = ModelCapabilities(
             tool_calling=ToolCallingMode.NATIVE,
@@ -587,6 +595,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
         self._command = command
         self._member = member
         self._legacy = legacy
+        self._historical = historical
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.call_count += 1
@@ -622,7 +631,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
             try:
                 candidate = (
                     decode_legacy_research_stage_artifact(payload["stage_artifact"])
-                    if self._legacy
+                    if self._legacy or self._historical
                     else ResearchStageArtifact.model_validate(payload["stage_artifact"])
                 )
             except (KeyError, TypeError, ValueError) as error:
@@ -664,6 +673,7 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 draft_artifact=draft_artifact,
                 member=self._member,
                 legacy=self._legacy,
+                historical=self._historical,
             )
         )
 
@@ -810,6 +820,7 @@ def _research_definition(
     run_id: str | None = None,
     member: ResearchMemberInput | None = None,
     context_items: tuple[ContextItem, ...] | None = None,
+    historical: bool = False,
 ) -> AgentDefinition:
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
@@ -819,11 +830,14 @@ def _research_definition(
         command=command,
         member=member,
         legacy=False,
+        historical=historical,
     )
     expected_members = (member,) if member is not None else command.members
     return AgentDefinition.for_adapter(
         definition_id=RESEARCH_DEFINITION_ID,
-        version=RESEARCH_DEFINITION_VERSION,
+        version=(
+            RESEARCH_PRIOR_DEFINITION_VERSION if historical else RESEARCH_DEFINITION_VERSION
+        ),
         instructions=RESEARCH_DEFINITION_INSTRUCTIONS,
         model_adapter=adapter,
         context_provider=_FrozenResearchContextProvider(
@@ -833,12 +847,21 @@ def _research_definition(
             expected_members=expected_members,
             fail=command.failure_mode == "DATA",
             legacy=False,
+            historical=historical,
         ),
         tools=(_read_announcement_tool(command.knowledge_cutoff),),
         output_contract=OutputContract(
             contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
-            version=RESEARCH_OUTPUT_CONTRACT_VERSION,
-            schema=ResearchDraftMember.model_json_schema(),
+            version=(
+                RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+                if historical
+                else RESEARCH_OUTPUT_CONTRACT_VERSION
+            ),
+            schema=(
+                historical_research_draft_member_json_schema()
+                if historical
+                else ResearchDraftMember.model_json_schema()
+            ),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
         context_plan=_research_context_plan(),
@@ -981,6 +1004,7 @@ def _research_model_response(
     draft_artifact: ResearchStageArtifact | None = None,
     member: ResearchMemberInput | None = None,
     legacy: bool = False,
+    historical: bool = False,
 ) -> str:
     draft_summary = (
         draft_artifact.summary
@@ -1027,7 +1051,7 @@ def _research_model_response(
             "bear_case": bear_case,
             "knowledge_cutoff": source.knowledge_cutoff.isoformat(),
         }
-        if not legacy:
+        if not legacy and not historical:
             payload.update(
                 {
                     "catalysts": catalysts,
@@ -1086,6 +1110,7 @@ async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: Runti
                 run_id=run_id,
                 member=member,
                 context_items=member_context_items,
+                historical=_is_historical_research_case(case),
             )
             _assert_existing_run_matches_definition_input(
                 run,
@@ -1127,6 +1152,30 @@ async def find_unmapped_legacy_frozen_decision_case(
         candidates[run.run_id] = legacy_case
     if len(candidates) > 1:
         raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
+    if case.research is not None and not _is_legacy_research_case(case):
+        expected_member_run_ids = {
+            _research_member_run_id(case, index, member)
+            for index, member in enumerate(case.research.members)
+        }
+        member_runs = [
+            await runtime.run_store.get_run(run_id) for run_id in expected_member_run_ids
+        ]
+        if all(run is not None for run in member_runs):
+            try:
+                uri = runtime.m_agent_run_store_path.resolve().as_uri() + "?mode=ro"
+                with closing(sqlite3.connect(uri, uri=True)) as connection:
+                    research_run_ids = {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT run_id FROM runs WHERE definition_id = ?",
+                            (case.agent_definition.definition_id,),
+                        )
+                    }
+            except sqlite3.Error as error:
+                raise ValueError("durable framework inventory cannot be verified") from error
+            if research_run_ids == expected_member_run_ids:
+                await validate_frozen_recovery_case(case, runtime)
+                return case
     # v0.5.0 has no Run inventory API. Read metadata only to veto unsafe creation;
     # never adopt a Run or reconstruct its frozen provenance from this inventory.
     try:
@@ -1398,6 +1447,7 @@ async def execute_research_run(
             clock=clock,
         )
 
+    historical = _is_historical_research_case(case)
     context_items = _research_context_items(command)
     member_results: list[ResearchMemberRunResult] = []
     member_drafts: list[ResearchDraftMember] = []
@@ -1420,12 +1470,15 @@ async def execute_research_run(
             run_id=run_id,
             member=member,
             context_items=member_context_items,
+            historical=historical,
         )
         _assert_research_registered_capabilities(case, research_definition)
         existing_run = await runtime.run_store.get_run(run_id)
         all_runs_existed = all_runs_existed and existing_run is not None
         member_input = _research_member_input_payload(case, member)
         allow_create = (
+            not historical
+            and
             case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
             and (
                 case.recovery_framework_run_id is None
@@ -1471,7 +1524,11 @@ async def execute_research_run(
         if result.status != "SUCCEEDED" or result.output is None:
             continue
         try:
-            member_drafts.append(ResearchDraftMember.model_validate_json(result.output))
+            member_drafts.append(
+                decode_historical_research_draft_member(json.loads(result.output))
+                if historical
+                else ResearchDraftMember.model_validate_json(result.output)
+            )
         except ValueError:
             member_results[-1] = replace(
                 member_results[-1],
@@ -1561,7 +1618,12 @@ async def execute_research_run(
     return FrameworkRunResult(
         run_id=case.framework_run_id,
         status="SUCCEEDED",
-        output=draft.model_dump_json(),
+        output=json.dumps(
+            research_draft_payload(draft, historical=historical),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
         run_existed_before=all_runs_existed,
         research_member_runs=member_run_result,
         transitions=tuple(primary_transitions),
@@ -1631,6 +1693,7 @@ async def execute_research_decision_case(
     return await execute_research_risk_journey(
         case,
         legacy=_is_legacy_research_case(case),
+        historical=_is_historical_research_case(case),
         execute_research=lambda: execute_research_run(
             case,
             runtime,
@@ -1947,11 +2010,19 @@ def _is_legacy_research_case(case: FrozenDecisionCase) -> bool:
     )
 
 
+def _is_historical_research_case(case: FrozenDecisionCase) -> bool:
+    return (
+        case.research is not None
+        and case.version_bundle.agent_definition_version == RESEARCH_PRIOR_DEFINITION_VERSION
+        and case.version_bundle.output_contract_version == RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    )
+
+
 def _research_definition_for_case(case: FrozenDecisionCase) -> AgentDefinition:
     """Rebuild the exact research Definition family named by a frozen case."""
     if _is_legacy_research_case(case):
         return _legacy_research_definition(case)
-    return _research_definition(case)
+    return _research_definition(case, historical=_is_historical_research_case(case))
 
 
 def _assert_registered_capabilities(case: FrozenDecisionCase, definition: AgentDefinition) -> None:
@@ -2051,14 +2122,19 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
     definition_version = definition_version_for_case_contract(bundle.case_contract_version)
     if case.research is not None:
         legacy = _is_legacy_research_case(case)
+        historical = _is_historical_research_case(case)
         expected_definition_version = (
             RESEARCH_LEGACY_DEFINITION_VERSION if legacy else RESEARCH_DEFINITION_VERSION
         )
+        if historical:
+            expected_definition_version = RESEARCH_PRIOR_DEFINITION_VERSION
         expected_output_contract_version = (
             RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
             if legacy
             else RESEARCH_OUTPUT_CONTRACT_VERSION
         )
+        if historical:
+            expected_output_contract_version = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
         expected_routing_policy_version = (
             RESEARCH_LEGACY_ROUTING_POLICY_VERSION
             if legacy
@@ -2072,7 +2148,11 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         expected_output_schema = (
             legacy_research_draft_json_schema()
             if legacy
-            else ResearchDraftMember.model_json_schema()
+            else (
+                historical_research_draft_member_json_schema()
+                if historical
+                else ResearchDraftMember.model_json_schema()
+            )
         )
         if (
             not supports_case_host_contract(

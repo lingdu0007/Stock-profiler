@@ -79,6 +79,8 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
+    RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
@@ -103,6 +105,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     calculate_structured_signals,
+    decode_historical_research_framework_output,
     decode_legacy_research_framework_output,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
@@ -1172,6 +1175,214 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert (
         execution.report.result.research.handoff.research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
+    )
+
+
+def test_historical_current_member_research_runs_are_recovered_without_rebinding(
+    migrated_settings: Settings,
+) -> None:
+    current_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = current_case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["input"]["research"] = research_payload
+    payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["agent_definition"]["output_contract"]["version"] = (
+        RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    )
+    historical_output_schema = ResearchDraftMember.model_json_schema()
+    for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+        historical_output_schema["properties"].pop(field_name, None)
+    historical_output_schema["required"] = [
+        "security_id",
+        "research_id",
+        "evidence_refs",
+        "thesis",
+        "bull_case",
+        "bear_case",
+        "knowledge_cutoff",
+    ]
+    payload["agent_definition"]["output_contract"]["json_schema"] = historical_output_schema
+    payload["version_bundle"]["agent_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["version_bundle"]["output_contract_version"] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    for member in payload["expected_external_result"]["research"]["members"]:
+        for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+            member.pop(field_name, None)
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_definition_version"
+    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_output_contract_version"
+    ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    original_historical_input = json.dumps(
+        payload["input"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    historical_case = FrozenDecisionCase.model_validate(payload)
+    runtime = initialize_runtime_storage(migrated_settings)
+    with pytest.raises(
+        MappedDurableRunMissingError,
+        match="mapped (?:research member|auxiliary) M-Agent Run",
+    ):
+        asyncio.run(frozen_decision_case.execute_research_run(historical_case, runtime))
+
+    command = historical_case.research
+    assert command is not None
+    context_items = frozen_decision_case._research_context_items(command)
+    for index, member in enumerate(command.members):
+        run_id = frozen_decision_case._research_member_run_id(historical_case, index, member)
+        member_context_items = tuple(
+            item for item in context_items if item.item_id == f"required-facts:{member.security_id}"
+        )
+        definition = frozen_decision_case._research_definition(
+            historical_case,
+            runtime=runtime,
+            run_id=run_id,
+            member=member,
+            context_items=member_context_items,
+            historical=True,
+        )
+        created = asyncio.run(
+            frozen_decision_case._execute_registered_run(
+                runtime=runtime,
+                run_id=run_id,
+                definition=definition,
+                input_payload=frozen_decision_case._research_member_input_payload(
+                    historical_case,
+                    member,
+                ),
+                case=None,
+                record_transition=None,
+                clock=None,
+            )
+        )
+        assert created.status == "SUCCEEDED"
+
+    stored_member_run = asyncio.run(
+        runtime.run_store.get_run(
+            frozen_decision_case._research_member_run_id(
+                historical_case,
+                0,
+                command.members[0],
+            )
+        )
+    )
+    assert stored_member_run is not None
+    assert stored_member_run.input is not None
+    assert json.loads(stored_member_run.input)["case_input"] == historical_case.input
+    assert stored_member_run.input == frozen_decision_case._research_member_input_payload(
+        historical_case,
+        command.members[0],
+    )
+    historical_stage_artifacts = [
+        json.loads(output_item.item.content)["stage_artifact"]
+        for checkpoint in asyncio.run(
+            runtime.run_store.get_checkpoints(stored_member_run.run_id)
+        )
+        if checkpoint.step_type is StepType.CONTEXT
+        if (stage_result := parse_stage_result(checkpoint.output)) is not None
+        for output_item in stage_result.output_items
+        if "stage_artifact" in json.loads(output_item.item.content)
+    ]
+    assert historical_stage_artifacts
+    assert all(
+        field_name not in artifact
+        for artifact in historical_stage_artifacts
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
+
+    recovered = asyncio.run(frozen_decision_case.execute_research_run(historical_case, runtime))
+
+    assert recovered.status == "SUCCEEDED"
+    assert recovered.run_id == historical_case.framework_run_id
+    assert recovered.run_existed_before is True
+    assert len(recovered.research_member_runs) == 10
+    assert all(member.status == "SUCCEEDED" for member in recovered.research_member_runs)
+    assert recovered.output is not None
+    recovered_payload = json.loads(recovered.output)
+    assert all(
+        field_name not in member
+        for member in recovered_payload["members"]
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
+    assert (
+        frozen_decision_case.frozen_capability_inventory(historical_case).definition_version
+        == RESEARCH_PRIOR_DEFINITION_VERSION
+    )
+
+    async def reserve_risk_run(_: str) -> bool:
+        return True
+
+    journey = asyncio.run(
+        frozen_decision_case.execute_research_decision_case(
+            historical_case,
+            runtime,
+            record_auxiliary_run_reservation=reserve_risk_run,
+        )
+    )
+    assert journey.status == "SUCCEEDED"
+    assert journey.output is not None
+    historical_envelope = decode_historical_research_framework_output(json.loads(journey.output))
+    assert historical_envelope.risk_run_id is not None
+    assert len(historical_envelope.research_run_ids) == 10
+    risk_run = asyncio.run(runtime.run_store.get_run(historical_envelope.risk_run_id))
+    assert risk_run is not None
+    assert risk_run.input is not None
+    historical_risk_input = json.loads(risk_run.input)
+    assert len(historical_risk_input["research_run_ids"]) == 10
+    assert all(
+        field_name not in member
+        for member in historical_risk_input["draft"]["members"]
+        for field_name in ("catalysts", "falsification_conditions", "unknowns")
+    )
+    assert historical_risk_input["member_handoffs"][0]["research_run_id"] is not None
+    assert historical_risk_input["member_handoffs"][0]["evidence"][0][
+        "evidence_contract_version"
+    ] == "2.0.0"
+    assert "effective_at" in historical_risk_input["member_handoffs"][0]["evidence"][0]
+    historical_outcome = freeze_research(
+        command,
+        historical_envelope,
+        historical=True,
+    )
+    assert (
+        historical_outcome.handoff.research_definition_version
+        == RESEARCH_PRIOR_DEFINITION_VERSION
+    )
+    assert (
+        historical_outcome.handoff.research_output_contract_version
+        == RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    )
+    historical_case = historical_case.model_copy(
+        update={
+            "expected_external_result": historical_case.expected_external_result.model_copy(
+                update={"research": historical_outcome}
+            )
+        }
+    )
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        historical_case.model_dump(mode="json"),
+    )
+    assert execution.report is not None
+    assert execution.report.result.research is not None
+    assert (
+        execution.report.result.research.handoff.research_definition_version
+        == RESEARCH_PRIOR_DEFINITION_VERSION
+    )
+    assert stored_member_run.input == frozen_decision_case._research_member_input_payload(
+        historical_case,
+        command.members[0],
+    )
+    assert original_historical_input == json.dumps(
+        historical_case.input,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
     )
 
 

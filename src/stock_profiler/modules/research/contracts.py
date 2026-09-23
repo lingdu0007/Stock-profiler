@@ -27,13 +27,15 @@ from pydantic import (
 RESEARCH_CONTRACT_VERSION = "1.0.0"
 RESEARCH_DEFINITION_ID = "synthetic-monthly-research"
 RESEARCH_LEGACY_DEFINITION_VERSION = "2.0.0"
-RESEARCH_DEFINITION_VERSION = "3.0.0"
+RESEARCH_PRIOR_DEFINITION_VERSION = "3.0.0"
+RESEARCH_DEFINITION_VERSION = "4.0.0"
 RESEARCH_MODEL_ADAPTER_ID = "m-agent-deterministic-research-adapter"
 RESEARCH_LEGACY_ROUTING_POLICY_VERSION = "monthly-research-risk-veto-v1"
 RESEARCH_ROUTING_POLICY_VERSION = "monthly-research-risk-veto-v2"
 RESEARCH_OUTPUT_CONTRACT_ID = "synthetic-monthly-research-draft"
 RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION = "1.0.0"
-RESEARCH_OUTPUT_CONTRACT_VERSION = "2.0.0"
+RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION = "2.0.0"
+RESEARCH_OUTPUT_CONTRACT_VERSION = "3.0.0"
 RISK_DEFINITION_ID = "synthetic-independent-risk-veto"
 RISK_DEFINITION_VERSION = "1.0.0"
 RISK_MODEL_ADAPTER_ID = "m-agent-deterministic-risk-adapter"
@@ -49,6 +51,11 @@ _LEGACY_RESEARCH_EVIDENCE_DECODING: ContextVar[bool] = ContextVar(
     "legacy_research_evidence_decoding",
     default=False,
 )
+_RESEARCH_DEFINITION_VERSION_OVERRIDE: ContextVar[str | None] = ContextVar(
+    "research_definition_version_override",
+    default=None,
+)
+ResearchContractMode = Literal["current", "historical", "legacy"]
 ResearchDataType = Literal[
     "DAILY_MARKET",
     "MONEY_FLOW",
@@ -68,6 +75,7 @@ RAW_SCORE_TRAINING_WINDOW_POLICY: Literal["EXPANDING_60_TO_119_ROLLING_120"] = (
     "EXPANDING_60_TO_119_ROLLING_120"
 )
 RAW_SCORE_LABEL_HORIZON_MONTHS = 6
+RAW_SCORE_TRAINING_START_MONTH = "2036-12"
 RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
@@ -132,6 +140,52 @@ RAW_SCORE_REVERSED_FEATURE_IDS = frozenset(
         "max_drawdown_60d",
     }
 )
+
+
+def research_contract_mode_for_versions(
+    definition_version: str,
+    output_contract_version: str,
+) -> ResearchContractMode:
+    """Select one explicit research compatibility boundary from persisted versions."""
+    pair = (definition_version, output_contract_version)
+    if pair == (
+        RESEARCH_DEFINITION_VERSION,
+        RESEARCH_OUTPUT_CONTRACT_VERSION,
+    ):
+        return "current"
+    if pair == (
+        RESEARCH_PRIOR_DEFINITION_VERSION,
+        RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
+    ):
+        return "historical"
+    if pair == (
+        RESEARCH_LEGACY_DEFINITION_VERSION,
+        RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    ):
+        return "legacy"
+    raise ValueError("unsupported research Definition and output contract version pair")
+
+
+def is_legacy_research_version_pair(
+    definition_version: str,
+    output_contract_version: str,
+) -> bool:
+    """Return whether a persisted research pair uses the pre-member-Run contract."""
+    return (
+        research_contract_mode_for_versions(definition_version, output_contract_version)
+        == "legacy"
+    )
+
+
+def is_historical_research_version_pair(
+    definition_version: str,
+    output_contract_version: str,
+) -> bool:
+    """Return whether a persisted research pair uses the prior current contract."""
+    return (
+        research_contract_mode_for_versions(definition_version, output_contract_version)
+        == "historical"
+    )
 
 
 def _raw_score_month_index(month: str) -> int:
@@ -211,6 +265,7 @@ class RawScoreTrainingCohort(ResearchContract):
             or self.research_definition_version
             not in {
                 RESEARCH_LEGACY_DEFINITION_VERSION,
+                RESEARCH_PRIOR_DEFINITION_VERSION,
                 RESEARCH_DEFINITION_VERSION,
             }
         ):
@@ -471,6 +526,19 @@ def _raw_score_label_available_at(evaluation_entry_at: datetime) -> datetime:
     return candidate
 
 
+def _raw_score_mature_training_months(cutoff_at: datetime) -> tuple[str, ...]:
+    """Return every fixed-inception month whose terminal label is mature by the cutoff."""
+    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    mature_months: list[str] = []
+    for month in _training_month_sequence(start_year, start_month, 1200):
+        selection_cutoff_at = _raw_score_month_end(month)
+        evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
+        if _raw_score_label_available_at(evaluation_entry_at) > cutoff_at:
+            break
+        mature_months.append(month)
+    return tuple(mature_months)
+
+
 def _frozen_raw_score_training_records(
     training_months: tuple[str, ...],
 ) -> tuple[tuple[RawScoreTrainingCohort, ...], tuple[RawScoreTrainingRecord, ...]]:
@@ -521,7 +589,8 @@ def _frozen_raw_score_training_records(
 
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
-    training_months = _training_month_sequence(2036, 12, 60)
+    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    training_months = _training_month_sequence(start_year, start_month, 60)
     training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
     label_watermark_at = max(record.label_available_at for record in training_records)
     return RawScoreModelSnapshot(
@@ -532,7 +601,7 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_window_policy=RAW_SCORE_TRAINING_WINDOW_POLICY,
         training_window_kind="EXPANDING",
         training_window_month_count=60,
-        training_window_start_month="2036-12",
+        training_window_start_month=RAW_SCORE_TRAINING_START_MONTH,
         training_window_end_month="2041-11",
         training_months=training_months,
         label_watermark_month=label_watermark_at.strftime("%Y-%m"),
@@ -1070,6 +1139,7 @@ class ResearchCommand(ResearchContract):
     risk_scenario: Literal["ACCEPT", "REJECT"] = "ACCEPT"
     risk_rejected_member_ids: tuple[str, ...] = ()
     _legacy_decoded: bool = PrivateAttr(default=False)
+    _historical_decoded: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def validate_fixed_ten_contract(self) -> ResearchCommand:
@@ -1107,6 +1177,24 @@ class ResearchCommand(ResearchContract):
             or self.raw_score_model.label_watermark_at > self.cutoff_at
         ):
             raise ValueError("raw-score training window must not cross research cutoff")
+        mature_months = _raw_score_mature_training_months(self.cutoff_at)
+        expected_training_months = (
+            mature_months[-120:] if len(mature_months) >= 120 else mature_months
+        )
+        expected_window_kind = "ROLLING_120" if len(mature_months) >= 120 else "EXPANDING"
+        if self.raw_score_model.has_sufficient_training_evidence:
+            if not expected_training_months:
+                raise ValueError("raw-score mature training window does not reach the cutoff")
+            if (
+                self.raw_score_model.training_months != expected_training_months
+                or self.raw_score_model.training_window_kind != expected_window_kind
+                or self.raw_score_model.training_window_month_count != len(expected_training_months)
+                or self.raw_score_model.training_window_start_month
+                != expected_training_months[0]
+            ):
+                raise ValueError("raw-score mature training window does not match the cutoff")
+            if self.raw_score_model.training_window_end_month != expected_training_months[-1]:
+                raise ValueError("raw-score mature training window does not match the cutoff")
         evidence_ids = [
             evidence.evidence_id for member in self.members for evidence in member.evidence
         ]
@@ -1127,10 +1215,20 @@ class ResearchCommand(ResearchContract):
             for member in self.members
             for evidence in member.evidence
         }
+        version_override = _RESEARCH_DEFINITION_VERSION_OVERRIDE.get()
         if evidence_contract_versions == {RESEARCH_EVIDENCE_CONTRACT_VERSION}:
-            expected_definition_version = RESEARCH_DEFINITION_VERSION
+            expected_definition_version = (
+                version_override
+                or (
+                    RESEARCH_PRIOR_DEFINITION_VERSION
+                    if self._historical_decoded
+                    else RESEARCH_DEFINITION_VERSION
+                )
+            )
         elif evidence_contract_versions == {RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION}:
-            expected_definition_version = RESEARCH_LEGACY_DEFINITION_VERSION
+            expected_definition_version = (
+                version_override or RESEARCH_LEGACY_DEFINITION_VERSION
+            )
         else:
             raise ValueError("research evidence contracts must use one Definition version")
         if any(
@@ -1166,7 +1264,10 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
                 "evidence_contract_version",
                 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
             )
-    token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    evidence_token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
+        RESEARCH_LEGACY_DEFINITION_VERSION
+    )
     try:
         command = ResearchCommand.model_validate(payload)
         object.__setattr__(command, "_legacy_decoded", True)
@@ -1176,7 +1277,24 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
                 object.__setattr__(evidence, "_legacy_decoded", True)
         return command
     finally:
-        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+        _RESEARCH_DEFINITION_VERSION_OVERRIDE.reset(version_token)
+        _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(evidence_token)
+
+
+def decode_historical_research_command(value: object) -> ResearchCommand:
+    """Decode the prior current research command at an explicit recovery boundary."""
+    if not isinstance(value, dict):
+        raise ValueError("historical research command must be an object")
+    payload = deepcopy(value)
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
+        RESEARCH_PRIOR_DEFINITION_VERSION
+    )
+    try:
+        command = ResearchCommand.model_validate(payload)
+        object.__setattr__(command, "_historical_decoded", True)
+        return command
+    finally:
+        _RESEARCH_DEFINITION_VERSION_OVERRIDE.reset(version_token)
 
 
 def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
@@ -1312,6 +1430,23 @@ def legacy_research_draft_json_schema() -> dict[str, object]:
     return schema
 
 
+def historical_research_draft_member_json_schema() -> dict[str, object]:
+    """Return the prior current per-member schema without the later debate fields."""
+    schema = deepcopy(ResearchDraftMember.model_json_schema())
+    for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            properties.pop(field_name, None)
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [
+            field_name
+            for field_name in required
+            if field_name not in {"catalysts", "falsification_conditions", "unknowns"}
+        ]
+    return schema
+
+
 def decode_legacy_research_draft(value: object) -> ResearchDraft:
     """Decode the historical draft into the current typed draft at a compatibility boundary."""
     if not isinstance(value, dict):
@@ -1337,13 +1472,38 @@ def decode_legacy_research_draft(value: object) -> ResearchDraft:
     )
 
 
+def decode_historical_research_draft(value: object) -> ResearchDraft:
+    """Decode the prior current draft while preserving its current evidence boundary."""
+    return decode_legacy_research_draft(value)
+
+
+def decode_historical_research_draft_member(value: object) -> ResearchDraftMember:
+    """Decode one prior current member output and mark newly added fields as unavailable."""
+    if not isinstance(value, dict):
+        raise ValueError("historical research draft member must be an object")
+    member = LegacyResearchDraftMember.model_validate(value)
+    return ResearchDraftMember(
+        security_id=member.security_id,
+        research_id=member.research_id,
+        evidence_refs=member.evidence_refs,
+        thesis=member.thesis,
+        bull_case=member.bull_case,
+        bear_case=member.bear_case,
+        catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
+        falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
+        unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
+        knowledge_cutoff=member.knowledge_cutoff,
+    )
+
+
 def research_draft_payload(
     draft: ResearchDraft,
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> dict[str, object]:
     """Serialize draft content using the exact current or historical field set."""
-    if not legacy:
+    if not legacy and not historical:
         return draft.model_dump(mode="json")
     return LegacyResearchDraft(
         contract_version=draft.contract_version,
@@ -1521,6 +1681,11 @@ def decode_legacy_research_framework_output(value: object) -> ResearchFrameworkO
         return output
     finally:
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
+def decode_historical_research_framework_output(value: object) -> ResearchFrameworkOutput:
+    """Decode the prior current envelope without downgrading current evidence clocks."""
+    return decode_legacy_research_framework_output(value)
 
 
 @dataclass(frozen=True)
@@ -1735,6 +1900,11 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
 
 
+def decode_historical_research_outcome(value: object) -> ResearchOutcome:
+    """Decode the prior current outcome while retaining current evidence clocks."""
+    return decode_legacy_research_outcome(value)
+
+
 def _transform_raw_score_feature(
     value: Decimal,
     transform: RawScoreFeatureTransform,
@@ -1914,11 +2084,16 @@ def handoff_fingerprint(
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
     member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
     legacy: bool = False,
+    historical: bool = False,
 ) -> str:
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
         "command": _research_command_fingerprint_payload(command, legacy=legacy),
-        "draft": research_draft_payload(draft, legacy=legacy),
+        "draft": research_draft_payload(
+            draft,
+            legacy=legacy,
+            historical=historical,
+        ),
         "raw_scores": (
             tuple(score.model_dump(mode="json") for score in raw_scores)
             if raw_scores is not None
@@ -1946,13 +2121,18 @@ def risk_run_id_for(
     tool_evidence: tuple[ResearchToolEvidence, ...] = (),
     member_handoffs: tuple[ResearchMemberHandoff, ...] = (),
     legacy: bool = False,
+    historical: bool = False,
 ) -> str:
     """Derive the independent risk Run identity from the frozen research Run."""
     digest = sha256(
         json.dumps(
             {
                 "research_run_id": research_run_id,
-                "draft": research_draft_payload(draft, legacy=legacy),
+                "draft": research_draft_payload(
+                    draft,
+                    legacy=legacy,
+                    historical=historical,
+                ),
                 "raw_scores": (
                     tuple(score.model_dump(mode="json") for score in raw_scores)
                     if raw_scores is not None

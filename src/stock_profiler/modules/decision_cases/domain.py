@@ -63,10 +63,16 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_LEGACY_DEFINITION_VERSION,
     RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
+    RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
+    ResearchContractMode,
     ResearchOutcome,
+    decode_historical_research_command,
+    decode_historical_research_outcome,
     decode_legacy_research_command,
     decode_legacy_research_outcome,
+    research_contract_mode_for_versions,
 )
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
@@ -470,6 +476,54 @@ def definition_version_for_case_contract(case_version: str) -> str:
     return FROZEN_AGENT_DEFINITION_VERSION
 
 
+def research_contract_mode_for_case(
+    case: FrozenDecisionCase | dict[str, Any],
+) -> ResearchContractMode | None:
+    """Return the explicit persisted research compatibility mode, if one is declared."""
+    version_bundle = (
+        case.version_bundle.model_dump(mode="python")
+        if isinstance(case, FrozenDecisionCase)
+        else case.get("version_bundle")
+    )
+    if not isinstance(version_bundle, dict):
+        return None
+    definition_version = version_bundle.get("agent_definition_version")
+    output_contract_version = version_bundle.get("output_contract_version")
+    if not isinstance(definition_version, str) or not isinstance(output_contract_version, str):
+        return None
+    try:
+        return research_contract_mode_for_versions(
+            definition_version,
+            output_contract_version,
+        )
+    except ValueError:
+        return None
+
+
+def _decode_research_command_for_mode(
+    value: object,
+    mode: ResearchContractMode,
+) -> ResearchCommand:
+    """Decode a research command only through the versioned historical boundary."""
+    if mode == "legacy":
+        return decode_legacy_research_command(value)
+    if mode == "historical":
+        return decode_historical_research_command(value)
+    return ResearchCommand.model_validate(value)
+
+
+def _decode_research_outcome_for_mode(
+    value: object,
+    mode: ResearchContractMode,
+) -> ResearchOutcome:
+    """Decode a research outcome only through the versioned historical boundary."""
+    if mode == "legacy":
+        return decode_legacy_research_outcome(value)
+    if mode == "historical":
+        return decode_historical_research_outcome(value)
+    return ResearchOutcome.model_validate(value)
+
+
 class FormalReport(FrozenContract):
     """Read-only delivery projection derived from one committed host event."""
 
@@ -500,20 +554,18 @@ class FormalReport(FrozenContract):
         """Decode historical research evidence before projecting a persisted report."""
         if not isinstance(value, dict):
             return value
-        version_bundle = value.get("version_bundle")
-        if not isinstance(version_bundle, dict) or (
-            version_bundle.get("agent_definition_version")
-            != RESEARCH_LEGACY_DEFINITION_VERSION
-            or version_bundle.get("output_contract_version")
-            != RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-        ):
+        mode = research_contract_mode_for_case(value)
+        if mode not in {"legacy", "historical"}:
             return value
         result = value.get("result")
         if not isinstance(result, dict) or not isinstance(result.get("research"), dict):
             return value
         payload = dict(value)
         normalized_result = dict(result)
-        normalized_result["research"] = decode_legacy_research_outcome(result["research"])
+        normalized_result["research"] = _decode_research_outcome_for_mode(
+            result["research"],
+            mode,
+        )
         payload["result"] = normalized_result
         return payload
 
@@ -738,33 +790,24 @@ class FrozenDecisionCase(FrozenContract):
         """Make the historical case boundary explicit before strict evidence decoding."""
         if not isinstance(value, dict):
             return value
-        version_bundle = value.get("version_bundle")
-        if not isinstance(version_bundle, dict) or (
-            version_bundle.get("agent_definition_version")
-            != RESEARCH_LEGACY_DEFINITION_VERSION
-            or version_bundle.get("output_contract_version")
-            != RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-        ):
+        mode = research_contract_mode_for_case(value)
+        if mode not in {"legacy", "historical"}:
             return value
 
         payload = dict(value)
         research_payload = payload.get("research")
         if isinstance(research_payload, dict):
-            payload["research"] = decode_legacy_research_command(research_payload)
+            payload["research"] = _decode_research_command_for_mode(research_payload, mode)
         expected_result = payload.get("expected_external_result")
         if (
             isinstance(expected_result, dict)
-            and isinstance(version_bundle, dict)
-            and version_bundle.get("agent_definition_version")
-            == RESEARCH_LEGACY_DEFINITION_VERSION
-            and version_bundle.get("output_contract_version")
-            == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
         ):
             expected_research = expected_result.get("research")
             if isinstance(expected_research, dict):
                 normalized_expected_result = dict(expected_result)
-                normalized_expected_result["research"] = decode_legacy_research_outcome(
-                    expected_research
+                normalized_expected_result["research"] = _decode_research_outcome_for_mode(
+                    expected_research,
+                    mode,
                 )
                 payload["expected_external_result"] = normalized_expected_result
         return payload
@@ -794,19 +837,13 @@ class FrozenDecisionCase(FrozenContract):
         if self.research is not None:
             research_input = self.input.get("research")
             research_input_matches = research_input == self.research.model_dump(mode="json")
+            research_mode = research_contract_mode_for_case(self) or "current"
             if not research_input_matches and isinstance(research_input, dict):
                 try:
-                    research_input_matches = (
-                        (
-                            decode_legacy_research_command(research_input)
-                            if self.version_bundle.agent_definition_version
-                            == RESEARCH_LEGACY_DEFINITION_VERSION
-                            and self.version_bundle.output_contract_version
-                            == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-                            else ResearchCommand.model_validate(research_input)
-                        )
-                        == self.research
-                    )
+                    research_input_matches = _decode_research_command_for_mode(
+                        research_input,
+                        research_mode,
+                    ) == self.research
                 except ValueError:
                     research_input_matches = False
             if (
@@ -988,6 +1025,7 @@ class FrozenDecisionCase(FrozenContract):
         allowed_definition_versions = (
             {
                 RESEARCH_LEGACY_DEFINITION_VERSION,
+                RESEARCH_PRIOR_DEFINITION_VERSION,
                 RESEARCH_DEFINITION_VERSION,
             }
             if research_governed
@@ -996,6 +1034,7 @@ class FrozenDecisionCase(FrozenContract):
         allowed_output_contract_versions = (
             {
                 RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+                RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
                 RESEARCH_OUTPUT_CONTRACT_VERSION,
             }
             if research_governed
@@ -1060,12 +1099,9 @@ class FrozenDecisionCase(FrozenContract):
             # Research handoffs contain the Run IDs that are derived from this
             # identity; exclude the expected host result to avoid a circular ID.
             payload.pop("expected_external_result", None)
-            if (
-                self.version_bundle.agent_definition_version
-                == RESEARCH_LEGACY_DEFINITION_VERSION
-                and self.version_bundle.output_contract_version
-                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-                and isinstance(self.input.get("research"), dict)
+            if research_contract_mode_for_case(self) != "current" and isinstance(
+                self.input.get("research"),
+                dict,
             ):
                 payload["research"] = self.input["research"]
         return _fingerprint(payload)
@@ -1424,11 +1460,9 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
             or has_complete_research_synthetic_input(
                 case.input,
                 legacy=(
-                    case.version_bundle.agent_definition_version
-                    == RESEARCH_LEGACY_DEFINITION_VERSION
-                    and case.version_bundle.output_contract_version
-                    == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                    research_contract_mode_for_case(case) == "legacy"
                 ),
+                historical=research_contract_mode_for_case(case) == "historical",
             )
         )
     )
@@ -1605,17 +1639,19 @@ def has_complete_research_synthetic_input(
     value: dict[str, Any],
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> bool:
     """Recognize a structurally complete fixed-ten research input."""
     payload = value.get("research")
     if not isinstance(payload, dict):
         return False
     try:
-        (
+        if legacy:
             decode_legacy_research_command(payload)
-            if legacy
-            else ResearchCommand.model_validate(payload)
-        )
+        elif historical:
+            decode_historical_research_command(payload)
+        else:
+            ResearchCommand.model_validate(payload)
     except ValueError:
         return False
     return True
@@ -1625,16 +1661,22 @@ def synthetic_outcome_code_from_input(
     value: dict[str, Any],
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> str | None:
     """Read the explicit synthetic scenario without consulting expected output."""
     if "research" in value:
-        if not has_complete_research_synthetic_input(value, legacy=legacy):
+        if not has_complete_research_synthetic_input(
+            value,
+            legacy=legacy,
+            historical=historical,
+        ):
             return None
-        research = (
-            decode_legacy_research_command(value["research"])
-            if legacy
-            else ResearchCommand.model_validate(value["research"])
-        )
+        if legacy:
+            research = decode_legacy_research_command(value["research"])
+        elif historical:
+            research = decode_historical_research_command(value["research"])
+        else:
+            research = ResearchCommand.model_validate(value["research"])
         if research.failure_mode == "DATA":
             return "RESEARCH_DATA_FAILED"
         if research.failure_mode == "RAW_SCORE":

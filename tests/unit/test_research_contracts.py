@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Context, Decimal, localcontext
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
@@ -11,6 +11,7 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
     RESEARCH_REQUIRED_DATA_TYPES,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
@@ -30,6 +31,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     calculate_structured_signals,
+    decode_historical_research_draft,
     decode_legacy_research_framework_output,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
@@ -286,6 +288,32 @@ def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
         ResearchCommand.model_validate(payload)
 
 
+def test_raw_score_snapshot_must_follow_the_mature_window_for_the_cutoff() -> None:
+    payload = _command().model_dump(mode="json")
+    future_cutoff = datetime(2048, 6, 30, 23, 59, 59, tzinfo=UTC)
+    old_cutoff = "2042-06-30T23:59:59Z"
+    new_cutoff = future_cutoff.isoformat().replace("+00:00", "Z")
+
+    def replace_cutoff(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: replace_cutoff(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace_cutoff(item) for item in value]
+        return new_cutoff if value == old_cutoff else value
+
+    payload = cast(dict[str, object], replace_cutoff(payload))
+    screening = FrozenDualTargetScreening.model_validate(payload["screening"])
+    payload["selection_fingerprint"] = selection_binding_sha256(
+        cast(str, payload["selection_object_id"]),
+        cast(str, payload["selection_event_id"]),
+        future_cutoff,
+        screening,
+    )
+
+    with pytest.raises(ValueError, match="mature training window"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:
     payload = _command().model_dump(mode="json")
     first_record = payload["raw_score_model"]["training_records"][0]
@@ -310,7 +338,7 @@ def test_raw_score_snapshot_rejects_record_outside_frozen_training_cohort() -> N
     ("field", "value"),
     (
         ("research_definition_id", "synthetic-monthly-research-other"),
-        ("research_definition_version", "4.0.0"),
+        ("research_definition_version", "5.0.0"),
     ),
 )
 def test_raw_score_snapshot_requires_compatible_research_definition(
@@ -440,6 +468,42 @@ def test_legacy_framework_output_decodes_the_historical_draft_shape() -> None:
         "HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",
     )
     assert decoded.draft.members[0].unknowns == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+
+
+def test_historical_current_draft_decodes_without_erasing_current_evidence_contract() -> None:
+    command = _command()
+    payload = {
+        "contract_version": "1.0.0",
+        "members": [
+            {
+                "security_id": member.security_id,
+                "research_id": member.research_id,
+                "evidence_refs": [evidence.evidence_id for evidence in member.evidence],
+                "thesis": "The historical current thesis is bounded by frozen evidence.",
+                "bull_case": "The historical current upside case remains conditional.",
+                "bear_case": "The historical current downside case remains explicit.",
+                "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+            }
+            for member in command.members
+        ],
+    }
+
+    decoded = decode_historical_research_draft(payload)
+
+    assert decoded.members[0].catalysts == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+    assert decoded.members[0].falsification_conditions == (
+        "HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",
+    )
+    assert decoded.members[0].unknowns == ("HISTORICAL_CONTRACT_FIELD_NOT_RECORDED",)
+
+
+def test_current_research_command_does_not_accept_the_prior_definition_version() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+
+    with pytest.raises(ValueError, match="match the executing research Definition"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_working_capital_signal_is_normalized_by_average_total_assets() -> None:

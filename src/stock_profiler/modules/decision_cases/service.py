@@ -38,6 +38,7 @@ from stock_profiler.modules.decision_cases.domain import (
     framework_run_status_from_stage,
     host_validation_result,
     is_committable_host_outcome,
+    research_contract_mode_for_case,
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
@@ -69,14 +70,14 @@ from stock_profiler.modules.position_management.service import reconcile as reco
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
-    RESEARCH_LEGACY_DEFINITION_VERSION,
-    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
     ResearchFrameworkOutput,
     ResearchRiskPlan,
     RiskVetoDraft,
+    decode_historical_research_draft,
+    decode_historical_research_framework_output,
     decode_legacy_research_draft,
     decode_legacy_research_framework_output,
     research_draft_payload,
@@ -272,6 +273,7 @@ async def execute_research_risk_journey(
     execute_research: Callable[[], Awaitable[FrameworkRunResult]],
     execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
     legacy: bool = False,
+    historical: bool = False,
 ) -> FrameworkRunResult:
     """Orchestrate typed research handoff and independent risk execution in the host."""
     command = case.research
@@ -288,6 +290,8 @@ async def execute_research_risk_journey(
         draft = (
             decode_legacy_research_draft(json.loads(research_run.output))
             if legacy
+            else decode_historical_research_draft(json.loads(research_run.output))
+            if historical
             else ResearchDraft.model_validate_json(research_run.output)
         )
     except ValueError:
@@ -320,6 +324,7 @@ async def execute_research_risk_journey(
                     tool_evidence=tool_evidence,
                 ),
                 legacy=legacy,
+                historical=historical,
             ),
         )
     try:
@@ -330,6 +335,7 @@ async def execute_research_risk_journey(
             tool_evidence,
             research_run_ids,
             legacy=legacy,
+            historical=historical,
         )
     except RawScoreCalculationError as error:
         return replace(
@@ -345,6 +351,7 @@ async def execute_research_risk_journey(
                     tool_evidence=tool_evidence,
                 ),
                 legacy=legacy,
+                historical=historical,
             ),
             raw_score_error_code=str(error),
         )
@@ -371,6 +378,7 @@ async def execute_research_risk_journey(
                 member_handoffs=risk_plan.member_handoffs,
             ),
             legacy=legacy,
+            historical=historical,
         ),
         risk_run_id=risk_run.run_id,
         risk_run_status=risk_run.status,
@@ -385,14 +393,20 @@ def _research_framework_output_json(
     output: ResearchFrameworkOutput,
     *,
     legacy: bool,
+    historical: bool = False,
 ) -> str:
     """Serialize the framework envelope without expanding a historical contract."""
     payload = output.model_dump(
         mode="json",
         exclude={"research_run_ids"} if legacy else None,
     )
+    if legacy or historical:
+        payload["draft"] = research_draft_payload(
+            output.draft,
+            legacy=legacy,
+            historical=historical,
+        )
     if legacy:
-        payload["draft"] = research_draft_payload(output.draft, legacy=True)
         payload["tool_evidence"] = tuple(
             research_evidence_payload(evidence, legacy=True) for evidence in output.tool_evidence
         )
@@ -761,11 +775,10 @@ def _run_frozen_decision_case(
                                     ),
                                 ),
                                 execute_risk=execute_risk,
-                                legacy=(
-                                    execution_case.version_bundle.agent_definition_version
-                                    == RESEARCH_LEGACY_DEFINITION_VERSION
-                                    and execution_case.version_bundle.output_contract_version
-                                    == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+                                legacy=research_contract_mode_for_case(execution_case) == "legacy",
+                                historical=(
+                                    research_contract_mode_for_case(execution_case)
+                                    == "historical"
                                 ),
                             )
                         )
@@ -1722,15 +1735,13 @@ def _commit_research_framework_result(
                 reasons=("RESEARCH_OUTPUT_MISSING",),
             )
         )
+    research_mode = research_contract_mode_for_case(execution_case) or "current"
     try:
         envelope = (
             decode_legacy_research_framework_output(json.loads(framework.output))
-            if (
-                execution_case.version_bundle.agent_definition_version
-                == RESEARCH_LEGACY_DEFINITION_VERSION
-                and execution_case.version_bundle.output_contract_version
-                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-            )
+            if research_mode == "legacy"
+            else decode_historical_research_framework_output(json.loads(framework.output))
+            if research_mode == "historical"
             else ResearchFrameworkOutput.model_validate_json(framework.output)
         )
     except (ValidationError, json.JSONDecodeError, ValueError):
@@ -1812,12 +1823,8 @@ def _commit_research_framework_result(
         research_outcome = freeze_research(
             command,
             envelope,
-            legacy=(
-                execution_case.version_bundle.agent_definition_version
-                == RESEARCH_LEGACY_DEFINITION_VERSION
-                and execution_case.version_bundle.output_contract_version
-                == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-            ),
+            legacy=research_mode == "legacy",
+            historical=research_mode == "historical",
         )
     except RawScoreCalculationError as error:
         return closed(

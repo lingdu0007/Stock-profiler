@@ -17,6 +17,8 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_MODEL_ADAPTER_ID,
     RESEARCH_OUTPUT_CONTRACT_ID,
     RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
+    RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
     RESEARCH_ROUTING_POLICY_VERSION,
     RESEARCH_SCOPE,
     RISK_DEFINITION_ID,
@@ -60,6 +62,7 @@ def prepare_research_risk_plan(
     tool_evidence: tuple[ResearchToolEvidence, ...],
     research_run_ids: tuple[str, ...] = (),
     legacy: bool = False,
+    historical: bool = False,
 ) -> ResearchRiskPlan:
     """Calculate and bind the immutable inputs consumed by the risk Run."""
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
@@ -77,6 +80,7 @@ def prepare_research_risk_plan(
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
         legacy=legacy,
+        historical=historical,
     )
     risk_run_id = risk_run_id_for(
         research_run_id,
@@ -86,11 +90,16 @@ def prepare_research_risk_plan(
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
         legacy=legacy,
+        historical=historical,
     )
     risk_payload: dict[str, object] = {
         "handoff_fingerprint": fingerprint,
         "research_run_id": research_run_id,
-        "draft": research_draft_payload(draft, legacy=legacy),
+        "draft": research_draft_payload(
+            draft,
+            legacy=legacy,
+            historical=historical,
+        ),
         "raw_scores": tuple(score.model_dump(mode="json") for score in raw_scores),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(
@@ -127,6 +136,7 @@ def freeze_research(
     framework: ResearchFrameworkOutput,
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> ResearchOutcome:
     """Freeze research text, calculate structured z20 scores, and honor risk veto."""
     risk_veto_draft = framework.risk_veto
@@ -147,7 +157,12 @@ def freeze_research(
         command,
         framework.member_handoffs,
     )
-    _validate_draft_against_command(command, framework, legacy=legacy)
+    _validate_draft_against_command(
+        command,
+        framework,
+        legacy=legacy,
+        historical=historical,
+    )
     if risk_veto_draft.disposition == "REJECTED" and not any(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
     ):
@@ -190,7 +205,11 @@ def freeze_research(
         risk_run_id=risk_run_id,
         research_definition_id=RESEARCH_DEFINITION_ID,
         research_definition_version=(
-            RESEARCH_LEGACY_DEFINITION_VERSION if legacy else RESEARCH_DEFINITION_VERSION
+            RESEARCH_LEGACY_DEFINITION_VERSION
+            if legacy
+            else RESEARCH_PRIOR_DEFINITION_VERSION
+            if historical
+            else RESEARCH_DEFINITION_VERSION
         ),
         risk_definition_id=RISK_DEFINITION_ID,
         risk_definition_version=RISK_DEFINITION_VERSION,
@@ -205,6 +224,8 @@ def freeze_research(
         research_output_contract_version=(
             RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
             if legacy
+            else RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+            if historical
             else RESEARCH_OUTPUT_CONTRACT_VERSION
         ),
         risk_output_contract_id=RISK_OUTPUT_CONTRACT_ID,
@@ -238,6 +259,7 @@ def _validate_draft_against_command(
     framework: ResearchFrameworkOutput,
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> None:
     """Reject a draft that loses evidence identity or invents a cohort member."""
     if framework.research_run_id == framework.risk_run_id:
@@ -261,6 +283,7 @@ def _validate_draft_against_command(
         tool_evidence=tool_evidence,
         member_handoffs=member_handoffs,
         legacy=legacy,
+        historical=historical,
     )
     if framework.risk_veto.handoff_fingerprint != expected_fingerprint:
         raise ValueError("risk Run must consume the immutable research handoff")
