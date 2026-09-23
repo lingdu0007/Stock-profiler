@@ -2370,6 +2370,11 @@ export interface components {
             l1_ratio: string;
             /** L2 Ratio */
             l2_ratio: string;
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
             /** Label Watermark Month */
             label_watermark_month: string;
             /** Mature Months */

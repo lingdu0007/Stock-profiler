@@ -5800,6 +5800,11 @@
             "title": "L2 Ratio",
             "type": "string"
           },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
           "label_watermark_month": {
             "title": "Label Watermark Month",
             "type": "string"
@@ -5919,6 +5924,7 @@
           "training_window_end_month",
           "training_months",
           "label_watermark_month",
+          "label_watermark_at",
           "normalization_snapshot_id",
           "mature_months",
           "training_record_count",
