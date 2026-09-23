@@ -51,6 +51,10 @@ _LEGACY_RESEARCH_EVIDENCE_DECODING: ContextVar[bool] = ContextVar(
     "legacy_research_evidence_decoding",
     default=False,
 )
+_LEGACY_RESEARCH_COMMAND_DECODING: ContextVar[bool] = ContextVar(
+    "legacy_research_command_decoding",
+    default=False,
+)
 _RESEARCH_DEFINITION_VERSION_OVERRIDE: ContextVar[str | None] = ContextVar(
     "research_definition_version_override",
     default=None,
@@ -325,6 +329,7 @@ class RawScoreModelSnapshot(ResearchContract):
 
     @model_validator(mode="after")
     def validate_training_snapshot(self) -> RawScoreModelSnapshot:
+        legacy_decoding = _LEGACY_RESEARCH_COMMAND_DECODING.get()
         if self.l1_ratio != RAW_SCORE_L1_RATIO or self.l2_ratio != RAW_SCORE_L2_RATIO:
             raise ValueError("raw-score Elastic Net must use 25% L1 and 75% L2")
         if self.model_version != RAW_SCORE_MODEL_VERSION:
@@ -348,91 +353,113 @@ class RawScoreModelSnapshot(ResearchContract):
             or self.training_months[-1] != self.training_window_end_month
         ):
             raise ValueError("raw-score training window dates do not match the months")
-        if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
-            raise ValueError("raw-score label watermark date does not match its month")
-        security_month_keys = [
-            (record.month, record.security_id) for record in self.training_records
-        ]
-        if len(set(security_month_keys)) != len(security_month_keys):
-            raise ValueError("raw-score training records must have unique security-month evidence")
-        cohorts_by_id = {cohort.cohort_id: cohort for cohort in self.training_cohorts}
-        if len(cohorts_by_id) != len(self.training_cohorts):
-            raise ValueError("raw-score training cohorts must have unique identities")
-        if {cohort.month for cohort in self.training_cohorts} != set(self.training_months):
-            raise ValueError("raw-score training cohorts must cover every training month")
-        if len({cohort.month for cohort in self.training_cohorts}) != len(self.training_cohorts):
-            raise ValueError("raw-score training cohorts must have one cohort per month")
-        if len({cohort.research_definition_version for cohort in self.training_cohorts}) != 1:
-            raise ValueError("raw-score training cohorts must use the same research Definition")
-        records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
-        for record in self.training_records:
-            cohort = cohorts_by_id.get(record.cohort_id)
-            if cohort is None:
-                raise ValueError("raw-score training record must bind to a frozen cohort")
-            if record.month != cohort.month:
-                raise ValueError("raw-score training record month must match its frozen cohort")
-            if record.security_id not in cohort.completed_research_ids:
-                raise ValueError("raw-score training record must bind to a frozen cohort member")
-            if cohort.completed_research_ids[record.security_id] != record.research_id:
-                raise ValueError("raw-score training record research identity is not frozen")
-            records_by_cohort.setdefault(record.cohort_id, []).append(record)
-        for cohort in self.training_cohorts:
-            actual_members = {
-                record.security_id for record in records_by_cohort.get(cohort.cohort_id, ())
-            }
-            if actual_members != set(cohort.completed_research_ids):
+        if not legacy_decoding:
+            if self.label_watermark_at is None:
+                raise ValueError("raw-score label watermark date is required")
+            if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
+                raise ValueError("raw-score label watermark date does not match its month")
+            if not self.training_cohorts or not self.training_records:
+                raise ValueError("raw-score training provenance is required")
+            security_month_keys = [
+                (record.month, record.security_id) for record in self.training_records
+            ]
+            if len(set(security_month_keys)) != len(security_month_keys):
                 raise ValueError(
-                    "raw-score training records must include every successful "
-                    "frozen research member"
+                    "raw-score training records must have unique security-month evidence"
                 )
-        record_keys = [
-            (record.month, record.security_id, record.research_id)
-            for record in self.training_records
-        ]
-        if len(set(record_keys)) != len(record_keys):
-            raise ValueError("raw-score training records must be unique")
-        if {record.month for record in self.training_records} != set(self.training_months):
-            raise ValueError("raw-score training records must cover every training month")
-        if self.mature_months != len(set(record.month for record in self.training_records)):
-            raise ValueError("raw-score mature month count must match training records")
-        if self.training_record_count != len(self.training_records):
-            raise ValueError("raw-score training record count does not match records")
-        if self.positive_record_count + self.negative_record_count != self.training_record_count:
-            raise ValueError("raw-score training records must equal the two class counts")
-        positive_records = sum(record.terminal_label for record in self.training_records)
-        if self.positive_record_count != positive_records:
-            raise ValueError("raw-score positive record count does not match records")
-        if self.negative_record_count != self.training_record_count - positive_records:
-            raise ValueError("raw-score negative record count does not match records")
-        if any(
-            record.source_model_version != self.model_version for record in self.training_records
-        ):
-            raise ValueError("raw-score training records must use the frozen model version")
-        if any(
-            record.selection_cutoff_at.strftime("%Y-%m") != record.month
-            for record in self.training_records
-        ):
-            raise ValueError("raw-score training record cutoff does not match its month")
-        if any(
-            record.evaluation_entry_at <= record.selection_cutoff_at
-            for record in self.training_records
-        ):
-            raise ValueError("raw-score evaluation entry must follow the selection cutoff")
-        if any(record.evaluation_entry_at.weekday() >= 5 for record in self.training_records):
-            raise ValueError("raw-score evaluation entry must be a synthetic trading day")
-        if any(
-            _raw_score_label_available_at(record.evaluation_entry_at) > record.label_available_at
-            for record in self.training_records
-        ):
-            raise ValueError("raw-score training record label maturity is incomplete")
-        if any(
-            record.label_available_at > self.label_watermark_at for record in self.training_records
-        ):
-            raise ValueError("raw-score training record exceeds the label availability watermark")
-        if max(record.label_available_at for record in self.training_records) != (
-            self.label_watermark_at
-        ):
-            raise ValueError("raw-score label watermark must match the latest training record")
+            cohorts_by_id = {cohort.cohort_id: cohort for cohort in self.training_cohorts}
+            if len(cohorts_by_id) != len(self.training_cohorts):
+                raise ValueError("raw-score training cohorts must have unique identities")
+            if {cohort.month for cohort in self.training_cohorts} != set(self.training_months):
+                raise ValueError("raw-score training cohorts must cover every training month")
+            if len({cohort.month for cohort in self.training_cohorts}) != len(
+                self.training_cohorts
+            ):
+                raise ValueError("raw-score training cohorts must have one cohort per month")
+            if len({cohort.research_definition_version for cohort in self.training_cohorts}) != 1:
+                raise ValueError("raw-score training cohorts must use the same research Definition")
+            records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
+            for record in self.training_records:
+                cohort = cohorts_by_id.get(record.cohort_id)
+                if cohort is None:
+                    raise ValueError("raw-score training record must bind to a frozen cohort")
+                if record.month != cohort.month:
+                    raise ValueError(
+                        "raw-score training record month must match its frozen cohort"
+                    )
+                if record.security_id not in cohort.completed_research_ids:
+                    raise ValueError(
+                        "raw-score training record must bind to a frozen cohort member"
+                    )
+                if cohort.completed_research_ids[record.security_id] != record.research_id:
+                    raise ValueError("raw-score training record research identity is not frozen")
+                records_by_cohort.setdefault(record.cohort_id, []).append(record)
+            for cohort in self.training_cohorts:
+                actual_members = {
+                    record.security_id for record in records_by_cohort.get(cohort.cohort_id, ())
+                }
+                if actual_members != set(cohort.completed_research_ids):
+                    raise ValueError(
+                        "raw-score training records must include every successful "
+                        "frozen research member"
+                    )
+            record_keys = [
+                (record.month, record.security_id, record.research_id)
+                for record in self.training_records
+            ]
+            if len(set(record_keys)) != len(record_keys):
+                raise ValueError("raw-score training records must be unique")
+            if {record.month for record in self.training_records} != set(self.training_months):
+                raise ValueError("raw-score training records must cover every training month")
+            if self.mature_months != len(set(record.month for record in self.training_records)):
+                raise ValueError("raw-score mature month count must match training records")
+            if self.training_record_count != len(self.training_records):
+                raise ValueError("raw-score training record count does not match records")
+            if (
+                self.positive_record_count + self.negative_record_count
+                != self.training_record_count
+            ):
+                raise ValueError("raw-score training records must equal the two class counts")
+            positive_records = sum(record.terminal_label for record in self.training_records)
+            if self.positive_record_count != positive_records:
+                raise ValueError("raw-score positive record count does not match records")
+            if self.negative_record_count != self.training_record_count - positive_records:
+                raise ValueError("raw-score negative record count does not match records")
+            if any(
+                record.source_model_version != self.model_version
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score training records must use the frozen model version")
+            if any(
+                record.selection_cutoff_at.strftime("%Y-%m") != record.month
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score training record cutoff does not match its month")
+            if any(
+                record.evaluation_entry_at <= record.selection_cutoff_at
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score evaluation entry must follow the selection cutoff")
+            if any(record.evaluation_entry_at.weekday() >= 5 for record in self.training_records):
+                raise ValueError("raw-score evaluation entry must be a synthetic trading day")
+            if any(
+                _raw_score_label_available_at(record.evaluation_entry_at)
+                > record.label_available_at
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score training record label maturity is incomplete")
+            if any(
+                self.label_watermark_at is None
+                or record.label_available_at > self.label_watermark_at
+                for record in self.training_records
+            ):
+                raise ValueError(
+                    "raw-score training record exceeds the label availability watermark"
+                )
+            if max(record.label_available_at for record in self.training_records) != (
+                self.label_watermark_at
+            ):
+                raise ValueError("raw-score label watermark must match the latest training record")
         if self.interaction_terms:
             raise ValueError("raw-score model snapshot must not contain interaction terms")
         if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
@@ -482,6 +509,14 @@ class RawScoreModelSnapshot(ResearchContract):
             and self.positive_record_count >= 50
             and self.negative_record_count >= 50
         )
+
+
+class LegacyRawScoreModelSnapshot(RawScoreModelSnapshot):
+    """Compatibility view for the original model snapshot without provenance additions."""
+
+    label_watermark_at: AwareDatetime | None = None  # type: ignore[assignment]
+    training_cohorts: tuple[RawScoreTrainingCohort, ...] = ()
+    training_records: tuple[RawScoreTrainingRecord, ...] = ()
 
 
 def _training_month_sequence(start_year: int, start_month: int, count: int) -> tuple[str, ...]:
@@ -1246,6 +1281,51 @@ class ResearchCommand(ResearchContract):
         return self
 
 
+def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != set(RAW_SCORE_FEATURE_IDS):
+        raise ValueError("legacy research member structured signals are incomplete")
+    return {
+        "revenue_growth_current": value["single_quarter_revenue_acceleration"],
+        "revenue_growth_prior": 0
+        if value["single_quarter_revenue_acceleration"] is not None
+        else None,
+        "quarter_profit_improvement": value["asset_normalized_quarter_profit_improvement"],
+        "average_total_assets": 1,
+        "operating_cash_flow_ttm": value["operating_cash_flow_return_on_assets"],
+        "working_capital_pressure_current": value["working_capital_pressure_change"],
+        "working_capital_pressure_prior": 0
+        if value["working_capital_pressure_change"] is not None
+        else None,
+        "leverage_ratio_current": value["leverage_ratio_change"],
+        "leverage_ratio_prior": 0 if value["leverage_ratio_change"] is not None else None,
+        "stock_return_20d": value["industry_relative_return_20d"],
+        "industry_return_20d": 0
+        if value["industry_relative_return_20d"] is not None
+        else None,
+        "downside_semivariance_60d": value["downside_semivariance_60d"],
+        "max_drawdown_60d": value["max_drawdown_60d"],
+        "turnover_change": value["turnover_change"],
+        "institutional_net_buy_ratio": value["institutional_net_buy_ratio"],
+        "institutional_listing_frequency": value["institutional_listing_frequency"],
+    }
+
+
+def _legacy_raw_score_model_payload(value: object) -> RawScoreModelSnapshot:
+    if not isinstance(value, dict):
+        raise ValueError("legacy raw-score model must be an object")
+    legacy_model = LegacyRawScoreModelSnapshot.model_validate(value)
+    label_watermark_at = legacy_model.label_watermark_at or _raw_score_month_end(
+        legacy_model.label_watermark_month
+    )
+    payload = dict(legacy_model.__dict__)
+    payload.update(
+        label_watermark_at=label_watermark_at,
+        training_cohorts=(),
+        training_records=(),
+    )
+    return RawScoreModelSnapshot.model_construct(**payload)
+
+
 def decode_legacy_research_command(value: object) -> ResearchCommand:
     """Decode historical evidence only at an explicit frozen-case boundary."""
     if isinstance(value, ResearchCommand):
@@ -1259,6 +1339,10 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
     for member in members:
         if not isinstance(member, dict):
             raise ValueError("legacy research member must be an object")
+        if "structured_facts" not in member:
+            member["structured_facts"] = _legacy_structured_facts_payload(
+                member.get("structured_signals")
+            )
         evidence_items = member.get("evidence")
         if not isinstance(evidence_items, (list, tuple)):
             raise ValueError("legacy research member evidence must be a list")
@@ -1270,10 +1354,14 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
                 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
             )
     evidence_token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    command_token = _LEGACY_RESEARCH_COMMAND_DECODING.set(True)
     version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
         RESEARCH_LEGACY_DEFINITION_VERSION
     )
     try:
+        payload["raw_score_model"] = _legacy_raw_score_model_payload(
+            payload.get("raw_score_model")
+        )
         command = ResearchCommand.model_validate(payload)
         object.__setattr__(command, "_legacy_decoded", True)
         for member in command.members:
@@ -1283,6 +1371,7 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         return command
     finally:
         _RESEARCH_DEFINITION_VERSION_OVERRIDE.reset(version_token)
+        _LEGACY_RESEARCH_COMMAND_DECODING.reset(command_token)
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(evidence_token)
 
 
@@ -1528,6 +1617,20 @@ def decode_historical_research_draft_member(value: object) -> ResearchDraftMembe
     )
 
 
+def _research_draft_has_debate_fields(draft: ResearchDraft) -> bool:
+    member_has_debate_fields = tuple(
+        member.catalysts != (LEGACY_RESEARCH_MISSING_TEXT,)
+        and member.falsification_conditions != (LEGACY_RESEARCH_MISSING_TEXT,)
+        and member.unknowns != (LEGACY_RESEARCH_MISSING_TEXT,)
+        for member in draft.members
+    )
+    if all(member_has_debate_fields):
+        return True
+    if not any(member_has_debate_fields):
+        return False
+    raise ValueError("research draft members must use one consistent schema")
+
+
 def research_draft_payload(
     draft: ResearchDraft,
     *,
@@ -1535,7 +1638,7 @@ def research_draft_payload(
     historical: bool = False,
 ) -> dict[str, object]:
     """Serialize draft content using the exact current or historical field set."""
-    if not legacy and not historical:
+    if not legacy and (not historical or _research_draft_has_debate_fields(draft)):
         return draft.model_dump(mode="json")
     return LegacyResearchDraft(
         contract_version=draft.contract_version,
@@ -1841,6 +1944,23 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     if not isinstance(value, dict):
         raise ValueError("legacy research outcome must be an object")
     payload = deepcopy(value)
+    raw_scores = payload.get("raw_scores")
+    if isinstance(raw_scores, (list, tuple)):
+        normalized_raw_scores: list[object] = []
+        for raw_score in raw_scores:
+            if not isinstance(raw_score, dict):
+                normalized_raw_scores.append(raw_score)
+                continue
+            normalized_raw_score = dict(raw_score)
+            if "label_watermark_at" not in normalized_raw_score:
+                label_watermark_month = normalized_raw_score.get("label_watermark_month")
+                if not isinstance(label_watermark_month, str):
+                    raise ValueError("legacy raw score is missing its label watermark month")
+                normalized_raw_score["label_watermark_at"] = _raw_score_month_end(
+                    label_watermark_month
+                ).isoformat()
+            normalized_raw_scores.append(normalized_raw_score)
+        payload["raw_scores"] = normalized_raw_scores
     members = payload.get("members")
     if isinstance(members, (list, tuple)):
         normalized_members: list[object] = []

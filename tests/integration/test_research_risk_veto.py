@@ -33,9 +33,11 @@ from stock_profiler.adapters.m_agent.frozen_decision_case import (
     execute_research_decision_case,
 )
 from stock_profiler.adapters.persistence.decision_ledger import (
+    DECISION_EVENTS,
     DECISION_STAGE_EVENTS,
     FORMAL_REPORTS,
     DecisionLedger,
+    _decode_research_event_payload,
 )
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
@@ -1569,6 +1571,30 @@ def test_risk_framework_rejection_is_driven_by_typed_veto_not_scenario() -> None
     assert asyncio.run(run()) == "REJECTED"
 
 
+def test_historical_full_draft_fields_remain_in_the_risk_identity_input() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+    draft = _draft(command)
+
+    risk_plan = research_service.prepare_research_risk_plan(
+        command,
+        "historical-full-draft-research-run",
+        draft,
+        (),
+        historical=True,
+    )
+
+    risk_payload = json.loads(risk_plan.input_payload)
+    assert risk_payload["draft"]["members"][0]["catalysts"] == [
+        "A fictional catalyst remains conditional."
+    ]
+    assert risk_payload["draft"]["members"][0]["falsification_conditions"] == [
+        "A frozen downside fact would falsify the thesis."
+    ]
+    assert risk_payload["draft"]["members"][0]["unknowns"] == [
+        "Future external evidence remains unresolved."
+    ]
+
+
 def test_risk_framework_preserves_mixed_member_verdicts() -> None:
     rejected_security_id = "synthetic-security-00"
     command = research_command(
@@ -1617,6 +1643,39 @@ def test_risk_framework_preserves_mixed_member_verdicts() -> None:
         return str(result.status.value)
 
     assert asyncio.run(run()) == "REJECTED"
+
+
+def test_current_research_event_keeps_strict_evidence_validation(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+    assert execution.decision_event_id is not None
+
+    runtime = initialize_runtime_storage(migrated_settings)
+    with runtime.engine.connect() as connection:
+        event_payload = json.loads(
+            connection.execute(
+                select(DECISION_EVENTS.c.event_payload).where(
+                    DECISION_EVENTS.c.decision_event_id == execution.decision_event_id
+                )
+            ).scalar_one()
+        )
+    current_tool_evidence = event_payload["result"]["research"]["tool_evidence"][0]
+    for field_name in (
+        "evidence_contract_version",
+        "effective_at",
+        "source_published_at",
+        "acquired_at",
+        "validated_at",
+    ):
+        current_tool_evidence.pop(field_name, None)
+
+    with pytest.raises(
+        ValueError,
+        match="current research Tool evidence requires all evidence clocks",
+    ):
+        _decode_research_event_payload(event_payload)
 
 
 def test_risk_handoff_preserves_each_member_evidence_and_flags(
@@ -1808,6 +1867,32 @@ def test_incomplete_member_manifest_is_saved_as_research_data_failure(
         "synthetic-security-00:RESEARCH_REQUIRED_FACTS_INCOMPLETE",
     )
     assert recovered_data_gates == data_gates
+
+
+def test_known_manifest_failure_is_preserved_when_another_member_fails_first() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+    payload = command.model_dump(mode="python")
+    payload["members"][1]["data_manifest"]["entries"][0]["completeness"] = "INCOMPLETE"
+    payload["members"][1]["data_manifest"]["entries"][0]["event_status"] = "UNAVAILABLE"
+    command = ResearchCommand.model_validate(payload)
+
+    gate_results = decision_case_service._research_data_gate_results(
+        command,
+        "RESEARCH_OUTPUT_INVALID",
+        (
+            ResearchMemberRunResult(
+                security_id=command.members[0].security_id,
+                research_id=command.members[0].research_id,
+                run_id="failed-member-run",
+                status="FAILED",
+                error_code="RESEARCH_OUTPUT_INVALID",
+            ),
+        ),
+    )
+
+    data_gates = {gate.gate_id: gate.status for gate in gate_results}
+    assert data_gates["RESEARCH_DATA:synthetic-security-01:DAILY_MARKET"] == "FAILED"
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:DAILY_MARKET"] == "PASSED"
 
 
 def test_duplicate_member_research_output_is_recorded_as_output_contract_failure(

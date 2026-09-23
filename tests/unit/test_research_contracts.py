@@ -33,6 +33,7 @@ from stock_profiler.modules.research.contracts import (
     calculate_structured_signals,
     decode_historical_research_command,
     decode_historical_research_draft,
+    decode_legacy_research_command,
     decode_legacy_research_framework_output,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
@@ -346,6 +347,26 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
     assert decoded.cutoff_at == historical_cutoff
     assert decoded.raw_score_model.training_months[-1] == "2041-11"
     assert decoded.raw_score_model.training_window_month_count == 60
+
+
+def test_legacy_research_command_decodes_the_original_input_shape() -> None:
+    payload = _command().model_dump(mode="json")
+    for member in payload["members"]:
+        member.pop("structured_facts", None)
+        for evidence in member["evidence"]:
+            evidence.pop("evidence_contract_version", None)
+            evidence.pop("effective_at", None)
+            evidence.pop("source_published_at", None)
+    payload["raw_score_model"].pop("label_watermark_at", None)
+    payload["raw_score_model"].pop("training_cohorts", None)
+    payload["raw_score_model"].pop("training_records", None)
+
+    decoded = decode_legacy_research_command(payload)
+
+    assert decoded.members[0].structured_signals == _command().members[0].structured_signals
+    assert decoded.raw_score_model.training_cohorts == ()
+    assert decoded.raw_score_model.training_records == ()
+    assert decoded.raw_score_model.label_watermark_at is not None
 
 
 def test_raw_score_snapshot_rejects_duplicate_security_month_evidence() -> None:

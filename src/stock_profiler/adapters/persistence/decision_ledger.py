@@ -59,6 +59,7 @@ from stock_profiler.modules.position_management.history import (
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
+    ResearchOutcome,
     decode_historical_research_outcome,
     decode_legacy_research_outcome,
     research_contract_mode_for_versions,
@@ -148,6 +149,8 @@ def _decode_research_event_payload(
         decode_legacy_research_outcome(research_payload)
         if mode == "legacy"
         else decode_historical_research_outcome(research_payload)
+        if mode == "historical"
+        else ResearchOutcome.model_validate(research_payload)
     )
     normalized["result"] = normalized_result
     return normalized

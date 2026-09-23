@@ -206,7 +206,7 @@ def _research_data_gate_results(
         "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
     ) and not member_run_gate_results:
         return ()
-    manifest_is_detailed = error_code == "RESEARCH_REQUIRED_FACTS_INCOMPLETE" and any(
+    manifest_is_detailed = any(
         entry.completeness != "COMPLETE"
         for member in command.members
         for entry in member.data_manifest.entries
