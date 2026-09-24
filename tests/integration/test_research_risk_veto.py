@@ -39,7 +39,10 @@ from stock_profiler.adapters.persistence.decision_ledger import (
     DecisionLedger,
     _decode_research_event_payload,
 )
-from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.adapters.persistence.runtime_ownership import (
+    RuntimeStorage,
+    initialize_runtime_storage,
+)
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.decision_versions import (
@@ -2038,6 +2041,33 @@ def test_known_manifest_failure_is_preserved_when_another_member_fails_first() -
     assert data_gates["RESEARCH_DATA:synthetic-security-00:DAILY_MARKET"] == "PASSED"
 
 
+def test_failed_provider_member_does_not_claim_complete_data_gates_passed() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+
+    gate_results = decision_case_service._research_data_gate_results(
+        command,
+        "RESEARCH_REQUIRED_FACTS_INCOMPLETE",
+        (
+            ResearchMemberRunResult(
+                security_id=command.members[0].security_id,
+                research_id=command.members[0].research_id,
+                run_id="failed-provider-member-run",
+                status="FAILED",
+                error_code="RESEARCH_REQUIRED_FACTS_INCOMPLETE",
+            ),
+        ),
+    )
+
+    data_gates = {gate.gate_id: gate.status for gate in gate_results}
+    failed_member_gates = {
+        gate_id: status
+        for gate_id, status in data_gates.items()
+        if gate_id.startswith("RESEARCH_DATA:synthetic-security-00:")
+    }
+    assert set(failed_member_gates.values()) == {"UNKNOWN"}
+    assert data_gates["RESEARCH_DATA:synthetic-security-01:DAILY_MARKET"] == "PASSED"
+
+
 def test_duplicate_member_research_output_is_recorded_as_output_contract_failure(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -2078,6 +2108,50 @@ def test_duplicate_member_research_output_is_recorded_as_output_contract_failure
     }
     assert len(data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
     assert set(data_gates.values()) == {"PASSED"}
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
+def test_malformed_tool_evidence_is_recorded_as_research_failure(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_tool_evidence = frozen_decision_case._research_tool_evidence
+    failed_once = False
+
+    async def malformed_tool_evidence(
+        runtime: RuntimeStorage,
+        run_id: str,
+        *,
+        legacy: bool = False,
+    ) -> tuple[ResearchToolEvidence, ...]:
+        nonlocal failed_once
+        if not legacy and not failed_once:
+            failed_once = True
+            raise ValueError("research Tool evidence is not structured")
+        return await original_tool_evidence(runtime, run_id, legacy=legacy)
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_tool_evidence",
+        malformed_tool_evidence,
+    )
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_TOOL_EVIDENCE_INVALID" in research_stage.reasons
+    assert "synthetic-security-00:RESEARCH_TOOL_EVIDENCE_INVALID" in research_stage.reasons
+    assert any(
+        gate.gate_id == "RESEARCH_RUN:synthetic-security-00" and gate.status == "FAILED"
+        for gate in research_stage.gate_results
+    )
+    assert all(
+        gate.status == "PASSED"
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:synthetic-security-00:")
+    )
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 

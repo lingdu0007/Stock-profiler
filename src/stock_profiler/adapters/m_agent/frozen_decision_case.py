@@ -1706,7 +1706,16 @@ async def execute_research_run(
             )
             continue
         member_draft_indexes.append(index)
-        for evidence in await _research_tool_evidence(runtime, run_id):
+        try:
+            member_tool_evidence = await _research_tool_evidence(runtime, run_id)
+        except ValueError:
+            member_results[-1] = replace(
+                member_results[-1],
+                status="FAILED",
+                error_code="RESEARCH_TOOL_EVIDENCE_INVALID",
+            )
+            continue
+        for evidence in member_tool_evidence:
             if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
                 tool_evidence.append(evidence)
 

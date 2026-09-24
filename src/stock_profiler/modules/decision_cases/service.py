@@ -208,11 +208,12 @@ def _research_data_gate_results(
         "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
     ) and not member_run_gate_results:
         return ()
-    manifest_is_detailed = any(
-        entry.completeness != "COMPLETE"
+    detailed_manifest_member_ids = {
+        member.security_id
         for member in command.members
-        for entry in member.data_manifest.entries
-    )
+        if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries)
+    }
+    manifest_is_detailed = bool(detailed_manifest_member_ids)
     invalid_structured_member_ids = {
         member.security_id
         for member in command.members
@@ -225,6 +226,26 @@ def _research_data_gate_results(
         for signal_id, value in member.structured_signals.items()
         if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
     }
+    data_failure_member_ids = {
+        member.security_id
+        for member in member_runs
+        if member.error_code == "RESEARCH_DATA_UNAVAILABLE"
+        or (member.error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+    }
+    unknown_data_member_ids = (
+        data_failure_member_ids
+        - detailed_manifest_member_ids
+        - invalid_structured_member_ids
+    )
+    unattributed_data_failure = (
+        (
+            error_code == "RESEARCH_DATA_UNAVAILABLE"
+            or (error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+        )
+        and not manifest_is_detailed
+        and not invalid_structured_member_ids
+        and not data_failure_member_ids
+    )
     data_gate_results = tuple(
         GateResult(
             gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
@@ -234,9 +255,7 @@ def _research_data_gate_results(
                 else "FAILED"
                 if (member.security_id, entry.data_type) in invalid_structured_data_types
                 else "UNKNOWN"
-                if error_code == "RESEARCH_DATA_UNAVAILABLE"
-                and not manifest_is_detailed
-                and not invalid_structured_member_ids
+                if member.security_id in unknown_data_member_ids or unattributed_data_failure
                 else "PASSED"
             ),
         )
