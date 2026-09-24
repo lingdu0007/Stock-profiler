@@ -38,12 +38,15 @@ from stock_profiler.modules.research.contracts import (
     decode_historical_research_draft,
     decode_legacy_research_command,
     decode_legacy_research_framework_output,
+    decode_legacy_research_outcome,
     decode_legacy_research_stage_artifact,
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
     research_draft_payload,
     research_member_handoff_payload,
+    research_outcome_payload,
+    research_outcome_raw_score_payloads,
     research_raw_score_payload,
     screening_output_sha256,
     selection_binding_sha256,
@@ -405,6 +408,62 @@ def test_historical_research_command_recovers_missing_audit_provenance() -> None
     )
 
 
+def test_historical_handoff_fingerprint_preserves_the_original_command_payload() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    for field_name in (
+        "fit_diagnostics",
+        "code_sha256",
+        "model_artifact_sha256",
+        "environment_sha256",
+        "randomness_control",
+    ):
+        payload["raw_score_model"].pop(field_name)
+
+    decoded = decode_historical_research_command(payload)
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The historical thesis remains bounded by frozen evidence.",
+                bull_case="The historical upside case remains conditional.",
+                bear_case="The historical downside case remains explicit.",
+                catalysts=("A historical catalyst remains conditional.",),
+                falsification_conditions=("A historical downside fact would falsify the thesis.",),
+                unknowns=("Historical future evidence remains unresolved.",),
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in decoded.members
+        ),
+    )
+    raw_scores = tuple(freeze_raw_score(decoded, member) for member in decoded.members)
+    expected_payload = {
+        "command": payload,
+        "draft": research_draft_payload(draft, historical=True),
+        "raw_scores": tuple(research_raw_score_payload(score) for score in raw_scores),
+        "tool_evidence_refs": (),
+        "tool_evidence": (),
+        "member_handoffs": (),
+    }
+    expected_fingerprint = sha256(
+        json.dumps(expected_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    assert (
+        handoff_fingerprint(
+            decoded,
+            draft,
+            raw_scores=raw_scores,
+            historical=True,
+        )
+        == expected_fingerprint
+    )
+
+
 def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     payload = _command().model_dump(mode="json")
     for member in payload["members"]:
@@ -423,6 +482,53 @@ def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     assert decoded.raw_score_model.training_cohorts == ()
     assert decoded.raw_score_model.training_records == ()
     assert decoded.raw_score_model.label_watermark_at is not None
+
+
+def test_legacy_research_command_decodes_the_original_v2_signal_schema() -> None:
+    legacy_signal_ids = (
+        "revenue_growth",
+        "earnings_revision",
+        "free_cash_flow_margin",
+        "leverage_ratio",
+        "valuation_gap",
+        "price_trend_6m",
+        "volatility_20d",
+        "drawdown_6m",
+        "breakout_distance",
+        "path_consistency",
+        "level2_imbalance",
+    )
+    payload = _command().model_dump(mode="json")
+    payload.pop("selection_fingerprint")
+    payload["screening"].pop("positive_percentiles")
+    payload["screening"].pop("terminal_percentiles")
+    payload["screening"]["output_sha256"] = "a" * 64
+    payload["raw_score_model"] = None
+    for member in payload["members"]:
+        member["evidence"] = [member["evidence"][0]]
+        member.pop("data_manifest")
+        member.pop("structured_facts")
+        member["structured_signals"] = {signal_id: "0.01" for signal_id in legacy_signal_ids}
+        for evidence in member["evidence"]:
+            for field_name in (
+                "evidence_contract_version",
+                "effective_at",
+                "source_published_at",
+                "acquired_at",
+                "validated_at",
+                "semantic_version",
+                "validation_status",
+            ):
+                evidence.pop(field_name, None)
+
+    decoded = decode_legacy_research_command(payload)
+    raw_score = freeze_raw_score(decoded, decoded.members[0])
+
+    assert decoded.members[0]._legacy_structured_signals is not None
+    assert tuple(decoded.members[0]._legacy_structured_signals) == legacy_signal_ids
+    assert raw_score.structured_inputs["revenue_growth"] == Decimal("0.01")
+    assert raw_score.coefficients["leverage_ratio"] == Decimal("-0.05")
+    assert raw_score.z20 == Decimal("-0.0615")
 
 
 def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
@@ -597,6 +703,149 @@ def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
         prepare_research_risk_plan(
             command,
             "research-run-legacy",
+            draft,
+            (),
+            legacy=True,
+            raw_score_payloads=tuple(tampered_raw_score_payloads),
+        )
+
+
+def test_legacy_outcome_replays_original_v2_scores_into_risk_plan() -> None:
+    payload = _command().model_dump(mode="json")
+    payload.pop("selection_fingerprint")
+    payload["screening"].pop("positive_percentiles")
+    payload["screening"].pop("terminal_percentiles")
+    payload["screening"]["output_sha256"] = "a" * 64
+    payload["raw_score_model"] = None
+    legacy_signal_ids = (
+        "revenue_growth",
+        "earnings_revision",
+        "free_cash_flow_margin",
+        "leverage_ratio",
+        "valuation_gap",
+        "price_trend_6m",
+        "volatility_20d",
+        "drawdown_6m",
+        "breakout_distance",
+        "path_consistency",
+        "level2_imbalance",
+    )
+    for member in payload["members"]:
+        member["evidence"] = [member["evidence"][0]]
+        member.pop("data_manifest")
+        member.pop("structured_facts")
+        member["structured_signals"] = {signal_id: "0.01" for signal_id in legacy_signal_ids}
+        for evidence in member["evidence"]:
+            for field_name in (
+                "evidence_contract_version",
+                "effective_at",
+                "source_published_at",
+                "acquired_at",
+                "validated_at",
+                "semantic_version",
+                "validation_status",
+            ):
+                evidence.pop(field_name, None)
+
+    command = decode_legacy_research_command(payload)
+    draft = ResearchDraft(
+        contract_version="1.0.0",
+        members=tuple(
+            ResearchDraftMember(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+                thesis="The v2 thesis remains bounded by frozen evidence.",
+                bull_case="The v2 upside case remains conditional.",
+                bear_case="The v2 downside case remains explicit.",
+                catalysts=("A v2 catalyst remains conditional.",),
+                falsification_conditions=("A v2 downside fact would falsify the thesis.",),
+                unknowns=("V2 future evidence remains unresolved.",),
+                knowledge_cutoff=member.knowledge_cutoff,
+            )
+            for member in command.members
+        ),
+    )
+    raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    member_handoffs = tuple(
+        ResearchMemberHandoff(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence=member.evidence,
+            risk_flags=member.risk_flags,
+        )
+        for member in command.members
+    )
+    risk_veto = RiskVetoDraft(
+        contract_version="1.0.0",
+        handoff_fingerprint=handoff_fingerprint(
+            command,
+            draft,
+            raw_scores=raw_scores,
+            member_handoffs=member_handoffs,
+            legacy=True,
+        ),
+        disposition="REJECTED",
+        gates=(RiskGate(gate_id="V2_RISK_GATE", status="FAILED"),),
+        reasons=("V2_RISK_VETO",),
+        member_vetoes=tuple(
+            RiskMemberVeto(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                disposition="REJECTED",
+                gates=(RiskGate(gate_id="V2_RISK_GATE", status="FAILED"),),
+                reasons=("V2_RISK_VETO",),
+            )
+            for member in command.members
+        ),
+    )
+    outcome = freeze_research(
+        command,
+        ResearchFrameworkOutput(
+            research_run_id="research-run-v2",
+            risk_run_id="risk-run-v2",
+            draft=draft,
+            risk_veto=risk_veto,
+            raw_scores=raw_scores,
+            member_handoffs=member_handoffs,
+        ),
+        legacy=True,
+    )
+
+    legacy_outcome_payload = research_outcome_payload(outcome, legacy=True)
+    decoded_outcome = decode_legacy_research_outcome(legacy_outcome_payload)
+    historical_raw_score_payloads = research_outcome_raw_score_payloads(decoded_outcome)
+
+    assert historical_raw_score_payloads is not None
+    assert "label_watermark_at" not in historical_raw_score_payloads[0]
+    legacy_coefficients = historical_raw_score_payloads[0].get("coefficients")
+    assert isinstance(legacy_coefficients, dict)
+    assert legacy_coefficients["revenue_growth"] == "0.08"
+
+    plan = prepare_research_risk_plan(
+        command,
+        "research-run-v2",
+        draft,
+        (),
+        legacy=True,
+        raw_score_payloads=historical_raw_score_payloads,
+    )
+    risk_payload = json.loads(plan.input_payload)
+
+    assert len(plan.raw_scores) == 10
+    assert plan.raw_scores[0].z20 == Decimal("-0.0615")
+    assert "label_watermark_at" not in risk_payload["raw_scores"][0]
+    assert plan.raw_scores[0]._persisted_payload == historical_raw_score_payloads[0]
+
+    tampered_raw_score_payloads = list(historical_raw_score_payloads)
+    tampered_raw_score_payloads[0] = {
+        **tampered_raw_score_payloads[0],
+        "z20": "999",
+    }
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_INPUT_MISMATCH"):
+        prepare_research_risk_plan(
+            command,
+            "research-run-v2",
             draft,
             (),
             legacy=True,

@@ -153,6 +153,43 @@ RAW_SCORE_REVERSED_FEATURE_IDS = frozenset(
         "max_drawdown_60d",
     }
 )
+LEGACY_RAW_SCORE_FEATURE_IDS: tuple[str, ...] = (
+    "revenue_growth",
+    "earnings_revision",
+    "free_cash_flow_margin",
+    "leverage_ratio",
+    "valuation_gap",
+    "price_trend_6m",
+    "volatility_20d",
+    "drawdown_6m",
+    "breakout_distance",
+    "path_consistency",
+    "level2_imbalance",
+)
+LEGACY_RAW_SCORE_COEFFICIENTS: dict[str, Decimal] = {
+    "screening_positive_prior": Decimal("0.15"),
+    "screening_terminal_prior": Decimal("0.35"),
+    "revenue_growth": Decimal("0.08"),
+    "earnings_revision": Decimal("0.07"),
+    "free_cash_flow_margin": Decimal("0.06"),
+    "leverage_ratio": Decimal("-0.05"),
+    "valuation_gap": Decimal("0.04"),
+    "price_trend_6m": Decimal("0.09"),
+    "volatility_20d": Decimal("-0.03"),
+    "drawdown_6m": Decimal("-0.04"),
+    "breakout_distance": Decimal("0.02"),
+    "path_consistency": Decimal("0.05"),
+    "level2_imbalance": Decimal("0.06"),
+}
+LEGACY_RAW_SCORE_INPUT_IDS: tuple[str, ...] = (
+    "screening_positive_prior",
+    "screening_terminal_prior",
+    *LEGACY_RAW_SCORE_FEATURE_IDS,
+)
+LEGACY_RAW_SCORE_TRAINING_WINDOW_ID = "legacy-raw-score-window-unrecorded"
+LEGACY_RAW_SCORE_NORMALIZATION_ID = "legacy-raw-score-normalization-unrecorded"
+LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH = "1970-01"
+LEGACY_RAW_SCORE_LABEL_WATERMARK_AT = datetime(1970, 1, 31, 23, 59, 59, tzinfo=UTC)
 
 
 def research_contract_mode_for_versions(
@@ -717,6 +754,52 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     )
 
 
+def _legacy_raw_score_model_snapshot() -> RawScoreModelSnapshot:
+    """Construct a typed shell while legacy scoring keeps its original parameters."""
+    return RawScoreModelSnapshot.model_construct(
+        algorithm="ELASTIC_NET_LOGISTIC",
+        model_version=RAW_SCORE_MODEL_VERSION,
+        target=RAW_SCORE_TARGET,
+        training_window_id=LEGACY_RAW_SCORE_TRAINING_WINDOW_ID,
+        training_window_policy=RAW_SCORE_TRAINING_WINDOW_POLICY,
+        training_window_kind="EXPANDING",
+        training_window_month_count=1,
+        training_window_start_month=LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH,
+        training_window_end_month=LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH,
+        training_months=(LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH,),
+        label_watermark_month=LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH,
+        label_watermark_at=LEGACY_RAW_SCORE_LABEL_WATERMARK_AT,
+        training_cohorts=(),
+        training_records=(),
+        normalization_snapshot_id=LEGACY_RAW_SCORE_NORMALIZATION_ID,
+        mature_months=0,
+        training_record_count=0,
+        positive_record_count=0,
+        negative_record_count=0,
+        intercept=RAW_SCORE_INTERCEPT,
+        coefficients=dict(RAW_SCORE_COEFFICIENTS),
+        transformations={
+            feature_id: RawScoreFeatureTransform(
+                lower_clip=Decimal("-3"),
+                upper_clip=Decimal("3"),
+                median=Decimal("0"),
+                iqr=Decimal("1"),
+                reverse=feature_id in RAW_SCORE_REVERSED_FEATURE_IDS,
+            )
+            for feature_id in RAW_SCORE_FEATURE_IDS
+        },
+        interaction_terms=RAW_SCORE_INTERACTION_TERMS,
+        l1_ratio=RAW_SCORE_L1_RATIO,
+        l2_ratio=RAW_SCORE_L2_RATIO,
+        penalty_strength=RAW_SCORE_PENALTY_STRENGTH,
+        fit_diagnostics=RawScoreFitDiagnostics(status=RAW_SCORE_FIT_DIAGNOSTICS_STATUS),
+        code_sha256=RAW_SCORE_CODE_SHA256,
+        model_artifact_sha256=RAW_SCORE_MODEL_ARTIFACT_SHA256,
+        environment_sha256=RAW_SCORE_ENVIRONMENT_SHA256,
+        randomness_control=RAW_SCORE_RANDOMNESS_CONTROL,
+    )
+
+
 class ResearchEvidence(ResearchContract):
     evidence_id: str = Field(min_length=1)
     source: str = Field(min_length=1)
@@ -1171,6 +1254,8 @@ class ResearchMemberInput(ResearchContract):
     structured_signals: dict[str, Decimal | None] = Field(default_factory=dict)
     risk_flags: tuple[str, ...] = ()
     _legacy_decoded: bool = PrivateAttr(default=False)
+    _legacy_structured_signals: dict[str, Decimal] | None = PrivateAttr(default=None)
+    _persisted_payload: dict[str, object] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def validate_member_facts(self) -> ResearchMemberInput:
@@ -1199,7 +1284,8 @@ class ResearchMemberInput(ResearchContract):
             raise ValueError(
                 "research data manifest must account for every Provider evidence identity"
             )
-        if len(set(manifest_evidence_ids)) != len(manifest_evidence_ids):
+        legacy_decoding = _LEGACY_RESEARCH_COMMAND_DECODING.get() or self._legacy_decoded
+        if not legacy_decoding and len(set(manifest_evidence_ids)) != len(manifest_evidence_ids):
             raise ValueError("research data manifest evidence identities must be unique")
         if any(
             entry.knowledge_cutoff != self.knowledge_cutoff for entry in self.data_manifest.entries
@@ -1281,6 +1367,7 @@ class ResearchCommand(ResearchContract):
     risk_rejected_member_ids: tuple[str, ...] = ()
     _legacy_decoded: bool = PrivateAttr(default=False)
     _historical_decoded: bool = PrivateAttr(default=False)
+    _persisted_payload: dict[str, object] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def validate_fixed_ten_contract(self) -> ResearchCommand:
@@ -1388,7 +1475,28 @@ class ResearchCommand(ResearchContract):
 
 
 def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != set(RAW_SCORE_FEATURE_IDS):
+    if not isinstance(value, dict):
+        raise ValueError("legacy research member structured signals are incomplete")
+    if set(value) == set(LEGACY_RAW_SCORE_FEATURE_IDS):
+        return {
+            "revenue_growth_current": Decimal("0"),
+            "revenue_growth_prior": Decimal("0"),
+            "quarter_profit_improvement": Decimal("0"),
+            "average_total_assets": Decimal("1"),
+            "operating_cash_flow_ttm": Decimal("0"),
+            "working_capital_pressure_current": Decimal("0"),
+            "working_capital_pressure_prior": Decimal("0"),
+            "leverage_ratio_current": Decimal("0"),
+            "leverage_ratio_prior": Decimal("0"),
+            "stock_return_20d": Decimal("0"),
+            "industry_return_20d": Decimal("0"),
+            "downside_semivariance_60d": Decimal("0"),
+            "max_drawdown_60d": Decimal("0"),
+            "turnover_change": Decimal("0"),
+            "institutional_net_buy_ratio": Decimal("0"),
+            "institutional_listing_frequency": Decimal("0"),
+        }
+    if set(value) != set(RAW_SCORE_FEATURE_IDS):
         raise ValueError("legacy research member structured signals are incomplete")
     return {
         "revenue_growth_current": value["single_quarter_revenue_acceleration"],
@@ -1416,6 +1524,48 @@ def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
     }
 
 
+def _legacy_structured_signal_payload(value: object) -> dict[str, Decimal | None]:
+    if not isinstance(value, dict):
+        raise ValueError("legacy research member structured signals are incomplete")
+    if set(value) == set(LEGACY_RAW_SCORE_FEATURE_IDS):
+        return {signal_id: Decimal("0") for signal_id in RAW_SCORE_FEATURE_IDS}
+    if set(value) != set(RAW_SCORE_FEATURE_IDS):
+        raise ValueError("legacy research member structured signals are incomplete")
+    return {signal_id: value[signal_id] for signal_id in RAW_SCORE_FEATURE_IDS}
+
+
+def _legacy_data_manifest_payload(
+    *,
+    evidence_id: str,
+    knowledge_cutoff: object,
+) -> dict[str, object]:
+    return {
+        "version": "legacy-research-data-manifest-v1",
+        "entries": [
+            {
+                "data_type": data_type,
+                "provider_id": "legacy-research-provider",
+                "provider_version": "legacy-research-provider-v1",
+                "completeness": "COMPLETE",
+                "event_status": "PRESENT",
+                "evidence_ids": [evidence_id],
+                "knowledge_cutoff": knowledge_cutoff,
+            }
+            for data_type in RESEARCH_REQUIRED_DATA_TYPES
+        ],
+    }
+
+
+def _normalize_legacy_evidence_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    payload = dict(value)
+    payload.setdefault("evidence_contract_version", RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION)
+    payload.setdefault("semantic_version", "legacy-research-evidence-v1")
+    payload.setdefault("validation_status", "VALIDATED")
+    return payload
+
+
 def _raw_score_model_audit_defaults(payload: dict[str, object]) -> None:
     payload.setdefault(
         "fit_diagnostics",
@@ -1427,10 +1577,61 @@ def _raw_score_model_audit_defaults(payload: dict[str, object]) -> None:
     payload.setdefault("randomness_control", RAW_SCORE_RANDOMNESS_CONTROL)
 
 
-def _legacy_raw_score_model_payload(value: object) -> RawScoreModelSnapshot:
+def _legacy_screening_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("legacy research screening must be an object")
+    payload = deepcopy(value)
+    selected_ids = payload.get("selected_member_ids")
+    if not isinstance(selected_ids, (list, tuple)):
+        raise ValueError("legacy research screening members are missing")
+    payload.setdefault(
+        "positive_percentiles",
+        {security_id: "0" for security_id in selected_ids},
+    )
+    payload.setdefault(
+        "terminal_percentiles",
+        {security_id: "0" for security_id in selected_ids},
+    )
+    positive_scores = _legacy_decimal_map(payload.get("positive_scores"))
+    terminal_scores = _legacy_decimal_map(payload.get("terminal_scores"))
+    positive_percentiles = _legacy_decimal_map(payload.get("positive_percentiles"))
+    terminal_percentiles = _legacy_decimal_map(payload.get("terminal_percentiles"))
+    screening = FrozenDualTargetScreening.model_construct(
+        positive_target=payload["positive_target"],
+        terminal_target=payload["terminal_target"],
+        strategy_version=payload["strategy_version"],
+        snapshot_id=payload["snapshot_id"],
+        universe_security_ids=tuple(payload["universe_security_ids"]),
+        selected_member_ids=tuple(selected_ids),
+        positive_scores=positive_scores,
+        terminal_scores=terminal_scores,
+        positive_percentiles=positive_percentiles,
+        terminal_percentiles=terminal_percentiles,
+        positive_head_version=payload["positive_head_version"],
+        terminal_head_version=payload["terminal_head_version"],
+        output_sha256="",
+    )
+    payload["output_sha256"] = screening_output_sha256(screening)
+    return payload
+
+
+def _legacy_decimal_map(value: object) -> dict[str, Decimal]:
+    if not isinstance(value, dict):
+        raise ValueError("legacy research screening scores are incomplete")
+    return {str(key): Decimal(str(score)) for key, score in value.items()}
+
+
+def _legacy_raw_score_model_payload(
+    value: object,
+) -> RawScoreModelSnapshot:
+    if value is None:
+        return _legacy_raw_score_model_snapshot()
     if not isinstance(value, dict):
         raise ValueError("legacy raw-score model must be an object")
     payload = deepcopy(value)
+    coefficients = payload.get("coefficients")
+    if isinstance(coefficients, dict) and set(coefficients) == set(LEGACY_RAW_SCORE_INPUT_IDS):
+        return _legacy_raw_score_model_snapshot()
     _raw_score_model_audit_defaults(payload)
     payload.setdefault("training_cohorts", ())
     training_records = payload.get("training_records")
@@ -1480,16 +1681,37 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         return value
     if not isinstance(value, dict):
         raise ValueError("legacy research command must be an object")
+    original_payload = deepcopy(value)
     payload = deepcopy(value)
     members = payload.get("members")
     if not isinstance(members, (list, tuple)):
         raise ValueError("legacy research command members must be a list")
+    original_members = original_payload.get("members")
+    if not isinstance(original_members, (list, tuple)):
+        raise ValueError("legacy research command members must be a list")
     for member in members:
         if not isinstance(member, dict):
             raise ValueError("legacy research member must be an object")
+        structured_signals = member.get("structured_signals")
         if "structured_facts" not in member:
-            member["structured_facts"] = _legacy_structured_facts_payload(
-                member.get("structured_signals")
+            member["structured_facts"] = _legacy_structured_facts_payload(structured_signals)
+        if isinstance(structured_signals, dict) and set(structured_signals) == set(
+            LEGACY_RAW_SCORE_FEATURE_IDS
+        ):
+            member["structured_signals"] = _legacy_structured_signal_payload(structured_signals)
+        if "data_manifest" not in member:
+            evidence_items = member.get("evidence")
+            if not isinstance(evidence_items, (list, tuple)) or not evidence_items:
+                raise ValueError("legacy research member evidence is required")
+            first_evidence = evidence_items[0]
+            if not isinstance(first_evidence, dict):
+                raise ValueError("legacy research evidence must be an object")
+            evidence_id = first_evidence.get("evidence_id")
+            if not isinstance(evidence_id, str):
+                raise ValueError("legacy research evidence identity is required")
+            member["data_manifest"] = _legacy_data_manifest_payload(
+                evidence_id=evidence_id,
+                knowledge_cutoff=member.get("knowledge_cutoff"),
             )
         evidence_items = member.get("evidence")
         if not isinstance(evidence_items, (list, tuple)):
@@ -1497,10 +1719,27 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         for evidence in evidence_items:
             if not isinstance(evidence, dict):
                 raise ValueError("legacy research evidence must be an object")
-            evidence.setdefault(
-                "evidence_contract_version",
-                RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
-            )
+            normalized_evidence = _normalize_legacy_evidence_payload(evidence)
+            if not isinstance(normalized_evidence, dict):
+                raise ValueError("legacy research evidence must be an object")
+            evidence.clear()
+            evidence.update(normalized_evidence)
+    payload["screening"] = _legacy_screening_payload(payload.get("screening"))
+    screening = FrozenDualTargetScreening.model_validate(payload["screening"])
+    if "selection_fingerprint" not in payload:
+        selection_object_id = payload.get("selection_object_id")
+        selection_event_id = payload.get("selection_event_id")
+        cutoff_at = payload.get("cutoff_at")
+        if not isinstance(selection_object_id, str) or not isinstance(selection_event_id, str):
+            raise ValueError("legacy research selection identities are required")
+        if not isinstance(cutoff_at, str):
+            raise ValueError("legacy research cutoff is required")
+        payload["selection_fingerprint"] = selection_binding_sha256(
+            selection_object_id,
+            selection_event_id,
+            datetime.fromisoformat(cutoff_at.replace("Z", "+00:00")),
+            screening,
+        )
     evidence_token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
     command_token = _LEGACY_RESEARCH_COMMAND_DECODING.set(True)
     version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
@@ -1508,12 +1747,28 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
     )
     try:
         payload["raw_score_model"] = _legacy_raw_score_model_payload(
-            payload.get("raw_score_model")
+            payload.get("raw_score_model"),
         )
         command = ResearchCommand.model_validate(payload)
         object.__setattr__(command, "_legacy_decoded", True)
-        for member in command.members:
+        object.__setattr__(command, "_persisted_payload", original_payload)
+        for index, member in enumerate(command.members):
             object.__setattr__(member, "_legacy_decoded", True)
+            original_member = original_members[index]
+            if isinstance(original_member, dict):
+                object.__setattr__(member, "_persisted_payload", deepcopy(original_member))
+                original_signals = original_member.get("structured_signals")
+                if isinstance(original_signals, dict) and set(original_signals) == set(
+                    LEGACY_RAW_SCORE_FEATURE_IDS
+                ):
+                    object.__setattr__(
+                        member,
+                        "_legacy_structured_signals",
+                        {
+                            signal_id: Decimal(str(original_signals[signal_id]))
+                            for signal_id in LEGACY_RAW_SCORE_FEATURE_IDS
+                        },
+                    )
             for evidence in member.evidence:
                 object.__setattr__(evidence, "_legacy_decoded", True)
         return command
@@ -1538,6 +1793,11 @@ def decode_historical_research_command(value: object) -> ResearchCommand:
     try:
         command = ResearchCommand.model_validate(payload)
         object.__setattr__(command, "_historical_decoded", True)
+        object.__setattr__(command, "_persisted_payload", deepcopy(value))
+        for index, member in enumerate(command.members):
+            original_member = value.get("members", ())[index]
+            if isinstance(original_member, dict):
+                object.__setattr__(member, "_persisted_payload", deepcopy(original_member))
         return command
     finally:
         _RESEARCH_DEFINITION_VERSION_OVERRIDE.reset(version_token)
@@ -1547,32 +1807,57 @@ def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
     """Decode one historical Provider payload at an explicit Run boundary."""
     if not isinstance(value, dict):
         raise ValueError("legacy research member must be an object")
+    original_payload = deepcopy(value)
     payload = deepcopy(value)
+    structured_signals = payload.get("structured_signals")
+    if "structured_facts" not in payload:
+        payload["structured_facts"] = _legacy_structured_facts_payload(structured_signals)
+    if isinstance(structured_signals, dict) and set(structured_signals) == set(
+        LEGACY_RAW_SCORE_FEATURE_IDS
+    ):
+        payload["structured_signals"] = _legacy_structured_signal_payload(structured_signals)
+    if "data_manifest" not in payload:
+        evidence_items = payload.get("evidence")
+        if not isinstance(evidence_items, (list, tuple)) or not evidence_items:
+            raise ValueError("legacy research member evidence is required")
+        first_evidence = evidence_items[0]
+        if not isinstance(first_evidence, dict) or not isinstance(
+            first_evidence.get("evidence_id"), str
+        ):
+            raise ValueError("legacy research evidence identity is required")
+        payload["data_manifest"] = _legacy_data_manifest_payload(
+            evidence_id=first_evidence["evidence_id"],
+            knowledge_cutoff=payload.get("knowledge_cutoff"),
+        )
     evidence_items = payload.get("evidence")
     if not isinstance(evidence_items, (list, tuple)):
         raise ValueError("legacy research member evidence must be a list")
     payload["evidence"] = [
-        (
-            {
-                **evidence,
-                "evidence_contract_version": evidence.get(
-                    "evidence_contract_version",
-                    RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
-                ),
-            }
-            if isinstance(evidence, dict)
-            else evidence
-        )
+        _normalize_legacy_evidence_payload(evidence)
         for evidence in evidence_items
     ]
     token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
+    command_token = _LEGACY_RESEARCH_COMMAND_DECODING.set(True)
     try:
         member = ResearchMemberInput.model_validate(payload)
         object.__setattr__(member, "_legacy_decoded", True)
+        object.__setattr__(member, "_persisted_payload", original_payload)
+        if isinstance(structured_signals, dict) and set(structured_signals) == set(
+            LEGACY_RAW_SCORE_FEATURE_IDS
+        ):
+            object.__setattr__(
+                member,
+                "_legacy_structured_signals",
+                {
+                    signal_id: Decimal(str(structured_signals[signal_id]))
+                    for signal_id in LEGACY_RAW_SCORE_FEATURE_IDS
+                },
+            )
         for evidence in member.evidence:
             object.__setattr__(evidence, "_legacy_decoded", True)
         return member
     finally:
+        _LEGACY_RESEARCH_COMMAND_DECODING.reset(command_token)
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
 
 
@@ -2171,6 +2456,10 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     )
     if isinstance(handoff, dict):
         normalized_handoff = dict(handoff)
+        normalized_handoff.setdefault(
+            "selection_fingerprint",
+            LEGACY_RESEARCH_MISSING_TEXT,
+        )
         normalized_handoff["raw_scores"] = normalize_raw_scores(
             normalized_handoff.get("raw_scores")
         )
@@ -2242,11 +2531,30 @@ def _legacy_raw_score_payload(value: object) -> object:
     if not isinstance(value, dict):
         return value
     normalized = dict(value)
+    normalized.setdefault("algorithm", "ELASTIC_NET_LOGISTIC")
+    normalized.setdefault("training_window_id", LEGACY_RAW_SCORE_TRAINING_WINDOW_ID)
+    normalized.setdefault("training_window_policy", RAW_SCORE_TRAINING_WINDOW_POLICY)
+    normalized.setdefault("training_window_kind", "EXPANDING")
+    normalized.setdefault("training_window_month_count", 1)
+    normalized.setdefault("training_window_start_month", LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH)
+    normalized.setdefault("training_window_end_month", LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH)
+    normalized.setdefault("training_months", [LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH])
+    normalized.setdefault("label_watermark_month", LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH)
     if "label_watermark_at" not in normalized:
-        label_watermark_month = normalized.get("label_watermark_month")
-        if not isinstance(label_watermark_month, str):
-            raise ValueError("legacy raw score is missing its label watermark month")
-        normalized["label_watermark_at"] = _raw_score_month_end(label_watermark_month).isoformat()
+        label_watermark_month = normalized["label_watermark_month"]
+        normalized["label_watermark_at"] = (
+            _raw_score_month_end(label_watermark_month).isoformat()
+            if label_watermark_month != LEGACY_RAW_SCORE_LABEL_WATERMARK_MONTH
+            else LEGACY_RAW_SCORE_LABEL_WATERMARK_AT.isoformat().replace("+00:00", "Z")
+        )
+    normalized.setdefault("normalization_snapshot_id", LEGACY_RAW_SCORE_NORMALIZATION_ID)
+    normalized.setdefault("mature_months", 0)
+    normalized.setdefault("training_record_count", 0)
+    normalized.setdefault("positive_record_count", 0)
+    normalized.setdefault("negative_record_count", 0)
+    normalized.setdefault("transformed_inputs", {})
+    normalized.setdefault("feature_transformations", {})
+    normalized.setdefault("penalty_strength", str(RAW_SCORE_PENALTY_STRENGTH))
     return normalized
 
 
@@ -2369,12 +2677,79 @@ def _transform_raw_score_feature(
     return -normalized if transform.reverse else normalized
 
 
+def _freeze_legacy_raw_score(
+    command: ResearchCommand,
+    member: ResearchMemberInput,
+    model: RawScoreModelSnapshot,
+    structured_signals: dict[str, Decimal],
+) -> RawScore:
+    """Replay the original v2 score without projecting its features into v4 semantics."""
+    structured_inputs = {
+        "screening_positive_prior": command.screening.positive_scores[member.security_id],
+        "screening_terminal_prior": command.screening.terminal_scores[member.security_id],
+        **structured_signals,
+    }
+    coefficients = dict(LEGACY_RAW_SCORE_COEFFICIENTS)
+    try:
+        with localcontext(_RAW_SCORE_DECIMAL_CONTEXT):
+            contributions = {
+                key: structured_inputs[key] * coefficients[key] for key in structured_inputs
+            }
+            z20 = RAW_SCORE_INTERCEPT + sum(contributions.values(), Decimal("0"))
+            if not z20.is_finite() or any(
+                not value.is_finite() for value in contributions.values()
+            ):
+                raise ArithmeticError("legacy raw score is not finite")
+    except ArithmeticError as error:
+        raise RawScoreCalculationError("RAW_SCORE_CALCULATION_FAILED") from error
+    return RawScore(
+        security_id=member.security_id,
+        research_id=member.research_id,
+        target=RAW_SCORE_TARGET,
+        algorithm=model.algorithm,
+        model_version=model.model_version,
+        training_window_id=model.training_window_id,
+        training_window_policy=model.training_window_policy,
+        training_window_kind=model.training_window_kind,
+        training_window_month_count=model.training_window_month_count,
+        training_window_start_month=model.training_window_start_month,
+        training_window_end_month=model.training_window_end_month,
+        training_months=model.training_months,
+        label_watermark_month=model.label_watermark_month,
+        label_watermark_at=model.label_watermark_at,
+        normalization_snapshot_id=model.normalization_snapshot_id,
+        mature_months=model.mature_months,
+        training_record_count=model.training_record_count,
+        positive_record_count=model.positive_record_count,
+        negative_record_count=model.negative_record_count,
+        intercept=RAW_SCORE_INTERCEPT,
+        structured_inputs=structured_inputs,
+        transformed_inputs={},
+        coefficients=coefficients,
+        feature_transformations={},
+        contributions=contributions,
+        z20=z20,
+        interaction_terms=RAW_SCORE_INTERACTION_TERMS,
+        l1_ratio=RAW_SCORE_L1_RATIO,
+        l2_ratio=RAW_SCORE_L2_RATIO,
+        penalty_strength=RAW_SCORE_PENALTY_STRENGTH,
+    )
+
+
 def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> RawScore:
     """Compute z20 only from structured screening priors and eleven signals."""
     if member.security_id not in command.screening.selected_member_ids:
         raise ValueError("raw score member is outside the fixed-ten cohort")
     if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
+    legacy_structured_signals = member._legacy_structured_signals
+    if legacy_structured_signals is not None:
+        return _freeze_legacy_raw_score(
+            command,
+            member,
+            command.raw_score_model,
+            legacy_structured_signals,
+        )
     structured_signals = calculate_structured_signals(member.structured_facts)
     if any(value is None for value in structured_signals.values()):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
@@ -2481,14 +2856,28 @@ def _research_command_fingerprint_payload(
     command: ResearchCommand,
     *,
     legacy: bool,
+    historical: bool,
 ) -> dict[str, object]:
-    payload = command.model_dump(mode="json")
+    payload = (
+        deepcopy(command._persisted_payload)
+        if (legacy or historical) and command._persisted_payload is not None
+        else command.model_dump(mode="json")
+    )
     if legacy:
-        for member in payload["members"]:
-            for evidence in member["evidence"]:
-                evidence.pop("evidence_contract_version", None)
-                evidence.pop("effective_at", None)
-                evidence.pop("source_published_at", None)
+        members = payload.get("members")
+        if isinstance(members, (list, tuple)):
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                evidence_items = member.get("evidence")
+                if not isinstance(evidence_items, (list, tuple)):
+                    continue
+                for evidence in evidence_items:
+                    if not isinstance(evidence, dict):
+                        continue
+                    evidence.pop("evidence_contract_version", None)
+                    evidence.pop("effective_at", None)
+                    evidence.pop("source_published_at", None)
     return payload
 
 
@@ -2542,7 +2931,11 @@ def handoff_fingerprint(
 ) -> str:
     """Hash the immutable input, typed draft, raw scores, and tool evidence."""
     payload = {
-        "command": _research_command_fingerprint_payload(command, legacy=legacy),
+        "command": _research_command_fingerprint_payload(
+            command,
+            legacy=legacy,
+            historical=historical,
+        ),
         "draft": research_draft_payload(
             draft,
             legacy=legacy,

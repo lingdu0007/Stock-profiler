@@ -6,6 +6,7 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -553,10 +554,15 @@ def _research_member_input_payload(
     member: ResearchMemberInput,
 ) -> str:
     """Bind each durable member Run to the complete frozen case and member identity."""
+    member_payload = (
+        deepcopy(member._persisted_payload)
+        if member._persisted_payload is not None
+        else member.model_dump(mode="json")
+    )
     return json.dumps(
         {
             "case_input": case.input,
-            "member": member.model_dump(mode="json"),
+            "member": member_payload,
         },
         ensure_ascii=True,
         separators=(",", ":"),
@@ -778,19 +784,23 @@ def _research_context_items(
             item_id=f"required-facts:{member.security_id}",
             source="synthetic-required-fact-provider",
             content=json.dumps(
-                {
-                    "security_id": member.security_id,
-                    "research_id": member.research_id,
-                    "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
-                    "evidence": tuple(
-                        research_evidence_payload(evidence, legacy=legacy)
-                        for evidence in member.evidence
-                    ),
-                    "data_manifest": member.data_manifest.model_dump(mode="json"),
-                    "structured_facts": member.structured_facts.model_dump(mode="json"),
-                    "structured_signals": member.model_dump(mode="json")["structured_signals"],
-                    "risk_flags": member.risk_flags,
-                },
+                (
+                    deepcopy(member._persisted_payload)
+                    if member._persisted_payload is not None
+                    else {
+                        "security_id": member.security_id,
+                        "research_id": member.research_id,
+                        "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+                        "evidence": tuple(
+                            research_evidence_payload(evidence, legacy=legacy)
+                            for evidence in member.evidence
+                        ),
+                        "data_manifest": member.data_manifest.model_dump(mode="json"),
+                        "structured_facts": member.structured_facts.model_dump(mode="json"),
+                        "structured_signals": member.model_dump(mode="json")["structured_signals"],
+                        "risk_flags": member.risk_flags,
+                    }
+                ),
                 ensure_ascii=True,
                 separators=(",", ":"),
                 sort_keys=True,
