@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from calendar import monthrange
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
@@ -86,9 +86,6 @@ RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
 RAW_SCORE_FIT_DIAGNOSTICS_STATUS: Literal["SYNTHETIC_NOT_FIT"] = "SYNTHETIC_NOT_FIT"
 RAW_SCORE_CODE_SHA256 = sha256(b"synthetic-raw-score-code-v1").hexdigest()
-RAW_SCORE_MODEL_ARTIFACT_SHA256 = sha256(
-    b"synthetic-elastic-net-logistic-z20-v1-artifact"
-).hexdigest()
 RAW_SCORE_ENVIRONMENT_SHA256 = sha256(
     b"synthetic-python-runtime-raw-score-v1"
 ).hexdigest()
@@ -296,6 +293,91 @@ class RawScoreFeatureTransform(ResearchContract):
         if self.iqr <= 0:
             raise ValueError("raw-score feature transform IQR must be positive")
         return self
+
+
+def _raw_score_model_artifact_payload(
+    *,
+    algorithm: str,
+    model_version: str,
+    target: str,
+    normalization_snapshot_id: str,
+    intercept: Decimal,
+    coefficients: Mapping[str, Decimal],
+    transformations: Mapping[str, RawScoreFeatureTransform | Mapping[str, object]],
+    interaction_terms: tuple[str, ...],
+    l1_ratio: Decimal,
+    l2_ratio: Decimal,
+    penalty_strength: Decimal,
+) -> dict[str, object]:
+    def transform_payload(
+        transform: RawScoreFeatureTransform | Mapping[str, object],
+    ) -> dict[str, object]:
+        if isinstance(transform, RawScoreFeatureTransform):
+            return {
+                "lower_clip": str(transform.lower_clip),
+                "upper_clip": str(transform.upper_clip),
+                "median": str(transform.median),
+                "iqr": str(transform.iqr),
+                "reverse": transform.reverse,
+            }
+        return {
+            "lower_clip": str(transform["lower_clip"]),
+            "upper_clip": str(transform["upper_clip"]),
+            "median": str(transform["median"]),
+            "iqr": str(transform["iqr"]),
+            "reverse": bool(transform["reverse"]),
+        }
+
+    return {
+        "algorithm": algorithm,
+        "model_version": model_version,
+        "target": target,
+        "normalization_snapshot_id": normalization_snapshot_id,
+        "intercept": str(intercept),
+        "coefficients": {key: str(value) for key, value in coefficients.items()},
+        "transformations": {
+            key: transform_payload(value) for key, value in transformations.items()
+        },
+        "interaction_terms": interaction_terms,
+        "l1_ratio": str(l1_ratio),
+        "l2_ratio": str(l2_ratio),
+        "penalty_strength": str(penalty_strength),
+    }
+
+
+def _raw_score_model_artifact_sha256(**kwargs: object) -> str:
+    return sha256(
+        json.dumps(
+            _raw_score_model_artifact_payload(**kwargs),  # type: ignore[arg-type]
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
+RAW_SCORE_MODEL_ARTIFACT_SHA256 = _raw_score_model_artifact_sha256(
+    algorithm="ELASTIC_NET_LOGISTIC",
+    model_version=RAW_SCORE_MODEL_VERSION,
+    target=RAW_SCORE_TARGET,
+    normalization_snapshot_id="synthetic-normalization-v1",
+    intercept=RAW_SCORE_INTERCEPT,
+    coefficients=RAW_SCORE_COEFFICIENTS,
+    transformations={
+        feature_id: RawScoreFeatureTransform(
+            lower_clip=Decimal("-3"),
+            upper_clip=Decimal("3"),
+            median=Decimal("0"),
+            iqr=Decimal("1"),
+            reverse=feature_id in RAW_SCORE_REVERSED_FEATURE_IDS,
+        )
+        for feature_id in RAW_SCORE_FEATURE_IDS
+    },
+    interaction_terms=RAW_SCORE_INTERACTION_TERMS,
+    l1_ratio=RAW_SCORE_L1_RATIO,
+    l2_ratio=RAW_SCORE_L2_RATIO,
+    penalty_strength=RAW_SCORE_PENALTY_STRENGTH,
+)
 
 
 class RawScoreFitDiagnostics(ResearchContract):
@@ -584,6 +666,23 @@ class RawScoreModelSnapshot(ResearchContract):
             and self.positive_record_count >= 50
             and self.negative_record_count >= 50
         )
+
+
+def raw_score_model_artifact_sha256(model: RawScoreModelSnapshot) -> str:
+    """Hash the frozen parameters that directly determine the raw score."""
+    return _raw_score_model_artifact_sha256(
+        algorithm=model.algorithm,
+        model_version=model.model_version,
+        target=model.target,
+        normalization_snapshot_id=model.normalization_snapshot_id,
+        intercept=model.intercept,
+        coefficients=model.coefficients,
+        transformations=model.transformations,
+        interaction_terms=model.interaction_terms,
+        l1_ratio=model.l1_ratio,
+        l2_ratio=model.l2_ratio,
+        penalty_strength=model.penalty_strength,
+    )
 
 
 class LegacyRawScoreModelSnapshot(RawScoreModelSnapshot):
@@ -1125,9 +1224,37 @@ def research_stage_artifact_payload(
     return payload
 
 
+class ResearchMoneyFlowFacts(ResearchContract):
+    """Raw cutoff-bound money-flow facts retained for research evidence."""
+
+    net_amount: Decimal | None
+    inflow_amount: Decimal | None
+    outflow_amount: Decimal | None
+
+    @model_validator(mode="after")
+    def validate_amounts(self) -> ResearchMoneyFlowFacts:
+        amounts = (self.net_amount, self.inflow_amount, self.outflow_amount)
+        if any(amount is not None and not amount.is_finite() for amount in amounts):
+            raise ValueError("money-flow facts must be finite")
+        if any(
+            amount is not None and amount < 0
+            for amount in (self.inflow_amount, self.outflow_amount)
+        ):
+            raise ValueError("money-flow inflow and outflow must be non-negative")
+        return self
+
+    @property
+    def is_complete(self) -> bool:
+        return all(
+            amount is not None
+            for amount in (self.net_amount, self.inflow_amount, self.outflow_amount)
+        )
+
+
 class ResearchStructuredFacts(ResearchContract):
     """Cutoff-bound source facts from which raw-score signals are calculated."""
 
+    money_flow: ResearchMoneyFlowFacts
     revenue_growth_current: Decimal | None
     revenue_growth_prior: Decimal | None
     quarter_profit_improvement: Decimal | None
@@ -1148,7 +1275,7 @@ class ResearchStructuredFacts(ResearchContract):
     @model_validator(mode="after")
     def validate_facts(self) -> ResearchStructuredFacts:
         values = self.model_dump(mode="python").values()
-        if any(value is not None and not value.is_finite() for value in values):
+        if any(isinstance(value, Decimal) and not value.is_finite() for value in values):
             raise ValueError("structured source facts must be finite")
         return self
 
@@ -1254,6 +1381,7 @@ class ResearchMemberInput(ResearchContract):
     structured_signals: dict[str, Decimal | None] = Field(default_factory=dict)
     risk_flags: tuple[str, ...] = ()
     _legacy_decoded: bool = PrivateAttr(default=False)
+    _historical_decoded: bool = PrivateAttr(default=False)
     _legacy_structured_signals: dict[str, Decimal] | None = PrivateAttr(default=None)
     _persisted_payload: dict[str, object] | None = PrivateAttr(default=None)
 
@@ -1324,6 +1452,17 @@ class ResearchMemberInput(ResearchContract):
             for evidence in self.evidence
         ):
             raise ValueError("research evidence must be validated and available by the cutoff")
+        money_flow_entry = next(
+            entry for entry in self.data_manifest.entries if entry.data_type == "MONEY_FLOW"
+        )
+        if (
+            money_flow_entry.completeness == "COMPLETE"
+            and not self.structured_facts.money_flow.is_complete
+            and not legacy_decoding
+            and not self._historical_decoded
+            and _RESEARCH_DEFINITION_VERSION_OVERRIDE.get() != RESEARCH_PRIOR_DEFINITION_VERSION
+        ):
+            raise ValueError("complete money-flow data requires structured money_flow facts")
         if (
             any(
                 evidence.evidence_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION
@@ -1479,6 +1618,11 @@ def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
         raise ValueError("legacy research member structured signals are incomplete")
     if set(value) == set(LEGACY_RAW_SCORE_FEATURE_IDS):
         return {
+            "money_flow": {
+                "net_amount": None,
+                "inflow_amount": None,
+                "outflow_amount": None,
+            },
             "revenue_growth_current": Decimal("0"),
             "revenue_growth_prior": Decimal("0"),
             "quarter_profit_improvement": Decimal("0"),
@@ -1499,6 +1643,11 @@ def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
     if set(value) != set(RAW_SCORE_FEATURE_IDS):
         raise ValueError("legacy research member structured signals are incomplete")
     return {
+        "money_flow": {
+            "net_amount": None,
+            "inflow_amount": None,
+            "outflow_amount": None,
+        },
         "revenue_growth_current": value["single_quarter_revenue_acceleration"],
         "revenue_growth_prior": 0
         if value["single_quarter_revenue_acceleration"] is not None
@@ -1811,6 +1960,23 @@ def decode_historical_research_command(value: object) -> ResearchCommand:
     if not isinstance(raw_score_model, dict):
         raise ValueError("historical research command raw-score model must be an object")
     _raw_score_model_audit_defaults(raw_score_model)
+    members = payload.get("members")
+    if not isinstance(members, (list, tuple)):
+        raise ValueError("historical research command members must be a list")
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("historical research member must be an object")
+        structured_facts = member.get("structured_facts")
+        if not isinstance(structured_facts, dict):
+            raise ValueError("historical research member structured facts must be an object")
+        structured_facts.setdefault(
+            "money_flow",
+            {
+                "net_amount": None,
+                "inflow_amount": None,
+                "outflow_amount": None,
+            },
+        )
     version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
         RESEARCH_PRIOR_DEFINITION_VERSION
     )
@@ -1820,6 +1986,7 @@ def decode_historical_research_command(value: object) -> ResearchCommand:
         object.__setattr__(command, "_persisted_payload", deepcopy(value))
         for index, member in enumerate(command.members):
             original_member = value.get("members", ())[index]
+            object.__setattr__(member, "_historical_decoded", True)
             if isinstance(original_member, dict):
                 object.__setattr__(member, "_persisted_payload", deepcopy(original_member))
         return command
@@ -1887,6 +2054,35 @@ def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
     finally:
         _LEGACY_RESEARCH_COMMAND_DECODING.reset(command_token)
         _LEGACY_RESEARCH_EVIDENCE_DECODING.reset(token)
+
+
+def decode_historical_research_member_input(value: object) -> ResearchMemberInput:
+    """Decode one pre-money-flow Provider payload at a historical Run boundary."""
+    if not isinstance(value, dict):
+        raise ValueError("historical research member must be an object")
+    original_payload = deepcopy(value)
+    payload = deepcopy(value)
+    structured_facts = payload.get("structured_facts")
+    if not isinstance(structured_facts, dict):
+        raise ValueError("historical research member structured facts must be an object")
+    structured_facts.setdefault(
+        "money_flow",
+        {
+            "net_amount": None,
+            "inflow_amount": None,
+            "outflow_amount": None,
+        },
+    )
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
+        RESEARCH_PRIOR_DEFINITION_VERSION
+    )
+    try:
+        member = ResearchMemberInput.model_validate(payload)
+        object.__setattr__(member, "_historical_decoded", True)
+        object.__setattr__(member, "_persisted_payload", original_payload)
+        return member
+    finally:
+        _RESEARCH_DEFINITION_VERSION_OVERRIDE.reset(version_token)
 
 
 def decode_legacy_research_tool_evidence(value: object) -> ResearchToolEvidence:
@@ -2815,6 +3011,12 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
                 raise ArithmeticError("raw score is not finite")
     except ArithmeticError as error:
         raise RawScoreCalculationError("RAW_SCORE_CALCULATION_FAILED") from error
+    if (
+        not command._legacy_decoded
+        and not command._historical_decoded
+        and model.model_artifact_sha256 != raw_score_model_artifact_sha256(model)
+    ):
+        raise RawScoreCalculationError("RAW_SCORE_MODEL_ARTIFACT_MISMATCH")
     return RawScore(
         security_id=member.security_id,
         research_id=member.research_id,

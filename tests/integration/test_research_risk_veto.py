@@ -101,6 +101,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchMemberHandoff,
     ResearchMemberInput,
+    ResearchMoneyFlowFacts,
     ResearchRiskPlan,
     ResearchStageArtifact,
     ResearchStructuredFacts,
@@ -125,6 +126,11 @@ from stock_profiler.modules.research.service import freeze_research
 def _structured_facts(index: int) -> ResearchStructuredFacts:
     signal_value = Decimal(index + 1) / Decimal(100)
     return ResearchStructuredFacts(
+        money_flow=ResearchMoneyFlowFacts(
+            net_amount=signal_value,
+            inflow_amount=signal_value + Decimal("1"),
+            outflow_amount=Decimal("1"),
+        ),
         revenue_growth_current=signal_value,
         revenue_growth_prior=Decimal("0"),
         quarter_profit_improvement=signal_value,
@@ -1045,7 +1051,7 @@ def test_historical_partial_member_recovery_creates_missing_member_runs(
     assert all(member.status == "SUCCEEDED" for member in recovered.research_member_runs)
 
 
-def test_reserved_missing_member_research_run_is_not_recreated(
+def test_reserved_missing_member_research_run_reuses_the_reserved_identity(
     migrated_settings: Settings,
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
@@ -1097,14 +1103,17 @@ def test_reserved_missing_member_research_run_is_not_recreated(
         )
 
     recovery_case = case.model_copy(update={"recovery_framework_run_id": case.framework_run_id})
-    with pytest.raises(MappedDurableRunMissingError, match="mapped auxiliary"):
-        asyncio.run(
-            frozen_decision_case.execute_research_run(
-                recovery_case,
-                runtime,
-                record_member_run_reservation=reserve_member_run,
-            )
+    recovered = asyncio.run(
+        frozen_decision_case.execute_research_run(
+            recovery_case,
+            runtime,
+            record_member_run_reservation=reserve_member_run,
         )
+    )
+
+    assert recovered.status == "SUCCEEDED"
+    assert len(recovered.research_member_runs) == 10
+    assert all(member.status == "SUCCEEDED" for member in recovered.research_member_runs)
 
 
 def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
@@ -2062,6 +2071,13 @@ def test_duplicate_member_research_output_is_recorded_as_output_contract_failure
     assert research_stage.status == "FAILED"
     assert "RESEARCH_OUTPUT_INVALID" in research_stage.reasons
     assert "synthetic-security-01:RESEARCH_OUTPUT_INVALID" in research_stage.reasons
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:")
+    }
+    assert len(data_gates) == 10 * len(RESEARCH_REQUIRED_DATA_TYPES)
+    assert set(data_gates.values()) == {"PASSED"}
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 

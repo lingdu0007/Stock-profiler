@@ -225,7 +225,6 @@ def _research_data_gate_results(
         for signal_id, value in member.structured_signals.items()
         if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
     }
-    gate_results_are_detailed = manifest_is_detailed or bool(invalid_structured_member_ids)
     data_gate_results = tuple(
         GateResult(
             gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
@@ -234,9 +233,11 @@ def _research_data_gate_results(
                 if manifest_is_detailed and entry.completeness != "COMPLETE"
                 else "FAILED"
                 if (member.security_id, entry.data_type) in invalid_structured_data_types
-                else "PASSED"
-                if gate_results_are_detailed
                 else "UNKNOWN"
+                if error_code == "RESEARCH_DATA_UNAVAILABLE"
+                and not manifest_is_detailed
+                and not invalid_structured_member_ids
+                else "PASSED"
             ),
         )
         for member in command.members
@@ -910,6 +911,15 @@ async def _record_research_member_run_reservation(
         )
         if any(stage_result.phase == "FRAMEWORK_RUN" for stage_result in history):
             return False
+        if any(
+            stage_result.phase == "AUXILIARY_RUN_RESERVATION"
+            and any(
+                gate.gate_id == "RESEARCH_MEMBER_RUN_RESERVED"
+                for gate in stage_result.gate_results
+            )
+            for stage_result in history
+        ):
+            return True
         if any(stage_result.phase == "AUXILIARY_RUN_RESERVATION" for stage_result in history):
             return False
         ledger.record_stage_result(

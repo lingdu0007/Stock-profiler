@@ -28,6 +28,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchFrameworkOutput,
     ResearchMemberHandoff,
     ResearchMemberInput,
+    ResearchMoneyFlowFacts,
     ResearchStructuredFacts,
     ResearchToolEvidence,
     RiskGate,
@@ -61,6 +62,11 @@ from stock_profiler.modules.research.service import (
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
     signal_value = Decimal(index + 1) / Decimal(10)
     structured_facts = ResearchStructuredFacts(
+        money_flow=ResearchMoneyFlowFacts(
+            net_amount=signal_value,
+            inflow_amount=signal_value + Decimal("1"),
+            outflow_amount=Decimal("1"),
+        ),
         revenue_growth_current=signal_value,
         revenue_growth_prior=Decimal("0"),
         quarter_profit_improvement=signal_value,
@@ -263,6 +269,15 @@ def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> N
         ResearchCommand.model_validate(payload)
 
 
+def test_raw_score_rejects_a_model_artifact_hash_that_does_not_match_parameters() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["raw_score_model"]["coefficients"]["turnover_change"] = "0.99"
+    command = ResearchCommand.model_validate(payload)
+
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_MODEL_ARTIFACT_MISMATCH"):
+        freeze_raw_score(command, command.members[0])
+
+
 def test_current_raw_score_snapshot_requires_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
     for field_name in (
@@ -405,6 +420,21 @@ def test_historical_research_command_recovers_missing_audit_provenance() -> None
     assert len(decoded.raw_score_model.environment_sha256) == 64
     assert decoded.raw_score_model.randomness_control == (
         "deterministic-synthetic-seed-1616"
+    )
+
+
+def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    for member in payload["members"]:
+        member["structured_facts"].pop("money_flow", None)
+
+    decoded = decode_historical_research_command(payload)
+
+    assert all(member._historical_decoded for member in decoded.members)
+    assert all(
+        not member.structured_facts.money_flow.is_complete for member in decoded.members
     )
 
 
@@ -1262,6 +1292,14 @@ def test_research_command_preserves_unavailable_data_for_failure_handling() -> N
 
     command = ResearchCommand.model_validate(payload)
     assert command.members[0].data_manifest.entries[1].completeness == "INCOMPLETE"
+
+
+def test_complete_money_flow_manifest_requires_structured_money_flow_facts() -> None:
+    payload = _command().model_dump(mode="json")
+    payload["members"][0]["structured_facts"].pop("money_flow", None)
+
+    with pytest.raises(ValueError, match="money_flow"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_research_command_allows_missing_signal_when_its_manifest_is_unavailable() -> None:

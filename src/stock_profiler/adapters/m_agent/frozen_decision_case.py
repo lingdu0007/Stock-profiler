@@ -128,6 +128,7 @@ from stock_profiler.modules.research.contracts import (
     RiskMemberVeto,
     RiskVetoDraft,
     decode_historical_research_draft_member,
+    decode_historical_research_member_input,
     decode_legacy_research_member_input,
     decode_legacy_research_stage_artifact,
     decode_legacy_research_tool_evidence,
@@ -309,6 +310,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                     self._items,
                     self._expected_members,
                     legacy=self._legacy,
+                    historical=self._historical,
                 )
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
@@ -337,6 +339,7 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                     self._items,
                     self._expected_members,
                     legacy=self._legacy,
+                    historical=self._historical,
                 )
             except ValueError as error:
                 self._failure_code = "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
@@ -455,6 +458,7 @@ def _validate_research_context_items(
     expected_members: tuple[ResearchMemberInput, ...],
     *,
     legacy: bool = False,
+    historical: bool = False,
 ) -> None:
     """Verify that the Provider will deliver every member's complete manifest."""
     expected_security_ids = tuple(member.security_id for member in expected_members)
@@ -471,6 +475,8 @@ def _validate_research_context_items(
             delivered_member = (
                 decode_legacy_research_member_input(payload)
                 if legacy
+                else decode_historical_research_member_input(payload)
+                if historical
                 else ResearchMemberInput.model_validate(payload)
             )
             evidence_ids = tuple(evidence.evidence_id for evidence in delivered_member.evidence)
@@ -509,6 +515,7 @@ def _recover_research_failure_code(
     expected_members: tuple[ResearchMemberInput, ...] | None = None,
     context_items: tuple[ContextItem, ...] | None = None,
     legacy: bool = False,
+    historical: bool = False,
 ) -> str | None:
     """Recover frozen data-failure identity after a terminal Run restart.
 
@@ -527,6 +534,7 @@ def _recover_research_failure_code(
             context_items if context_items is not None else _research_context_items(command),
             expected_members if expected_members is not None else command.members,
             legacy=legacy,
+            historical=historical,
         )
     except ValueError as error:
         if str(error).startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE"):
@@ -1666,6 +1674,7 @@ async def execute_research_run(
                     context_provider,
                     expected_members=(member,),
                     context_items=member_context_items,
+                    historical=_is_historical_research_case(case),
                 )
                 if failure_code is not None:
                     result = replace(result, error_code=failure_code)
