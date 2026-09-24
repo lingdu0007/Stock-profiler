@@ -118,7 +118,6 @@ from stock_profiler.modules.research.contracts import (
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
     ResearchCommand,
-    ResearchDataManifest,
     ResearchDraft,
     ResearchDraftMember,
     ResearchMemberInput,
@@ -469,13 +468,13 @@ def _validate_research_context_items(
         try:
             payload = json.loads(item.content)
             security_id = payload["security_id"]
-            evidence_ids = tuple(evidence["evidence_id"] for evidence in payload["evidence"])
-            manifest = ResearchDataManifest.model_validate(payload["data_manifest"])
             delivered_member = (
                 decode_legacy_research_member_input(payload)
                 if legacy
                 else ResearchMemberInput.model_validate(payload)
             )
+            evidence_ids = tuple(evidence.evidence_id for evidence in delivered_member.evidence)
+            manifest = delivered_member.data_manifest
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: malformed item") from error
         expected_member = expected_members_by_security_id.get(security_id)
@@ -815,6 +814,77 @@ def _research_context_items(
     )
 
 
+def _legacy_research_context_items(command: ResearchCommand) -> tuple[ContextItem, ...]:
+    """Rebuild the pre-staged Provider payload used by the original aggregate Run."""
+    items: list[ContextItem] = []
+    for member in command.members:
+        persisted_member = (
+            deepcopy(member._persisted_payload)
+            if member._persisted_payload is not None
+            else member.model_dump(mode="json")
+        )
+        persisted_evidence = persisted_member.get("evidence")
+        structured_signals = persisted_member.get(
+            "structured_signals",
+            member.model_dump(mode="json")["structured_signals"],
+        )
+        risk_flags = persisted_member.get("risk_flags", member.risk_flags)
+        context_payload: dict[str, object] = {
+            "security_id": member.security_id,
+            "research_id": member.research_id,
+            "evidence": (),
+            "structured_signals": structured_signals,
+            "risk_flags": risk_flags,
+        }
+        if "data_manifest" in persisted_member:
+            context_payload.update(
+                {
+                    "knowledge_cutoff": persisted_member.get(
+                        "knowledge_cutoff",
+                        member.knowledge_cutoff.isoformat(),
+                    ),
+                    "data_manifest": deepcopy(persisted_member["data_manifest"]),
+                    "structured_facts": deepcopy(
+                        persisted_member.get(
+                            "structured_facts",
+                            member.structured_facts.model_dump(mode="json"),
+                        )
+                    ),
+                }
+            )
+        evidence_payloads: list[object] = [
+            research_evidence_payload(evidence, legacy=True) for evidence in member.evidence
+        ]
+        if isinstance(persisted_evidence, (list, tuple)):
+            persisted_by_id = {
+                candidate["evidence_id"]: candidate
+                for candidate in persisted_evidence
+                if isinstance(candidate, dict) and isinstance(candidate.get("evidence_id"), str)
+            }
+            evidence_payloads = [
+                deepcopy(persisted_by_id.get(evidence.evidence_id, payload))
+                for evidence, payload in zip(member.evidence, evidence_payloads, strict=True)
+            ]
+        first_evidence_id = member.evidence[0].evidence_id
+        items.append(
+            ContextItem(
+                item_id=f"required-fact:{member.security_id}:{first_evidence_id}",
+                source="synthetic-required-fact-provider",
+                content=json.dumps(
+                    {**context_payload, "evidence": evidence_payloads},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                metadata={
+                    "availability": "REQUIRED_BEFORE_MODEL",
+                    "knowledge_cutoff": member.knowledge_cutoff.isoformat(),
+                },
+            )
+        )
+    return tuple(items)
+
+
 def _research_context_plan() -> ContextPlan:
     return ContextPlan(
         plan_version=RESEARCH_CONTRACT_VERSION,
@@ -841,6 +911,26 @@ def _research_context_plan() -> ContextPlan:
                 output_channels=output_channels,
             )
             for stage_id, input_channels, output_channels in RESEARCH_STAGE_CONTRACTS
+        ),
+    )
+
+
+def _legacy_research_context_plan() -> ContextPlan:
+    """Rebuild the four-stage plan persisted by the original aggregate Run."""
+    return ContextPlan(
+        plan_version=RESEARCH_CONTRACT_VERSION,
+        stages=tuple(
+            ContextStage(
+                identity=ContextStageIdentity(
+                    stage_id=stage_id,
+                    scope=ContextScope.RUN_INPUT,
+                    transform_type=ContextTransformType.PROVIDE,
+                    config_version=RESEARCH_CONTRACT_VERSION,
+                ),
+                input_channels=("REQUIRED_STRUCTURED_FACTS",),
+                output_channels=("REQUIRED_STRUCTURED_FACTS",),
+            )
+            for stage_id in RESEARCH_STAGE_IDS
         ),
     )
 
@@ -933,19 +1023,26 @@ def _legacy_research_definition(
     """Reconstruct the pre-member-Run Definition for historical Run recovery."""
     command = case.research
     assert command is not None
+    legacy_capabilities = ModelCapabilities(
+        tool_calling=ToolCallingMode.NATIVE,
+        structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+        supported_combinations=(
+            ModelCapabilityCombination(
+                tool_calling=ToolCallingMode.NATIVE,
+                structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
+            ),
+        ),
+    )
     return AgentDefinition.for_adapter(
         definition_id=RESEARCH_DEFINITION_ID,
         version=RESEARCH_LEGACY_DEFINITION_VERSION,
         instructions=LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS,
-        model_adapter=_StagedResearchModelAdapter(
-            _research_model_response(command, legacy=True),
-            command=command,
-            legacy=True,
+        model_adapter=DeterministicModelAdapter(
+            responses=(_research_model_response(command, legacy=True),),
+            capabilities=legacy_capabilities,
         ),
         context_provider=_FrozenResearchContextProvider(
-            _research_context_items(command, legacy=True),
-            runtime=runtime,
-            run_id=run_id,
+            _legacy_research_context_items(command),
             expected_members=command.members,
             fail=command.failure_mode == "DATA",
             legacy=True,
@@ -962,7 +1059,7 @@ def _legacy_research_definition(
             schema=legacy_research_draft_json_schema(),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
-        context_plan=_research_context_plan(),
+        context_plan=_legacy_research_context_plan(),
     )
 
 
@@ -2020,16 +2117,30 @@ def _assert_research_registered_capabilities(
     definition: AgentDefinition,
 ) -> None:
     """Keep research extensions deterministic and read-only at registration time."""
-    if (
+    common_invalid = (
         tuple(tool.name for tool in definition.tools)
         != tuple(sorted(RESEARCH_READ_ONLY_TOOL_ALLOWLIST))
         or any(tool.effect is not ToolEffect.READ_ONLY for tool in definition.tools)
         or any(not getattr(tool, "deterministic", False) for tool in definition.tools)
-        or type(definition.model_adapter) is not _StagedResearchModelAdapter
         or definition.model_adapters
         or type(definition.run_policy) is not AllowAllRunPolicy
         or definition.compression_contract is not None
         or not definition.context_plan.stages
+        or not isinstance(definition.context_provider, _FrozenResearchContextProvider)
+        or not definition.context_provider.deterministic
+        or case.research is None
+    )
+    if common_invalid:
+        raise ValueError("undeclared research framework capability")
+    if _is_legacy_research_case(case):
+        if (
+            type(definition.model_adapter) is not DeterministicModelAdapter
+            or definition.context_plan != _legacy_research_context_plan()
+        ):
+            raise ValueError("undeclared legacy research framework capability")
+        return
+    if (
+        type(definition.model_adapter) is not _StagedResearchModelAdapter
         or tuple(stage.identity.stage_id for stage in definition.context_plan.stages)
         != RESEARCH_STAGE_IDS
         or tuple(
@@ -2057,9 +2168,6 @@ def _assert_research_registered_capabilities(
             != RESEARCH_STAGE_IDS.index(stage.identity.stage_id)
             for stage in definition.context_plan.stages
         )
-        or not isinstance(definition.context_provider, _FrozenResearchContextProvider)
-        or not definition.context_provider.deterministic
-        or case.research is None
     ):
         raise ValueError("undeclared research framework capability")
 

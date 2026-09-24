@@ -1165,6 +1165,13 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
         runtime=runtime,
         run_id=legacy_case.framework_run_id,
     )
+    assert type(definition.model_adapter) is DeterministicModelAdapter
+    assert all(stage.config is None for stage in definition.context_plan.stages)
+    assert all(
+        stage.input_channels == ("REQUIRED_STRUCTURED_FACTS",)
+        and stage.output_channels == ("REQUIRED_STRUCTURED_FACTS",)
+        for stage in definition.context_plan.stages
+    )
     created = asyncio.run(
         frozen_decision_case._execute_registered_run(
             runtime=runtime,
@@ -1185,26 +1192,18 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     stored_legacy_run = asyncio.run(runtime.run_store.get_run(legacy_case.framework_run_id))
     assert stored_legacy_run is not None
     assert stored_legacy_run.input == original_legacy_input
-    legacy_stage_artifacts = [
-        json.loads(output_item.item.content)["stage_artifact"]
+    legacy_context_payloads = [
+        json.loads(output_item.item.content)
         for checkpoint in asyncio.run(
             runtime.run_store.get_checkpoints(legacy_case.framework_run_id)
         )
         if checkpoint.step_type is StepType.CONTEXT
         if (stage_result := parse_stage_result(checkpoint.output)) is not None
         for output_item in stage_result.output_items
-        if "stage_artifact" in json.loads(output_item.item.content)
     ]
-    assert legacy_stage_artifacts
+    assert legacy_context_payloads
     assert all(
-        field_name not in artifact
-        for artifact in legacy_stage_artifacts
-        for field_name in (
-            "input_item_ids",
-            "catalysts",
-            "falsification_conditions",
-            "unknowns",
-        )
+        "stage_artifact" not in payload for payload in legacy_context_payloads
     )
 
     recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))

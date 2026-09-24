@@ -1556,6 +1556,23 @@ def _legacy_data_manifest_payload(
     }
 
 
+def _legacy_member_knowledge_cutoff(
+    value: object,
+    evidence_items: object,
+) -> object:
+    if isinstance(value, (str, datetime)):
+        return value
+    if not isinstance(evidence_items, (list, tuple)) or not evidence_items:
+        raise ValueError("legacy research member knowledge cutoff is missing")
+    first_evidence = evidence_items[0]
+    if not isinstance(first_evidence, dict):
+        raise ValueError("legacy research evidence must be an object")
+    knowledge_cutoff = first_evidence.get("knowledge_cutoff")
+    if not isinstance(knowledge_cutoff, str):
+        raise ValueError("legacy research member knowledge cutoff is missing")
+    return knowledge_cutoff
+
+
 def _normalize_legacy_evidence_payload(value: object) -> object:
     if not isinstance(value, dict):
         return value
@@ -1584,13 +1601,16 @@ def _legacy_screening_payload(value: object) -> dict[str, object]:
     selected_ids = payload.get("selected_member_ids")
     if not isinstance(selected_ids, (list, tuple)):
         raise ValueError("legacy research screening members are missing")
+    universe_ids = payload.get("universe_security_ids")
+    if not isinstance(universe_ids, (list, tuple)):
+        raise ValueError("legacy research screening universe is missing")
     payload.setdefault(
         "positive_percentiles",
-        {security_id: "0" for security_id in selected_ids},
+        {security_id: "0" for security_id in universe_ids},
     )
     payload.setdefault(
         "terminal_percentiles",
-        {security_id: "0" for security_id in selected_ids},
+        {security_id: "0" for security_id in universe_ids},
     )
     positive_scores = _legacy_decimal_map(payload.get("positive_scores"))
     terminal_scores = _legacy_decimal_map(payload.get("terminal_scores"))
@@ -1693,6 +1713,11 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         if not isinstance(member, dict):
             raise ValueError("legacy research member must be an object")
         structured_signals = member.get("structured_signals")
+        evidence_items = member.get("evidence")
+        member.setdefault(
+            "knowledge_cutoff",
+            _legacy_member_knowledge_cutoff(member.get("knowledge_cutoff"), evidence_items),
+        )
         if "structured_facts" not in member:
             member["structured_facts"] = _legacy_structured_facts_payload(structured_signals)
         if isinstance(structured_signals, dict) and set(structured_signals) == set(
@@ -1700,7 +1725,6 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         ):
             member["structured_signals"] = _legacy_structured_signal_payload(structured_signals)
         if "data_manifest" not in member:
-            evidence_items = member.get("evidence")
             if not isinstance(evidence_items, (list, tuple)) or not evidence_items:
                 raise ValueError("legacy research member evidence is required")
             first_evidence = evidence_items[0]
@@ -1810,6 +1834,11 @@ def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
     original_payload = deepcopy(value)
     payload = deepcopy(value)
     structured_signals = payload.get("structured_signals")
+    evidence_items = payload.get("evidence")
+    payload.setdefault(
+        "knowledge_cutoff",
+        _legacy_member_knowledge_cutoff(payload.get("knowledge_cutoff"), evidence_items),
+    )
     if "structured_facts" not in payload:
         payload["structured_facts"] = _legacy_structured_facts_payload(structured_signals)
     if isinstance(structured_signals, dict) and set(structured_signals) == set(
@@ -1817,7 +1846,6 @@ def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
     ):
         payload["structured_signals"] = _legacy_structured_signal_payload(structured_signals)
     if "data_manifest" not in payload:
-        evidence_items = payload.get("evidence")
         if not isinstance(evidence_items, (list, tuple)) or not evidence_items:
             raise ValueError("legacy research member evidence is required")
         first_evidence = evidence_items[0]

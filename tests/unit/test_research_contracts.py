@@ -531,6 +531,28 @@ def test_legacy_research_command_decodes_the_original_v2_signal_schema() -> None
     assert raw_score.z20 == Decimal("-0.0615")
 
 
+def test_legacy_research_command_restores_missing_percentiles_for_the_full_universe() -> None:
+    payload = _command().model_dump(mode="json")
+    extra_security_id = "synthetic-security-extra"
+    screening = payload["screening"]
+    screening["universe_security_ids"].append(extra_security_id)
+    screening["positive_scores"][extra_security_id] = "0.5"
+    screening["terminal_scores"][extra_security_id] = "0.5"
+    screening.pop("positive_percentiles")
+    screening.pop("terminal_percentiles")
+    screening["output_sha256"] = "a" * 64
+    payload.pop("selection_fingerprint")
+    payload["raw_score_model"] = None
+
+    decoded = decode_legacy_research_command(payload)
+
+    universe_ids = set(decoded.screening.universe_security_ids)
+    assert set(decoded.screening.positive_percentiles) == universe_ids
+    assert set(decoded.screening.terminal_percentiles) == universe_ids
+    assert decoded.screening.positive_percentiles[extra_security_id] == Decimal("0")
+    assert decoded.screening.terminal_percentiles[extra_security_id] == Decimal("0")
+
+
 def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
     for cohort in payload["raw_score_model"]["training_cohorts"]:
