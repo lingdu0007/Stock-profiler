@@ -83,6 +83,7 @@ from stock_profiler.modules.research.contracts import (
     research_draft_payload,
     research_evidence_payload,
     research_member_handoff_payload,
+    research_outcome_raw_score_payloads,
     research_raw_score_payload,
 )
 from stock_profiler.modules.research.service import (
@@ -329,6 +330,13 @@ async def execute_research_risk_journey(
             ),
         )
     try:
+        historical_raw_score_payloads = (
+            research_outcome_raw_score_payloads(
+                case.expected_external_result.research,
+            )
+            if legacy or historical
+            else None
+        )
         risk_plan = prepare_research_risk_plan(
             command,
             research_run.run_id,
@@ -337,6 +345,7 @@ async def execute_research_risk_journey(
             research_run_ids,
             legacy=legacy,
             historical=historical,
+            raw_score_payloads=historical_raw_score_payloads,
         )
     except RawScoreCalculationError as error:
         return replace(
@@ -407,10 +416,12 @@ def _research_framework_output_json(
             legacy=legacy,
             historical=historical,
         )
-    if legacy:
+    if legacy or historical:
         payload["raw_scores"] = tuple(
-            research_raw_score_payload(score, legacy=True) for score in output.raw_scores or ()
+            research_raw_score_payload(score, legacy=legacy)
+            for score in output.raw_scores or ()
         )
+    if legacy:
         payload["tool_evidence"] = tuple(
             research_evidence_payload(evidence, legacy=True) for evidence in output.tool_evidence
         )

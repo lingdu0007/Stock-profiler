@@ -37,6 +37,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchToolEvidence,
     RiskMemberVeto,
     RiskVetoOutcome,
+    bind_research_raw_score_payloads,
     freeze_raw_score,
     handoff_fingerprint,
     research_draft_payload,
@@ -64,11 +65,16 @@ def prepare_research_risk_plan(
     research_run_ids: tuple[str, ...] = (),
     legacy: bool = False,
     historical: bool = False,
+    raw_score_payloads: tuple[dict[str, object], ...] | None = None,
 ) -> ResearchRiskPlan:
     """Calculate and bind the immutable inputs consumed by the risk Run."""
     tool_evidence_refs = tuple(evidence.evidence_id for evidence in tool_evidence)
     validate_research_draft(command, draft, tool_evidence)
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
+    if raw_score_payloads is not None:
+        if len(raw_score_payloads) != len(raw_scores):
+            raise ValueError("research raw-score payloads must cover every cohort member")
+        bind_research_raw_score_payloads(raw_scores, raw_score_payloads)
     member_handoffs = _member_handoffs_for_command(
         command,
         () if legacy else research_run_ids,
@@ -149,9 +155,9 @@ def freeze_research(
     if framework.raw_scores is None:
         raise RawScoreCalculationError("RAW_SCORE_HANDOFF_MISSING")
     expected_raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
-    if tuple(
-        research_raw_score_payload(score, legacy=legacy) for score in framework.raw_scores
-    ) != tuple(research_raw_score_payload(score, legacy=legacy) for score in expected_raw_scores):
+    if tuple(score.model_dump(mode="json") for score in framework.raw_scores) != tuple(
+        score.model_dump(mode="json") for score in expected_raw_scores
+    ):
         raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH")
     tool_evidence = _validate_tool_evidence(
         command,

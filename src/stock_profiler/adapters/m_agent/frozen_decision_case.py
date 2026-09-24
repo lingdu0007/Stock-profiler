@@ -1524,12 +1524,18 @@ async def execute_research_run(
         all_runs_existed = all_runs_existed and existing_run is not None
         member_input = _research_member_input_payload(case, member)
         allow_create = (
-            not historical
-            and
-            case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
-            and (
-                case.recovery_framework_run_id is None
-                or index > 0
+            (
+                not historical
+                and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
+                and (
+                    case.recovery_framework_run_id is None
+                    or index > 0
+                )
+            )
+            or (
+                historical
+                and case.recovery_framework_run_id is not None
+                and record_member_run_reservation is not None
             )
         )
         if existing_run is None and allow_create and record_member_run_reservation is not None:

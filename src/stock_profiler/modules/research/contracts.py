@@ -1795,6 +1795,7 @@ class RawScore(ResearchContract):
     l1_ratio: Decimal
     l2_ratio: Decimal
     penalty_strength: Decimal
+    _persisted_payload: dict[str, object] | None = PrivateAttr(default=None)
 
 
 def research_raw_score_payload(
@@ -1803,6 +1804,8 @@ def research_raw_score_payload(
     legacy: bool = False,
 ) -> dict[str, object]:
     """Serialize one score using the exact current or legacy field set."""
+    if score._persisted_payload is not None:
+        return deepcopy(score._persisted_payload)
     payload = score.model_dump(mode="json")
     if legacy:
         payload.pop("label_watermark_at", None)
@@ -1838,10 +1841,10 @@ def _decode_research_framework_output(
     draft = payload.get("draft")
     if isinstance(draft, dict):
         payload["draft"] = draft_decoder(draft).model_dump(mode="python")
-    raw_scores = payload.get("raw_scores")
-    if isinstance(raw_scores, (list, tuple)):
+    raw_score_payloads = payload.get("raw_scores")
+    if isinstance(raw_score_payloads, (list, tuple)):
         payload["raw_scores"] = [
-            _legacy_raw_score_payload(raw_score) for raw_score in raw_scores
+            _legacy_raw_score_payload(raw_score) for raw_score in raw_score_payloads
         ]
     tool_evidence = payload.get("tool_evidence")
     if isinstance(tool_evidence, (list, tuple)):
@@ -1888,6 +1891,7 @@ def _decode_research_framework_output(
     token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
     try:
         output = ResearchFrameworkOutput.model_validate(payload)
+        bind_research_raw_score_payloads(output.raw_scores, raw_score_payloads)
         for tool_evidence in output.tool_evidence:
             object.__setattr__(tool_evidence, "_legacy_decoded", True)
         for handoff in output.member_handoffs:
@@ -2064,6 +2068,11 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
             for evidence in tool_evidence
         ]
     handoff = payload.get("handoff")
+    handoff_raw_score_payloads = (
+        deepcopy(handoff.get("raw_scores"))
+        if isinstance(handoff, dict)
+        else None
+    )
     if isinstance(handoff, dict):
         normalized_handoff = dict(handoff)
         normalized_handoff["raw_scores"] = normalize_raw_scores(
@@ -2116,6 +2125,11 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
     try:
         outcome = ResearchOutcome.model_validate(payload)
         object.__setattr__(outcome, "_persisted_payload", deepcopy(value))
+        bind_research_raw_score_payloads(outcome.raw_scores, raw_scores)
+        bind_research_raw_score_payloads(
+            outcome.handoff.raw_scores,
+            handoff_raw_score_payloads,
+        )
         for tool_evidence in outcome.tool_evidence:
             object.__setattr__(tool_evidence, "_legacy_decoded", True)
         for handoff_tool_evidence in outcome.handoff.tool_evidence:
@@ -2140,12 +2154,16 @@ def _legacy_raw_score_payload(value: object) -> object:
     return normalized
 
 
-def _legacy_serialized_raw_score_payload(value: object) -> object:
-    if not isinstance(value, dict):
-        return value
-    normalized = dict(value)
-    normalized.pop("label_watermark_at", None)
-    return normalized
+def bind_research_raw_score_payloads(
+    scores: tuple[RawScore, ...] | None,
+    payloads: object,
+) -> None:
+    """Retain the exact historical raw-score field set beside normalized models."""
+    if scores is None or not isinstance(payloads, (list, tuple)):
+        return
+    for score, payload in zip(scores, payloads, strict=False):
+        if isinstance(payload, dict):
+            object.__setattr__(score, "_persisted_payload", deepcopy(payload))
 
 
 def decode_historical_research_outcome(value: object) -> ResearchOutcome:
@@ -2178,18 +2196,19 @@ def research_outcome_payload(
             for field_name in ("catalysts", "falsification_conditions", "unknowns"):
                 member.pop(field_name, None)
     if legacy:
-        payload["raw_scores"] = [
-            _legacy_serialized_raw_score_payload(score)
-            for score in payload.get("raw_scores", ())
-        ]
+        if outcome.raw_scores is not None:
+            payload["raw_scores"] = [
+                research_raw_score_payload(score, legacy=True)
+                for score in outcome.raw_scores
+            ]
         payload["tool_evidence"] = [
             _legacy_evidence_payload(evidence) for evidence in payload.get("tool_evidence", ())
         ]
         handoff = payload.get("handoff")
         if isinstance(handoff, dict):
             handoff["raw_scores"] = [
-                _legacy_serialized_raw_score_payload(score)
-                for score in handoff.get("raw_scores", ())
+                research_raw_score_payload(score, legacy=True)
+                for score in outcome.handoff.raw_scores
             ]
             handoff["tool_evidence"] = [
                 _legacy_evidence_payload(evidence) for evidence in handoff.get("tool_evidence", ())
@@ -2205,6 +2224,26 @@ def research_outcome_payload(
                         for evidence in member_handoff.get("evidence", ())
                     ]
     return payload
+
+
+def research_outcome_raw_score_payloads(
+    outcome: ResearchOutcome | None,
+) -> tuple[dict[str, object], ...] | None:
+    """Read the exact raw-score payloads bound to a persisted research outcome."""
+    if outcome is None:
+        return None
+    payload = research_outcome_payload(outcome)
+    handoff = payload.get("handoff")
+    raw_scores = (
+        handoff.get("raw_scores")
+        if isinstance(handoff, dict)
+        else payload.get("raw_scores")
+    )
+    if not isinstance(raw_scores, (list, tuple)) or not all(
+        isinstance(score, dict) for score in raw_scores
+    ):
+        return None
+    return tuple(deepcopy(score) for score in raw_scores)
 
 
 def _transform_raw_score_feature(

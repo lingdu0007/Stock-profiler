@@ -945,6 +945,106 @@ def test_partial_member_research_recovery_creates_missing_member_runs(
         assert asyncio.run(runtime.run_store.get_run(member_run.run_id)) is not None
 
 
+def test_historical_partial_member_recovery_creates_missing_member_runs(
+    migrated_settings: Settings,
+) -> None:
+    current_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = current_case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["input"]["research"] = research_payload
+    payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["agent_definition"]["output_contract"]["version"] = (
+        RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    )
+    historical_output_schema = ResearchDraftMember.model_json_schema()
+    for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+        historical_output_schema["properties"].pop(field_name, None)
+    historical_output_schema["required"] = [
+        "security_id",
+        "research_id",
+        "evidence_refs",
+        "thesis",
+        "bull_case",
+        "bear_case",
+        "knowledge_cutoff",
+    ]
+    payload["agent_definition"]["output_contract"]["json_schema"] = historical_output_schema
+    payload["version_bundle"]["agent_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["version_bundle"]["output_contract_version"] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    for member in payload["expected_external_result"]["research"]["members"]:
+        for field_name in ("catalysts", "falsification_conditions", "unknowns"):
+            member.pop(field_name, None)
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_definition_version"
+    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"][
+        "research_output_contract_version"
+    ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
+    historical_case = FrozenDecisionCase.model_validate(payload)
+    runtime = initialize_runtime_storage(migrated_settings)
+    command = historical_case.research
+    assert command is not None
+    first_member = command.members[0]
+    first_run_id = frozen_decision_case._research_member_run_id(
+        historical_case,
+        0,
+        first_member,
+    )
+    first_context = tuple(
+        item
+        for item in frozen_decision_case._research_context_items(command)
+        if item.item_id == f"required-facts:{first_member.security_id}"
+    )
+    first_definition = frozen_decision_case._research_definition(
+        historical_case,
+        runtime=runtime,
+        run_id=first_run_id,
+        member=first_member,
+        context_items=first_context,
+        historical=True,
+    )
+    first_result = asyncio.run(
+        frozen_decision_case._execute_registered_run(
+            runtime=runtime,
+            run_id=first_run_id,
+            definition=first_definition,
+            input_payload=frozen_decision_case._research_member_input_payload(
+                historical_case,
+                first_member,
+            ),
+            case=None,
+            record_transition=None,
+            clock=None,
+        )
+    )
+    assert first_result.status == "SUCCEEDED"
+
+    reserved_run_ids: list[str] = []
+
+    async def reserve_member_run(run_id: str) -> bool:
+        reserved_run_ids.append(run_id)
+        return True
+
+    recovery_case = historical_case.model_copy(
+        update={"recovery_framework_run_id": historical_case.framework_run_id}
+    )
+    recovered = asyncio.run(
+        frozen_decision_case.execute_research_run(
+            recovery_case,
+            runtime,
+            record_member_run_reservation=reserve_member_run,
+        )
+    )
+
+    assert recovered.status == "SUCCEEDED"
+    assert len(reserved_run_ids) == 9
+    assert len(recovered.research_member_runs) == 10
+    assert all(member.status == "SUCCEEDED" for member in recovered.research_member_runs)
+
+
 def test_reserved_missing_member_research_run_is_not_recreated(
     migrated_settings: Settings,
 ) -> None:
@@ -1142,6 +1242,7 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     assert risk_run.input is not None
     legacy_risk_input = json.loads(risk_run.input)
     assert "research_run_ids" not in legacy_risk_input
+    assert "label_watermark_at" in legacy_risk_input["raw_scores"][0]
     assert all(
         field_name not in member
         for member in legacy_risk_input["draft"]["members"]

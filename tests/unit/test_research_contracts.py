@@ -44,6 +44,7 @@ from stock_profiler.modules.research.contracts import (
     handoff_fingerprint,
     research_draft_payload,
     research_member_handoff_payload,
+    research_raw_score_payload,
     screening_output_sha256,
     selection_binding_sha256,
 )
@@ -465,6 +466,38 @@ def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
         ).hexdigest()
     )
     assert plan.risk_run_id == expected_risk_run_id
+
+    historical_raw_score_payloads = tuple(
+        research_raw_score_payload(score) for score in plan.raw_scores
+    )
+    historical_plan = prepare_research_risk_plan(
+        command,
+        "research-run-legacy",
+        draft,
+        (),
+        legacy=True,
+        raw_score_payloads=historical_raw_score_payloads,
+    )
+    historical_risk_payload = json.loads(historical_plan.input_payload)
+
+    assert "label_watermark_at" in historical_risk_payload["raw_scores"][0]
+    expected_historical_payload = {
+        **expected_payload,
+        "raw_scores": historical_raw_score_payloads,
+    }
+    expected_historical_risk_run_id = (
+        "risk-run-"
+        + sha256(
+            json.dumps(
+                expected_historical_payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+    )
+    assert historical_plan.risk_run_id == expected_historical_risk_run_id
+    assert historical_plan.risk_run_id != plan.risk_run_id
 
 
 def test_legacy_stage_artifact_decodes_without_new_input_item_ids() -> None:
