@@ -232,6 +232,12 @@ def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> N
     assert snapshot.transformations["turnover_change"].reverse is False
     assert snapshot.l1_ratio == Decimal("0.25")
     assert snapshot.l2_ratio == Decimal("0.75")
+    assert snapshot.fit_diagnostics.status == "SYNTHETIC_NOT_FIT"
+    assert snapshot.fit_diagnostics.training_log_loss is None
+    assert len(snapshot.code_sha256) == 64
+    assert len(snapshot.model_artifact_sha256) == 64
+    assert len(snapshot.environment_sha256) == 64
+    assert snapshot.randomness_control == "deterministic-synthetic-seed-1616"
 
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["l1_ratio"] = "1"
@@ -251,6 +257,21 @@ def test_raw_score_snapshot_freezes_transformations_and_model_constraints() -> N
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["transformations"]["downside_semivariance_60d"]["reverse"] = False
     with pytest.raises(ValueError, match="direction"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_current_raw_score_snapshot_requires_audit_provenance() -> None:
+    payload = _command().model_dump(mode="json")
+    for field_name in (
+        "fit_diagnostics",
+        "code_sha256",
+        "model_artifact_sha256",
+        "environment_sha256",
+        "randomness_control",
+    ):
+        payload["raw_score_model"].pop(field_name)
+
+    with pytest.raises(ValueError):
         ResearchCommand.model_validate(payload)
 
 
@@ -360,6 +381,30 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
     assert decoded.raw_score_model.training_window_month_count == 60
 
 
+def test_historical_research_command_recovers_missing_audit_provenance() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    for field_name in (
+        "fit_diagnostics",
+        "code_sha256",
+        "model_artifact_sha256",
+        "environment_sha256",
+        "randomness_control",
+    ):
+        payload["raw_score_model"].pop(field_name)
+
+    decoded = decode_historical_research_command(payload)
+
+    assert decoded.raw_score_model.fit_diagnostics.status == "SYNTHETIC_NOT_FIT"
+    assert len(decoded.raw_score_model.code_sha256) == 64
+    assert len(decoded.raw_score_model.model_artifact_sha256) == 64
+    assert len(decoded.raw_score_model.environment_sha256) == 64
+    assert decoded.raw_score_model.randomness_control == (
+        "deterministic-synthetic-seed-1616"
+    )
+
+
 def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     payload = _command().model_dump(mode="json")
     for member in payload["members"]:
@@ -380,6 +425,30 @@ def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     assert decoded.raw_score_model.label_watermark_at is not None
 
 
+def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
+    payload = _command().model_dump(mode="json")
+    for cohort in payload["raw_score_model"]["training_cohorts"]:
+        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    for field_name in (
+        "fit_diagnostics",
+        "code_sha256",
+        "model_artifact_sha256",
+        "environment_sha256",
+        "randomness_control",
+    ):
+        payload["raw_score_model"].pop(field_name)
+
+    decoded = decode_legacy_research_command(payload)
+
+    assert decoded.raw_score_model.fit_diagnostics.status == "SYNTHETIC_NOT_FIT"
+    assert len(decoded.raw_score_model.code_sha256) == 64
+    assert len(decoded.raw_score_model.model_artifact_sha256) == 64
+    assert len(decoded.raw_score_model.environment_sha256) == 64
+    assert decoded.raw_score_model.randomness_control == (
+        "deterministic-synthetic-seed-1616"
+    )
+
+
 def test_legacy_research_command_preserves_existing_training_provenance() -> None:
     payload = _command().model_dump(mode="json")
     for cohort in payload["raw_score_model"]["training_cohorts"]:
@@ -392,6 +461,26 @@ def test_legacy_research_command_preserves_existing_training_provenance() -> Non
     assert (
         decoded.raw_score_model.training_cohorts[0].research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
+    )
+
+
+def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
+    payload = _command().model_dump(mode="json")
+    raw_score_model = payload["raw_score_model"]
+    raw_score_model.pop("training_cohorts", None)
+    for record in raw_score_model["training_records"]:
+        record.pop("cohort_id", None)
+        record.pop("evaluation_entry_at", None)
+
+    decoded = decode_legacy_research_command(payload)
+
+    assert len(decoded.raw_score_model.training_records) == 500
+    assert decoded.raw_score_model.training_records[0].cohort_id.startswith(
+        "legacy-training-cohort-"
+    )
+    assert (
+        decoded.raw_score_model.training_records[0].evaluation_entry_at
+        > decoded.raw_score_model.training_records[0].selection_cutoff_at
     )
 
 
@@ -498,6 +587,21 @@ def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
     )
     assert historical_plan.risk_run_id == expected_historical_risk_run_id
     assert historical_plan.risk_run_id != plan.risk_run_id
+
+    tampered_raw_score_payloads = list(historical_raw_score_payloads)
+    tampered_raw_score_payloads[0] = {
+        **tampered_raw_score_payloads[0],
+        "z20": "999",
+    }
+    with pytest.raises(RawScoreCalculationError, match="RAW_SCORE_INPUT_MISMATCH"):
+        prepare_research_risk_plan(
+            command,
+            "research-run-legacy",
+            draft,
+            (),
+            legacy=True,
+            raw_score_payloads=tuple(tampered_raw_score_payloads),
+        )
 
 
 def test_legacy_stage_artifact_decodes_without_new_input_item_ids() -> None:

@@ -46,6 +46,7 @@ from stock_profiler.modules.research.contracts import (
     research_member_results,
     research_raw_score_payload,
     risk_run_id_for,
+    validate_research_raw_score_payloads,
 )
 
 __all__ = (
@@ -72,8 +73,10 @@ def prepare_research_risk_plan(
     validate_research_draft(command, draft, tool_evidence)
     raw_scores = tuple(freeze_raw_score(command, member) for member in command.members)
     if raw_score_payloads is not None:
-        if len(raw_score_payloads) != len(raw_scores):
-            raise ValueError("research raw-score payloads must cover every cohort member")
+        try:
+            validate_research_raw_score_payloads(raw_scores, raw_score_payloads)
+        except ValueError as error:
+            raise RawScoreCalculationError("RAW_SCORE_INPUT_MISMATCH") from error
         bind_research_raw_score_payloads(raw_scores, raw_score_payloads)
     member_handoffs = _member_handoffs_for_command(
         command,

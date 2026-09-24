@@ -84,6 +84,15 @@ RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
+RAW_SCORE_FIT_DIAGNOSTICS_STATUS: Literal["SYNTHETIC_NOT_FIT"] = "SYNTHETIC_NOT_FIT"
+RAW_SCORE_CODE_SHA256 = sha256(b"synthetic-raw-score-code-v1").hexdigest()
+RAW_SCORE_MODEL_ARTIFACT_SHA256 = sha256(
+    b"synthetic-elastic-net-logistic-z20-v1-artifact"
+).hexdigest()
+RAW_SCORE_ENVIRONMENT_SHA256 = sha256(
+    b"synthetic-python-runtime-raw-score-v1"
+).hexdigest()
+RAW_SCORE_RANDOMNESS_CONTROL = "deterministic-synthetic-seed-1616"
 _RAW_SCORE_DECIMAL_CONTEXT = Context(prec=38)
 _RAW_SCORE_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 RAW_SCORE_INTERACTION_TERMS: tuple[str, ...] = ()
@@ -252,6 +261,30 @@ class RawScoreFeatureTransform(ResearchContract):
         return self
 
 
+class RawScoreFitDiagnostics(ResearchContract):
+    """Explicit fit status and diagnostics for the frozen model artifact."""
+
+    status: Literal["SYNTHETIC_NOT_FIT"]
+    training_log_loss: Decimal | None = None
+    validation_log_loss: Decimal | None = None
+    training_brier_score: Decimal | None = None
+    validation_brier_score: Decimal | None = None
+
+    @model_validator(mode="after")
+    def validate_synthetic_status(self) -> RawScoreFitDiagnostics:
+        if any(
+            metric is not None
+            for metric in (
+                self.training_log_loss,
+                self.validation_log_loss,
+                self.training_brier_score,
+                self.validation_brier_score,
+            )
+        ):
+            raise ValueError("synthetic raw-score fit diagnostics must not claim fit metrics")
+        return self
+
+
 class RawScoreTrainingCohort(ResearchContract):
     """Frozen historical fixed-ten cohort and its successful research members."""
 
@@ -326,6 +359,11 @@ class RawScoreModelSnapshot(ResearchContract):
     l1_ratio: Decimal
     l2_ratio: Decimal
     penalty_strength: Decimal
+    fit_diagnostics: RawScoreFitDiagnostics
+    code_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    model_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    environment_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    randomness_control: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_training_snapshot(self) -> RawScoreModelSnapshot:
@@ -517,6 +555,13 @@ class LegacyRawScoreModelSnapshot(RawScoreModelSnapshot):
     label_watermark_at: AwareDatetime | None = None  # type: ignore[assignment]
     training_cohorts: tuple[RawScoreTrainingCohort, ...] = ()
     training_records: tuple[RawScoreTrainingRecord, ...] = ()
+    fit_diagnostics: RawScoreFitDiagnostics = RawScoreFitDiagnostics(
+        status=RAW_SCORE_FIT_DIAGNOSTICS_STATUS
+    )
+    code_sha256: str = RAW_SCORE_CODE_SHA256
+    model_artifact_sha256: str = RAW_SCORE_MODEL_ARTIFACT_SHA256
+    environment_sha256: str = RAW_SCORE_ENVIRONMENT_SHA256
+    randomness_control: str = RAW_SCORE_RANDOMNESS_CONTROL
 
 
 def _training_month_sequence(start_year: int, start_month: int, count: int) -> tuple[str, ...]:
@@ -664,6 +709,11 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         l1_ratio=RAW_SCORE_L1_RATIO,
         l2_ratio=RAW_SCORE_L2_RATIO,
         penalty_strength=RAW_SCORE_PENALTY_STRENGTH,
+        fit_diagnostics=RawScoreFitDiagnostics(status=RAW_SCORE_FIT_DIAGNOSTICS_STATUS),
+        code_sha256=RAW_SCORE_CODE_SHA256,
+        model_artifact_sha256=RAW_SCORE_MODEL_ARTIFACT_SHA256,
+        environment_sha256=RAW_SCORE_ENVIRONMENT_SHA256,
+        randomness_control=RAW_SCORE_RANDOMNESS_CONTROL,
     )
 
 
@@ -1366,20 +1416,62 @@ def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
     }
 
 
+def _raw_score_model_audit_defaults(payload: dict[str, object]) -> None:
+    payload.setdefault(
+        "fit_diagnostics",
+        {"status": RAW_SCORE_FIT_DIAGNOSTICS_STATUS},
+    )
+    payload.setdefault("code_sha256", RAW_SCORE_CODE_SHA256)
+    payload.setdefault("model_artifact_sha256", RAW_SCORE_MODEL_ARTIFACT_SHA256)
+    payload.setdefault("environment_sha256", RAW_SCORE_ENVIRONMENT_SHA256)
+    payload.setdefault("randomness_control", RAW_SCORE_RANDOMNESS_CONTROL)
+
+
 def _legacy_raw_score_model_payload(value: object) -> RawScoreModelSnapshot:
     if not isinstance(value, dict):
         raise ValueError("legacy raw-score model must be an object")
-    legacy_model = LegacyRawScoreModelSnapshot.model_validate(value)
+    payload = deepcopy(value)
+    _raw_score_model_audit_defaults(payload)
+    payload.setdefault("training_cohorts", ())
+    training_records = payload.get("training_records")
+    if isinstance(training_records, (list, tuple)):
+        normalized_records: list[object] = []
+        for record in training_records:
+            if not isinstance(record, dict):
+                normalized_records.append(record)
+                continue
+            normalized_record = dict(record)
+            month = normalized_record.get("month")
+            if not isinstance(month, str):
+                raise ValueError("legacy raw-score training record is missing its month")
+            normalized_record.setdefault("cohort_id", f"legacy-training-cohort-{month}")
+            if "evaluation_entry_at" not in normalized_record:
+                selection_cutoff_at = normalized_record.get("selection_cutoff_at")
+                if not isinstance(selection_cutoff_at, str):
+                    raise ValueError(
+                        "legacy raw-score training record is missing its selection cutoff"
+                    )
+                selection_cutoff = datetime.fromisoformat(
+                    selection_cutoff_at.replace("Z", "+00:00")
+                )
+                normalized_record["evaluation_entry_at"] = (
+                    _raw_score_evaluation_entry_at(selection_cutoff).isoformat()
+                )
+            normalized_records.append(normalized_record)
+        payload["training_records"] = normalized_records
+    else:
+        payload.setdefault("training_records", ())
+    legacy_model = LegacyRawScoreModelSnapshot.model_validate(payload)
     label_watermark_at = legacy_model.label_watermark_at or _raw_score_month_end(
         legacy_model.label_watermark_month
     )
-    payload = dict(legacy_model.__dict__)
-    payload.update(
+    normalized_payload = dict(legacy_model.__dict__)
+    normalized_payload.update(
         label_watermark_at=label_watermark_at,
         training_cohorts=legacy_model.training_cohorts,
         training_records=legacy_model.training_records,
     )
-    return RawScoreModelSnapshot.model_construct(**payload)
+    return RawScoreModelSnapshot.model_construct(**normalized_payload)
 
 
 def decode_legacy_research_command(value: object) -> ResearchCommand:
@@ -1436,6 +1528,10 @@ def decode_historical_research_command(value: object) -> ResearchCommand:
     if not isinstance(value, dict):
         raise ValueError("historical research command must be an object")
     payload = deepcopy(value)
+    raw_score_model = payload.get("raw_score_model")
+    if not isinstance(raw_score_model, dict):
+        raise ValueError("historical research command raw-score model must be an object")
+    _raw_score_model_audit_defaults(raw_score_model)
     version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
         RESEARCH_PRIOR_DEFINITION_VERSION
     )
@@ -2164,6 +2260,23 @@ def bind_research_raw_score_payloads(
     for score, payload in zip(scores, payloads, strict=False):
         if isinstance(payload, dict):
             object.__setattr__(score, "_persisted_payload", deepcopy(payload))
+
+
+def validate_research_raw_score_payloads(
+    scores: tuple[RawScore, ...],
+    payloads: tuple[dict[str, object], ...],
+) -> None:
+    """Require historical raw-score bytes to describe the recalculated scores."""
+    if len(scores) != len(payloads):
+        raise ValueError("research raw-score payloads must cover every cohort member")
+    for score, payload in zip(scores, payloads, strict=True):
+        normalized_payload = _legacy_raw_score_payload(payload)
+        try:
+            decoded = RawScore.model_validate(normalized_payload)
+        except ValueError as error:
+            raise ValueError("historical raw-score payload is invalid") from error
+        if decoded.model_dump(mode="json") != score.model_dump(mode="json"):
+            raise ValueError("historical raw-score payload changed the calculated score")
 
 
 def decode_historical_research_outcome(value: object) -> ResearchOutcome:
