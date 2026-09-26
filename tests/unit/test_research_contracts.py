@@ -1460,6 +1460,34 @@ def test_research_draft_member_rejects_success_chance_and_chinese_trade_advice()
         draft_member("The calibrated probability equals 95%")
 
 
+def test_research_draft_rejects_ordinary_probability_and_trade_instruction_phrasing() -> None:
+    member = _command().members[0]
+
+    def draft_member(thesis: str) -> ResearchDraftMember:
+        return ResearchDraftMember(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+            thesis=thesis,
+            bull_case="The fictional upside case remains conditional.",
+            bear_case="The fictional downside case remains explicit.",
+            catalysts=("A fictional catalyst remains conditional.",),
+            falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+            unknowns=("Future external evidence remains unresolved.",),
+            knowledge_cutoff=member.knowledge_cutoff,
+        )
+
+    for thesis in (
+        (
+            "There is a 95% probability of reaching the six-month 20% target. "
+            "You should acquire 100 shares."
+        ),
+        "The likelihood of success is 0.95. Investors ought to purchase 100 shares.",
+    ):
+        with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+            draft_member(thesis)
+
+
 def test_research_draft_member_allows_non_directive_evidence_language() -> None:
     member = _command().members[0]
 

@@ -9,7 +9,6 @@ from contextlib import closing
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from hashlib import sha256
 from importlib.metadata import version
 from typing import Literal, cast
 
@@ -77,6 +76,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrameworkRunStatus,
     FrozenDecisionCase,
     definition_version_for_case_contract,
+    research_member_run_id,
     supports_case_host_contract,
     supports_report_projection_contract,
     synthetic_outcome_code_from_input,
@@ -84,7 +84,6 @@ from stock_profiler.modules.decision_cases.domain import (
 from stock_profiler.modules.decision_cases.ports import (
     AuxiliaryRunReservationRecorder,
     ResearchMemberRunReservationRecorder,
-    ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.ports import FrameworkRunResult as FrameworkRunResult
 from stock_profiler.modules.decision_cases.ports import (
@@ -122,7 +121,6 @@ from stock_profiler.modules.research.contracts import (
     RISK_OUTPUT_CONTRACT_ID,
     RISK_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
-    ResearchDraft,
     ResearchDraftMember,
     ResearchMemberInput,
     ResearchRiskPlan,
@@ -131,7 +129,6 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
-    decode_historical_research_draft_member,
     decode_historical_research_member_input,
     decode_legacy_research_member_input,
     decode_legacy_research_stage_artifact,
@@ -139,7 +136,6 @@ from stock_profiler.modules.research.contracts import (
     historical_research_draft_member_json_schema,
     legacy_research_draft_json_schema,
     legacy_risk_veto_draft_json_schema,
-    research_draft_payload,
     research_evidence_payload,
     research_stage_artifact_payload,
 )
@@ -547,20 +543,6 @@ def _recover_research_failure_code(
     return None
 
 
-def _research_member_run_id(
-    case: FrozenDecisionCase,
-    index: int,
-    member: ResearchMemberInput,
-) -> str:
-    """Keep the host mapping as the first member Run and hash the others."""
-    if index == 0:
-        return case.framework_run_id
-    digest = sha256(
-        f"{case.framework_run_id}:{member.security_id}:{member.research_id}".encode()
-    ).hexdigest()
-    return f"research-member-run-{digest}"
-
-
 def _research_member_input_payload(
     case: FrozenDecisionCase,
     member: ResearchMemberInput,
@@ -579,6 +561,20 @@ def _research_member_input_payload(
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
+    )
+
+
+def _research_member_run_id(
+    case: FrozenDecisionCase,
+    index: int,
+    member: ResearchMemberInput,
+) -> str:
+    """Preserve the adapter helper for callers while identity lives in the host domain."""
+    return research_member_run_id(
+        case.framework_run_id,
+        index,
+        member.security_id,
+        member.research_id,
     )
 
 
@@ -1273,7 +1269,12 @@ async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: Runti
     if case.research is not None:
         context_items = _research_context_items(case.research)
         for index, member in enumerate(case.research.members):
-            run_id = _research_member_run_id(case, index, member)
+            run_id = research_member_run_id(
+                case.framework_run_id,
+                index,
+                member.security_id,
+                member.research_id,
+            )
             run = await runtime.run_store.get_run(run_id)
             if run is None:
                 raise MappedDurableRunMissingError("mapped research member Run is missing")
@@ -1332,7 +1333,12 @@ async def find_unmapped_legacy_frozen_decision_case(
         raise ValueError("multiple durable M-Agent Runs match the legacy frozen input")
     if case.research is not None and not _is_legacy_research_case(case):
         expected_member_run_ids = {
-            _research_member_run_id(case, index, member)
+            research_member_run_id(
+                case.framework_run_id,
+                index,
+                member.security_id,
+                member.research_id,
+            )
             for index, member in enumerate(case.research.members)
         }
         member_runs = [
@@ -1600,6 +1606,95 @@ async def _execute_legacy_research_run(
     )
 
 
+async def execute_research_member_run(
+    case: FrozenDecisionCase,
+    runtime: RuntimeStorage,
+    member_index: int,
+    member: ResearchMemberInput,
+    run_id: str,
+    record_transition: FrameworkTransitionRecorder | None = None,
+    *,
+    record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    clock: Clock | None = None,
+) -> FrameworkRunResult:
+    """Execute or recover one M-Agent Run for a host-selected cohort member."""
+    command = case.research
+    assert command is not None
+    if _is_legacy_research_case(case):
+        raise ValueError("legacy aggregate research Runs cannot be executed per member")
+    try:
+        _assert_runtime_version_bundle(case)
+    except ValueError:
+        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
+        raise
+
+    historical = _is_historical_research_case(case)
+    member_context_items = tuple(
+        item
+        for item in _research_context_items(command)
+        if item.item_id == f"required-facts:{member.security_id}"
+    )
+    research_definition = _research_definition(
+        case,
+        runtime=runtime,
+        run_id=run_id,
+        member=member,
+        context_items=member_context_items,
+        historical=historical,
+    )
+    _assert_research_registered_capabilities(case, research_definition)
+    existing_run = await runtime.run_store.get_run(run_id)
+    member_input = _research_member_input_payload(case, member)
+    allow_create = (
+        not historical
+        and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
+        and (case.recovery_framework_run_id is None or member_index > 0)
+    ) or (
+        historical
+        and case.recovery_framework_run_id is not None
+        and record_member_run_reservation is not None
+    )
+    if existing_run is None and allow_create and record_member_run_reservation is not None:
+        allow_create = await record_member_run_reservation(run_id)
+    result = await _execute_registered_run(
+        runtime=runtime,
+        run_id=run_id,
+        definition=research_definition,
+        input_payload=member_input,
+        case=None,
+        record_transition=record_transition,
+        allow_create=allow_create,
+        clock=clock,
+    )
+    if result.status != "SUCCEEDED" or result.output is None:
+        context_provider = research_definition.context_provider
+        if isinstance(context_provider, _FrozenResearchContextProvider):
+            failure_code = _recover_research_failure_code(
+                command,
+                result,
+                context_provider,
+                expected_members=(member,),
+                context_items=member_context_items,
+                historical=historical,
+            )
+            if failure_code is not None:
+                result = replace(result, error_code=failure_code)
+        return replace(result, run_existed_before=existing_run is not None)
+    try:
+        tool_evidence = await _research_tool_evidence(runtime, run_id)
+    except ValueError:
+        return replace(
+            result,
+            run_existed_before=existing_run is not None,
+            error_code="RESEARCH_TOOL_EVIDENCE_INVALID",
+        )
+    return replace(
+        result,
+        run_existed_before=existing_run is not None,
+        research_tool_evidence=tool_evidence,
+    )
+
+
 async def execute_research_run(
     case: FrozenDecisionCase,
     runtime: RuntimeStorage,
@@ -1608,15 +1703,7 @@ async def execute_research_run(
     record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
     clock: Clock | None = None,
 ) -> FrameworkRunResult:
-    """Execute or recover one staged, durable research Run per cohort member."""
-    command = case.research
-    assert command is not None
-    try:
-        _assert_runtime_version_bundle(case)
-    except ValueError:
-        ResultDelivery(runtime.engine, clock=clock).record_capability_denial(case.framework_run_id)
-        raise
-
+    """Compatibility entrypoint; cohort scheduling and result policy stay in the host."""
     if _is_legacy_research_case(case):
         return await _execute_legacy_research_run(
             case,
@@ -1624,223 +1711,29 @@ async def execute_research_run(
             record_transition,
             clock=clock,
         )
+    from stock_profiler.modules.decision_cases.service import execute_research_member_runs
 
-    historical = _is_historical_research_case(case)
-    context_items = _research_context_items(command)
-    member_results: list[ResearchMemberRunResult] = []
-    member_drafts: list[ResearchDraftMember] = []
-    member_draft_indexes: list[int] = []
-    member_run_ids: list[str] = []
-    transitions: list[FrameworkRunTransition] = []
-    primary_transitions: list[FrameworkRunTransition] = []
-    tool_evidence: list[ResearchToolEvidence] = []
-    all_runs_existed = True
-
-    for index, member in enumerate(command.members):
-        run_id = _research_member_run_id(case, index, member)
-        member_run_ids.append(run_id)
-        member_context_items = tuple(
-            item for item in context_items if item.item_id == f"required-facts:{member.security_id}"
-        )
-        research_definition = _research_definition(
+    async def execute_member(
+        member_index: int,
+        member: ResearchMemberInput,
+        run_id: str,
+    ) -> FrameworkRunResult:
+        return await execute_research_member_run(
             case,
-            runtime=runtime,
-            run_id=run_id,
-            member=member,
-            context_items=member_context_items,
-            historical=historical,
+            runtime,
+            member_index,
+            member,
+            run_id,
+            record_transition,
+            record_member_run_reservation=record_member_run_reservation,
+            clock=clock,
         )
-        _assert_research_registered_capabilities(case, research_definition)
-        existing_run = await runtime.run_store.get_run(run_id)
-        all_runs_existed = all_runs_existed and existing_run is not None
-        member_input = _research_member_input_payload(case, member)
-        allow_create = (
-            not historical
-            and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
-            and (case.recovery_framework_run_id is None or index > 0)
-        ) or (
-            historical
-            and case.recovery_framework_run_id is not None
-            and record_member_run_reservation is not None
-        )
-        if existing_run is None and allow_create and record_member_run_reservation is not None:
-            allow_create = await record_member_run_reservation(run_id)
-        try:
-            result = await _execute_registered_run(
-                runtime=runtime,
-                run_id=run_id,
-                definition=research_definition,
-                input_payload=member_input,
-                case=None,
-                record_transition=record_transition,
-                allow_create=allow_create,
-                clock=clock,
-            )
-        except (MappedDurableRunMissingError, ValueError) as error:
-            if not member_results:
-                raise
-            error_code = (
-                "RESEARCH_RUN_MISSING"
-                if isinstance(error, MappedDurableRunMissingError)
-                else "RESEARCH_RUN_RECOVERY_FAILED"
-            )
-            transition = FrameworkRunTransition(
-                run_id=run_id,
-                status="FAILED",
-                reason=error_code,
-            )
-            if record_transition is not None:
-                await record_transition(transition)
-            result = FrameworkRunResult(
-                run_id=run_id,
-                status="FAILED",
-                output=None,
-                error_code=error_code,
-                transitions=(transition,),
-                transitions_durably_recorded=record_transition is not None,
-            )
-        if result.status != "SUCCEEDED" or result.output is None:
-            context_provider = research_definition.context_provider
-            if isinstance(context_provider, _FrozenResearchContextProvider):
-                failure_code = _recover_research_failure_code(
-                    command,
-                    result,
-                    context_provider,
-                    expected_members=(member,),
-                    context_items=member_context_items,
-                    historical=_is_historical_research_case(case),
-                )
-                if failure_code is not None:
-                    result = replace(result, error_code=failure_code)
-        transitions.extend(result.transitions)
-        if index == 0:
-            primary_transitions.extend(result.transitions)
-        member_results.append(
-            ResearchMemberRunResult(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                run_id=run_id,
-                status=result.status,
-                error_code=result.error_code,
-            )
-        )
-        if result.status != "SUCCEEDED" or result.output is None:
-            continue
-        try:
-            member_drafts.append(
-                decode_historical_research_draft_member(json.loads(result.output))
-                if historical
-                else ResearchDraftMember.model_validate_json(result.output)
-            )
-        except ValueError:
-            member_results[-1] = replace(
-                member_results[-1],
-                status="FAILED",
-                error_code="RESEARCH_OUTPUT_INVALID",
-            )
-            continue
-        member_draft_indexes.append(index)
-        try:
-            member_tool_evidence = await _research_tool_evidence(runtime, run_id)
-        except ValueError:
-            member_results[-1] = replace(
-                member_results[-1],
-                status="FAILED",
-                error_code="RESEARCH_TOOL_EVIDENCE_INVALID",
-            )
-            continue
-        for evidence in member_tool_evidence:
-            if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
-                tool_evidence.append(evidence)
 
-    member_run_result = tuple(member_results)
-    failed_results = tuple(
-        result for result in member_run_result if result.status in {"FAILED", "REJECTED"}
-    )
-    waiting_results = tuple(result for result in member_run_result if result.status == "WAITING")
-    if failed_results:
-        aggregate_status: FrameworkRunStatus = "FAILED"
-    elif waiting_results:
-        aggregate_status = "WAITING"
-    else:
-        aggregate_status = "SUCCEEDED"
-    error_codes = tuple(result.error_code for result in member_run_result if result.error_code)
-    if aggregate_status != "SUCCEEDED":
-        aggregate_run_id = (
-            failed_results[0].run_id
-            if failed_results
-            else waiting_results[0].run_id
-            if waiting_results
-            else case.framework_run_id
-        )
-        return FrameworkRunResult(
-            run_id=aggregate_run_id,
-            status=aggregate_status,
-            output=None,
-            run_existed_before=all_runs_existed,
-            waiting_reason=(
-                waiting_results[0].error_code
-                if waiting_results and waiting_results[0].error_code is not None
-                else "RESEARCH_MEMBER_RUN_WAITING"
-                if waiting_results
-                else None
-            ),
-            error_code=error_codes[0] if error_codes else "RESEARCH_MEMBER_RUN_FAILED",
-            research_member_runs=member_run_result,
-            transitions=tuple(transitions),
-            transitions_durably_recorded=record_transition is not None,
-            research_tool_evidence=tuple(tool_evidence),
-        )
-    try:
-        draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
-    except ValueError:
-        invalid_member_indexes = {
-            index
-            for index, member_draft in zip(
-                member_draft_indexes,
-                member_drafts,
-                strict=True,
-            )
-            if (
-                member_draft.security_id != command.members[index].security_id
-                or member_draft.research_id != command.members[index].research_id
-            )
-        }
-        member_run_result = tuple(
-            replace(
-                member_result,
-                status="FAILED",
-                error_code="RESEARCH_OUTPUT_INVALID",
-            )
-            if index in invalid_member_indexes
-            else member_result
-            for index, member_result in enumerate(member_run_result)
-        )
-        return FrameworkRunResult(
-            run_id=case.framework_run_id,
-            status="FAILED",
-            output=None,
-            run_existed_before=all_runs_existed,
-            error_code="RESEARCH_OUTPUT_INVALID",
-            research_member_runs=member_run_result,
-            transitions=tuple(primary_transitions),
-            transitions_durably_recorded=record_transition is not None,
-            research_tool_evidence=tuple(tool_evidence),
-        )
-    return FrameworkRunResult(
-        run_id=case.framework_run_id,
-        status="SUCCEEDED",
-        output=json.dumps(
-            research_draft_payload(draft, historical=historical),
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
-        run_existed_before=all_runs_existed,
-        research_member_runs=member_run_result,
-        transitions=tuple(primary_transitions),
-        transitions_durably_recorded=record_transition is not None,
-        research_tool_evidence=tuple(tool_evidence),
+    return await execute_research_member_runs(
+        case,
+        execute_member=execute_member,
+        record_transition=record_transition,
+        historical=_is_historical_research_case(case),
     )
 
 

@@ -2606,7 +2606,7 @@ def test_research_waiting_is_saved_without_a_research_failure(
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
 
-    async def waiting_research_run(*_: object, **__: object) -> FrameworkRunResult:
+    async def waiting_research_run(*_: Any, **__: Any) -> FrameworkRunResult:
         return FrameworkRunResult(
             run_id=case.framework_run_id,
             status="WAITING",
@@ -2614,7 +2614,11 @@ def test_research_waiting_is_saved_without_a_research_failure(
             waiting_reason="RESEARCH_WAITING_FOR_RECOVERY",
         )
 
-    monkeypatch.setattr(case_bootstrap, "execute_research_run", waiting_research_run)
+    monkeypatch.setattr(
+        case_bootstrap,
+        "execute_research_member_run",
+        waiting_research_run,
+    )
     execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
 
     assert execution.report is None
@@ -2634,10 +2638,14 @@ def test_missing_research_run_is_saved_as_a_failed_stage_without_replacement(
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
 
-    async def missing_research_run(*_: object, **__: object) -> FrameworkRunResult:
+    async def missing_research_run(*_: Any, **__: Any) -> FrameworkRunResult:
         raise MappedDurableRunMissingError("mapped research M-Agent Run is missing")
 
-    monkeypatch.setattr(case_bootstrap, "execute_research_run", missing_research_run)
+    monkeypatch.setattr(
+        case_bootstrap,
+        "execute_research_member_run",
+        missing_research_run,
+    )
     execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
 
     assert execution.report is None
@@ -2671,28 +2679,39 @@ def test_later_member_waiting_preserves_the_research_waiting_state(
         command.members[waiting_index],
     )
 
-    async def waiting_member_research_run(*_: object, **__: object) -> FrameworkRunResult:
-        return FrameworkRunResult(
-            run_id=waiting_run_id,
-            status="WAITING",
-            output=None,
-            waiting_reason="RESEARCH_MEMBER_RUN_WAITING",
-            research_member_runs=tuple(
-                ResearchMemberRunResult(
-                    security_id=member.security_id,
-                    research_id=member.research_id,
-                    run_id=(
-                        waiting_run_id
-                        if index == waiting_index
-                        else frozen_decision_case._research_member_run_id(case, index, member)
-                    ),
-                    status="WAITING" if index == waiting_index else "SUCCEEDED",
-                )
-                for index, member in enumerate(command.members)
-            ),
+    execute_member = frozen_decision_case.execute_research_member_run
+
+    async def waiting_member_research_run(
+        member_case: FrozenDecisionCase,
+        runtime: RuntimeStorage,
+        member_index: int,
+        member: ResearchMemberInput,
+        run_id: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> FrameworkRunResult:
+        if member_index == waiting_index:
+            return FrameworkRunResult(
+                run_id=waiting_run_id,
+                status="WAITING",
+                output=None,
+                waiting_reason="RESEARCH_MEMBER_RUN_WAITING",
+            )
+        return await execute_member(
+            member_case,
+            runtime,
+            member_index,
+            member,
+            run_id,
+            *args,
+            **kwargs,
         )
 
-    monkeypatch.setattr(case_bootstrap, "execute_research_run", waiting_member_research_run)
+    monkeypatch.setattr(
+        case_bootstrap,
+        "execute_research_member_run",
+        waiting_member_research_run,
+    )
     execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
 
     assert execution.report is None
@@ -2702,7 +2721,7 @@ def test_later_member_waiting_preserves_the_research_waiting_state(
         and stage.status == "WAITING"
         and "RESEARCH_MEMBER_RUN_WAITING" in stage.reasons
         for stage in execution.stage_results
-    )
+    ), tuple((stage.phase, stage.status, stage.reasons) for stage in execution.stage_results)
     assert not any(
         stage.phase == "RESEARCH" and stage.status == "FAILED" for stage in execution.stage_results
     )

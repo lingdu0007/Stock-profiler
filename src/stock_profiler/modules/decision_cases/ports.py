@@ -31,7 +31,11 @@ from stock_profiler.modules.position_management.contracts import (
     PositionReconciliationOutcome,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
-from stock_profiler.modules.research.contracts import ResearchRiskPlan, ResearchToolEvidence
+from stock_profiler.modules.research.contracts import (
+    ResearchMemberInput,
+    ResearchRiskPlan,
+    ResearchToolEvidence,
+)
 
 Transaction = TypeVar("Transaction")
 
@@ -123,6 +127,17 @@ class FrozenFramework(Protocol):
     async def execute_research_run(
         self,
         case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_member_run(
+        self,
+        case: FrozenDecisionCase,
+        member_index: int,
+        member: ResearchMemberInput,
+        run_id: str,
         record_transition: FrameworkTransitionRecorder,
         *,
         record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,

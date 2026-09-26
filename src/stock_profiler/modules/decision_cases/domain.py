@@ -351,6 +351,21 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "RAW_SCORE": frozenset({"SUCCEEDED", "FAILED"}),
     "RISK_VETO": frozenset({"SUCCEEDED", "REJECTED", "FAILED"}),
 }
+
+
+def research_member_run_id(
+    framework_run_id: str,
+    member_index: int,
+    security_id: str,
+    research_id: str,
+) -> str:
+    """Derive the stable framework Run identity owned by one cohort member."""
+    if member_index == 0:
+        return framework_run_id
+    digest = sha256(f"{framework_run_id}:{security_id}:{research_id}".encode()).hexdigest()
+    return f"research-member-run-{digest}"
+
+
 _LIFECYCLE_OWNER_BY_PHASE: dict[str, BusinessLifecycleOwner] = {
     "ADJUDICATION_LIFECYCLE": "ADJUDICATION",
     "VALIDITY_LIFECYCLE": "VALIDITY",

@@ -39,6 +39,7 @@ from stock_profiler.modules.decision_cases.domain import (
     host_validation_result,
     is_committable_host_outcome,
     research_contract_mode_for_case,
+    research_member_run_id,
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
@@ -74,10 +75,14 @@ from stock_profiler.modules.research.contracts import (
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
+    ResearchDraftMember,
     ResearchFrameworkOutput,
+    ResearchMemberInput,
     ResearchRiskPlan,
+    ResearchToolEvidence,
     RiskVetoDraft,
     decode_historical_research_draft,
+    decode_historical_research_draft_member,
     decode_historical_research_framework_output,
     decode_legacy_research_draft,
     decode_legacy_research_framework_output,
@@ -95,6 +100,204 @@ from stock_profiler.modules.research.service import (
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
+
+
+ResearchMemberExecutor = Callable[[int, ResearchMemberInput, str], Awaitable[FrameworkRunResult]]
+
+
+async def execute_research_member_runs(
+    case: FrozenDecisionCase,
+    *,
+    execute_member: ResearchMemberExecutor,
+    record_transition: Callable[[FrameworkRunTransition], Awaitable[None]] | None = None,
+    historical: bool = False,
+) -> FrameworkRunResult:
+    """Schedule and aggregate member Runs as a host-owned cohort decision."""
+    command = case.research
+    assert command is not None
+    member_results: list[ResearchMemberRunResult] = []
+    member_drafts: list[ResearchDraftMember] = []
+    member_draft_indexes: list[int] = []
+    member_transitions: list[FrameworkRunTransition] = []
+    primary_transitions: tuple[FrameworkRunTransition, ...] = ()
+    primary_transitions_durably_recorded = False
+    tool_evidence: list[ResearchToolEvidence] = []
+    first_waiting_reason: str | None = None
+    all_runs_existed = True
+
+    for index, member in enumerate(command.members):
+        run_id = research_member_run_id(
+            case.framework_run_id,
+            index,
+            member.security_id,
+            member.research_id,
+        )
+        try:
+            result = await execute_member(index, member, run_id)
+        except (MappedDurableRunMissingError, ValueError) as error:
+            if not member_results:
+                raise
+            error_code = (
+                "RESEARCH_RUN_MISSING"
+                if isinstance(error, MappedDurableRunMissingError)
+                else "RESEARCH_RUN_RECOVERY_FAILED"
+            )
+            transition = FrameworkRunTransition(
+                status="FAILED",
+                reason=error_code,
+                run_id=run_id,
+            )
+            if record_transition is not None:
+                await record_transition(transition)
+            result = FrameworkRunResult(
+                run_id=run_id,
+                status="FAILED",
+                output=None,
+                error_code=error_code,
+                transitions=(transition,),
+                transitions_durably_recorded=record_transition is not None,
+            )
+
+        all_runs_existed = all_runs_existed and result.run_existed_before
+        member_transitions.extend(result.transitions)
+        if result.status == "WAITING" and first_waiting_reason is None:
+            first_waiting_reason = result.waiting_reason
+        if index == 0:
+            primary_transitions = result.transitions
+            primary_transitions_durably_recorded = result.transitions_durably_recorded
+        member_status = result.status
+        member_error_code = result.error_code
+        if result.status == "SUCCEEDED" and result.error_code is not None:
+            member_status = "FAILED"
+        elif result.status == "SUCCEEDED" and result.output is not None:
+            try:
+                draft_member = (
+                    decode_historical_research_draft_member(json.loads(result.output))
+                    if historical
+                    else ResearchDraftMember.model_validate_json(result.output)
+                )
+            except ValueError:
+                member_status = "FAILED"
+                member_error_code = "RESEARCH_OUTPUT_INVALID"
+            else:
+                if (
+                    draft_member.security_id != member.security_id
+                    or draft_member.research_id != member.research_id
+                ):
+                    member_status = "FAILED"
+                    member_error_code = "RESEARCH_OUTPUT_INVALID"
+                else:
+                    member_drafts.append(draft_member)
+                    member_draft_indexes.append(index)
+                    for evidence in result.research_tool_evidence:
+                        if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
+                            tool_evidence.append(evidence)
+        elif result.status == "SUCCEEDED":
+            member_status = "FAILED"
+            member_error_code = "RESEARCH_OUTPUT_MISSING"
+        member_results.append(
+            ResearchMemberRunResult(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                run_id=run_id,
+                status=member_status,
+                error_code=member_error_code,
+            )
+        )
+
+    member_run_results = tuple(member_results)
+    failed_results = tuple(
+        result for result in member_run_results if result.status in {"FAILED", "REJECTED"}
+    )
+    waiting_results = tuple(result for result in member_run_results if result.status == "WAITING")
+    aggregate_status: FrameworkRunStatus = (
+        "FAILED" if failed_results else "WAITING" if waiting_results else "SUCCEEDED"
+    )
+    error_codes = tuple(result.error_code for result in member_run_results if result.error_code)
+    if aggregate_status != "SUCCEEDED":
+        aggregate_run_id = (
+            failed_results[0].run_id
+            if failed_results
+            else waiting_results[0].run_id
+            if waiting_results
+            else case.framework_run_id
+        )
+        return FrameworkRunResult(
+            run_id=aggregate_run_id,
+            status=aggregate_status,
+            output=None,
+            run_existed_before=all_runs_existed,
+            waiting_reason=(
+                first_waiting_reason
+                if waiting_results and first_waiting_reason is not None
+                else "RESEARCH_MEMBER_RUN_WAITING"
+                if waiting_results
+                else None
+            ),
+            error_code=(
+                error_codes[0]
+                if error_codes
+                else "RESEARCH_MEMBER_RUN_FAILED"
+                if aggregate_status == "FAILED"
+                else None
+            ),
+            research_member_runs=member_run_results,
+            transitions=(
+                primary_transitions
+                if aggregate_run_id == case.framework_run_id
+                else tuple(member_transitions)
+            ),
+            transitions_durably_recorded=(
+                primary_transitions_durably_recorded
+                if aggregate_run_id == case.framework_run_id
+                else False
+            ),
+            research_tool_evidence=tuple(tool_evidence),
+        )
+
+    try:
+        draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
+    except ValueError:
+        invalid_member_indexes = {
+            index
+            for index, draft_member in zip(member_draft_indexes, member_drafts, strict=True)
+            if (
+                draft_member.security_id != command.members[index].security_id
+                or draft_member.research_id != command.members[index].research_id
+            )
+        }
+        failed_members = tuple(
+            replace(result, status="FAILED", error_code="RESEARCH_OUTPUT_INVALID")
+            if index in invalid_member_indexes
+            else result
+            for index, result in enumerate(member_run_results)
+        )
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            run_existed_before=all_runs_existed,
+            error_code="RESEARCH_OUTPUT_INVALID",
+            research_member_runs=failed_members,
+            transitions=primary_transitions,
+            transitions_durably_recorded=record_transition is not None,
+            research_tool_evidence=tuple(tool_evidence),
+        )
+    return FrameworkRunResult(
+        run_id=case.framework_run_id,
+        status="SUCCEEDED",
+        output=json.dumps(
+            research_draft_payload(draft, historical=historical),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        run_existed_before=all_runs_existed,
+        research_member_runs=member_run_results,
+        transitions=primary_transitions,
+        transitions_durably_recorded=record_transition is not None,
+        research_tool_evidence=tuple(tool_evidence),
+    )
 
 
 def get_formal_report(
@@ -308,7 +511,9 @@ def _raw_score_model_evidence_gate_results(command: ResearchCommand) -> tuple[Ga
 async def execute_research_risk_journey(
     case: FrozenDecisionCase,
     *,
-    execute_research: Callable[[], Awaitable[FrameworkRunResult]],
+    execute_research: Callable[[], Awaitable[FrameworkRunResult]] | None = None,
+    execute_research_member: ResearchMemberExecutor | None = None,
+    record_research_transition: Callable[[FrameworkRunTransition], Awaitable[None]] | None = None,
     execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
     record_raw_score_checkpoint: Callable[[ResearchRiskPlan], Awaitable[None]] | None = None,
     legacy: bool = False,
@@ -318,7 +523,17 @@ async def execute_research_risk_journey(
     command = case.research
     assert command is not None
     try:
-        research_run = await execute_research()
+        if execute_research_member is not None:
+            research_run = await execute_research_member_runs(
+                case,
+                execute_member=execute_research_member,
+                record_transition=record_research_transition,
+                historical=historical,
+            )
+        elif execute_research is not None:
+            research_run = await execute_research()
+        else:
+            raise ValueError("a research Run executor is required")
     except MappedDurableRunMissingError:
         research_run = FrameworkRunResult(
             run_id=case.framework_run_id,
@@ -880,9 +1095,28 @@ def _run_frozen_decision_case(
                                 ledger,
                                 execution_case,
                                 risk_plan,
-                                legacy=research_contract_mode_for_case(execution_case) == "legacy",
+                                legacy=(
+                                    research_contract_mode_for_case(execution_case) == "legacy"
+                                ),
                             )
 
+                        async def execute_research_member(
+                            member_index: int,
+                            member: ResearchMemberInput,
+                            run_id: str,
+                        ) -> FrameworkRunResult:
+                            return await framework_adapter.execute_research_member_run(
+                                execution_case,
+                                member_index,
+                                member,
+                                run_id,
+                                record_transition,
+                                record_member_run_reservation=(
+                                    record_research_member_run_reservation
+                                ),
+                            )
+
+                        research_mode = research_contract_mode_for_case(execution_case)
                         framework = asyncio.run(
                             execute_research_risk_journey(
                                 execution_case,
@@ -893,12 +1127,14 @@ def _run_frozen_decision_case(
                                         record_research_member_run_reservation
                                     ),
                                 ),
+                                execute_research_member=(
+                                    None if research_mode == "legacy" else execute_research_member
+                                ),
+                                record_research_transition=record_transition,
                                 execute_risk=execute_risk,
                                 record_raw_score_checkpoint=record_raw_score_checkpoint,
-                                legacy=research_contract_mode_for_case(execution_case) == "legacy",
-                                historical=(
-                                    research_contract_mode_for_case(execution_case) == "historical"
-                                ),
+                                legacy=research_mode == "legacy",
+                                historical=research_mode == "historical",
                             )
                         )
                     else:

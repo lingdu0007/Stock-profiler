@@ -264,14 +264,19 @@ class ResearchContract(BaseModel):
 
 _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     re.compile(
-        r"\b(?:(?:formal|calibrated)\s+)?(?:success\s+)?probability\s*"
-        r"(?:is|of|equals|=|:)\s*"
-        r"(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
+        r"\b(?:probability|chance|likelihood|odds)\b"
+        r"[^.!?;。！？；]{0,48}\b(?:0?\.\d+|\d+(?:\.\d+)?)\s*"
+        r"(?:%|percent|per cent)?\b"
+        r"|\b(?:0?\.\d+|\d+(?:\.\d+)?)\s*(?:%|percent|per cent)?\b"
+        r"[^.!?;。！？；]{0,48}\b(?:probability|chance|likelihood|odds)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:six[-\s]+month\s+)?success\s+(?:chance|likelihood|odds)\s*"
-        r"(?:is|of|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
+        r"\b(?:should|ought\s+to|must|need\s+to|recommend(?:s|ed|ation)?|"
+        r"suggest(?:s|ed|ion)?|advise(?:s|d)?|consider)\s+"
+        r"(?:(?:you|investors?|we|i)\s+)?(?:to\s+)?"
+        r"(?:buy|buying|acquire|acquiring|purchase|purchasing|sell|selling|"
+        r"hold|holding|close|closing|trade|trading|order|ordering)\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -286,6 +291,11 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     ),
     re.compile(
         r"\b(?:buy|sell|hold|close|order|execute|purchase)\s+\d[\d,]*(?:\.\d+)?\s+"
+        r"(?:shares?|units?|lots?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:acquire|acquiring|purchase|purchasing)\s+\d[\d,]*(?:\.\d+)?\s+"
         r"(?:shares?|units?|lots?)\b",
         re.IGNORECASE,
     ),
