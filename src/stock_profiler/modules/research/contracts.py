@@ -37,10 +37,12 @@ RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION = "1.0.0"
 RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION = "2.0.0"
 RESEARCH_OUTPUT_CONTRACT_VERSION = "3.0.0"
 RISK_DEFINITION_ID = "synthetic-independent-risk-veto"
-RISK_DEFINITION_VERSION = "1.0.0"
+RISK_LEGACY_DEFINITION_VERSION = "1.0.0"
+RISK_DEFINITION_VERSION = "2.0.0"
 RISK_MODEL_ADAPTER_ID = "m-agent-deterministic-risk-adapter"
 RISK_OUTPUT_CONTRACT_ID = "synthetic-independent-risk-veto"
-RISK_OUTPUT_CONTRACT_VERSION = "1.0.0"
+RISK_LEGACY_OUTPUT_CONTRACT_VERSION = "1.0.0"
+RISK_OUTPUT_CONTRACT_VERSION = "2.0.0"
 RESEARCH_SCOPE: Literal["D0_SYNTHETIC_RESEARCH_ONLY"] = "D0_SYNTHETIC_RESEARCH_ONLY"
 RESEARCH_LEGACY_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v1"
 RESEARCH_ANNOUNCEMENT_TOOL_VERSION = "synthetic-announcement-tool-v2"
@@ -1452,17 +1454,6 @@ class ResearchMemberInput(ResearchContract):
             for evidence in self.evidence
         ):
             raise ValueError("research evidence must be validated and available by the cutoff")
-        money_flow_entry = next(
-            entry for entry in self.data_manifest.entries if entry.data_type == "MONEY_FLOW"
-        )
-        if (
-            money_flow_entry.completeness == "COMPLETE"
-            and not self.structured_facts.money_flow.is_complete
-            and not legacy_decoding
-            and not self._historical_decoded
-            and _RESEARCH_DEFINITION_VERSION_OVERRIDE.get() != RESEARCH_PRIOR_DEFINITION_VERSION
-        ):
-            raise ValueError("complete money-flow data requires structured money_flow facts")
         if (
             any(
                 evidence.evidence_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION
@@ -2364,6 +2355,18 @@ class RiskVetoDraft(ResearchContract):
             if self.disposition != expected:
                 raise ValueError("cohort risk disposition must summarize member vetoes")
         return self
+
+
+def legacy_risk_veto_draft_json_schema() -> dict[str, object]:
+    """Rebuild the pre-member-veto schema used by historical risk Runs."""
+    schema = deepcopy(RiskVetoDraft.model_json_schema())
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        properties.pop("member_vetoes", None)
+    definitions = schema.get("$defs")
+    if isinstance(definitions, dict):
+        definitions.pop("RiskMemberVeto", None)
+    return schema
 
 
 class RawScore(ResearchContract):

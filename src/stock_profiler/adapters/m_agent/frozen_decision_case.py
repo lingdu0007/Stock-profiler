@@ -117,6 +117,10 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
+    RISK_LEGACY_DEFINITION_VERSION,
+    RISK_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RISK_OUTPUT_CONTRACT_ID,
+    RISK_OUTPUT_CONTRACT_VERSION,
     ResearchCommand,
     ResearchDraft,
     ResearchDraftMember,
@@ -134,6 +138,7 @@ from stock_profiler.modules.research.contracts import (
     decode_legacy_research_tool_evidence,
     historical_research_draft_member_json_schema,
     legacy_research_draft_json_schema,
+    legacy_risk_veto_draft_json_schema,
     research_draft_payload,
     research_evidence_payload,
     research_stage_artifact_payload,
@@ -498,6 +503,12 @@ def _validate_research_context_items(
             raise ValueError(
                 "RESEARCH_REQUIRED_FACTS_INCOMPLETE: " + ",".join(incomplete_data_types)
             )
+        if (
+            not legacy
+            and not historical
+            and not delivered_member.structured_facts.money_flow.is_complete
+        ):
+            raise ValueError("RESEARCH_REQUIRED_FACTS_INCOMPLETE: MONEY_FLOW")
         if all(entry.completeness == "COMPLETE" for entry in manifest.entries) and any(
             value is None for value in delivered_member.structured_signals.values()
         ):
@@ -1076,8 +1087,19 @@ def _risk_definition(
     *,
     research_run_id: str,
     risk_plan: ResearchRiskPlan,
+    legacy: bool = False,
+    historical: bool = False,
 ) -> AgentDefinition:
     """Register the independent risk Definition over an immutable handoff."""
+    historical_risk_contract = legacy or historical
+    risk_definition_version = (
+        RISK_LEGACY_DEFINITION_VERSION if historical_risk_contract else RISK_DEFINITION_VERSION
+    )
+    risk_output_contract_version = (
+        RISK_LEGACY_OUTPUT_CONTRACT_VERSION
+        if historical_risk_contract
+        else RISK_OUTPUT_CONTRACT_VERSION
+    )
     handoff = risk_plan.handoff_fingerprint
     rejected_member_ids = (
         {member.security_id for member in command.members}
@@ -1096,41 +1118,47 @@ def _risk_definition(
             ),
         ),
         reasons=("SYNTHETIC_RISK_VETO" if risk_rejected else "SYNTHETIC_RISK_ACCEPTED",),
-        member_vetoes=tuple(
-            RiskMemberVeto(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                disposition=(
-                    "REJECTED" if member.security_id in rejected_member_ids else "ACCEPTED"
-                ),
-                gates=(
-                    RiskGate(
-                        gate_id="SYNTHETIC_RISK_VETO",
-                        status=(
-                            "FAILED" if member.security_id in rejected_member_ids else "PASSED"
+        member_vetoes=(
+            tuple(
+                RiskMemberVeto(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    disposition=(
+                        "REJECTED" if member.security_id in rejected_member_ids else "ACCEPTED"
+                    ),
+                    gates=(
+                        RiskGate(
+                            gate_id="SYNTHETIC_RISK_VETO",
+                            status=(
+                                "FAILED"
+                                if member.security_id in rejected_member_ids
+                                else "PASSED"
+                            ),
                         ),
                     ),
-                ),
-                reasons=(
-                    "SYNTHETIC_RISK_VETO"
-                    if member.security_id in rejected_member_ids
-                    else "SYNTHETIC_RISK_ACCEPTED",
-                ),
+                    reasons=(
+                        "SYNTHETIC_RISK_VETO"
+                        if member.security_id in rejected_member_ids
+                        else "SYNTHETIC_RISK_ACCEPTED",
+                    ),
+                )
+                for member in command.members
             )
-            for member in command.members
+            if not historical_risk_contract
+            else ()
         ),
     )
+    risk_response_payload = risk_response.model_dump(mode="json")
+    if historical_risk_contract:
+        risk_response_payload.pop("member_vetoes", None)
     if command.failure_mode == "RISK":
-        risk_response_payload = risk_response.model_dump(mode="json")
         risk_response_payload["probability"] = "0.01"
-        risk_response_json = json.dumps(
-            risk_response_payload,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-    else:
-        risk_response_json = risk_response.model_dump_json()
+    risk_response_json = json.dumps(
+        risk_response_payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     adapter = DeterministicModelAdapter(
         responses=(risk_response_json,),
         capabilities=ModelCapabilities(structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT),
@@ -1144,15 +1172,19 @@ def _risk_definition(
     )
     return AgentDefinition.for_adapter(
         definition_id=RISK_DEFINITION_ID,
-        version=RISK_DEFINITION_VERSION,
+        version=risk_definition_version,
         instructions=RISK_DEFINITION_INSTRUCTIONS,
         model_adapter=adapter,
         context_provider=DeterministicContextProvider(items=(handoff_item,)),
         tools=(),
         output_contract=OutputContract(
-            contract_id="synthetic-independent-risk-veto",
-            version="1.0.0",
-            schema=RiskVetoDraft.model_json_schema(),
+            contract_id=RISK_OUTPUT_CONTRACT_ID,
+            version=risk_output_contract_version,
+            schema=(
+                legacy_risk_veto_draft_json_schema()
+                if historical_risk_contract
+                else RiskVetoDraft.model_json_schema()
+            ),
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
         run_policy=risk_policy,
@@ -1827,6 +1859,8 @@ async def execute_research_risk_run(
         command,
         research_run_id=research_run.run_id,
         risk_plan=risk_plan,
+        legacy=_is_legacy_research_case(case),
+        historical=_is_historical_research_case(case),
     )
     _assert_risk_definition(risk_definition)
     existing_risk_run = await runtime.run_store.get_run(risk_plan.risk_run_id)

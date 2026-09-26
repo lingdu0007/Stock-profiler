@@ -92,6 +92,8 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_ROUTING_POLICY_VERSION,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
+    RISK_LEGACY_DEFINITION_VERSION,
+    RISK_LEGACY_OUTPUT_CONTRACT_VERSION,
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     RawScoreModelSnapshot,
@@ -1713,6 +1715,31 @@ def test_historical_full_draft_fields_remain_in_the_risk_identity_input() -> Non
     ]
 
 
+def test_historical_risk_definition_preserves_the_original_contract_snapshot() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+    draft = _draft(command)
+    risk_plan = research_service.prepare_research_risk_plan(
+        command,
+        "historical-risk-research-run",
+        draft,
+        (),
+        historical=True,
+    )
+
+    definition = frozen_decision_case._risk_definition(
+        command,
+        research_run_id="historical-risk-research-run",
+        risk_plan=risk_plan,
+        historical=True,
+    )
+
+    assert definition.version == RISK_LEGACY_DEFINITION_VERSION
+    assert definition.output_contract.version == RISK_LEGACY_OUTPUT_CONTRACT_VERSION
+    assert "member_vetoes" not in definition.output_contract.schema_definition["properties"]
+    response_payload = json.loads(definition.model_adapter._responses[0])
+    assert "member_vetoes" not in response_payload
+
+
 def test_risk_framework_preserves_mixed_member_verdicts() -> None:
     rejected_security_id = "synthetic-security-00"
     command = research_command(
@@ -2212,6 +2239,36 @@ def test_missing_market_signal_is_saved_against_the_market_data_gate(
     assert data_gates["RESEARCH_DATA:synthetic-security-00:DAILY_MARKET"] == "FAILED"
     assert data_gates["RESEARCH_DATA:synthetic-security-00:FINANCIAL_STATEMENTS"] == "PASSED"
     assert sum(status == "FAILED" for status in data_gates.values()) == 1
+
+
+def test_incomplete_money_flow_facts_are_saved_as_research_data_failure(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    money_flow = research_payload["members"][0]["structured_facts"]["money_flow"]
+    assert isinstance(money_flow, dict)
+    money_flow["net_amount"] = None
+    payload["research"] = research_payload
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in research_stage.reasons
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:synthetic-security-00:")
+    }
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:MONEY_FLOW"] == "FAILED"
+    assert sum(status == "FAILED" for status in data_gates.values()) == 1
+    assert sum(status == "PASSED" for status in data_gates.values()) == len(data_gates) - 1
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
 def test_overflowing_feature_arithmetic_is_saved_as_research_data_failure(

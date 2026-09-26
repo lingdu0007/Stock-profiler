@@ -23,6 +23,8 @@ from stock_profiler.modules.research.contracts import (
     RESEARCH_SCOPE,
     RISK_DEFINITION_ID,
     RISK_DEFINITION_VERSION,
+    RISK_LEGACY_DEFINITION_VERSION,
+    RISK_LEGACY_OUTPUT_CONTRACT_VERSION,
     RISK_MODEL_ADAPTER_ID,
     RISK_OUTPUT_CONTRACT_ID,
     RISK_OUTPUT_CONTRACT_VERSION,
@@ -185,13 +187,26 @@ def freeze_research(
         gate.status == "FAILED" for gate in risk_veto_draft.gates
     ):
         raise ValueError("risk acceptance cannot contain a failed risk gate")
-    member_vetoes = _validate_risk_member_vetoes(command, risk_veto_draft.member_vetoes)
+    member_vetoes = (
+        _validate_risk_member_vetoes(command, risk_veto_draft.member_vetoes)
+        if risk_veto_draft.member_vetoes or not (legacy or historical)
+        else ()
+    )
+
+    risk_definition_version = (
+        RISK_LEGACY_DEFINITION_VERSION if legacy or historical else RISK_DEFINITION_VERSION
+    )
+    risk_output_contract_version = (
+        RISK_LEGACY_OUTPUT_CONTRACT_VERSION
+        if legacy or historical
+        else RISK_OUTPUT_CONTRACT_VERSION
+    )
 
     raw_scores = framework.raw_scores
     risk_veto = RiskVetoOutcome(
         run_id=risk_run_id,
         definition_id=RISK_DEFINITION_ID,
-        definition_version=RISK_DEFINITION_VERSION,
+        definition_version=risk_definition_version,
         disposition=risk_veto_draft.disposition,
         gates=risk_veto_draft.gates,
         reasons=risk_veto_draft.reasons,
@@ -226,7 +241,7 @@ def freeze_research(
             else RESEARCH_DEFINITION_VERSION
         ),
         risk_definition_id=RISK_DEFINITION_ID,
-        risk_definition_version=RISK_DEFINITION_VERSION,
+        risk_definition_version=risk_definition_version,
         research_model_adapter_id=RESEARCH_MODEL_ADAPTER_ID,
         risk_model_adapter_id=RISK_MODEL_ADAPTER_ID,
         research_routing_policy_version=(
@@ -243,7 +258,7 @@ def freeze_research(
             else RESEARCH_OUTPUT_CONTRACT_VERSION
         ),
         risk_output_contract_id=RISK_OUTPUT_CONTRACT_ID,
-        risk_output_contract_version=RISK_OUTPUT_CONTRACT_VERSION,
+        risk_output_contract_version=risk_output_contract_version,
         screening_strategy_version=command.screening.strategy_version,
         screening_snapshot_id=command.screening.snapshot_id,
         selection_fingerprint=command.selection_fingerprint,

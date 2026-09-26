@@ -218,7 +218,10 @@ def _research_data_gate_results(
         member.security_id
         for member in command.members
         if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
-        and any(value is None for value in member.structured_signals.values())
+        and (
+            not member.structured_facts.money_flow.is_complete
+            or any(value is None for value in member.structured_signals.values())
+        )
     }
     invalid_structured_data_types = {
         (member.security_id, RAW_SCORE_FEATURE_DATA_TYPES[signal_id])
@@ -226,6 +229,12 @@ def _research_data_gate_results(
         for signal_id, value in member.structured_signals.items()
         if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
     }
+    invalid_structured_data_types.update(
+        (member.security_id, "MONEY_FLOW")
+        for member in command.members
+        if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
+        and not member.structured_facts.money_flow.is_complete
+    )
     data_failure_member_ids = {
         member.security_id
         for member in member_runs
