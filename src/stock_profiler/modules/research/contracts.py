@@ -306,10 +306,18 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
         r"\b(?:buy|sell|hold|close)\s+(?:now|today|immediately)\b",
         re.IGNORECASE,
     ),
-    re.compile(r"(?:正式|成功)?概率(?:为|是|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?"),
+    re.compile(r"(?:正式|成功)?概率(?:为|是|=|:|：)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?"),
     re.compile(r"(?:已获|获得|通过|授予|具备).{0,8}(?:资格|能力资格)"),
     re.compile(r"(?:买入|卖出|持有|清仓|下单|交易)\s*\d+(?:\.\d+)?\s*(?:股|份|手|元)?"),
     re.compile(r"(?:建议|推荐|应当|应该|宜|适合|不建议|不要)\s*(?:买入|卖出|持有|清仓|下单|交易)"),
+    re.compile(
+        r"(?:操作|交易|投资)?结论\s*(?:是|为|:|：)\s*(?:买入|卖出|持有|清仓|下单|交易)"
+    ),
+    re.compile(
+        r"\b(?:my|your|our|personal)\s+(?:position|holding|quantity|allocation|shares?|units?|lots?)\b"
+        r".{0,24}\b\d[\d,]*(?:\.\d+)?\s*(?:shares?|units?|lots?)?\b",
+        re.IGNORECASE,
+    ),
 )
 _RESEARCH_STANDALONE_TRADE_PATTERN = re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)")
 _RESEARCH_STANDALONE_TRADE_WORDS = frozenset({"buy", "sell", "hold", "close"})

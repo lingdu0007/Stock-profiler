@@ -957,6 +957,46 @@ def test_partial_member_research_recovery_creates_missing_member_runs(
         assert asyncio.run(runtime.run_store.get_run(member_run.run_id)) is not None
 
 
+def test_later_missing_member_run_preserves_completed_member_results(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    command = case.research
+    assert command is not None
+    second_run_id = frozen_decision_case._research_member_run_id(case, 1, command.members[1])
+    original_execute_registered_run = frozen_decision_case._execute_registered_run
+
+    async def missing_second_member_run(**kwargs: Any) -> FrameworkRunResult:
+        if kwargs["run_id"] == second_run_id:
+            raise MappedDurableRunMissingError("mapped research member Run is missing")
+        return await original_execute_registered_run(**kwargs)
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_execute_registered_run",
+        missing_second_member_run,
+    )
+    runtime = initialize_runtime_storage(migrated_settings)
+    recovered = asyncio.run(frozen_decision_case.execute_research_run(case, runtime))
+
+    assert recovered.status == "FAILED"
+    assert recovered.run_id == second_run_id
+    assert recovered.error_code == "RESEARCH_RUN_MISSING"
+    member_results = {member.run_id: member for member in recovered.research_member_runs}
+    assert len(member_results) == len(command.members)
+    first_run_id = frozen_decision_case._research_member_run_id(case, 0, command.members[0])
+    assert member_results[first_run_id].status == "SUCCEEDED"
+    assert member_results[second_run_id].status == "FAILED"
+    assert member_results[second_run_id].error_code == "RESEARCH_RUN_MISSING"
+    assert any(
+        transition.run_id == second_run_id
+        and transition.status == "FAILED"
+        and transition.reason == "RESEARCH_RUN_MISSING"
+        for transition in recovered.transitions
+    )
+
+
 def test_historical_partial_member_recovery_creates_missing_member_runs(
     migrated_settings: Settings,
 ) -> None:

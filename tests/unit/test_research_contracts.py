@@ -1455,6 +1455,10 @@ def test_research_draft_member_rejects_success_chance_and_chinese_trade_advice()
         draft_member("The six-month success chance is 95%.")
     with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
         draft_member("建议买入该股票。")
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        draft_member("We recommend increasing your position by 100 shares.")
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        draft_member("成功概率：95%，操作结论：买入。")
 
 
 def test_research_draft_member_allows_non_directive_evidence_language() -> None:

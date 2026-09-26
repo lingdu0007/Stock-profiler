@@ -1687,16 +1687,40 @@ async def execute_research_run(
         )
         if existing_run is None and allow_create and record_member_run_reservation is not None:
             allow_create = await record_member_run_reservation(run_id)
-        result = await _execute_registered_run(
-            runtime=runtime,
-            run_id=run_id,
-            definition=research_definition,
-            input_payload=member_input,
-            case=None,
-            record_transition=record_transition,
-            allow_create=allow_create,
-            clock=clock,
-        )
+        try:
+            result = await _execute_registered_run(
+                runtime=runtime,
+                run_id=run_id,
+                definition=research_definition,
+                input_payload=member_input,
+                case=None,
+                record_transition=record_transition,
+                allow_create=allow_create,
+                clock=clock,
+            )
+        except (MappedDurableRunMissingError, ValueError) as error:
+            if not member_results:
+                raise
+            error_code = (
+                "RESEARCH_RUN_MISSING"
+                if isinstance(error, MappedDurableRunMissingError)
+                else "RESEARCH_RUN_RECOVERY_FAILED"
+            )
+            transition = FrameworkRunTransition(
+                run_id=run_id,
+                status="FAILED",
+                reason=error_code,
+            )
+            if record_transition is not None:
+                await record_transition(transition)
+            result = FrameworkRunResult(
+                run_id=run_id,
+                status="FAILED",
+                output=None,
+                error_code=error_code,
+                transitions=(transition,),
+                transitions_durably_recorded=record_transition is not None,
+            )
         if result.status != "SUCCEEDED" or result.output is None:
             context_provider = research_definition.context_provider
             if isinstance(context_provider, _FrozenResearchContextProvider):
@@ -1785,7 +1809,7 @@ async def execute_research_run(
             ),
             error_code=error_codes[0] if error_codes else "RESEARCH_MEMBER_RUN_FAILED",
             research_member_runs=member_run_result,
-            transitions=tuple(primary_transitions),
+            transitions=tuple(transitions),
             transitions_durably_recorded=record_transition is not None,
             research_tool_evidence=tuple(tool_evidence),
         )
