@@ -309,7 +309,36 @@ async def execute_research_risk_journey(
     """Orchestrate typed research handoff and independent risk execution in the host."""
     command = case.research
     assert command is not None
-    research_run = await execute_research()
+    try:
+        research_run = await execute_research()
+    except MappedDurableRunMissingError:
+        research_run = FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RESEARCH_RUN_MISSING",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=case.framework_run_id,
+                    status="FAILED",
+                    reason="RESEARCH_RUN_MISSING",
+                ),
+            ),
+        )
+    except ValueError:
+        research_run = FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RESEARCH_RUN_RECOVERY_FAILED",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=case.framework_run_id,
+                    status="FAILED",
+                    reason="RESEARCH_RUN_RECOVERY_FAILED",
+                ),
+            ),
+        )
     if research_run.status != "SUCCEEDED":
         return research_run
     if research_run.output is None:

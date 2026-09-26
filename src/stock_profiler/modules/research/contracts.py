@@ -291,7 +291,7 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
         r"(?:buy|sell|hold|close|order|trade|purchase)\b",
         re.IGNORECASE,
     ),
-    re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)"),
+    re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)", re.IGNORECASE),
     re.compile(r"(?:正式|成功)?概率(?:为|是|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?"),
     re.compile(r"(?:已获|获得|通过|授予|具备).{0,8}(?:资格|能力资格)"),
     re.compile(r"(?:买入|卖出|持有|清仓|下单|交易)\s*\d+(?:\.\d+)?\s*(?:股|份|手|元)?"),

@@ -2560,6 +2560,35 @@ def test_research_waiting_is_saved_without_a_research_failure(
     assert not any(stage.phase == "RESEARCH" for stage in execution.stage_results)
 
 
+def test_missing_research_run_is_saved_as_a_failed_stage_without_replacement(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    async def missing_research_run(*_: object, **__: object) -> FrameworkRunResult:
+        raise MappedDurableRunMissingError("mapped research M-Agent Run is missing")
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_run", missing_research_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "FRAMEWORK_RUN"
+        and stage.status == "FAILED"
+        and "RESEARCH_RUN_MISSING" in stage.reasons
+        and any(gate.status == "FAILED" for gate in stage.gate_results)
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_RUN_MISSING" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
 def test_later_member_waiting_preserves_the_research_waiting_state(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -2781,11 +2810,26 @@ def test_historical_research_case_without_original_run_fails_closed(
         }
     )
 
-    with pytest.raises(DecisionEventCommitError, match="missing durable framework Run"):
-        run_frozen_decision_case(
-            migrated_settings,
-            historical_case.model_dump(mode="json"),
-        )
+    execution = run_frozen_decision_case(
+        migrated_settings,
+        historical_case.model_dump(mode="json"),
+    )
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "FRAMEWORK_RUN"
+        and stage.status == "FAILED"
+        and "RESEARCH_RUN_MISSING" in stage.reasons
+        and any(gate.status == "FAILED" for gate in stage.gate_results)
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RESEARCH"
+        and stage.status == "FAILED"
+        and "RESEARCH_RUN_MISSING" in stage.reasons
+        for stage in execution.stage_results
+    )
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
 def test_research_provider_failure_closes_without_raw_score_or_risk_run(

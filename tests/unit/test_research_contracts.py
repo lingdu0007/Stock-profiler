@@ -1416,6 +1416,24 @@ def test_research_draft_member_rejects_trading_conclusions_in_text() -> None:
         )
 
 
+def test_research_draft_member_rejects_a_standalone_trading_conclusion() -> None:
+    member = _command().members[0]
+
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        ResearchDraftMember(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+            thesis="BUY",
+            bull_case="The fictional upside case remains conditional.",
+            bear_case="The fictional downside case remains explicit.",
+            catalysts=("A fictional catalyst remains conditional.",),
+            falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+            unknowns=("Future external evidence remains unresolved.",),
+            knowledge_cutoff=member.knowledge_cutoff,
+        )
+
+
 def test_research_stage_artifact_rejects_capability_claims_in_model_text() -> None:
     with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
         ResearchStageArtifact(
