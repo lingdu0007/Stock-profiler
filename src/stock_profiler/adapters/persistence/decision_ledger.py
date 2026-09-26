@@ -861,7 +861,7 @@ class DecisionLedger:
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
-        stage_payload = _canonical_json(stage_result.model_dump(mode="json"))
+        stage_payload = _canonical_json(stage_result.model_dump(mode="json", exclude_none=True))
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,

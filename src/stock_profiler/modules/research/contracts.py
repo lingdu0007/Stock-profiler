@@ -267,7 +267,8 @@ class ResearchContract(BaseModel):
 
 _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     re.compile(
-        r"\b(?:formal\s+)?(?:success\s+)?probability\s*(?:is|of|=|:)\s*"
+        r"\b(?:(?:formal|calibrated)\s+)?(?:success\s+)?probability\s*"
+        r"(?:is|of|equals|=|:)\s*"
         r"(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
         re.IGNORECASE,
     ),
@@ -288,6 +289,11 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     ),
     re.compile(
         r"\b(?:buy|sell|hold|close|order|execute|purchase)\s+\d[\d,]*(?:\.\d+)?\s+"
+        r"(?:shares?|units?|lots?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:buy|sell|hold|close)\s+(?:all|any|some)\s+"
         r"(?:shares?|units?|lots?)\b",
         re.IGNORECASE,
     ),
@@ -316,6 +322,12 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     re.compile(
         r"\b(?:my|your|our|personal)\s+(?:position|holding|quantity|allocation|shares?|units?|lots?)\b"
         r".{0,24}\b\d[\d,]*(?:\.\d+)?\s*(?:shares?|units?|lots?)?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:allocate|assign|transfer|credit|move)\s+\d[\d,]*(?:\.\d+)?\s+"
+        r"(?:shares?|units?|lots?)\s+(?:to|into)\s+(?:my|your|our|the)\s+"
+        r"(?:account|portfolio|position|holding)\b",
         re.IGNORECASE,
     ),
 )

@@ -70,6 +70,7 @@ from stock_profiler.modules.position_management.service import reconcile as reco
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
+    RawScore,
     RawScoreCalculationError,
     ResearchCommand,
     ResearchDraft,
@@ -309,6 +310,7 @@ async def execute_research_risk_journey(
     *,
     execute_research: Callable[[], Awaitable[FrameworkRunResult]],
     execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
+    record_raw_score_checkpoint: Callable[[ResearchRiskPlan], Awaitable[None]] | None = None,
     legacy: bool = False,
     historical: bool = False,
 ) -> FrameworkRunResult:
@@ -429,6 +431,8 @@ async def execute_research_risk_journey(
             ),
             raw_score_error_code=str(error),
         )
+    if record_raw_score_checkpoint is not None:
+        await record_raw_score_checkpoint(risk_plan)
     try:
         risk_run = await execute_risk(research_run, risk_plan)
     except MappedDurableRunMissingError:
@@ -872,6 +876,16 @@ def _run_frozen_decision_case(
                                 record_auxiliary_run_reservation=(record_auxiliary_run_reservation),
                             )
 
+                        async def record_raw_score_checkpoint(
+                            risk_plan: ResearchRiskPlan,
+                        ) -> None:
+                            await _record_raw_score_checkpoint(
+                                ledger,
+                                execution_case,
+                                risk_plan,
+                                legacy=research_contract_mode_for_case(execution_case) == "legacy",
+                            )
+
                         framework = asyncio.run(
                             execute_research_risk_journey(
                                 execution_case,
@@ -883,6 +897,7 @@ def _run_frozen_decision_case(
                                     ),
                                 ),
                                 execute_risk=execute_risk,
+                                record_raw_score_checkpoint=record_raw_score_checkpoint,
                                 legacy=research_contract_mode_for_case(execution_case) == "legacy",
                                 historical=(
                                     research_contract_mode_for_case(execution_case)
@@ -1028,6 +1043,42 @@ async def _record_research_member_run_reservation(
             framework_run_id=framework_run_id,
         )
     return True
+
+
+def _raw_score_stage_result(
+    raw_scores: tuple[RawScore, ...] | None,
+    *,
+    legacy: bool = False,
+) -> StageResult:
+    """Build the immutable raw-score stage with its independently saved payload."""
+    return StageResult(
+        phase="RAW_SCORE",
+        status="SUCCEEDED",
+        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
+        reasons=("RAW_SCORE_FROZEN",),
+        raw_score_payloads=(
+            tuple(research_raw_score_payload(score, legacy=legacy) for score in raw_scores)
+            if raw_scores
+            else None
+        ),
+    )
+
+
+async def _record_raw_score_checkpoint(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    risk_plan: ResearchRiskPlan,
+    *,
+    legacy: bool = False,
+) -> None:
+    """Persist raw scores before an independent risk Run can start or fail."""
+    with ledger.serialize_case_execution() as connection:
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=_raw_score_stage_result(risk_plan.raw_scores, legacy=legacy),
+            framework_run_id=case.framework_run_id,
+        )
 
 
 @contextmanager
@@ -1907,11 +1958,9 @@ def _commit_research_framework_result(
             ),
             validation=_failed_host_validation(framework.raw_score_error_code),
         )
-    raw_score_stage = StageResult(
-        phase="RAW_SCORE",
-        status="SUCCEEDED",
-        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
-        reasons=("RAW_SCORE_FROZEN",),
+    raw_score_stage = _raw_score_stage_result(
+        envelope.raw_scores,
+        legacy=research_mode == "legacy",
     )
     if framework.risk_run_status == "WAITING":
         return closed(

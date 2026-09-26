@@ -366,12 +366,21 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
+    raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Immutable raw-score payloads saved with a successful RAW_SCORE stage.",
+    )
 
     @model_validator(mode="after")
     def validate_phase_status(self) -> StageResult:
         """Keep lifecycle states in the phase that owns their meaning."""
         if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
             raise ValueError(f"{self.phase} cannot record status {self.status}")
+        if self.raw_score_payloads is not None and (
+            self.phase != "RAW_SCORE" or self.status != "SUCCEEDED"
+        ):
+            raise ValueError("raw score payloads require a successful RAW_SCORE stage")
         return self
 
 
