@@ -1202,6 +1202,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            research?: components["schemas"]["ResearchOutcome"] | null;
             selection?: components["schemas"]["SelectionOutcome"] | null;
             stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
@@ -2337,6 +2338,118 @@ export interface components {
             user_id: string;
         };
         /**
+         * RawScore
+         * @description The structured, uncalibrated terminal-target score frozen after the cohort.
+         */
+        RawScore: {
+            /**
+             * Algorithm
+             * @constant
+             */
+            algorithm: "ELASTIC_NET_LOGISTIC";
+            /** Coefficients */
+            coefficients: {
+                [key: string]: string;
+            };
+            /** Contributions */
+            contributions: {
+                [key: string]: string;
+            };
+            /** Feature Transformations */
+            feature_transformations: {
+                [key: string]: components["schemas"]["RawScoreFeatureTransform"];
+            };
+            /**
+             * Interaction Terms
+             * @default []
+             */
+            interaction_terms: string[];
+            /** Intercept */
+            intercept: string;
+            /** L1 Ratio */
+            l1_ratio: string;
+            /** L2 Ratio */
+            l2_ratio: string;
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
+            /** Label Watermark Month */
+            label_watermark_month: string;
+            /** Mature Months */
+            mature_months: number;
+            /** Model Version */
+            model_version: string;
+            /** Negative Record Count */
+            negative_record_count: number;
+            /** Normalization Snapshot Id */
+            normalization_snapshot_id: string;
+            /** Penalty Strength */
+            penalty_strength: string;
+            /** Positive Record Count */
+            positive_record_count: number;
+            /** Probability */
+            probability?: null;
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Structured Inputs */
+            structured_inputs: {
+                [key: string]: string;
+            };
+            /**
+             * Target
+             * @constant
+             */
+            target: "SIX_MONTH_TERMINAL_20_PERCENT";
+            /** Training Months */
+            training_months: string[];
+            /** Training Record Count */
+            training_record_count: number;
+            /** Training Window End Month */
+            training_window_end_month: string;
+            /** Training Window Id */
+            training_window_id: string;
+            /**
+             * Training Window Kind
+             * @enum {string}
+             */
+            training_window_kind: "EXPANDING" | "ROLLING_120";
+            /** Training Window Month Count */
+            training_window_month_count: number;
+            /**
+             * Training Window Policy
+             * @constant
+             */
+            training_window_policy: "EXPANDING_60_TO_119_ROLLING_120";
+            /** Training Window Start Month */
+            training_window_start_month: string;
+            /** Transformed Inputs */
+            transformed_inputs: {
+                [key: string]: string;
+            };
+            /** Z20 */
+            z20: string;
+        };
+        /**
+         * RawScoreFeatureTransform
+         * @description Frozen winsorization and robust-standardization parameters for one signal.
+         */
+        RawScoreFeatureTransform: {
+            /** Iqr */
+            iqr: string;
+            /** Lower Clip */
+            lower_clip: string;
+            /** Median */
+            median: string;
+            /** Reverse */
+            reverse: boolean;
+            /** Upper Clip */
+            upper_clip: string;
+        };
+        /**
          * ReauthenticationVerificationDto
          * @description Pydantic transport contract for a completed recent reauthentication.
          */
@@ -2539,6 +2652,250 @@ export interface components {
              */
             registered_at: string;
         };
+        /** ResearchEvidence */
+        ResearchEvidence: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
+            /**
+             * Evidence Contract Version
+             * @default 2.0.0
+             * @enum {string}
+             */
+            evidence_contract_version: "1.0.0" | "2.0.0";
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Reference */
+            reference: string;
+            /** Semantic Version */
+            semantic_version: string;
+            /** Source */
+            source: string;
+            /** Source Published At */
+            source_published_at?: string | null;
+            /** Statement */
+            statement: string;
+            /** Validated At */
+            validated_at?: string | null;
+            /**
+             * Validation Status
+             * @constant
+             */
+            validation_status: "VALIDATED";
+        };
+        /**
+         * ResearchHandoff
+         * @description Versioned, immutable boundary between research/risk and later work.
+         */
+        ResearchHandoff: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /**
+             * Member Handoffs
+             * @default []
+             */
+            member_handoffs: components["schemas"]["ResearchMemberHandoff"][];
+            /** Raw Scores */
+            raw_scores: components["schemas"]["RawScore"][];
+            /** Research Definition Id */
+            research_definition_id: string;
+            /** Research Definition Version */
+            research_definition_version: string;
+            /** Research Model Adapter Id */
+            research_model_adapter_id: string;
+            /** Research Output Contract Id */
+            research_output_contract_id: string;
+            /** Research Output Contract Version */
+            research_output_contract_version: string;
+            /** Research Routing Policy Version */
+            research_routing_policy_version: string;
+            /** Research Run Id */
+            research_run_id: string;
+            /**
+             * Research Run Ids
+             * @default []
+             */
+            research_run_ids: string[];
+            /** Risk Definition Id */
+            risk_definition_id: string;
+            /** Risk Definition Version */
+            risk_definition_version: string;
+            /** Risk Model Adapter Id */
+            risk_model_adapter_id: string;
+            /** Risk Output Contract Id */
+            risk_output_contract_id: string;
+            /** Risk Output Contract Version */
+            risk_output_contract_version: string;
+            /** Risk Run Id */
+            risk_run_id: string;
+            risk_veto?: components["schemas"]["RiskVetoOutcome"] | null;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "D0_SYNTHETIC_RESEARCH_ONLY";
+            /** Screening Snapshot Id */
+            screening_snapshot_id: string;
+            /** Screening Strategy Version */
+            screening_strategy_version: string;
+            /** Security Ids */
+            security_ids: string[];
+            /** Selection Event Id */
+            selection_event_id: string;
+            /** Selection Fingerprint */
+            selection_fingerprint: string;
+            /** Selection Object Id */
+            selection_object_id: string;
+            /** Targets */
+            targets: string[];
+            /**
+             * Tool Evidence
+             * @default []
+             */
+            tool_evidence: components["schemas"]["ResearchToolEvidence"][];
+        };
+        /**
+         * ResearchMemberHandoff
+         * @description Immutable per-member evidence and risk facts consumed by risk.
+         */
+        ResearchMemberHandoff: {
+            /** Evidence */
+            evidence: components["schemas"]["ResearchEvidence"][];
+            /** Research Id */
+            research_id: string;
+            /** Research Run Id */
+            research_run_id?: string | null;
+            /**
+             * Risk Flags
+             * @default []
+             */
+            risk_flags: string[];
+            /** Security Id */
+            security_id: string;
+        };
+        /** ResearchMemberResult */
+        ResearchMemberResult: {
+            /** Bear Case */
+            bear_case: string;
+            /** Bull Case */
+            bull_case: string;
+            /** Catalysts */
+            catalysts: string[];
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /** Falsification Conditions */
+            falsification_conditions: string[];
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+            /** Thesis */
+            thesis: string;
+            /** Unknowns */
+            unknowns: string[];
+        };
+        /**
+         * ResearchOutcome
+         * @description Host-owned research result, including independent risk disposition.
+         */
+        ResearchOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "FROZEN" | "REJECTED" | "DATA_FAILED" | "SYSTEM_FAILED" | "BLOCKED";
+            handoff: components["schemas"]["ResearchHandoff"];
+            /** Members */
+            members: components["schemas"]["ResearchMemberResult"][];
+            /** Raw Scores */
+            raw_scores?: components["schemas"]["RawScore"][] | null;
+            /** Reasons */
+            reasons: string[];
+            risk_veto?: components["schemas"]["RiskVetoOutcome"] | null;
+            /**
+             * Tool Evidence
+             * @default []
+             */
+            tool_evidence: components["schemas"]["ResearchToolEvidence"][];
+        };
+        /**
+         * ResearchToolEvidence
+         * @description Structured provenance emitted by the allowlisted exploratory Tool.
+         */
+        ResearchToolEvidence: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
+            /**
+             * Evidence Contract Version
+             * @default 2.0.0
+             * @enum {string}
+             */
+            evidence_contract_version: "1.0.0" | "2.0.0";
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Reference */
+            reference: string;
+            /** Semantic Version */
+            semantic_version: string;
+            /** Source */
+            source: string;
+            /** Source Published At */
+            source_published_at?: string | null;
+            /** Statement */
+            statement: string;
+            /** Validated At */
+            validated_at?: string | null;
+            /**
+             * Validation Status
+             * @constant
+             */
+            validation_status: "VALIDATED";
+        };
         /**
          * ResultAccessScope
          * @description Immutable ownership and visibility bound before a scoped case is executed.
@@ -2641,6 +2998,58 @@ export interface components {
             predecessor_authorization_id: string;
             /** Predecessor Risk Budget Version Id */
             predecessor_risk_budget_version_id: string;
+        };
+        /** RiskGate */
+        RiskGate: {
+            /** Gate Id */
+            gate_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED";
+        };
+        /**
+         * RiskMemberVeto
+         * @description Independent risk disposition and gates for one fixed cohort member.
+         */
+        RiskMemberVeto: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ACCEPTED" | "REJECTED";
+            /** Gates */
+            gates: components["schemas"]["RiskGate"][];
+            /** Reasons */
+            reasons: string[];
+            /** Research Id */
+            research_id: string;
+            /** Security Id */
+            security_id: string;
+        };
+        /** RiskVetoOutcome */
+        RiskVetoOutcome: {
+            /** Definition Id */
+            definition_id: string;
+            /** Definition Version */
+            definition_version: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "ACCEPTED" | "REJECTED";
+            /** Gates */
+            gates: components["schemas"]["RiskGate"][];
+            /**
+             * Member Vetoes
+             * @default []
+             */
+            member_vetoes: components["schemas"]["RiskMemberVeto"][];
+            /** Reasons */
+            reasons: string[];
+            /** Run Id */
+            run_id: string;
         };
         /**
          * SafetyCapabilitiesDiagnosticDto
@@ -2838,7 +3247,14 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            /**
+             * Raw Score Payloads
+             * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.
+             */
+            raw_score_payloads?: {
+                [key: string]: unknown;
+            }[] | null;
             /** Reasons */
             reasons: string[];
             /**

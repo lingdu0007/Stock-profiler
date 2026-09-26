@@ -7,6 +7,9 @@ from typing import Any
 
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
     execute_frozen_decision_case,
+    execute_research_member_run,
+    execute_research_risk_run,
+    execute_research_run,
     find_unmapped_legacy_frozen_decision_case,
     validate_frozen_recovery_case,
 )
@@ -29,11 +32,14 @@ from stock_profiler.modules.decision_cases.domain import (
     load_frozen_decision_case,
 )
 from stock_profiler.modules.decision_cases.ports import (
+    AuxiliaryRunReservationRecorder,
     FrameworkRunResult,
     FrameworkTransitionRecorder,
+    ResearchMemberRunReservationRecorder,
 )
 from stock_profiler.modules.delivery.access import AccessPrincipal
 from stock_profiler.modules.qualification.governance import InvalidGovernanceRequest
+from stock_profiler.modules.research.contracts import ResearchMemberInput, ResearchRiskPlan
 
 
 @dataclass(frozen=True)
@@ -50,10 +56,80 @@ class _FrozenFramework:
         return await find_unmapped_legacy_frozen_decision_case(case, self.runtime, known_run_ids)
 
     async def execute(
-        self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult:
+        if case.research is None:
+            return await execute_frozen_decision_case(
+                case,
+                self.runtime,
+                record_transition,
+                clock=self.clock,
+            )
         return await execute_frozen_decision_case(
-            case, self.runtime, record_transition, clock=self.clock
+            case,
+            self.runtime,
+            record_transition,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
+            clock=self.clock,
+        )
+
+    async def execute_research_run(
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    ) -> FrameworkRunResult:
+        return await execute_research_run(
+            case,
+            self.runtime,
+            record_transition,
+            record_member_run_reservation=record_member_run_reservation,
+            clock=self.clock,
+        )
+
+    async def execute_research_member_run(
+        self,
+        case: FrozenDecisionCase,
+        member_index: int,
+        member: ResearchMemberInput,
+        run_id: str,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    ) -> FrameworkRunResult:
+        return await execute_research_member_run(
+            case,
+            self.runtime,
+            member_index,
+            member,
+            run_id,
+            record_transition,
+            record_member_run_reservation=record_member_run_reservation,
+            clock=self.clock,
+        )
+
+    async def execute_research_risk_run(
+        self,
+        case: FrozenDecisionCase,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
+    ) -> FrameworkRunResult:
+        return await execute_research_risk_run(
+            case,
+            self.runtime,
+            research_run,
+            risk_plan,
+            record_transition,
+            record_auxiliary_run_reservation=record_auxiliary_run_reservation,
+            clock=self.clock,
         )
 
 

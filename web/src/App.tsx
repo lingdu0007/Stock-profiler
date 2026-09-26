@@ -139,6 +139,7 @@ function FormalReportView({ report }: { report: FormalReport }) {
         </ol>
       </section>
 
+      {report.result.research && <ResearchEvidence research={report.result.research} />}
       {correction && (
         <section className="report-section" aria-label="Correction evidence">
           <h2>Correction evidence</h2>
@@ -233,6 +234,104 @@ function FormalReportView({ report }: { report: FormalReport }) {
           <Record label="Release commit" value={report.version_bundle.m_agent_release_commit} />
         </dl>
       </section>
+    </section>
+  );
+}
+
+function ResearchEvidence({
+  research
+}: {
+  research: NonNullable<FormalReport["result"]["research"]>;
+}) {
+  const rawScores = new Map((research.raw_scores ?? []).map((score) => [score.security_id, score]));
+  const memberVetoes = new Map(
+    (research.risk_veto?.member_vetoes ?? []).map((veto) => [veto.security_id, veto])
+  );
+
+  return (
+    <section className="report-section" aria-label="Research evidence">
+      <h2>Research evidence</h2>
+      <dl className="record-list">
+        <Record label="Disposition" value={research.disposition} />
+        <Record label="Reasons" value={research.reasons.join(", ")} />
+        <Record label="Research Run" value={research.handoff.research_run_id} />
+        <Record label="Risk Run" value={research.handoff.risk_run_id} />
+        <Record
+          label="Definition"
+          value={`${research.handoff.research_definition_id} @ ${research.handoff.research_definition_version}`}
+        />
+        <Record label="Evidence count" value={String(research.handoff.evidence_ids.length)} />
+      </dl>
+
+      {research.members.map((member) => {
+        const rawScore = rawScores.get(member.security_id);
+        const veto = memberVetoes.get(member.security_id);
+        return (
+          <section
+            className="portfolio-subsection"
+            aria-label={`Research member ${member.security_id}`}
+            key={member.security_id}
+          >
+            <h3>{member.security_id}</h3>
+            <dl className="record-list">
+              <Record label="Research ID" value={member.research_id} />
+              <Record label="Thesis" value={member.thesis} />
+              <Record label="Bull case" value={member.bull_case} />
+              <Record label="Bear case" value={member.bear_case} />
+              <Record label="Knowledge cutoff" value={member.knowledge_cutoff} />
+              <Record label="Evidence" value={member.evidence_refs.join(", ")} />
+              {rawScore && (
+                <>
+                  <Record label="Raw z20" value={rawScore.z20} />
+                  <Record label="Raw score type" value="Uncalibrated raw success score" />
+                  <Record
+                    label="Major contributions"
+                    value={
+                      Object.entries(rawScore.contributions)
+                        .map(([feature, contribution]) => `${feature}: ${contribution}`)
+                        .join(", ") || "None recorded"
+                    }
+                  />
+                  <Record
+                    label="Raw model"
+                    value={`${rawScore.model_version} @ ${rawScore.training_window_id}`}
+                  />
+                  <Record
+                    label="Model window"
+                    value={`${rawScore.training_window_kind} ${rawScore.training_window_start_month} to ${rawScore.training_window_end_month}`}
+                  />
+                  <Record label="Label watermark" value={rawScore.label_watermark_month} />
+                </>
+              )}
+              {veto && (
+                <>
+                  <Record label="Risk disposition" value={veto.disposition} />
+                  <Record label="Risk reasons" value={veto.reasons.join(", ")} />
+                  <Record
+                    label="Risk gates"
+                    value={veto.gates.map((gate) => `${gate.gate_id}: ${gate.status}`).join(", ")}
+                  />
+                </>
+              )}
+            </dl>
+          </section>
+        );
+      })}
+
+      {research.tool_evidence.length > 0 && (
+        <section className="portfolio-subsection" aria-label="Research tool evidence">
+          <h3>Exploratory evidence</h3>
+          <dl className="record-list">
+            {research.tool_evidence.map((item) => (
+              <Record
+                key={item.evidence_id}
+                label={item.evidence_id}
+                value={`${item.source} | ${item.statement}`}
+              />
+            ))}
+          </dl>
+        </section>
+      )}
     </section>
   );
 }

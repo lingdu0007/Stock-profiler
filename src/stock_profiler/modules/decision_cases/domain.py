@@ -57,6 +57,25 @@ from stock_profiler.modules.qualification.contracts import (
     GovernanceOutcome,
     QualificationCommand,
 )
+from stock_profiler.modules.research.contracts import (
+    RESEARCH_DEFINITION_ID,
+    RESEARCH_DEFINITION_VERSION,
+    RESEARCH_LEGACY_DEFINITION_VERSION,
+    RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_OUTPUT_CONTRACT_VERSION,
+    RESEARCH_PRIOR_DEFINITION_VERSION,
+    RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
+    ResearchCommand,
+    ResearchContractMode,
+    ResearchOutcome,
+    decode_historical_research_command,
+    decode_historical_research_outcome,
+    decode_legacy_research_command,
+    decode_legacy_research_outcome,
+    historical_research_draft_member_json_schema,
+    research_contract_mode_for_versions,
+    research_outcome_payload,
+)
 
 FROZEN_CASE_CONTRACT_VERSION = "2.0.0"
 FROZEN_HOST_CONTRACT_VERSION = "2.0.0"
@@ -79,6 +98,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "monitoring.1.0.0",
         "universe.1.0.0",
         "selection.1.0.0",
+        "research.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -101,6 +121,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("monitoring.1.0.0", "monitoring.1.0.0"),
         ("universe.1.0.0", "universe.1.0.0"),
         ("selection.1.0.0", "selection.1.0.0"),
+        ("research.1.0.0", "research.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -212,6 +233,7 @@ class ExternalResult(FrozenContract):
     monitoring: MonitoringOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    research: ResearchOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class GateResult(FrozenContract):
@@ -242,6 +264,8 @@ LifecycleStagePhase = Literal[
 ]
 StagePhase = Literal[
     "FRAMEWORK_RUN",
+    "RISK_FRAMEWORK_RUN",
+    "AUXILIARY_RUN_RESERVATION",
     "HOST_VALIDATION",
     "BUSINESS_DECISION",
     "QUALIFICATION",
@@ -260,6 +284,9 @@ StagePhase = Literal[
     "PUBLICATION",
     "NOTIFICATION",
     "CORRECTION",
+    "RESEARCH",
+    "RAW_SCORE",
+    "RISK_VETO",
 ]
 NotificationAttemptStatus = Literal["SUCCEEDED", "FAILED"]
 
@@ -300,6 +327,8 @@ _COMMITTABLE_HOST_OUTCOME_PHASES = frozenset(
 )
 _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
+    "RISK_FRAMEWORK_RUN": _FRAMEWORK_RUN_STATUSES,
+    "AUXILIARY_RUN_RESERVATION": frozenset({"PENDING"}),
     "HOST_VALIDATION": frozenset({"SUCCEEDED", "FAILED"}),
     "BUSINESS_DECISION": _BUSINESS_RESULT_STATUSES,
     "QUALIFICATION": frozenset({"SUCCEEDED", "REJECTED"}),
@@ -318,7 +347,25 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "PUBLICATION": frozenset({"SUCCEEDED", "FAILED", "UNKNOWN"}),
     "NOTIFICATION": frozenset({"SUCCEEDED", "FAILED"}),
     "CORRECTION": frozenset({"SUCCEEDED"}),
+    "RESEARCH": frozenset({"SUCCEEDED", "FAILED", "REJECTED"}),
+    "RAW_SCORE": frozenset({"SUCCEEDED", "FAILED"}),
+    "RISK_VETO": frozenset({"SUCCEEDED", "REJECTED", "FAILED"}),
 }
+
+
+def research_member_run_id(
+    framework_run_id: str,
+    member_index: int,
+    security_id: str,
+    research_id: str,
+) -> str:
+    """Derive the stable framework Run identity owned by one cohort member."""
+    if member_index == 0:
+        return framework_run_id
+    digest = sha256(f"{framework_run_id}:{security_id}:{research_id}".encode()).hexdigest()
+    return f"research-member-run-{digest}"
+
+
 _LIFECYCLE_OWNER_BY_PHASE: dict[str, BusinessLifecycleOwner] = {
     "ADJUDICATION_LIFECYCLE": "ADJUDICATION",
     "VALIDITY_LIFECYCLE": "VALIDITY",
@@ -334,12 +381,21 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
+    raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Immutable raw-score payloads saved with a successful RAW_SCORE stage.",
+    )
 
     @model_validator(mode="after")
     def validate_phase_status(self) -> StageResult:
         """Keep lifecycle states in the phase that owns their meaning."""
         if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
             raise ValueError(f"{self.phase} cannot record status {self.status}")
+        if self.raw_score_payloads is not None and (
+            self.phase != "RAW_SCORE" or self.status != "SUCCEEDED"
+        ):
+            raise ValueError("raw score payloads require a successful RAW_SCORE stage")
         return self
 
 
@@ -439,11 +495,59 @@ def supports_case_host_contract(case_version: str, host_version: str) -> bool:
 
 def definition_version_for_case_contract(case_version: str) -> str:
     """Keep host and framework boundary validation on the same compatibility rule."""
-    return (
-        "2.0.0"
-        if case_version in _SCOPED_CASE_CONTRACT_VERSIONS
-        else FROZEN_AGENT_DEFINITION_VERSION
+    if case_version == "research.1.0.0":
+        return RESEARCH_DEFINITION_VERSION
+    if case_version in _SCOPED_CASE_CONTRACT_VERSIONS:
+        return "2.0.0"
+    return FROZEN_AGENT_DEFINITION_VERSION
+
+
+def research_contract_mode_for_case(
+    case: FrozenDecisionCase | dict[str, Any],
+) -> ResearchContractMode | None:
+    """Return the explicit persisted research compatibility mode, if one is declared."""
+    version_bundle = (
+        case.version_bundle.model_dump(mode="python")
+        if isinstance(case, FrozenDecisionCase)
+        else case.get("version_bundle")
     )
+    if not isinstance(version_bundle, dict):
+        return None
+    definition_version = version_bundle.get("agent_definition_version")
+    output_contract_version = version_bundle.get("output_contract_version")
+    if not isinstance(definition_version, str) or not isinstance(output_contract_version, str):
+        return None
+    try:
+        return research_contract_mode_for_versions(
+            definition_version,
+            output_contract_version,
+        )
+    except ValueError:
+        return None
+
+
+def _decode_research_command_for_mode(
+    value: object,
+    mode: ResearchContractMode,
+) -> ResearchCommand:
+    """Decode a research command only through the versioned historical boundary."""
+    if mode == "legacy":
+        return decode_legacy_research_command(value)
+    if mode == "historical":
+        return decode_historical_research_command(value)
+    return ResearchCommand.model_validate(value)
+
+
+def _decode_research_outcome_for_mode(
+    value: object,
+    mode: ResearchContractMode,
+) -> ResearchOutcome:
+    """Decode a research outcome only through the versioned historical boundary."""
+    if mode == "legacy":
+        return decode_legacy_research_outcome(value)
+    if mode == "historical":
+        return decode_historical_research_outcome(value)
+    return ResearchOutcome.model_validate(value)
 
 
 class FormalReport(FrozenContract):
@@ -469,6 +573,27 @@ class FormalReport(FrozenContract):
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def decode_legacy_research_evidence(cls, value: Any) -> Any:
+        """Decode historical research evidence before projecting a persisted report."""
+        if not isinstance(value, dict):
+            return value
+        mode = research_contract_mode_for_case(value)
+        if mode not in {"legacy", "historical"}:
+            return value
+        result = value.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("research"), dict):
+            return value
+        payload = dict(value)
+        normalized_result = dict(result)
+        normalized_result["research"] = _decode_research_outcome_for_mode(
+            result["research"],
+            mode,
+        )
+        payload["result"] = normalized_result
+        return payload
 
     def with_publication_history(self, event_stages: tuple[StageResult, ...]) -> FormalReport:
         """Retain closed gates and correction recovery without replacing saved facts."""
@@ -606,6 +731,30 @@ class DecisionEventFact(FrozenContract):
         return stored_report_payload(self, report_version_id)
 
 
+def _stored_result_payload(event: DecisionEventFact) -> dict[str, object]:
+    result_payload = event.result.model_dump(mode="json")
+    research = event.result.research
+    research_mode = research_contract_mode_for_case(event.case)
+    if research is not None and research_mode is not None:
+        result_payload["research"] = research_outcome_payload(
+            research,
+            legacy=research_mode == "legacy",
+            historical_without_debate_fields=(
+                research_mode == "historical"
+                and event.case.agent_definition.output_contract.json_schema
+                == historical_research_draft_member_json_schema()
+            ),
+        )
+    return result_payload
+
+
+def stored_decision_event_payload(event: DecisionEventFact) -> dict[str, object]:
+    """Serialize an append-only event without expanding a historical research shape."""
+    payload = event.model_dump(mode="json")
+    payload["result"] = _stored_result_payload(event)
+    return payload
+
+
 def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> dict[str, object]:
     """Frozen v1/v2 storage contract, shared by publication and integrity validation."""
     payload: dict[str, object] = {
@@ -620,7 +769,7 @@ def stored_report_payload(event: DecisionEventFact, report_version_id: str) -> d
         "knowledge_cutoff": event.case.knowledge_cutoff,
         "evidence_clock": event.case.evidence_clock.model_dump(mode="json"),
         "version_bundle": event.case.version_bundle.model_dump(mode="json"),
-        "result": event.result.model_dump(mode="json"),
+        "result": _stored_result_payload(event),
         "stage_results": [
             *(stage.model_dump(mode="json") for stage in event.stage_results),
             {
@@ -658,6 +807,7 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    research: ResearchCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -684,6 +834,32 @@ class FrozenDecisionCase(FrozenContract):
         default=None, exclude_if=lambda value: value is None
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def decode_legacy_research_evidence(cls, value: Any) -> Any:
+        """Make the historical case boundary explicit before strict evidence decoding."""
+        if not isinstance(value, dict):
+            return value
+        mode = research_contract_mode_for_case(value)
+        if mode not in {"legacy", "historical"}:
+            return value
+
+        payload = dict(value)
+        research_payload = payload.get("research")
+        if isinstance(research_payload, dict):
+            payload["research"] = _decode_research_command_for_mode(research_payload, mode)
+        expected_result = payload.get("expected_external_result")
+        if isinstance(expected_result, dict):
+            expected_research = expected_result.get("research")
+            if isinstance(expected_research, dict):
+                normalized_expected_result = dict(expected_result)
+                normalized_expected_result["research"] = _decode_research_outcome_for_mode(
+                    expected_research,
+                    mode,
+                )
+                payload["expected_external_result"] = normalized_expected_result
+        return payload
+
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
@@ -697,12 +873,36 @@ class FrozenDecisionCase(FrozenContract):
         monitoring_governed = self.version_bundle.case_contract_version == "monitoring.1.0.0"
         universe_governed = self.version_bundle.case_contract_version == "universe.1.0.0"
         selection_governed = self.version_bundle.case_contract_version == "selection.1.0.0"
+        research_governed = self.version_bundle.case_contract_version == "research.1.0.0"
         if selection_governed != (self.selection is not None):
             raise ValueError("selection requires its own frozen contract")
         if self.selection is not None and self.selection.cutoff_at != datetime.fromisoformat(
             self.knowledge_cutoff
         ):
             raise ValueError("selection and frozen cutoff must agree")
+        if research_governed != (self.research is not None):
+            raise ValueError("research requires its own frozen contract")
+        if self.research is not None:
+            research_input = self.input.get("research")
+            research_input_matches = research_input == self.research.model_dump(mode="json")
+            research_mode = research_contract_mode_for_case(self) or "current"
+            if not research_input_matches and isinstance(research_input, dict):
+                try:
+                    research_input_matches = (
+                        _decode_research_command_for_mode(
+                            research_input,
+                            research_mode,
+                        )
+                        == self.research
+                    )
+                except ValueError:
+                    research_input_matches = False
+            if (
+                self.research.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+                or self.research.knowledge_cutoff != datetime.fromisoformat(self.knowledge_cutoff)
+                or not research_input_matches
+            ):
+                raise ValueError("research and frozen cutoff and input must agree")
         if universe_governed != (self.universe is not None):
             raise ValueError("universe requires its own frozen contract")
         if self.universe is not None and (
@@ -752,6 +952,7 @@ class FrozenDecisionCase(FrozenContract):
             or monitoring_governed
             or universe_governed
             or selection_governed
+            or research_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -780,6 +981,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.monitoring,
                     self.universe,
                     self.selection,
+                    self.research,
                 )
             )
             > 1
@@ -809,8 +1011,11 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or (self.expected_external_result.research is not None and not research_governed)
         ):
             raise ValueError("host decisions are never framework output")
+        if research_governed and self.expected_external_result.research is None:
+            raise ValueError("research cases require a host-owned research result expectation")
         if self.governance is not None and (
             self.access_scope is None
             or self.governance.scope.user_id != self.access_scope.user_id
@@ -868,6 +1073,24 @@ class FrozenDecisionCase(FrozenContract):
         definition_version = definition_version_for_case_contract(
             self.version_bundle.case_contract_version
         )
+        allowed_definition_versions = (
+            {
+                RESEARCH_LEGACY_DEFINITION_VERSION,
+                RESEARCH_PRIOR_DEFINITION_VERSION,
+                RESEARCH_DEFINITION_VERSION,
+            }
+            if research_governed
+            else {definition_version}
+        )
+        allowed_output_contract_versions = (
+            {
+                RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION,
+                RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION,
+                RESEARCH_OUTPUT_CONTRACT_VERSION,
+            }
+            if research_governed
+            else {FROZEN_OUTPUT_CONTRACT_VERSION}
+        )
         if scoped != (self.access_scope is not None):
             raise ValueError("scoped cases require a scoped contract and frozen access scope")
         if scoped and (
@@ -895,9 +1118,10 @@ class FrozenDecisionCase(FrozenContract):
             or not supports_report_projection_contract(
                 self.version_bundle.report_projection_contract_version
             )
-            or self.version_bundle.agent_definition_id != FROZEN_AGENT_DEFINITION_ID
-            or self.version_bundle.agent_definition_version != definition_version
-            or self.version_bundle.output_contract_version != FROZEN_OUTPUT_CONTRACT_VERSION
+            or self.version_bundle.agent_definition_id
+            != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
+            or self.version_bundle.agent_definition_version not in allowed_definition_versions
+            or self.version_bundle.output_contract_version not in allowed_output_contract_versions
         ):
             raise ValueError("frozen version bundle does not match the supported contract")
         if (
@@ -909,9 +1133,10 @@ class FrozenDecisionCase(FrozenContract):
         ):
             raise ValueError("frozen AgentDefinition must match the version bundle")
         if (
-            self.agent_definition.definition_id != FROZEN_AGENT_DEFINITION_ID
-            or self.agent_definition.version != definition_version
-            or self.agent_definition.output_contract.version != FROZEN_OUTPUT_CONTRACT_VERSION
+            self.agent_definition.definition_id
+            != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
+            or self.agent_definition.version not in allowed_definition_versions
+            or self.agent_definition.output_contract.version not in allowed_output_contract_versions
         ):
             raise ValueError("frozen AgentDefinition does not match the supported contract")
         return self
@@ -919,11 +1144,37 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def frozen_input_fingerprint(self) -> str:
         """Hash the exact original input, clocks, scope, and version bundle."""
-        return _fingerprint(self.model_dump(mode="json"))
+        payload = self.model_dump(mode="json")
+        if self.research is not None:
+            # Research handoffs contain the Run IDs that are derived from this
+            # identity; exclude the expected host result to avoid a circular ID.
+            payload.pop("expected_external_result", None)
+            if research_contract_mode_for_case(self) != "current" and isinstance(
+                self.input.get("research"),
+                dict,
+            ):
+                payload["research"] = self.input["research"]
+        return _fingerprint(payload)
 
     @property
     def business_object_id(self) -> str:
         """Identify the Stock Profiler business object independently from a framework Run."""
+        if self.research is not None:
+            assert self.access_scope is not None
+            return _stable_id(
+                "business-object",
+                {
+                    "owner": self.access_scope.user_id,
+                    "accounts": sorted(self.access_scope.account_ids),
+                    "visibility": self.access_scope.visibility,
+                    "selection_object_id": self.research.selection_object_id,
+                    "selection_event_id": self.research.selection_event_id,
+                    "month": self.research.cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+                        "%Y-%m"
+                    ),
+                    "contract": self.version_bundle.case_contract_version,
+                },
+            )
         if self.selection is not None:
             assert self.access_scope is not None
             return _stable_id(
@@ -1254,7 +1505,14 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
     valid_frozen_input = (
         case.synthetic
         and case.qualification_scope == FROZEN_QUALIFICATION_SCOPE
-        and has_complete_synthetic_input(case.input)
+        and (
+            has_complete_synthetic_input(case.input)
+            or has_complete_research_synthetic_input(
+                case.input,
+                legacy=(research_contract_mode_for_case(case) == "legacy"),
+                historical=research_contract_mode_for_case(case) == "historical",
+            )
+        )
     )
     if not recorded_reasons:
         return StageResult(
@@ -1344,6 +1602,41 @@ _SYNTHETIC_OUTCOMES: dict[str, _SyntheticOutcomeDefinition] = {
         "UNKNOWN",
         GateResult(gate_id="DECISION_DETERMINED", status="UNKNOWN"),
     ),
+    "RESEARCH_FROZEN": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "SUCCEEDED",
+        GateResult(gate_id="RESEARCH_ACCEPTED", status="PASSED"),
+    ),
+    "RESEARCH_REJECTED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "REJECTED",
+        GateResult(gate_id="RISK_VETO", status="FAILED"),
+    ),
+    "RESEARCH_DATA_FAILED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "FAILED",
+        GateResult(gate_id="RESEARCH_DATA", status="FAILED"),
+    ),
+    "RESEARCH_SYSTEM_FAILED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "FAILED",
+        GateResult(gate_id="RESEARCH_SYSTEM", status="FAILED"),
+    ),
+    "RESEARCH_RAW_SCORE_FAILED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "FAILED",
+        GateResult(gate_id="RAW_SCORE_AVAILABLE", status="FAILED"),
+    ),
+    "RESEARCH_RISK_FAILED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "FAILED",
+        GateResult(gate_id="RISK_VETO", status="FAILED"),
+    ),
+    "RESEARCH_BLOCKED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "REJECTED",
+        GateResult(gate_id="RESEARCH_AVAILABLE", status="FAILED"),
+    ),
 }
 
 
@@ -1390,8 +1683,59 @@ def has_complete_synthetic_input(value: dict[str, Any]) -> bool:
     return synthetic_outcome_code_from_input(value) is not None
 
 
-def synthetic_outcome_code_from_input(value: dict[str, Any]) -> str | None:
+def has_complete_research_synthetic_input(
+    value: dict[str, Any],
+    *,
+    legacy: bool = False,
+    historical: bool = False,
+) -> bool:
+    """Recognize a structurally complete fixed-ten research input."""
+    payload = value.get("research")
+    if not isinstance(payload, dict):
+        return False
+    try:
+        if legacy:
+            decode_legacy_research_command(payload)
+        elif historical:
+            decode_historical_research_command(payload)
+        else:
+            ResearchCommand.model_validate(payload)
+    except ValueError:
+        return False
+    return True
+
+
+def synthetic_outcome_code_from_input(
+    value: dict[str, Any],
+    *,
+    legacy: bool = False,
+    historical: bool = False,
+) -> str | None:
     """Read the explicit synthetic scenario without consulting expected output."""
+    if "research" in value:
+        if not has_complete_research_synthetic_input(
+            value,
+            legacy=legacy,
+            historical=historical,
+        ):
+            return None
+        if legacy:
+            research = decode_legacy_research_command(value["research"])
+        elif historical:
+            research = decode_historical_research_command(value["research"])
+        else:
+            research = ResearchCommand.model_validate(value["research"])
+        if research.failure_mode == "DATA":
+            return "RESEARCH_DATA_FAILED"
+        if research.failure_mode == "RAW_SCORE":
+            return "RESEARCH_RAW_SCORE_FAILED"
+        if research.failure_mode == "RISK":
+            return "RESEARCH_RISK_FAILED"
+        if research.failure_mode in {"RESEARCH", "SYSTEM"}:
+            return "RESEARCH_SYSTEM_FAILED"
+        if research.risk_scenario == "REJECT":
+            return "RESEARCH_REJECTED"
+        return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
     account = input_without_scenario.get("account")

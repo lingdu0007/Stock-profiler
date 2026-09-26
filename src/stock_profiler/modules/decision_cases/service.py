@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+import json
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
+from datetime import datetime
 from threading import Lock
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -34,6 +38,8 @@ from stock_profiler.modules.decision_cases.domain import (
     framework_run_status_from_stage,
     host_validation_result,
     is_committable_host_outcome,
+    research_contract_mode_for_case,
+    research_member_run_id,
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
@@ -48,6 +54,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkRunTransition,
     FrozenFramework,
     MappedDurableRunMissingError,
+    ResearchMemberRunResult,
     Transaction,
 )
 from stock_profiler.modules.portfolio.contracts import (
@@ -62,9 +69,235 @@ from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
+from stock_profiler.modules.research.contracts import (
+    RAW_SCORE_FEATURE_DATA_TYPES,
+    RawScore,
+    RawScoreCalculationError,
+    ResearchCommand,
+    ResearchDraft,
+    ResearchDraftMember,
+    ResearchFrameworkOutput,
+    ResearchMemberInput,
+    ResearchRiskPlan,
+    ResearchToolEvidence,
+    RiskVetoDraft,
+    decode_historical_research_draft,
+    decode_historical_research_draft_member,
+    decode_historical_research_framework_output,
+    decode_legacy_research_draft,
+    decode_legacy_research_framework_output,
+    research_draft_payload,
+    research_evidence_payload,
+    research_member_handoff_payload,
+    research_outcome_raw_score_payloads,
+    research_raw_score_payload,
+)
+from stock_profiler.modules.research.service import (
+    freeze_research,
+    prepare_research_risk_plan,
+    validate_research_draft,
+)
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
+
+
+ResearchMemberExecutor = Callable[[int, ResearchMemberInput, str], Awaitable[FrameworkRunResult]]
+
+
+async def execute_research_member_runs(
+    case: FrozenDecisionCase,
+    *,
+    execute_member: ResearchMemberExecutor,
+    record_transition: Callable[[FrameworkRunTransition], Awaitable[None]] | None = None,
+    historical: bool = False,
+) -> FrameworkRunResult:
+    """Schedule and aggregate member Runs as a host-owned cohort decision."""
+    command = case.research
+    assert command is not None
+    member_results: list[ResearchMemberRunResult] = []
+    member_drafts: list[ResearchDraftMember] = []
+    member_draft_indexes: list[int] = []
+    member_transitions: list[FrameworkRunTransition] = []
+    primary_transitions: tuple[FrameworkRunTransition, ...] = ()
+    primary_transitions_durably_recorded = False
+    tool_evidence: list[ResearchToolEvidence] = []
+    first_waiting_reason: str | None = None
+    all_runs_existed = True
+
+    for index, member in enumerate(command.members):
+        run_id = research_member_run_id(
+            case.framework_run_id,
+            index,
+            member.security_id,
+            member.research_id,
+        )
+        try:
+            result = await execute_member(index, member, run_id)
+        except (MappedDurableRunMissingError, ValueError) as error:
+            if not member_results:
+                raise
+            error_code = (
+                "RESEARCH_RUN_MISSING"
+                if isinstance(error, MappedDurableRunMissingError)
+                else "RESEARCH_RUN_RECOVERY_FAILED"
+            )
+            transition = FrameworkRunTransition(
+                status="FAILED",
+                reason=error_code,
+                run_id=run_id,
+            )
+            if record_transition is not None:
+                await record_transition(transition)
+            result = FrameworkRunResult(
+                run_id=run_id,
+                status="FAILED",
+                output=None,
+                error_code=error_code,
+                transitions=(transition,),
+                transitions_durably_recorded=record_transition is not None,
+            )
+
+        all_runs_existed = all_runs_existed and result.run_existed_before
+        member_transitions.extend(result.transitions)
+        if result.status == "WAITING" and first_waiting_reason is None:
+            first_waiting_reason = result.waiting_reason
+        if index == 0:
+            primary_transitions = result.transitions
+            primary_transitions_durably_recorded = result.transitions_durably_recorded
+        member_status = result.status
+        member_error_code = result.error_code
+        if result.status == "SUCCEEDED" and result.error_code is not None:
+            member_status = "FAILED"
+        elif result.status == "SUCCEEDED" and result.output is not None:
+            try:
+                draft_member = (
+                    decode_historical_research_draft_member(json.loads(result.output))
+                    if historical
+                    else ResearchDraftMember.model_validate_json(result.output)
+                )
+            except ValueError:
+                member_status = "FAILED"
+                member_error_code = "RESEARCH_OUTPUT_INVALID"
+            else:
+                if (
+                    draft_member.security_id != member.security_id
+                    or draft_member.research_id != member.research_id
+                ):
+                    member_status = "FAILED"
+                    member_error_code = "RESEARCH_OUTPUT_INVALID"
+                else:
+                    member_drafts.append(draft_member)
+                    member_draft_indexes.append(index)
+                    for evidence in result.research_tool_evidence:
+                        if evidence.evidence_id not in {item.evidence_id for item in tool_evidence}:
+                            tool_evidence.append(evidence)
+        elif result.status == "SUCCEEDED":
+            member_status = "FAILED"
+            member_error_code = "RESEARCH_OUTPUT_MISSING"
+        member_results.append(
+            ResearchMemberRunResult(
+                security_id=member.security_id,
+                research_id=member.research_id,
+                run_id=run_id,
+                status=member_status,
+                error_code=member_error_code,
+            )
+        )
+
+    member_run_results = tuple(member_results)
+    failed_results = tuple(
+        result for result in member_run_results if result.status in {"FAILED", "REJECTED"}
+    )
+    waiting_results = tuple(result for result in member_run_results if result.status == "WAITING")
+    aggregate_status: FrameworkRunStatus = (
+        "FAILED" if failed_results else "WAITING" if waiting_results else "SUCCEEDED"
+    )
+    error_codes = tuple(result.error_code for result in member_run_results if result.error_code)
+    if aggregate_status != "SUCCEEDED":
+        aggregate_run_id = (
+            failed_results[0].run_id
+            if failed_results
+            else waiting_results[0].run_id
+            if waiting_results
+            else case.framework_run_id
+        )
+        return FrameworkRunResult(
+            run_id=aggregate_run_id,
+            status=aggregate_status,
+            output=None,
+            run_existed_before=all_runs_existed,
+            waiting_reason=(
+                first_waiting_reason
+                if waiting_results and first_waiting_reason is not None
+                else "RESEARCH_MEMBER_RUN_WAITING"
+                if waiting_results
+                else None
+            ),
+            error_code=(
+                error_codes[0]
+                if error_codes
+                else "RESEARCH_MEMBER_RUN_FAILED"
+                if aggregate_status == "FAILED"
+                else None
+            ),
+            research_member_runs=member_run_results,
+            transitions=(
+                primary_transitions
+                if aggregate_run_id == case.framework_run_id
+                else tuple(member_transitions)
+            ),
+            transitions_durably_recorded=(
+                primary_transitions_durably_recorded
+                if aggregate_run_id == case.framework_run_id
+                else False
+            ),
+            research_tool_evidence=tuple(tool_evidence),
+        )
+
+    try:
+        draft = ResearchDraft(contract_version="1.0.0", members=tuple(member_drafts))
+    except ValueError:
+        invalid_member_indexes = {
+            index
+            for index, draft_member in zip(member_draft_indexes, member_drafts, strict=True)
+            if (
+                draft_member.security_id != command.members[index].security_id
+                or draft_member.research_id != command.members[index].research_id
+            )
+        }
+        failed_members = tuple(
+            replace(result, status="FAILED", error_code="RESEARCH_OUTPUT_INVALID")
+            if index in invalid_member_indexes
+            else result
+            for index, result in enumerate(member_run_results)
+        )
+        return FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            run_existed_before=all_runs_existed,
+            error_code="RESEARCH_OUTPUT_INVALID",
+            research_member_runs=failed_members,
+            transitions=primary_transitions,
+            transitions_durably_recorded=record_transition is not None,
+            research_tool_evidence=tuple(tool_evidence),
+        )
+    return FrameworkRunResult(
+        run_id=case.framework_run_id,
+        status="SUCCEEDED",
+        output=json.dumps(
+            research_draft_payload(draft, historical=historical),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        run_existed_before=all_runs_existed,
+        research_member_runs=member_run_results,
+        transitions=primary_transitions,
+        transitions_durably_recorded=record_transition is not None,
+        research_tool_evidence=tuple(tool_evidence),
+    )
 
 
 def get_formal_report(
@@ -81,6 +314,431 @@ def run_default_frozen_decision_case(
 ) -> DecisionCaseExecution:
     """Run the published public fixture through the same host module used by every entrypoint."""
     return _run_frozen_decision_case(case, ledger, framework)
+
+
+def _validate_research_selection_event(
+    case: FrozenDecisionCase,
+    selection_event: DecisionEventFact | None,
+) -> None:
+    """Require research to consume the committed upstream selection fact."""
+    command = case.research
+    assert command is not None
+    if selection_event is None:
+        raise ValueError("RESEARCH_SELECTION_EVENT_MISSING")
+    if (
+        selection_event.decision_event_id != command.selection_event_id
+        or selection_event.corrects_event_id is not None
+        or selection_event.validation_status != "PASSED"
+    ):
+        raise ValueError("RESEARCH_SELECTION_EVENT_INVALID")
+    source_case = selection_event.case
+    source_selection = source_case.selection
+    source_outcome = selection_event.result.selection
+    if source_selection is None or source_outcome is None:
+        raise ValueError("RESEARCH_SELECTION_HANDOFF_MISSING")
+    if (
+        selection_event.business_object_id != command.selection_object_id
+        or source_case.business_object_id != command.selection_object_id
+    ):
+        raise ValueError("RESEARCH_SELECTION_OBJECT_MISMATCH")
+    if (
+        case.access_scope is None
+        or source_case.access_scope is None
+        or not case.access_scope.same_scope_as(source_case.access_scope)
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCOPE_MISMATCH")
+    if (
+        source_selection.cutoff_at != command.cutoff_at
+        or source_outcome.cutoff_at != command.cutoff_at
+        or datetime.fromisoformat(source_case.knowledge_cutoff) != command.knowledge_cutoff
+    ):
+        raise ValueError("RESEARCH_SELECTION_CUTOFF_MISMATCH")
+    if source_outcome.disposition != "FROZEN":
+        raise ValueError("RESEARCH_SELECTION_NOT_FROZEN")
+    if tuple(source_outcome.members) != tuple(command.screening.selected_member_ids):
+        raise ValueError("RESEARCH_SELECTION_COHORT_MISMATCH")
+    source_rows = tuple(source_selection.rows)
+    if tuple(row.security_id for row in source_rows) != tuple(
+        command.screening.universe_security_ids
+    ):
+        raise ValueError("RESEARCH_SELECTION_UNIVERSE_MISMATCH")
+    if (
+        source_selection.screening_snapshot_id != command.screening.snapshot_id
+        or source_selection.strategy_version != command.screening.strategy_version
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCREENING_VERSION_MISMATCH")
+    source_positive_scores = {row.security_id: row.positive_score for row in source_rows}
+    source_terminal_scores = {row.security_id: row.terminal_score for row in source_rows}
+    if (
+        any(score is None for score in source_positive_scores.values())
+        or any(score is None for score in source_terminal_scores.values())
+        or source_positive_scores != command.screening.positive_scores
+        or source_terminal_scores != command.screening.terminal_scores
+    ):
+        raise ValueError("RESEARCH_SELECTION_SCREENING_MISMATCH")
+    source_ranking = tuple(source_outcome.ranking)
+    source_ranking_ids = tuple(rank.security_id for rank in source_ranking)
+    if len(source_ranking_ids) != len(set(source_ranking_ids)) or set(source_ranking_ids) != set(
+        command.screening.universe_security_ids
+    ):
+        raise ValueError("RESEARCH_SELECTION_RANKING_UNIVERSE_MISMATCH")
+    source_positive_percentiles = {
+        rank.security_id: rank.positive_percentile for rank in source_ranking
+    }
+    source_terminal_percentiles = {
+        rank.security_id: rank.terminal_percentile for rank in source_ranking
+    }
+    if (
+        source_positive_percentiles != command.screening.positive_percentiles
+        or source_terminal_percentiles != command.screening.terminal_percentiles
+    ):
+        raise ValueError("RESEARCH_SELECTION_PERCENTILE_MISMATCH")
+
+
+def _research_data_gate_results(
+    command: ResearchCommand,
+    error_code: str | None,
+    member_runs: tuple[ResearchMemberRunResult, ...] = (),
+) -> tuple[GateResult, ...]:
+    """Persist each member/data-type gate when the required-facts Provider fails."""
+    member_run_gate_results = tuple(
+        GateResult(
+            gate_id=f"RESEARCH_RUN:{member.security_id}",
+            status=(
+                "PASSED"
+                if member.status == "SUCCEEDED"
+                else "UNKNOWN"
+                if member.status == "WAITING"
+                else "FAILED"
+            ),
+        )
+        for member in member_runs
+    )
+    if (
+        error_code != "RESEARCH_DATA_UNAVAILABLE"
+        and not (error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+        and not member_run_gate_results
+    ):
+        return ()
+    detailed_manifest_member_ids = {
+        member.security_id
+        for member in command.members
+        if any(entry.completeness != "COMPLETE" for entry in member.data_manifest.entries)
+    }
+    manifest_is_detailed = bool(detailed_manifest_member_ids)
+    invalid_structured_member_ids = {
+        member.security_id
+        for member in command.members
+        if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
+        and (
+            not member.structured_facts.money_flow.is_complete
+            or any(value is None for value in member.structured_signals.values())
+        )
+    }
+    invalid_structured_data_types = {
+        (member.security_id, RAW_SCORE_FEATURE_DATA_TYPES[signal_id])
+        for member in command.members
+        for signal_id, value in member.structured_signals.items()
+        if value is None and signal_id in RAW_SCORE_FEATURE_DATA_TYPES
+    }
+    invalid_structured_data_types.update(
+        (member.security_id, "MONEY_FLOW")
+        for member in command.members
+        if all(entry.completeness == "COMPLETE" for entry in member.data_manifest.entries)
+        and not member.structured_facts.money_flow.is_complete
+    )
+    data_failure_member_ids = {
+        member.security_id
+        for member in member_runs
+        if member.error_code == "RESEARCH_DATA_UNAVAILABLE"
+        or (member.error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+    }
+    unknown_data_member_ids = (
+        data_failure_member_ids - detailed_manifest_member_ids - invalid_structured_member_ids
+    )
+    unattributed_data_failure = (
+        (
+            error_code == "RESEARCH_DATA_UNAVAILABLE"
+            or (error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+        )
+        and not manifest_is_detailed
+        and not invalid_structured_member_ids
+        and not data_failure_member_ids
+    )
+    data_gate_results = tuple(
+        GateResult(
+            gate_id=f"RESEARCH_DATA:{member.security_id}:{entry.data_type}",
+            status=(
+                "FAILED"
+                if manifest_is_detailed and entry.completeness != "COMPLETE"
+                else "FAILED"
+                if (member.security_id, entry.data_type) in invalid_structured_data_types
+                else "UNKNOWN"
+                if member.security_id in unknown_data_member_ids or unattributed_data_failure
+                else "PASSED"
+            ),
+        )
+        for member in command.members
+        for entry in member.data_manifest.entries
+    )
+    return (*member_run_gate_results, *data_gate_results)
+
+
+def _raw_score_model_evidence_gate_results(command: ResearchCommand) -> tuple[GateResult, ...]:
+    """Persist each frozen raw-score waterline result before the aggregate failure."""
+    model = command.raw_score_model
+    return (
+        GateResult(
+            gate_id="RAW_SCORE_MATURE_MONTHS",
+            status="PASSED" if model.mature_months >= 60 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_TRAINING_RECORD_COUNT",
+            status="PASSED" if model.training_record_count >= 500 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_POSITIVE_CLASS",
+            status="PASSED" if model.positive_record_count >= 50 else "FAILED",
+        ),
+        GateResult(
+            gate_id="RAW_SCORE_NEGATIVE_CLASS",
+            status="PASSED" if model.negative_record_count >= 50 else "FAILED",
+        ),
+        GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),
+    )
+
+
+async def execute_research_risk_journey(
+    case: FrozenDecisionCase,
+    *,
+    execute_research: Callable[[], Awaitable[FrameworkRunResult]] | None = None,
+    execute_research_member: ResearchMemberExecutor | None = None,
+    record_research_transition: Callable[[FrameworkRunTransition], Awaitable[None]] | None = None,
+    execute_risk: Callable[[FrameworkRunResult, ResearchRiskPlan], Awaitable[FrameworkRunResult]],
+    record_raw_score_checkpoint: Callable[[ResearchRiskPlan], Awaitable[None]] | None = None,
+    legacy: bool = False,
+    historical: bool = False,
+) -> FrameworkRunResult:
+    """Orchestrate typed research handoff and independent risk execution in the host."""
+    command = case.research
+    assert command is not None
+    try:
+        if execute_research_member is not None:
+            research_run = await execute_research_member_runs(
+                case,
+                execute_member=execute_research_member,
+                record_transition=record_research_transition,
+                historical=historical,
+            )
+        elif execute_research is not None:
+            research_run = await execute_research()
+        else:
+            raise ValueError("a research Run executor is required")
+    except MappedDurableRunMissingError:
+        research_run = FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RESEARCH_RUN_MISSING",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=case.framework_run_id,
+                    status="FAILED",
+                    reason="RESEARCH_RUN_MISSING",
+                ),
+            ),
+        )
+    except ValueError:
+        research_run = FrameworkRunResult(
+            run_id=case.framework_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RESEARCH_RUN_RECOVERY_FAILED",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=case.framework_run_id,
+                    status="FAILED",
+                    reason="RESEARCH_RUN_RECOVERY_FAILED",
+                ),
+            ),
+        )
+    if research_run.status != "SUCCEEDED":
+        return research_run
+    if research_run.output is None:
+        return replace(
+            research_run,
+            research_validation_error_code="RESEARCH_OUTPUT_MISSING",
+        )
+    try:
+        draft = (
+            decode_legacy_research_draft(json.loads(research_run.output))
+            if legacy
+            else decode_historical_research_draft(json.loads(research_run.output))
+            if historical
+            else ResearchDraft.model_validate_json(research_run.output)
+        )
+    except ValueError:
+        return replace(
+            research_run,
+            research_validation_error_code="RESEARCH_OUTPUT_INVALID",
+        )
+    tool_evidence = research_run.research_tool_evidence
+    research_run_ids = tuple(member_run.run_id for member_run in research_run.research_member_runs)
+    try:
+        validate_research_draft(command, draft, tool_evidence)
+    except ValueError:
+        return replace(
+            research_run,
+            research_validation_error_code="RESEARCH_PROVENANCE_INVALID",
+        )
+    if command.failure_mode == "RAW_SCORE":
+        return replace(
+            research_run,
+            output=_research_framework_output_json(
+                ResearchFrameworkOutput(
+                    research_run_id=research_run.run_id,
+                    research_run_ids=research_run_ids,
+                    risk_run_id=None,
+                    draft=draft,
+                    risk_veto=None,
+                    tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                    tool_evidence=tool_evidence,
+                ),
+                legacy=legacy,
+                historical=historical,
+            ),
+        )
+    try:
+        historical_raw_score_payloads = (
+            research_outcome_raw_score_payloads(
+                case.expected_external_result.research,
+            )
+            if legacy or historical
+            else None
+        )
+        risk_plan = prepare_research_risk_plan(
+            command,
+            research_run.run_id,
+            draft,
+            tool_evidence,
+            research_run_ids,
+            legacy=legacy,
+            historical=historical,
+            raw_score_payloads=historical_raw_score_payloads,
+        )
+    except RawScoreCalculationError as error:
+        return replace(
+            research_run,
+            output=_research_framework_output_json(
+                ResearchFrameworkOutput(
+                    research_run_id=research_run.run_id,
+                    research_run_ids=research_run_ids,
+                    risk_run_id=None,
+                    draft=draft,
+                    risk_veto=None,
+                    tool_evidence_refs=tuple(item.evidence_id for item in tool_evidence),
+                    tool_evidence=tool_evidence,
+                ),
+                legacy=legacy,
+                historical=historical,
+            ),
+            raw_score_error_code=str(error),
+        )
+    if record_raw_score_checkpoint is not None:
+        await record_raw_score_checkpoint(risk_plan)
+    try:
+        risk_run = await execute_risk(research_run, risk_plan)
+    except MappedDurableRunMissingError:
+        risk_run = FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RISK_RUN_MISSING",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=risk_plan.risk_run_id,
+                    status="FAILED",
+                    reason="RISK_RUN_MISSING",
+                ),
+            ),
+        )
+    except ValueError:
+        risk_run = FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RISK_RUN_RECOVERY_FAILED",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=risk_plan.risk_run_id,
+                    status="FAILED",
+                    reason="RISK_RUN_RECOVERY_FAILED",
+                ),
+            ),
+        )
+    if risk_run.status in {"SUCCEEDED", "REJECTED"} and risk_run.output is not None:
+        try:
+            risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
+        except ValueError:
+            risk_veto = None
+    else:
+        risk_veto = None
+    return replace(
+        research_run,
+        output=_research_framework_output_json(
+            ResearchFrameworkOutput(
+                research_run_id=research_run.run_id,
+                research_run_ids=research_run_ids,
+                risk_run_id=risk_run.run_id,
+                draft=draft,
+                risk_veto=risk_veto,
+                raw_scores=risk_plan.raw_scores,
+                tool_evidence_refs=risk_plan.tool_evidence_refs,
+                tool_evidence=risk_plan.tool_evidence,
+                member_handoffs=risk_plan.member_handoffs,
+            ),
+            legacy=legacy,
+            historical=historical,
+        ),
+        risk_run_id=risk_run.run_id,
+        risk_run_status=risk_run.status,
+        risk_waiting_reason=risk_run.waiting_reason,
+        risk_run_error_code=risk_run.error_code,
+        risk_transitions=risk_run.transitions,
+        risk_transitions_durably_recorded=risk_run.transitions_durably_recorded,
+    )
+
+
+def _research_framework_output_json(
+    output: ResearchFrameworkOutput,
+    *,
+    legacy: bool,
+    historical: bool = False,
+) -> str:
+    """Serialize the framework envelope without expanding a historical contract."""
+    payload = output.model_dump(
+        mode="json",
+        exclude={"research_run_ids"} if legacy else None,
+    )
+    if legacy or historical:
+        payload["draft"] = research_draft_payload(
+            output.draft,
+            legacy=legacy,
+            historical=historical,
+        )
+    if legacy or historical:
+        payload["raw_scores"] = tuple(
+            research_raw_score_payload(score, legacy=legacy) for score in output.raw_scores or ()
+        )
+    if legacy:
+        payload["tool_evidence"] = tuple(
+            research_evidence_payload(evidence, legacy=True) for evidence in output.tool_evidence
+        )
+        payload["member_handoffs"] = tuple(
+            research_member_handoff_payload(handoff, legacy=True)
+            for handoff in output.member_handoffs
+        )
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
 def replay_default_frozen_decision_case(
@@ -335,21 +993,158 @@ def _run_frozen_decision_case(
                         execution_case = execution_case.model_copy(
                             update={"recovery_framework_run_id": mapping.framework_run_id}
                         )
+                    if execution_case.research is not None:
+                        try:
+                            _validate_research_selection_event(
+                                execution_case,
+                                ledger.get_decision_event(
+                                    execution_case.research.selection_event_id,
+                                    connection,
+                                ),
+                            )
+                        except ValueError as error:
+                            ledger.record_stage_result(
+                                connection,
+                                case=execution_case,
+                                stage_result=StageResult(
+                                    phase="RESEARCH",
+                                    status="FAILED",
+                                    gate_results=(
+                                        GateResult(
+                                            gate_id="RESEARCH_SELECTION_EVENT",
+                                            status="FAILED",
+                                        ),
+                                    ),
+                                    reasons=(str(error),),
+                                ),
+                                framework_run_id=execution_case.framework_run_id,
+                            )
+                            ledger.record_stage_result(
+                                connection,
+                                case=execution_case,
+                                stage_result=_failed_host_validation(str(error)),
+                                framework_run_id=execution_case.framework_run_id,
+                            )
+                            return _unpublished_execution(
+                                execution_case,
+                                framework_run_status="CREATED",
+                                business_result_status=None,
+                                business_lifecycle=None,
+                                business_commit_status="NOT_ATTEMPTED",
+                                stage_results=ledger.get_stage_results(
+                                    execution_case.business_object_id,
+                                    connection,
+                                ),
+                            )
                 else:
                     execution_case = None
             if fact is None:
                 assert execution_case is not None
                 try:
-                    framework = asyncio.run(
-                        framework_adapter.execute(
+
+                    async def record_transition(transition: FrameworkRunTransition) -> None:
+                        await _record_framework_transition(
+                            ledger,
                             execution_case,
-                            lambda transition: _record_framework_transition(
+                            transition,
+                        )
+
+                    async def record_auxiliary_run_reservation(risk_run_id: str) -> bool:
+                        return await _record_auxiliary_run_reservation(
+                            ledger,
+                            execution_case,
+                            risk_run_id,
+                        )
+
+                    async def record_research_member_run_reservation(run_id: str) -> bool:
+                        return await _record_research_member_run_reservation(
+                            ledger,
+                            execution_case,
+                            run_id,
+                        )
+
+                    if execution_case.research is not None:
+
+                        async def execute_risk(
+                            research_run: FrameworkRunResult,
+                            risk_plan: ResearchRiskPlan,
+                        ) -> FrameworkRunResult:
+                            async def record_risk_transition(
+                                transition: FrameworkRunTransition,
+                            ) -> None:
+                                await _record_framework_transition(
+                                    ledger,
+                                    execution_case,
+                                    transition,
+                                    framework_run_id=risk_plan.risk_run_id,
+                                    phase="RISK_FRAMEWORK_RUN",
+                                )
+
+                            return await framework_adapter.execute_research_risk_run(
+                                execution_case,
+                                research_run,
+                                risk_plan,
+                                record_risk_transition,
+                                record_auxiliary_run_reservation=(record_auxiliary_run_reservation),
+                            )
+
+                        async def record_raw_score_checkpoint(
+                            risk_plan: ResearchRiskPlan,
+                        ) -> None:
+                            await _record_raw_score_checkpoint(
                                 ledger,
                                 execution_case,
-                                transition,
-                            ),
+                                risk_plan,
+                                legacy=(
+                                    research_contract_mode_for_case(execution_case) == "legacy"
+                                ),
+                            )
+
+                        async def execute_research_member(
+                            member_index: int,
+                            member: ResearchMemberInput,
+                            run_id: str,
+                        ) -> FrameworkRunResult:
+                            return await framework_adapter.execute_research_member_run(
+                                execution_case,
+                                member_index,
+                                member,
+                                run_id,
+                                record_transition,
+                                record_member_run_reservation=(
+                                    record_research_member_run_reservation
+                                ),
+                            )
+
+                        research_mode = research_contract_mode_for_case(execution_case)
+                        framework = asyncio.run(
+                            execute_research_risk_journey(
+                                execution_case,
+                                execute_research=lambda: framework_adapter.execute_research_run(
+                                    execution_case,
+                                    record_transition,
+                                    record_member_run_reservation=(
+                                        record_research_member_run_reservation
+                                    ),
+                                ),
+                                execute_research_member=(
+                                    None if research_mode == "legacy" else execute_research_member
+                                ),
+                                record_research_transition=record_transition,
+                                execute_risk=execute_risk,
+                                record_raw_score_checkpoint=record_raw_score_checkpoint,
+                                legacy=research_mode == "legacy",
+                                historical=research_mode == "historical",
+                            )
                         )
-                    )
+                    else:
+                        framework = asyncio.run(
+                            framework_adapter.execute(
+                                execution_case,
+                                record_transition,
+                                record_auxiliary_run_reservation=(record_auxiliary_run_reservation),
+                            )
+                        )
                 except MappedDurableRunMissingError as error:
                     raise DecisionEventCommitError(
                         "business identity maps to a missing durable framework Run; "
@@ -396,15 +1191,122 @@ async def _record_framework_transition(
     ledger: DecisionLedger[Transaction],
     case: FrozenDecisionCase,
     transition: FrameworkRunTransition,
+    *,
+    framework_run_id: str | None = None,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> None:
     """Commit each already-durable M-Agent transition before more framework work begins."""
     with ledger.serialize_case_execution() as connection:
         ledger.record_stage_result(
             connection,
             case=case,
-            stage_result=_framework_transition_stage_result(transition),
-            framework_run_id=case.framework_run_id,
+            stage_result=_framework_transition_stage_result(transition, phase=phase),
+            framework_run_id=framework_run_id or transition.run_id or case.framework_run_id,
             allow_repeated_occurrence=transition.status in {"RUNNING", "WAITING"},
+        )
+
+
+async def _record_auxiliary_run_reservation(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+) -> bool:
+    """Reserve a deterministic auxiliary Run identity before creating it."""
+    with ledger.serialize_case_execution() as connection:
+        history = ledger.get_stage_results(
+            case.business_object_id,
+            connection,
+            framework_run_id=framework_run_id,
+        )
+        if any(stage_result.phase == "RISK_FRAMEWORK_RUN" for stage_result in history):
+            return False
+        if any(stage_result.phase == "AUXILIARY_RUN_RESERVATION" for stage_result in history):
+            return True
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=StageResult(
+                phase="AUXILIARY_RUN_RESERVATION",
+                status="PENDING",
+                gate_results=(GateResult(gate_id="RISK_RUN_RESERVED", status="PASSED"),),
+                reasons=("RISK_RUN_ID_RESERVED",),
+            ),
+            framework_run_id=framework_run_id,
+        )
+    return True
+
+
+async def _record_research_member_run_reservation(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+) -> bool:
+    """Reserve one member Run without allowing replacement after execution began."""
+    with ledger.serialize_case_execution() as connection:
+        history = ledger.get_stage_results(
+            case.business_object_id,
+            connection,
+            framework_run_id=framework_run_id,
+        )
+        if any(stage_result.phase == "FRAMEWORK_RUN" for stage_result in history):
+            return False
+        if any(
+            stage_result.phase == "AUXILIARY_RUN_RESERVATION"
+            and any(
+                gate.gate_id == "RESEARCH_MEMBER_RUN_RESERVED" for gate in stage_result.gate_results
+            )
+            for stage_result in history
+        ):
+            return True
+        if any(stage_result.phase == "AUXILIARY_RUN_RESERVATION" for stage_result in history):
+            return False
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=StageResult(
+                phase="AUXILIARY_RUN_RESERVATION",
+                status="PENDING",
+                gate_results=(GateResult(gate_id="RESEARCH_MEMBER_RUN_RESERVED", status="PASSED"),),
+                reasons=("RESEARCH_MEMBER_RUN_ID_RESERVED",),
+            ),
+            framework_run_id=framework_run_id,
+        )
+    return True
+
+
+def _raw_score_stage_result(
+    raw_scores: tuple[RawScore, ...] | None,
+    *,
+    legacy: bool = False,
+) -> StageResult:
+    """Build the immutable raw-score stage with its independently saved payload."""
+    return StageResult(
+        phase="RAW_SCORE",
+        status="SUCCEEDED",
+        gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="PASSED"),),
+        reasons=("RAW_SCORE_FROZEN",),
+        raw_score_payloads=(
+            tuple(research_raw_score_payload(score, legacy=legacy) for score in raw_scores)
+            if raw_scores
+            else None
+        ),
+    )
+
+
+async def _record_raw_score_checkpoint(
+    ledger: DecisionLedger[Transaction],
+    case: FrozenDecisionCase,
+    risk_plan: ResearchRiskPlan,
+    *,
+    legacy: bool = False,
+) -> None:
+    """Persist raw scores before an independent risk Run can start or fail."""
+    with ledger.serialize_case_execution() as connection:
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=_raw_score_stage_result(risk_plan.raw_scores, legacy=legacy),
+            framework_run_id=case.framework_run_id,
         )
 
 
@@ -459,13 +1361,22 @@ def _commit_framework_result(
     durable_transition_count = (
         len(framework.transitions) if framework.transitions_durably_recorded else 0
     )
-    for framework_stage_result in framework_stage_results[durable_transition_count:]:
-        ledger.record_stage_result(
+    _record_framework_stage_results(
+        ledger,
+        connection,
+        execution_case,
+        execution_case.framework_run_id,
+        framework_stage_results,
+        durable_transition_count,
+    )
+    if execution_case.research is not None:
+        return _commit_research_framework_result(
+            ledger,
             connection,
-            case=execution_case,
-            stage_result=framework_stage_result,
-            framework_run_id=execution_case.framework_run_id,
-            allow_repeated_occurrence=framework_stage_result.status in {"RUNNING", "WAITING"},
+            execution_case,
+            framework,
+            framework_stage_results,
+            durable_transition_count,
         )
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
@@ -1105,6 +2016,406 @@ def _commit_framework_result(
         )
 
 
+def _commit_research_framework_result(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    execution_case: FrozenDecisionCase,
+    framework: FrameworkRunResult,
+    framework_stage_results: tuple[StageResult, ...],
+    durable_transition_count: int,
+) -> DecisionEventFact | DecisionCaseExecution:
+    """Validate the staged research envelope before committing its host result."""
+    command = execution_case.research
+    assert command is not None
+    risk_run_id: str | None = None
+    risk_stage_results: tuple[StageResult, ...] = ()
+    risk_stage_results_to_restore: tuple[StageResult, ...] = ()
+    risk_durable_transition_count = 0
+    if framework.risk_run_id is not None:
+        risk_run_id = framework.risk_run_id
+        risk_stage_results = _framework_stage_results_for_auxiliary_run(framework)
+        risk_durable_transition_count = (
+            len(framework.risk_transitions) if framework.risk_transitions_durably_recorded else 0
+        )
+        risk_stage_results_to_restore = risk_stage_results[risk_durable_transition_count:]
+        _record_framework_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            risk_run_id,
+            risk_stage_results,
+            risk_durable_transition_count,
+        )
+
+    def record(stage_result: StageResult) -> None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=stage_result,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=stage_result.status
+            not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
+        )
+
+    def closed(
+        *,
+        validation: StageResult | None = None,
+        research: StageResult | None = None,
+        raw_score: StageResult | None = None,
+        risk: StageResult | None = None,
+    ) -> DecisionCaseExecution:
+        for stage_result in (research, raw_score, risk, validation):
+            if stage_result is not None:
+                record(stage_result)
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=None,
+            business_lifecycle=None,
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+
+    if framework.run_id != execution_case.framework_run_id and framework.status not in {
+        "FAILED",
+        "WAITING",
+    }:
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
+            business_result_status=None,
+            business_lifecycle=None,
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+    if framework.status == "WAITING":
+        return closed()
+    if framework.status != "SUCCEEDED":
+        return closed(
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(
+                    GateResult(gate_id="RESEARCH_RUN", status="FAILED"),
+                    *_research_data_gate_results(
+                        command,
+                        framework.error_code,
+                        framework.research_member_runs,
+                    ),
+                ),
+                reasons=(
+                    framework.error_code or framework.waiting_reason or "RESEARCH_RUN_FAILED",
+                    *(
+                        f"{member.security_id}:{member.error_code or member.status}"
+                        for member in framework.research_member_runs
+                        if member.status != "SUCCEEDED"
+                    ),
+                ),
+            )
+        )
+    if framework.research_validation_error_code is not None:
+        return closed(
+            validation=_failed_host_validation(framework.research_validation_error_code),
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_HOST_VALIDATION", status="FAILED"),),
+                reasons=(framework.research_validation_error_code,),
+            ),
+        )
+    if framework.output is None:
+        return closed(
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RESEARCH_OUTPUT", status="FAILED"),),
+                reasons=("RESEARCH_OUTPUT_MISSING",),
+            )
+        )
+    research_mode = research_contract_mode_for_case(execution_case) or "current"
+    try:
+        envelope = (
+            decode_legacy_research_framework_output(json.loads(framework.output))
+            if research_mode == "legacy"
+            else decode_historical_research_framework_output(json.loads(framework.output))
+            if research_mode == "historical"
+            else ResearchFrameworkOutput.model_validate_json(framework.output)
+        )
+    except (ValidationError, json.JSONDecodeError, ValueError):
+        return closed(
+            validation=_failed_host_validation("RESEARCH_OUTPUT_CONTRACT_INVALID"),
+            research=StageResult(
+                phase="RESEARCH",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="OUTPUT_CONTRACT", status="FAILED"),),
+                reasons=("RESEARCH_OUTPUT_CONTRACT_INVALID",),
+            ),
+        )
+    research_stage = StageResult(
+        phase="RESEARCH",
+        status="SUCCEEDED",
+        gate_results=(
+            GateResult(gate_id="RESEARCH_DRAFT_TYPED", status="PASSED"),
+            GateResult(gate_id="RESEARCH_PROVENANCE", status="PASSED"),
+        ),
+        reasons=("RESEARCH_DRAFT_READY",),
+    )
+    if command.failure_mode == "RAW_SCORE":
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RAW_SCORE_AVAILABLE", status="FAILED"),),
+                reasons=("RAW_SCORE_NOT_AVAILABLE",),
+            ),
+            validation=_failed_host_validation("RAW_SCORE_NOT_AVAILABLE"),
+        )
+    if framework.raw_score_error_code is not None:
+        raw_score_gate_results = (
+            _raw_score_model_evidence_gate_results(command)
+            if framework.raw_score_error_code == "RAW_SCORE_MODEL_EVIDENCE_INSUFFICIENT"
+            else (GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),)
+        )
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=raw_score_gate_results,
+                reasons=(framework.raw_score_error_code,),
+            ),
+            validation=_failed_host_validation(framework.raw_score_error_code),
+        )
+    raw_score_stage = _raw_score_stage_result(
+        envelope.raw_scores,
+        legacy=research_mode == "legacy",
+    )
+    if framework.risk_run_status == "WAITING":
+        return closed(
+            research=research_stage,
+            raw_score=raw_score_stage,
+        )
+    if (
+        envelope.risk_veto is None
+        or framework.risk_run_status not in {"SUCCEEDED", "REJECTED"}
+        or (
+            framework.risk_run_status == "REJECTED" and envelope.risk_veto.disposition != "REJECTED"
+        )
+    ):
+        return closed(
+            research=research_stage,
+            raw_score=raw_score_stage,
+            risk=StageResult(
+                phase="RISK_VETO",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RISK_RUN", status="FAILED"),),
+                reasons=(framework.risk_run_error_code or "RISK_VETO_OUTPUT_INVALID",),
+            ),
+            validation=_failed_host_validation("RISK_VETO_OUTPUT_INVALID"),
+        )
+    try:
+        research_outcome = freeze_research(
+            command,
+            envelope,
+            legacy=research_mode == "legacy",
+            historical=research_mode == "historical",
+        )
+    except RawScoreCalculationError as error:
+        return closed(
+            research=research_stage,
+            raw_score=StageResult(
+                phase="RAW_SCORE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="STRUCTURED_Z20", status="FAILED"),),
+                reasons=(str(error),),
+            ),
+            validation=_failed_host_validation("RAW_SCORE_CALCULATION_FAILED"),
+        )
+    except ValueError:
+        return closed(
+            research=research_stage,
+            raw_score=raw_score_stage,
+            risk=StageResult(
+                phase="RISK_VETO",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="RISK_HANDOFF", status="FAILED"),),
+                reasons=("RISK_HANDOFF_INVALID",),
+            ),
+            validation=_failed_host_validation("RESEARCH_HANDOFF_INVALID"),
+        )
+    result = ExternalResult(
+        outcome_code=(
+            "RESEARCH_REJECTED" if research_outcome.disposition == "REJECTED" else "RESEARCH_FROZEN"
+        ),
+        summary=(
+            "Synthetic fixed-ten research and independent risk veto were frozen."
+            if research_outcome.disposition == "FROZEN"
+            else "Synthetic fixed-ten research was rejected by the independent risk veto."
+        ),
+        key_reasons=research_outcome.reasons,
+        research=research_outcome,
+    )
+    validation_result = host_validation_result(execution_case, result)
+    business_result = (
+        business_outcome_result(result) if validation_result.status == "SUCCEEDED" else None
+    )
+    risk_stage = StageResult(
+        phase="RISK_VETO",
+        status=(
+            "REJECTED"
+            if research_outcome.risk_veto is not None
+            and research_outcome.risk_veto.disposition == "REJECTED"
+            else "SUCCEEDED"
+        ),
+        gate_results=tuple(
+            GateResult(gate_id=gate.gate_id, status=gate.status)
+            for gate in research_outcome.risk_veto.gates
+        )
+        if research_outcome.risk_veto is not None
+        else (),
+        reasons=research_outcome.risk_veto.reasons
+        if research_outcome.risk_veto is not None
+        else ("RISK_VETO_MISSING",),
+    )
+    record(research_stage)
+    record(raw_score_stage)
+    record(risk_stage)
+    record(validation_result)
+    if business_result is not None:
+        record(business_result)
+    current_stage_results_before_commit = (
+        *framework_stage_results[durable_transition_count:],
+        research_stage,
+        raw_score_stage,
+        risk_stage,
+        validation_result,
+        *((business_result,) if business_result is not None else ()),
+    )
+    stage_results_before_commit = ledger.get_stage_results(
+        execution_case.business_object_id,
+        connection,
+    )
+    if business_result is None or not is_committable_host_outcome(business_result):
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=(
+                business_result_status_from_stage(business_result)
+                if business_result is not None
+                else None
+            ),
+            business_lifecycle=(
+                business_lifecycle_from_stage(business_result)
+                if business_result is not None
+                else None
+            ),
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=stage_results_before_commit,
+        )
+    stage_results = (
+        *stage_results_before_commit,
+        StageResult(
+            phase="BUSINESS_COMMIT",
+            status="SUCCEEDED",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="PASSED"),),
+            reasons=(),
+        ),
+    )
+    committed_at = ledger.observed_at()
+    attempted_fact = ledger.build_event_fact(
+        case=execution_case,
+        framework_run_id=framework.run_id,
+        result=result,
+        stage_results=stage_results,
+        committed_at=committed_at,
+        generated_at=execution_case.report_generated_at,
+    )
+    try:
+        return ledger.commit_event_fact(connection, attempted_fact)
+    except DecisionEventCommitUncertainError:
+        committed = ledger.reconcile_event_commit(connection, attempted_fact)
+        if committed is not None:
+            return committed
+        _restore_precommit_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            current_stage_results_before_commit,
+        )
+        if risk_run_id is not None:
+            _restore_precommit_stage_results(
+                ledger,
+                connection,
+                execution_case,
+                risk_stage_results_to_restore,
+                framework_run_id=risk_run_id,
+            )
+        uncertain_commit = StageResult(
+            phase="COMMIT_RECONCILIATION",
+            status="UNKNOWN",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="UNKNOWN"),),
+            reasons=("COMMIT_UNCERTAIN",),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=uncertain_commit,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=True,
+        )
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=business_result_status_from_stage(business_result),
+            business_lifecycle=(
+                business_lifecycle_from_stage(business_result)
+                or business_lifecycle_from_stage(uncertain_commit)
+            ),
+            business_commit_status="UNKNOWN",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+    except DecisionEventCommitError:
+        committed = ledger.reconcile_event_commit(connection, attempted_fact)
+        if committed is not None:
+            return committed
+        _restore_precommit_stage_results(
+            ledger,
+            connection,
+            execution_case,
+            current_stage_results_before_commit,
+        )
+        if risk_run_id is not None:
+            _restore_precommit_stage_results(
+                ledger,
+                connection,
+                execution_case,
+                risk_stage_results_to_restore,
+                framework_run_id=risk_run_id,
+            )
+        failed_commit = StageResult(
+            phase="BUSINESS_COMMIT",
+            status="FAILED",
+            gate_results=(GateResult(gate_id="HOST_RESULT_SAVED", status="FAILED"),),
+            reasons=("COMMIT_STORAGE_FAILED",),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=failed_commit,
+            framework_run_id=execution_case.framework_run_id,
+            allow_repeated_occurrence=True,
+        )
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework.status,
+            business_result_status=business_result_status_from_stage(business_result),
+            business_lifecycle=business_lifecycle_from_stage(business_result),
+            business_commit_status="FAILED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+
+
 def _publish_committed_fact(
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
@@ -1293,40 +2604,22 @@ def _unpublished_execution(
 def _framework_stage_result(case: FrozenDecisionCase, framework: FrameworkRunResult) -> StageResult:
     """Save the framework state before evaluating any host-owned result."""
     if framework.run_id != case.framework_run_id:
+        if case.research is not None and framework.status in {"FAILED", "WAITING"}:
+            return _framework_status_stage_result(
+                status=framework.status,
+                error_code=framework.error_code,
+                waiting_reason=framework.waiting_reason,
+            )
         return StageResult(
             phase="FRAMEWORK_RUN",
             status="FAILED",
             gate_results=(GateResult(gate_id="ORIGINAL_RUN_IDENTITY", status="FAILED"),),
             reasons=("FRAMEWORK_IDENTITY_MISMATCH",),
         )
-    if framework.status in {"SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}:
-        return StageResult(
-            phase="FRAMEWORK_RUN",
-            status=framework.status,
-            gate_results=(
-                GateResult(gate_id="RUN_TERMINAL", status="PASSED"),
-                GateResult(
-                    gate_id="FRAMEWORK_EXECUTION",
-                    status="PASSED" if framework.status == "SUCCEEDED" else "FAILED",
-                ),
-            ),
-            reasons=(
-                ("FRAMEWORK_RUN_SUCCEEDED",)
-                if framework.status == "SUCCEEDED"
-                else (
-                    framework.error_code
-                    or framework.waiting_reason
-                    or f"FRAMEWORK_{framework.status}",
-                )
-            ),
-        )
-    return StageResult(
-        phase="FRAMEWORK_RUN",
+    return _framework_status_stage_result(
         status=framework.status,
-        gate_results=(GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
-        reasons=(
-            framework.error_code or framework.waiting_reason or f"FRAMEWORK_{framework.status}",
-        ),
+        error_code=framework.error_code,
+        waiting_reason=framework.waiting_reason,
     )
 
 
@@ -1345,19 +2638,110 @@ def _framework_stage_results(
     return (*transitions, final_result)
 
 
+def _framework_stage_results_for_auxiliary_run(
+    framework: FrameworkRunResult,
+) -> tuple[StageResult, ...]:
+    """Preserve a secondary framework Run under its own durable identity."""
+    if framework.risk_run_id is None or framework.risk_run_status is None:
+        return ()
+    return _framework_stage_results_for_run(
+        status=framework.risk_run_status,
+        error_code=framework.risk_run_error_code,
+        waiting_reason=framework.risk_waiting_reason,
+        transitions=framework.risk_transitions,
+        phase="RISK_FRAMEWORK_RUN",
+    )
+
+
+def _framework_stage_results_for_run(
+    *,
+    status: FrameworkRunStatus,
+    error_code: str | None,
+    waiting_reason: str | None,
+    transitions: tuple[FrameworkRunTransition, ...],
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
+) -> tuple[StageResult, ...]:
+    final_result = _framework_status_stage_result(
+        status=status,
+        error_code=error_code,
+        waiting_reason=waiting_reason,
+        phase=phase,
+    )
+    transition_results = tuple(
+        _framework_transition_stage_result(transition, phase=phase) for transition in transitions
+    )
+    if transition_results and transition_results[-1] == final_result:
+        return transition_results
+    return (*transition_results, final_result)
+
+
+def _record_framework_stage_results(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    case: FrozenDecisionCase,
+    framework_run_id: str,
+    stage_results: tuple[StageResult, ...],
+    durable_transition_count: int,
+) -> None:
+    for stage_result in stage_results[durable_transition_count:]:
+        ledger.record_stage_result(
+            connection,
+            case=case,
+            stage_result=stage_result,
+            framework_run_id=framework_run_id,
+            allow_repeated_occurrence=stage_result.status in {"RUNNING", "WAITING"},
+        )
+
+
 def _framework_transition_stage_result(
     transition: FrameworkRunTransition,
+    *,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
 ) -> StageResult:
     gate_id = {
         "CREATED": "RUN_CREATED",
         "RUNNING": "RUN_ACTIVE",
         "WAITING": "RUN_RECOVERABLE",
+        "SUCCEEDED": "RUN_SUCCEEDED",
+        "REJECTED": "RUN_REJECTED",
+        "FAILED": "RUN_FAILED",
+        "CANCELLED": "RUN_CANCELLED",
     }.get(transition.status, "RUN_RECOVERABLE")
+    gate_status: Literal["PASSED", "FAILED"] = (
+        "FAILED" if transition.status in {"FAILED", "CANCELLED"} else "PASSED"
+    )
     return StageResult(
-        phase="FRAMEWORK_RUN",
+        phase=phase,
         status=transition.status,
-        gate_results=(GateResult(gate_id=gate_id, status="PASSED"),),
+        gate_results=(GateResult(gate_id=gate_id, status=gate_status),),
         reasons=(transition.reason,),
+    )
+
+
+def _framework_status_stage_result(
+    *,
+    status: FrameworkRunStatus,
+    error_code: str | None,
+    waiting_reason: str | None,
+    phase: Literal["FRAMEWORK_RUN", "RISK_FRAMEWORK_RUN"] = "FRAMEWORK_RUN",
+) -> StageResult:
+    return StageResult(
+        phase=phase,
+        status=status,
+        gate_results=(
+            GateResult(gate_id="RUN_TERMINAL", status="PASSED"),
+            GateResult(
+                gate_id="FRAMEWORK_EXECUTION",
+                status="PASSED" if status == "SUCCEEDED" else "FAILED",
+            ),
+        )
+        if status in {"SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"}
+        else (GateResult(gate_id="RUN_TERMINAL", status="FAILED"),),
+        reasons=(
+            ("FRAMEWORK_RUN_SUCCEEDED",)
+            if status == "SUCCEEDED"
+            else (error_code or waiting_reason or f"FRAMEWORK_{status}",)
+        ),
     )
 
 
@@ -1375,14 +2759,17 @@ def _restore_precommit_stage_results(
     connection: Transaction,
     case: FrozenDecisionCase,
     stage_results: tuple[StageResult, ...],
+    *,
+    framework_run_id: str | None = None,
 ) -> None:
     """Restore durable pre-commit evidence after an event write transaction rolls back."""
+    durable_framework_run_id = framework_run_id or case.framework_run_id
     for stage_result in stage_results:
         ledger.record_stage_result(
             connection,
             case=case,
             stage_result=stage_result,
-            framework_run_id=case.framework_run_id,
+            framework_run_id=durable_framework_run_id,
             allow_repeated_occurrence=stage_result.status
             not in {"SUCCEEDED", "REJECTED", "ABSTAINED"},
         )

@@ -1,1 +1,1 @@
-"""Research ownership boundary without research runs or provider integrations."""
+"""Host-owned research contracts and staged M-Agent run boundaries."""

@@ -27,6 +27,7 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttemptStatus,
     ResultAccessScope,
     StageResult,
+    stored_decision_event_payload,
     stored_report_payload,
 )
 from stock_profiler.modules.decision_cases.ports import (
@@ -57,6 +58,12 @@ from stock_profiler.modules.position_management.history import (
     authoritative_ledger_history,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
+from stock_profiler.modules.research.contracts import (
+    ResearchOutcome,
+    decode_historical_research_outcome,
+    decode_legacy_research_outcome,
+    research_contract_mode_for_versions,
+)
 
 METADATA = MetaData()
 DECISION_CASE_BUSINESS_OBJECTS = Table(
@@ -110,6 +117,43 @@ DECISION_NOTIFICATION_ATTEMPTS = Table(
     Column("reasons_payload", String, nullable=False),
     Column("recorded_at", String(40), nullable=False),
 )
+
+
+def _decode_research_event_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Decode historical research evidence only at the persisted event boundary."""
+    case_payload = payload.get("case")
+    if not isinstance(case_payload, dict):
+        return payload
+    version_bundle = case_payload.get("version_bundle")
+    if not isinstance(version_bundle, dict):
+        return payload
+    definition_version = version_bundle.get("agent_definition_version")
+    output_contract_version = version_bundle.get("output_contract_version")
+    if not isinstance(definition_version, str) or not isinstance(output_contract_version, str):
+        return payload
+    try:
+        mode = research_contract_mode_for_versions(definition_version, output_contract_version)
+    except ValueError:
+        return payload
+    result_payload = payload.get("result")
+    if not isinstance(result_payload, dict):
+        return payload
+    research_payload = result_payload.get("research")
+    if not isinstance(research_payload, dict):
+        return payload
+    normalized = dict(payload)
+    normalized_result = dict(result_payload)
+    normalized_result["research"] = (
+        decode_legacy_research_outcome(research_payload)
+        if mode == "legacy"
+        else decode_historical_research_outcome(research_payload)
+        if mode == "historical"
+        else ResearchOutcome.model_validate(research_payload)
+    )
+    normalized["result"] = normalized_result
+    return normalized
 
 
 class DecisionLedger:
@@ -474,9 +518,13 @@ class DecisionLedger:
             return mapping.case
 
     def mapped_framework_run_ids(self, connection: Connection) -> frozenset[str]:
-        return frozenset(
+        mapped_ids = set(
             connection.execute(select(DECISION_CASE_BUSINESS_OBJECTS.c.framework_run_id)).scalars()
         )
+        mapped_ids.update(
+            connection.execute(select(DECISION_STAGE_EVENTS.c.framework_run_id)).scalars()
+        )
+        return frozenset(mapped_ids)
 
     def ensure_business_object(self, connection: Connection, case: FrozenDecisionCase) -> None:
         """Persist the one host-to-framework mapping before running the framework."""
@@ -713,8 +761,11 @@ class DecisionLedger:
         corrects_event_id = row.corrects_event_id
         payload = row.event_payload
         try:
-            fact = DecisionEventFact.model_validate_json(payload)
-        except ValidationError as error:
+            event_payload = json.loads(payload)
+            if not isinstance(event_payload, dict):
+                raise ValueError("stored decision event must be an object")
+            fact = DecisionEventFact.model_validate(_decode_research_event_payload(event_payload))
+        except (ValidationError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise DecisionEventCommitError("stored decision event is invalid") from error
         mapping = self.get_business_object_mapping(business_object_id, connection)
         has_snapshotless_legacy_mapping_for_fact = (
@@ -808,7 +859,7 @@ class DecisionLedger:
     ) -> None:
         """Append a phase outcome without replacing an earlier result family."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
-        stage_payload = _canonical_json(stage_result.model_dump(mode="json"))
+        stage_payload = _canonical_json(stage_result.model_dump(mode="json", exclude_none=True))
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,
@@ -894,12 +945,23 @@ class DecisionLedger:
             raise DecisionEventCommitError("stage event identity maps to different results")
 
     def get_stage_results(
-        self, business_object_id: str, connection: Connection | None = None
+        self,
+        business_object_id: str,
+        connection: Connection | None = None,
+        *,
+        framework_run_id: str | None = None,
     ) -> tuple[StageResult, ...]:
         """Read the append-only stage history in the order it was recorded."""
         statement = (
             select(DECISION_STAGE_EVENTS.c.stage_payload)
-            .where(DECISION_STAGE_EVENTS.c.business_object_id == business_object_id)
+            .where(
+                DECISION_STAGE_EVENTS.c.business_object_id == business_object_id,
+                *(
+                    (DECISION_STAGE_EVENTS.c.framework_run_id == framework_run_id,)
+                    if framework_run_id is not None
+                    else ()
+                ),
+            )
             .order_by(DECISION_STAGE_EVENTS.c.sequence)
         )
         if connection is not None:
@@ -1049,7 +1111,7 @@ class DecisionLedger:
                     business_object_id=case.business_object_id,
                     framework_run_id=framework_run_id,
                     corrects_event_id=corrects_event_id,
-                    event_payload=fact.model_dump_json(),
+                    event_payload=_canonical_json(stored_decision_event_payload(fact)),
                     committed_at=fact.committed_at,
                 )
             )

@@ -70,7 +70,8 @@ contain a security, direction, quantity, price, order identifier, or callback.
 Same-key retries return the original fact; conflicting retries append a
 denial. Reports and user facts are never overwritten.
 
-The registered Tool allowlist is explicitly empty. The host admits only its
+The registered Tool allowlist for the general frozen decision case is explicitly
+empty. The host admits only its
 deterministic model adapter and frozen Context Provider, with no secondary
 model adapters, custom executable policy, context stages, or compression
 extension. No Session companion, live model, broker client, order credential,
@@ -78,6 +79,16 @@ notification provider, or order adapter is composed. Unregistered model Tool
 calls are rejected by the pinned M-Agent contract before a Tool Step. The
 host preserves an additional opaque capability-denial fact. CLI and HTTP
 reject undeclared commands and routes before dispatch.
+
+The versioned `research.1.0.0` D0 contract is an isolated research boundary,
+not an extension of that general case. Its frozen Definition admits only one
+deterministic, synthetic, read-only announcement Tool and an explicit
+four-stage Context Plan for collection, analysis, bull/bear organization, and
+draft preparation. Required structured facts still arrive through the frozen
+Context Provider before model work; the research Tool cannot write state or
+introduce model, broker, order, notification, Session, or live-provider
+capabilities. The research capability inventory and host contract reject these
+extensions everywhere else.
 
 `tests/security`, the focused integration isolation tests, and the browser
 shadow test exercise this credential-free D0 contract. The original

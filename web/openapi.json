@@ -2492,6 +2492,16 @@
               }
             ]
           },
+          "research": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "selection": {
             "anyOf": [
               {
@@ -5735,6 +5745,238 @@
         "title": "QualificationScope",
         "type": "object"
       },
+      "RawScore": {
+        "additionalProperties": false,
+        "description": "The structured, uncalibrated terminal-target score frozen after the cohort.",
+        "properties": {
+          "algorithm": {
+            "const": "ELASTIC_NET_LOGISTIC",
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "coefficients": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Coefficients",
+            "type": "object"
+          },
+          "contributions": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Contributions",
+            "type": "object"
+          },
+          "feature_transformations": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RawScoreFeatureTransform"
+            },
+            "title": "Feature Transformations",
+            "type": "object"
+          },
+          "interaction_terms": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Interaction Terms",
+            "type": "array"
+          },
+          "intercept": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Intercept",
+            "type": "string"
+          },
+          "l1_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "L1 Ratio",
+            "type": "string"
+          },
+          "l2_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "L2 Ratio",
+            "type": "string"
+          },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
+          "label_watermark_month": {
+            "title": "Label Watermark Month",
+            "type": "string"
+          },
+          "mature_months": {
+            "title": "Mature Months",
+            "type": "integer"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "negative_record_count": {
+            "title": "Negative Record Count",
+            "type": "integer"
+          },
+          "normalization_snapshot_id": {
+            "title": "Normalization Snapshot Id",
+            "type": "string"
+          },
+          "penalty_strength": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Penalty Strength",
+            "type": "string"
+          },
+          "positive_record_count": {
+            "title": "Positive Record Count",
+            "type": "integer"
+          },
+          "probability": {
+            "title": "Probability",
+            "type": "null"
+          },
+          "research_id": {
+            "title": "Research Id",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "structured_inputs": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Structured Inputs",
+            "type": "object"
+          },
+          "target": {
+            "const": "SIX_MONTH_TERMINAL_20_PERCENT",
+            "title": "Target",
+            "type": "string"
+          },
+          "training_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Training Months",
+            "type": "array"
+          },
+          "training_record_count": {
+            "title": "Training Record Count",
+            "type": "integer"
+          },
+          "training_window_end_month": {
+            "title": "Training Window End Month",
+            "type": "string"
+          },
+          "training_window_id": {
+            "title": "Training Window Id",
+            "type": "string"
+          },
+          "training_window_kind": {
+            "enum": ["EXPANDING", "ROLLING_120"],
+            "title": "Training Window Kind",
+            "type": "string"
+          },
+          "training_window_month_count": {
+            "title": "Training Window Month Count",
+            "type": "integer"
+          },
+          "training_window_policy": {
+            "const": "EXPANDING_60_TO_119_ROLLING_120",
+            "title": "Training Window Policy",
+            "type": "string"
+          },
+          "training_window_start_month": {
+            "title": "Training Window Start Month",
+            "type": "string"
+          },
+          "transformed_inputs": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Transformed Inputs",
+            "type": "object"
+          },
+          "z20": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Z20",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "research_id",
+          "target",
+          "algorithm",
+          "model_version",
+          "training_window_id",
+          "training_window_policy",
+          "training_window_kind",
+          "training_window_month_count",
+          "training_window_start_month",
+          "training_window_end_month",
+          "training_months",
+          "label_watermark_month",
+          "label_watermark_at",
+          "normalization_snapshot_id",
+          "mature_months",
+          "training_record_count",
+          "positive_record_count",
+          "negative_record_count",
+          "intercept",
+          "structured_inputs",
+          "transformed_inputs",
+          "coefficients",
+          "feature_transformations",
+          "contributions",
+          "z20",
+          "l1_ratio",
+          "l2_ratio",
+          "penalty_strength"
+        ],
+        "title": "RawScore",
+        "type": "object"
+      },
+      "RawScoreFeatureTransform": {
+        "additionalProperties": false,
+        "description": "Frozen winsorization and robust-standardization parameters for one signal.",
+        "properties": {
+          "iqr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iqr",
+            "type": "string"
+          },
+          "lower_clip": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Clip",
+            "type": "string"
+          },
+          "median": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Median",
+            "type": "string"
+          },
+          "reverse": {
+            "title": "Reverse",
+            "type": "boolean"
+          },
+          "upper_clip": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Clip",
+            "type": "string"
+          }
+        },
+        "required": ["lower_clip", "upper_clip", "median", "iqr", "reverse"],
+        "title": "RawScoreFeatureTransform",
+        "type": "object"
+      },
       "ReauthenticationVerificationDto": {
         "description": "Pydantic transport contract for a completed recent reauthentication.",
         "properties": {
@@ -6272,6 +6514,611 @@
         "title": "RequalificationProof",
         "type": "object"
       },
+      "ResearchEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_contract_version": {
+            "default": "2.0.0",
+            "enum": ["1.0.0", "2.0.0"],
+            "title": "Evidence Contract Version",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "reference": {
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "semantic_version": {
+            "minLength": 1,
+            "title": "Semantic Version",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          },
+          "validation_status": {
+            "const": "VALIDATED",
+            "title": "Validation Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source",
+          "reference",
+          "statement",
+          "knowledge_cutoff",
+          "semantic_version",
+          "validation_status"
+        ],
+        "title": "ResearchEvidence",
+        "type": "object"
+      },
+      "ResearchHandoff": {
+        "additionalProperties": false,
+        "description": "Versioned, immutable boundary between research/risk and later work.",
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 10,
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "member_handoffs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchMemberHandoff"
+            },
+            "title": "Member Handoffs",
+            "type": "array"
+          },
+          "raw_scores": {
+            "items": {
+              "$ref": "#/components/schemas/RawScore"
+            },
+            "maxItems": 10,
+            "minItems": 10,
+            "title": "Raw Scores",
+            "type": "array"
+          },
+          "research_definition_id": {
+            "title": "Research Definition Id",
+            "type": "string"
+          },
+          "research_definition_version": {
+            "title": "Research Definition Version",
+            "type": "string"
+          },
+          "research_model_adapter_id": {
+            "title": "Research Model Adapter Id",
+            "type": "string"
+          },
+          "research_output_contract_id": {
+            "title": "Research Output Contract Id",
+            "type": "string"
+          },
+          "research_output_contract_version": {
+            "title": "Research Output Contract Version",
+            "type": "string"
+          },
+          "research_routing_policy_version": {
+            "title": "Research Routing Policy Version",
+            "type": "string"
+          },
+          "research_run_id": {
+            "title": "Research Run Id",
+            "type": "string"
+          },
+          "research_run_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Research Run Ids",
+            "type": "array"
+          },
+          "risk_definition_id": {
+            "title": "Risk Definition Id",
+            "type": "string"
+          },
+          "risk_definition_version": {
+            "title": "Risk Definition Version",
+            "type": "string"
+          },
+          "risk_model_adapter_id": {
+            "title": "Risk Model Adapter Id",
+            "type": "string"
+          },
+          "risk_output_contract_id": {
+            "title": "Risk Output Contract Id",
+            "type": "string"
+          },
+          "risk_output_contract_version": {
+            "title": "Risk Output Contract Version",
+            "type": "string"
+          },
+          "risk_run_id": {
+            "title": "Risk Run Id",
+            "type": "string"
+          },
+          "risk_veto": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskVetoOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "const": "D0_SYNTHETIC_RESEARCH_ONLY",
+            "title": "Scope",
+            "type": "string"
+          },
+          "screening_snapshot_id": {
+            "title": "Screening Snapshot Id",
+            "type": "string"
+          },
+          "screening_strategy_version": {
+            "title": "Screening Strategy Version",
+            "type": "string"
+          },
+          "security_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 10,
+            "title": "Security Ids",
+            "type": "array"
+          },
+          "selection_event_id": {
+            "title": "Selection Event Id",
+            "type": "string"
+          },
+          "selection_fingerprint": {
+            "title": "Selection Fingerprint",
+            "type": "string"
+          },
+          "selection_object_id": {
+            "title": "Selection Object Id",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Targets",
+            "type": "array"
+          },
+          "tool_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchToolEvidence"
+            },
+            "title": "Tool Evidence",
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract_version",
+          "scope",
+          "selection_object_id",
+          "selection_event_id",
+          "selection_fingerprint",
+          "security_ids",
+          "targets",
+          "cutoff_at",
+          "knowledge_cutoff",
+          "evidence_ids",
+          "research_run_id",
+          "risk_run_id",
+          "research_definition_id",
+          "research_definition_version",
+          "risk_definition_id",
+          "risk_definition_version",
+          "research_model_adapter_id",
+          "risk_model_adapter_id",
+          "research_routing_policy_version",
+          "research_output_contract_id",
+          "research_output_contract_version",
+          "risk_output_contract_id",
+          "risk_output_contract_version",
+          "screening_strategy_version",
+          "screening_snapshot_id",
+          "raw_scores"
+        ],
+        "title": "ResearchHandoff",
+        "type": "object"
+      },
+      "ResearchMemberHandoff": {
+        "additionalProperties": false,
+        "description": "Immutable per-member evidence and risk facts consumed by risk.",
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchEvidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "research_id": {
+            "minLength": 1,
+            "title": "Research Id",
+            "type": "string"
+          },
+          "research_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Run Id"
+          },
+          "risk_flags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Risk Flags",
+            "type": "array"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "research_id", "evidence"],
+        "title": "ResearchMemberHandoff",
+        "type": "object"
+      },
+      "ResearchMemberResult": {
+        "additionalProperties": false,
+        "properties": {
+          "bear_case": {
+            "title": "Bear Case",
+            "type": "string"
+          },
+          "bull_case": {
+            "title": "Bull Case",
+            "type": "string"
+          },
+          "catalysts": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Catalysts",
+            "type": "array"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "falsification_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Falsification Conditions",
+            "type": "array"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "research_id": {
+            "title": "Research Id",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "thesis": {
+            "title": "Thesis",
+            "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Unknowns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "security_id",
+          "research_id",
+          "evidence_refs",
+          "thesis",
+          "bull_case",
+          "bear_case",
+          "catalysts",
+          "falsification_conditions",
+          "unknowns",
+          "knowledge_cutoff"
+        ],
+        "title": "ResearchMemberResult",
+        "type": "object"
+      },
+      "ResearchOutcome": {
+        "additionalProperties": false,
+        "description": "Host-owned research result, including independent risk disposition.",
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "disposition": {
+            "enum": ["FROZEN", "REJECTED", "DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "handoff": {
+            "$ref": "#/components/schemas/ResearchHandoff"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchMemberResult"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "raw_scores": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RawScore"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Scores"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "risk_veto": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskVetoOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResearchToolEvidence"
+            },
+            "title": "Tool Evidence",
+            "type": "array"
+          }
+        },
+        "required": ["disposition", "members", "handoff", "reasons"],
+        "title": "ResearchOutcome",
+        "type": "object"
+      },
+      "ResearchToolEvidence": {
+        "additionalProperties": false,
+        "description": "Structured provenance emitted by the allowlisted exploratory Tool.",
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_contract_version": {
+            "default": "2.0.0",
+            "enum": ["1.0.0", "2.0.0"],
+            "title": "Evidence Contract Version",
+            "type": "string"
+          },
+          "evidence_id": {
+            "pattern": "^announcement:.+",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "reference": {
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "semantic_version": {
+            "minLength": 1,
+            "title": "Semantic Version",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          },
+          "validation_status": {
+            "const": "VALIDATED",
+            "title": "Validation Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source",
+          "reference",
+          "statement",
+          "knowledge_cutoff",
+          "semantic_version",
+          "validation_status"
+        ],
+        "title": "ResearchToolEvidence",
+        "type": "object"
+      },
       "ResultAccessScope": {
         "additionalProperties": false,
         "description": "Immutable ownership and visibility bound before a scoped case is executed.",
@@ -6470,6 +7317,118 @@
           "available_at"
         ],
         "title": "RiskBudgetRelaxationEvidence",
+        "type": "object"
+      },
+      "RiskGate": {
+        "additionalProperties": false,
+        "properties": {
+          "gate_id": {
+            "minLength": 1,
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PASSED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["gate_id", "status"],
+        "title": "RiskGate",
+        "type": "object"
+      },
+      "RiskMemberVeto": {
+        "additionalProperties": false,
+        "description": "Independent risk disposition and gates for one fixed cohort member.",
+        "properties": {
+          "disposition": {
+            "enum": ["ACCEPTED", "REJECTED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/RiskGate"
+            },
+            "minItems": 1,
+            "title": "Gates",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_id": {
+            "minLength": 1,
+            "title": "Research Id",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "research_id", "disposition", "gates", "reasons"],
+        "title": "RiskMemberVeto",
+        "type": "object"
+      },
+      "RiskVetoOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "definition_id": {
+            "title": "Definition Id",
+            "type": "string"
+          },
+          "definition_version": {
+            "title": "Definition Version",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": ["ACCEPTED", "REJECTED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/RiskGate"
+            },
+            "title": "Gates",
+            "type": "array"
+          },
+          "member_vetoes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RiskMemberVeto"
+            },
+            "title": "Member Vetoes",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "definition_id",
+          "definition_version",
+          "disposition",
+          "gates",
+          "reasons"
+        ],
+        "title": "RiskVetoOutcome",
         "type": "object"
       },
       "SafetyCapabilitiesDiagnosticDto": {
@@ -6941,6 +7900,8 @@
           "phase": {
             "enum": [
               "FRAMEWORK_RUN",
+              "RISK_FRAMEWORK_RUN",
+              "AUXILIARY_RUN_RESERVATION",
               "HOST_VALIDATION",
               "BUSINESS_DECISION",
               "QUALIFICATION",
@@ -6958,10 +7919,29 @@
               "BUSINESS_COMMIT",
               "PUBLICATION",
               "NOTIFICATION",
-              "CORRECTION"
+              "CORRECTION",
+              "RESEARCH",
+              "RAW_SCORE",
+              "RISK_VETO"
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "raw_score_payloads": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable raw-score payloads saved with a successful RAW_SCORE stage.",
+            "title": "Raw Score Payloads"
           },
           "reasons": {
             "items": {

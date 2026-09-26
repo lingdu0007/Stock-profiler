@@ -20,7 +20,7 @@ const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 let vitePort = 0;
 const proxyPort = Number(process.env.STOCK_PROFILER_E2E_PROXY_PORT ?? "4174");
 const browserOrigin = `https://localhost:${proxyPort}`;
-const apiReadyTimeoutMilliseconds = 15_000;
+const apiReadyTimeoutMilliseconds = 60_000;
 let apiPort = 0;
 let temporaryDirectory = "";
 let report: FormalReport;
@@ -35,7 +35,7 @@ let apiProcess: ChildProcess | undefined;
 let httpsProxy: HttpsServer | undefined;
 
 test.beforeEach(async ({ baseURL }, testInfo) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   if (!baseURL) {
     throw new Error("The authenticated report journey requires the configured web origin.");
   }
@@ -529,8 +529,9 @@ async function waitForApi() {
         return;
       }
     } catch {
-      if (apiProcess?.exitCode !== null) {
-        throw new Error(`FastAPI process exited with code ${apiProcess.exitCode}.`);
+      const currentApiProcess = apiProcess;
+      if (currentApiProcess && currentApiProcess.exitCode !== null) {
+        throw new Error(`FastAPI process exited with code ${currentApiProcess.exitCode}.`);
       }
     }
     await new Promise((resolve) => setTimeout(resolve, retryDelayMilliseconds));

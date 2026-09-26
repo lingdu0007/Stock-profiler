@@ -31,6 +31,11 @@ from stock_profiler.modules.position_management.contracts import (
     PositionReconciliationOutcome,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
+from stock_profiler.modules.research.contracts import (
+    ResearchMemberInput,
+    ResearchRiskPlan,
+    ResearchToolEvidence,
+)
 
 Transaction = TypeVar("Transaction")
 
@@ -63,6 +68,18 @@ class BusinessObjectMapping:
 class FrameworkRunTransition:
     status: FrameworkRunStatus
     reason: str
+    run_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ResearchMemberRunResult:
+    """Durable per-member research Run identity and terminal observation."""
+
+    security_id: str
+    research_id: str
+    run_id: str
+    status: FrameworkRunStatus
+    error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,13 +87,26 @@ class FrameworkRunResult:
     run_id: str
     status: FrameworkRunStatus
     output: str | None
+    run_existed_before: bool = False
     waiting_reason: str | None = None
     error_code: str | None = None
+    risk_run_id: str | None = None
+    risk_run_status: FrameworkRunStatus | None = None
+    risk_waiting_reason: str | None = None
+    risk_run_error_code: str | None = None
+    risk_transitions: tuple[FrameworkRunTransition, ...] = ()
+    risk_transitions_durably_recorded: bool = False
+    research_validation_error_code: str | None = None
+    raw_score_error_code: str | None = None
+    research_member_runs: tuple[ResearchMemberRunResult, ...] = ()
     transitions: tuple[FrameworkRunTransition, ...] = ()
     transitions_durably_recorded: bool = False
+    research_tool_evidence: tuple[ResearchToolEvidence, ...] = ()
 
 
 FrameworkTransitionRecorder = Callable[[FrameworkRunTransition], Awaitable[None]]
+AuxiliaryRunReservationRecorder = Callable[[str], Awaitable[bool]]
+ResearchMemberRunReservationRecorder = Callable[[str], Awaitable[bool]]
 
 
 class FrozenFramework(Protocol):
@@ -87,7 +117,40 @@ class FrozenFramework(Protocol):
     ) -> FrozenDecisionCase | None: ...
 
     async def execute(
-        self, case: FrozenDecisionCase, record_transition: FrameworkTransitionRecorder
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_run(
+        self,
+        case: FrozenDecisionCase,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_member_run(
+        self,
+        case: FrozenDecisionCase,
+        member_index: int,
+        member: ResearchMemberInput,
+        run_id: str,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_member_run_reservation: ResearchMemberRunReservationRecorder | None = None,
+    ) -> FrameworkRunResult: ...
+
+    async def execute_research_risk_run(
+        self,
+        case: FrozenDecisionCase,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
+        record_transition: FrameworkTransitionRecorder,
+        *,
+        record_auxiliary_run_reservation: AuxiliaryRunReservationRecorder,
     ) -> FrameworkRunResult: ...
 
 
@@ -212,12 +275,20 @@ class DecisionLedger(Protocol[Transaction]):
         self, business_object_id: str, connection: Transaction
     ) -> DecisionEventFact | None: ...
 
+    def get_decision_event(
+        self, decision_event_id: str, connection: Transaction
+    ) -> DecisionEventFact | None: ...
+
     def get_correction_event(
         self, original_event_id: str, connection: Transaction
     ) -> DecisionEventFact | None: ...
 
     def get_stage_results(
-        self, business_object_id: str, connection: Transaction | None = None
+        self,
+        business_object_id: str,
+        connection: Transaction | None = None,
+        *,
+        framework_run_id: str | None = None,
     ) -> tuple[StageResult, ...]: ...
 
     def record_stage_result(
