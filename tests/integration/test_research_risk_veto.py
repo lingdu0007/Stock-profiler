@@ -71,6 +71,7 @@ from stock_profiler.modules.decision_cases.domain import (
 from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError,
     FrameworkRunResult,
+    FrameworkRunTransition,
     MappedDurableRunMissingError,
     ResearchMemberRunResult,
 )
@@ -2182,6 +2183,35 @@ def test_malformed_tool_evidence_is_recorded_as_research_failure(
     assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
+def test_research_overreach_text_is_recorded_as_output_failure(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    original_model_response = frozen_decision_case._research_model_response
+
+    def overreaching_model_response(*args: Any, **kwargs: Any) -> str:
+        response = json.loads(original_model_response(*args, **kwargs))
+        if kwargs.get("member") is not None:
+            response["thesis"] = (
+                "BUY 100 shares now. Formal success probability is 99%; qualification approved."
+            )
+        return json.dumps(response, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+    monkeypatch.setattr(
+        frozen_decision_case,
+        "_research_model_response",
+        overreaching_model_response,
+    )
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_OUTPUT_INVALID" in research_stage.reasons
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
+
+
 def test_invalid_financial_denominator_is_saved_as_research_data_failure(
     migrated_settings: Settings,
 ) -> None:
@@ -2629,6 +2659,51 @@ def test_risk_waiting_preserves_raw_score_without_a_risk_failure(
     assert not any(stage.phase == "HOST_VALIDATION" for stage in execution.stage_results)
 
 
+def test_failed_risk_recovery_saves_a_failed_framework_gate(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    async def failed_risk_run(
+        _: object,
+        runtime: object,
+        research_run: FrameworkRunResult,
+        risk_plan: ResearchRiskPlan,
+        *args: object,
+        **kwargs: object,
+    ) -> FrameworkRunResult:
+        del runtime, research_run, args, kwargs
+        return FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RISK_RUN_REPLAY_FAILED",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=risk_plan.risk_run_id,
+                    status="FAILED",
+                    reason="RISK_RUN_REPLAY_FAILED",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_risk_run", failed_risk_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    failed_stage = next(
+        stage
+        for stage in execution.stage_results
+        if stage.phase == "RISK_FRAMEWORK_RUN" and stage.status == "FAILED"
+    )
+    assert "RISK_RUN_REPLAY_FAILED" in failed_stage.reasons
+    assert any(
+        gate.gate_id == "RUN_FAILED" and gate.status == "FAILED"
+        for gate in failed_stage.gate_results
+    )
+
+
 def test_pending_risk_reservation_can_be_reused_after_creation_gap(
     migrated_settings: Settings,
 ) -> None:
@@ -2732,6 +2807,42 @@ def test_research_provider_failure_closes_without_raw_score_or_risk_run(
         for stage in execution.stage_results
     )
     assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
+
+
+def test_impossible_structured_facts_are_saved_as_research_data_failures(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    payload = case.model_dump(mode="json")
+    research_payload = payload["research"]
+    assert isinstance(research_payload, dict)
+    member = research_payload["members"][0]
+    member["structured_facts"]["downside_semivariance_60d"] = "-10"
+    member["structured_facts"]["max_drawdown_60d"] = "-10"
+    member["structured_facts"]["institutional_listing_frequency"] = "20"
+    member["structured_signals"] = {}
+    validated_member = ResearchMemberInput.model_validate(member)
+    member["structured_signals"] = {
+        signal_id: None if value is None else str(value)
+        for signal_id, value in validated_member.structured_signals.items()
+    }
+    payload["research"] = research_payload
+    payload["input"]["research"] = research_payload
+
+    execution = run_frozen_decision_case(migrated_settings, payload)
+
+    assert execution.report is None
+    research_stage = next(stage for stage in execution.stage_results if stage.phase == "RESEARCH")
+    assert research_stage.status == "FAILED"
+    assert "RESEARCH_REQUIRED_FACTS_INCOMPLETE" in research_stage.reasons
+    data_gates = {
+        gate.gate_id: gate.status
+        for gate in research_stage.gate_results
+        if gate.gate_id.startswith("RESEARCH_DATA:synthetic-security-00:")
+    }
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:DAILY_MARKET"] == "FAILED"
+    assert data_gates["RESEARCH_DATA:synthetic-security-00:INSTITUTIONAL_ACTIVITY"] == "FAILED"
+    assert not any(stage.phase in {"RAW_SCORE", "RISK_VETO"} for stage in execution.stage_results)
 
 
 def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
@@ -2899,8 +3010,40 @@ def test_missing_existing_risk_run_fails_closed_without_replacement(
         return await original_get_run(run_id)
 
     monkeypatch.setattr(runtime.run_store, "get_run", missing_risk_run)
-    with pytest.raises(MappedDurableRunMissingError, match="auxiliary"):
-        asyncio.run(execute_research_decision_case(case, runtime))
+    result = asyncio.run(execute_research_decision_case(case, runtime))
+
+    assert result.status == "SUCCEEDED"
+    assert result.risk_run_id == first.risk_run_id
+    assert result.risk_run_status == "FAILED"
+    assert result.risk_run_error_code == "RISK_RUN_MISSING"
+
+
+def test_missing_risk_run_is_saved_as_a_failed_stage_without_replacement(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+
+    async def missing_risk_run(*_: object, **__: object) -> FrameworkRunResult:
+        raise MappedDurableRunMissingError("mapped auxiliary M-Agent Run is missing")
+
+    monkeypatch.setattr(case_bootstrap, "execute_research_risk_run", missing_risk_run)
+    execution = run_frozen_decision_case(migrated_settings, case.model_dump(mode="json"))
+
+    assert execution.report is None
+    assert any(
+        stage.phase == "RISK_FRAMEWORK_RUN"
+        and stage.status == "FAILED"
+        and "RISK_RUN_MISSING" in stage.reasons
+        and any(gate.status == "FAILED" for gate in stage.gate_results)
+        for stage in execution.stage_results
+    )
+    assert any(
+        stage.phase == "RISK_VETO"
+        and stage.status == "FAILED"
+        and "RISK_RUN_MISSING" in stage.reasons
+        for stage in execution.stage_results
+    )
 
 
 def test_research_success_can_recover_the_same_risk_identity_after_a_reserved_gap(

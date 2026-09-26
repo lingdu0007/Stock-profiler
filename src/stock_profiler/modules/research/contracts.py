@@ -61,6 +61,10 @@ _RESEARCH_DEFINITION_VERSION_OVERRIDE: ContextVar[str | None] = ContextVar(
     "research_definition_version_override",
     default=None,
 )
+_RESEARCH_TEXT_CAPABILITY_VALIDATION: ContextVar[bool] = ContextVar(
+    "research_text_capability_validation",
+    default=True,
+)
 ResearchContractMode = Literal["current", "historical", "legacy"]
 ResearchDataType = Literal[
     "DAILY_MARKET",
@@ -259,6 +263,46 @@ class ResearchContract(BaseModel):
     """Reject unversioned research fields and mutable contract payloads."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="never")
+
+
+_RESEARCH_TEXT_CAPABILITY_PATTERNS = (
+    re.compile(
+        r"\b(?:formal\s+)?(?:success\s+)?probability\s*(?:is|of|=|:)\s*"
+        r"(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:p20|pr20)\s*(?:is|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:qualified|eligible|approved)\s+(?:to\s+)?"
+        r"(?:buy|sell|trade|purchase|enter)\b"
+        r"|\bqualification\s+(?:is\s+)?(?:approved|passed|granted)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:buy|sell|hold|close|order|execute|purchase)\s+\d[\d,]*(?:\.\d+)?\s+"
+        r"(?:shares?|units?|lots?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:recommend(?:ed|ation)?|advice|conclusion|decision)\b.{0,24}\b"
+        r"(?:buy|sell|hold|close|order|trade|purchase)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)"),
+    re.compile(r"(?:正式|成功)?概率(?:为|是|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?"),
+    re.compile(r"(?:已获|获得|通过|授予|具备).{0,8}(?:资格|能力资格)"),
+    re.compile(r"(?:买入|卖出|持有|清仓|下单|交易)\s*\d+(?:\.\d+)?\s*(?:股|份|手|元)?"),
+)
+
+
+def validate_research_text_capabilities(*values: str | None) -> None:
+    """Reject explicit probability, qualification, quantity, or trade conclusions."""
+    normalized = " ".join(value.casefold() for value in values if value)
+    if any(pattern.search(normalized) for pattern in _RESEARCH_TEXT_CAPABILITY_PATTERNS):
+        raise ValueError("RESEARCH_TEXT_CAPABILITY_VIOLATION")
 
 
 def _validate_evidence_clocks(
@@ -1163,6 +1207,15 @@ class ResearchStageArtifact(ResearchContract):
             self.bull_case,
             self.bear_case,
         )
+        if _RESEARCH_TEXT_CAPABILITY_VALIDATION.get():
+            validate_research_text_capabilities(
+                self.summary,
+                self.bull_case,
+                self.bear_case,
+                *self.catalysts,
+                *self.falsification_conditions,
+                *self.unknowns,
+            )
         if len(set(self.input_item_ids)) != len(self.input_item_ids):
             raise ValueError("research stage artifact input identities must be unique")
         if self.stage_id == "draft" and (
@@ -1206,7 +1259,11 @@ def decode_legacy_research_stage_artifact(value: object) -> ResearchStageArtifac
         payload.setdefault("catalysts", ())
         payload.setdefault("falsification_conditions", ())
         payload.setdefault("unknowns", ())
-    return ResearchStageArtifact.model_validate(payload)
+    validation_token = _RESEARCH_TEXT_CAPABILITY_VALIDATION.set(False)
+    try:
+        return ResearchStageArtifact.model_validate(payload)
+    finally:
+        _RESEARCH_TEXT_CAPABILITY_VALIDATION.reset(validation_token)
 
 
 def research_stage_artifact_payload(
@@ -1302,6 +1359,18 @@ def _structured_ratio(
     return numerator / denominator
 
 
+def _structured_non_negative(value: Decimal | None, field_name: str) -> Decimal | None:
+    if value is not None and value < 0:
+        raise ValueError(f"structured source fact {field_name} must be non-negative")
+    return value
+
+
+def _structured_unit_interval(value: Decimal | None, field_name: str) -> Decimal | None:
+    if value is not None and not Decimal("0") <= value <= Decimal("1"):
+        raise ValueError(f"structured source fact {field_name} must be between zero and one")
+    return value
+
+
 def _structured_signal_calculators(
     facts: ResearchStructuredFacts,
 ) -> dict[str, Callable[[], Decimal | None]]:
@@ -1334,11 +1403,20 @@ def _structured_signal_calculators(
             facts.stock_return_20d,
             facts.industry_return_20d,
         ),
-        "downside_semivariance_60d": lambda: facts.downside_semivariance_60d,
-        "max_drawdown_60d": lambda: facts.max_drawdown_60d,
+        "downside_semivariance_60d": lambda: _structured_non_negative(
+            facts.downside_semivariance_60d,
+            "downside_semivariance_60d",
+        ),
+        "max_drawdown_60d": lambda: _structured_non_negative(
+            facts.max_drawdown_60d,
+            "max_drawdown_60d",
+        ),
         "turnover_change": lambda: facts.turnover_change,
         "institutional_net_buy_ratio": lambda: facts.institutional_net_buy_ratio,
-        "institutional_listing_frequency": lambda: facts.institutional_listing_frequency,
+        "institutional_listing_frequency": lambda: _structured_unit_interval(
+            facts.institutional_listing_frequency,
+            "institutional_listing_frequency",
+        ),
     }
 
 
@@ -2108,6 +2186,19 @@ class ResearchDraftMember(ResearchContract):
     unknowns: tuple[str, ...] = Field(min_length=1)
     knowledge_cutoff: AwareDatetime
 
+    @model_validator(mode="after")
+    def validate_text_capabilities(self) -> ResearchDraftMember:
+        if _RESEARCH_TEXT_CAPABILITY_VALIDATION.get():
+            validate_research_text_capabilities(
+                self.thesis,
+                self.bull_case,
+                self.bear_case,
+                *self.catalysts,
+                *self.falsification_conditions,
+                *self.unknowns,
+            )
+        return self
+
 
 class LegacyResearchDraftMember(ResearchContract):
     """The only per-stock content the research model may produce."""
@@ -2216,31 +2307,39 @@ def decode_legacy_research_draft(value: object) -> ResearchDraft:
     """Decode the historical draft into the current typed draft at a compatibility boundary."""
     if not isinstance(value, dict):
         raise ValueError("legacy research draft must be an object")
-    legacy_draft = LegacyResearchDraft.model_validate(value)
-    return ResearchDraft(
-        contract_version=legacy_draft.contract_version,
-        members=tuple(
-            ResearchDraftMember(
-                security_id=member.security_id,
-                research_id=member.research_id,
-                evidence_refs=member.evidence_refs,
-                thesis=member.thesis,
-                bull_case=member.bull_case,
-                bear_case=member.bear_case,
-                catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
-                falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
-                unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
-                knowledge_cutoff=member.knowledge_cutoff,
-            )
-            for member in legacy_draft.members
-        ),
-    )
+    validation_token = _RESEARCH_TEXT_CAPABILITY_VALIDATION.set(False)
+    try:
+        legacy_draft = LegacyResearchDraft.model_validate(value)
+        return ResearchDraft(
+            contract_version=legacy_draft.contract_version,
+            members=tuple(
+                ResearchDraftMember(
+                    security_id=member.security_id,
+                    research_id=member.research_id,
+                    evidence_refs=member.evidence_refs,
+                    thesis=member.thesis,
+                    bull_case=member.bull_case,
+                    bear_case=member.bear_case,
+                    catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
+                    falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
+                    unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
+                    knowledge_cutoff=member.knowledge_cutoff,
+                )
+                for member in legacy_draft.members
+            ),
+        )
+    finally:
+        _RESEARCH_TEXT_CAPABILITY_VALIDATION.reset(validation_token)
 
 
 def decode_historical_research_draft(value: object) -> ResearchDraft:
     """Decode either prior current draft shape at an explicit recovery boundary."""
     if _historical_draft_has_debate_fields(value):
-        return ResearchDraft.model_validate(value)
+        validation_token = _RESEARCH_TEXT_CAPABILITY_VALIDATION.set(False)
+        try:
+            return ResearchDraft.model_validate(value)
+        finally:
+            _RESEARCH_TEXT_CAPABILITY_VALIDATION.reset(validation_token)
     return decode_legacy_research_draft(value)
 
 
@@ -2248,25 +2347,29 @@ def decode_historical_research_draft_member(value: object) -> ResearchDraftMembe
     """Decode one prior current member output in either persisted schema shape."""
     if not isinstance(value, dict):
         raise ValueError("historical research draft member must be an object")
-    debate_fields = ("catalysts", "falsification_conditions", "unknowns")
-    present = [field in value for field in debate_fields]
-    if all(present):
-        return ResearchDraftMember.model_validate(value)
-    if any(present):
-        raise ValueError("historical research draft members must use one consistent schema")
-    member = LegacyResearchDraftMember.model_validate(value)
-    return ResearchDraftMember(
-        security_id=member.security_id,
-        research_id=member.research_id,
-        evidence_refs=member.evidence_refs,
-        thesis=member.thesis,
-        bull_case=member.bull_case,
-        bear_case=member.bear_case,
-        catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
-        falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
-        unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
-        knowledge_cutoff=member.knowledge_cutoff,
-    )
+    validation_token = _RESEARCH_TEXT_CAPABILITY_VALIDATION.set(False)
+    try:
+        debate_fields = ("catalysts", "falsification_conditions", "unknowns")
+        present = [field in value for field in debate_fields]
+        if all(present):
+            return ResearchDraftMember.model_validate(value)
+        if any(present):
+            raise ValueError("historical research draft members must use one consistent schema")
+        member = LegacyResearchDraftMember.model_validate(value)
+        return ResearchDraftMember(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence_refs=member.evidence_refs,
+            thesis=member.thesis,
+            bull_case=member.bull_case,
+            bear_case=member.bear_case,
+            catalysts=(LEGACY_RESEARCH_MISSING_TEXT,),
+            falsification_conditions=(LEGACY_RESEARCH_MISSING_TEXT,),
+            unknowns=(LEGACY_RESEARCH_MISSING_TEXT,),
+            knowledge_cutoff=member.knowledge_cutoff,
+        )
+    finally:
+        _RESEARCH_TEXT_CAPABILITY_VALIDATION.reset(validation_token)
 
 
 def _research_draft_has_debate_fields(draft: ResearchDraft) -> bool:
@@ -2977,7 +3080,10 @@ def freeze_raw_score(command: ResearchCommand, member: ResearchMemberInput) -> R
             command.raw_score_model,
             legacy_structured_signals,
         )
-    structured_signals = calculate_structured_signals(member.structured_facts)
+    try:
+        structured_signals = calculate_structured_signals(member.structured_facts)
+    except (ValueError, ArithmeticError) as error:
+        raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE") from error
     if any(value is None for value in structured_signals.values()):
         raise RawScoreCalculationError("RESEARCH_DATA_UNAVAILABLE")
     model = command.raw_score_model

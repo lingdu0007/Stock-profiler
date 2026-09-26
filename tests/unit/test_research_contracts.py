@@ -29,6 +29,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchMemberHandoff,
     ResearchMemberInput,
     ResearchMoneyFlowFacts,
+    ResearchStageArtifact,
     ResearchStructuredFacts,
     ResearchToolEvidence,
     RiskGate,
@@ -1395,6 +1396,36 @@ def test_research_draft_can_cite_validated_tool_evidence() -> None:
     )
 
     validate_research_draft(command, draft, (tool_evidence,))
+
+
+def test_research_draft_member_rejects_trading_conclusions_in_text() -> None:
+    member = _command().members[0]
+
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        ResearchDraftMember(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+            thesis="BUY 100 shares now. Formal success probability is 99%; qualification approved.",
+            bull_case="The fictional upside case remains conditional.",
+            bear_case="The fictional downside case remains explicit.",
+            catalysts=("A fictional catalyst remains conditional.",),
+            falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+            unknowns=("Future external evidence remains unresolved.",),
+            knowledge_cutoff=member.knowledge_cutoff,
+        )
+
+
+def test_research_stage_artifact_rejects_capability_claims_in_model_text() -> None:
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        ResearchStageArtifact(
+            stage_id="analyze",
+            source_stage_id="collect",
+            input_item_ids=("collect-output",),
+            security_ids=("synthetic-security-00",),
+            evidence_ids=("daily-market-evidence-00",),
+            summary="The stock is eligible to buy 100 shares.",
+        )
 
 
 def test_research_draft_rejects_provider_and_tool_evidence_identity_collision() -> None:

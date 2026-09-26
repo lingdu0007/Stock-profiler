@@ -394,7 +394,36 @@ async def execute_research_risk_journey(
             ),
             raw_score_error_code=str(error),
         )
-    risk_run = await execute_risk(research_run, risk_plan)
+    try:
+        risk_run = await execute_risk(research_run, risk_plan)
+    except MappedDurableRunMissingError:
+        risk_run = FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RISK_RUN_MISSING",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=risk_plan.risk_run_id,
+                    status="FAILED",
+                    reason="RISK_RUN_MISSING",
+                ),
+            ),
+        )
+    except ValueError:
+        risk_run = FrameworkRunResult(
+            run_id=risk_plan.risk_run_id,
+            status="FAILED",
+            output=None,
+            error_code="RISK_RUN_RECOVERY_FAILED",
+            transitions=(
+                FrameworkRunTransition(
+                    run_id=risk_plan.risk_run_id,
+                    status="FAILED",
+                    reason="RISK_RUN_RECOVERY_FAILED",
+                ),
+            ),
+        )
     if risk_run.status in {"SUCCEEDED", "REJECTED"} and risk_run.output is not None:
         try:
             risk_veto = RiskVetoDraft.model_validate_json(risk_run.output)
@@ -2365,10 +2394,13 @@ def _framework_transition_stage_result(
         "FAILED": "RUN_FAILED",
         "CANCELLED": "RUN_CANCELLED",
     }.get(transition.status, "RUN_RECOVERABLE")
+    gate_status: Literal["PASSED", "FAILED"] = (
+        "FAILED" if transition.status in {"FAILED", "CANCELLED"} else "PASSED"
+    )
     return StageResult(
         phase=phase,
         status=transition.status,
-        gate_results=(GateResult(gate_id=gate_id, status="PASSED"),),
+        gate_results=(GateResult(gate_id=gate_id, status=gate_status),),
         reasons=(transition.reason,),
     )
 
