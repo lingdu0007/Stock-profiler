@@ -764,9 +764,7 @@ class DecisionLedger:
             event_payload = json.loads(payload)
             if not isinstance(event_payload, dict):
                 raise ValueError("stored decision event must be an object")
-            fact = DecisionEventFact.model_validate(
-                _decode_research_event_payload(event_payload)
-            )
+            fact = DecisionEventFact.model_validate(_decode_research_event_payload(event_payload))
         except (ValidationError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise DecisionEventCommitError("stored decision event is invalid") from error
         mapping = self.get_business_object_mapping(business_object_id, connection)

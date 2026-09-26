@@ -211,9 +211,11 @@ def _research_data_gate_results(
         )
         for member in member_runs
     )
-    if error_code != "RESEARCH_DATA_UNAVAILABLE" and not (error_code or "").startswith(
-        "RESEARCH_REQUIRED_FACTS_INCOMPLETE"
-    ) and not member_run_gate_results:
+    if (
+        error_code != "RESEARCH_DATA_UNAVAILABLE"
+        and not (error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
+        and not member_run_gate_results
+    ):
         return ()
     detailed_manifest_member_ids = {
         member.security_id
@@ -249,9 +251,7 @@ def _research_data_gate_results(
         or (member.error_code or "").startswith("RESEARCH_REQUIRED_FACTS_INCOMPLETE")
     }
     unknown_data_member_ids = (
-        data_failure_member_ids
-        - detailed_manifest_member_ids
-        - invalid_structured_member_ids
+        data_failure_member_ids - detailed_manifest_member_ids - invalid_structured_member_ids
     )
     unattributed_data_failure = (
         (
@@ -368,9 +368,7 @@ async def execute_research_risk_journey(
             research_validation_error_code="RESEARCH_OUTPUT_INVALID",
         )
     tool_evidence = research_run.research_tool_evidence
-    research_run_ids = tuple(
-        member_run.run_id for member_run in research_run.research_member_runs
-    )
+    research_run_ids = tuple(member_run.run_id for member_run in research_run.research_member_runs)
     try:
         validate_research_draft(command, draft, tool_evidence)
     except ValueError:
@@ -515,8 +513,7 @@ def _research_framework_output_json(
         )
     if legacy or historical:
         payload["raw_scores"] = tuple(
-            research_raw_score_payload(score, legacy=legacy)
-            for score in output.raw_scores or ()
+            research_raw_score_payload(score, legacy=legacy) for score in output.raw_scores or ()
         )
     if legacy:
         payload["tool_evidence"] = tuple(
@@ -900,8 +897,7 @@ def _run_frozen_decision_case(
                                 record_raw_score_checkpoint=record_raw_score_checkpoint,
                                 legacy=research_contract_mode_for_case(execution_case) == "legacy",
                                 historical=(
-                                    research_contract_mode_for_case(execution_case)
-                                    == "historical"
+                                    research_contract_mode_for_case(execution_case) == "historical"
                                 ),
                             )
                         )
@@ -1021,8 +1017,7 @@ async def _record_research_member_run_reservation(
         if any(
             stage_result.phase == "AUXILIARY_RUN_RESERVATION"
             and any(
-                gate.gate_id == "RESEARCH_MEMBER_RUN_RESERVED"
-                for gate in stage_result.gate_results
+                gate.gate_id == "RESEARCH_MEMBER_RUN_RESERVED" for gate in stage_result.gate_results
             )
             for stage_result in history
         ):
@@ -1035,9 +1030,7 @@ async def _record_research_member_run_reservation(
             stage_result=StageResult(
                 phase="AUXILIARY_RUN_RESERVATION",
                 status="PENDING",
-                gate_results=(
-                    GateResult(gate_id="RESEARCH_MEMBER_RUN_RESERVED", status="PASSED"),
-                ),
+                gate_results=(GateResult(gate_id="RESEARCH_MEMBER_RUN_RESERVED", status="PASSED"),),
                 reasons=("RESEARCH_MEMBER_RUN_ID_RESERVED",),
             ),
             framework_run_id=framework_run_id,

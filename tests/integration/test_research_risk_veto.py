@@ -823,9 +823,7 @@ def test_each_fixed_ten_member_has_its_own_durable_research_run(
     assert execution.report is not None
     research = execution.report.result.research
     assert research is not None
-    member_run_ids = tuple(
-        handoff.research_run_id for handoff in research.handoff.member_handoffs
-    )
+    member_run_ids = tuple(handoff.research_run_id for handoff in research.handoff.member_handoffs)
     assert len(member_run_ids) == 10
     assert len(set(member_run_ids)) == 10
     assert member_run_ids[0] == case.framework_run_id
@@ -905,9 +903,14 @@ def test_failed_member_does_not_relabel_a_successful_member_run(
     assert failed_member_run.status.value == "FAILED"
     assert result.status == "FAILED"
     assert result.run_id == failed_member_run_id
-    assert next(
-        member for member in result.research_member_runs if member.run_id == failed_member_run_id
-    ).status == "FAILED"
+    assert (
+        next(
+            member
+            for member in result.research_member_runs
+            if member.run_id == failed_member_run_id
+        ).status
+        == "FAILED"
+    )
 
 
 def test_partial_member_research_recovery_creates_missing_member_runs(
@@ -1029,9 +1032,9 @@ def test_historical_partial_member_recovery_creates_missing_member_runs(
     for member in payload["expected_external_result"]["research"]["members"]:
         for field_name in ("catalysts", "falsification_conditions", "unknowns"):
             member.pop(field_name, None)
-    payload["expected_external_result"]["research"]["handoff"][
-        "research_definition_version"
-    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"]["research_definition_version"] = (
+        RESEARCH_PRIOR_DEFINITION_VERSION
+    )
     payload["expected_external_result"]["research"]["handoff"][
         "research_output_contract_version"
     ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
@@ -1257,9 +1260,7 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
         for output_item in stage_result.output_items
     ]
     assert legacy_context_payloads
-    assert all(
-        "stage_artifact" not in payload for payload in legacy_context_payloads
-    )
+    assert all("stage_artifact" not in payload for payload in legacy_context_payloads)
 
     recovered = asyncio.run(frozen_decision_case.execute_research_run(legacy_case, runtime))
 
@@ -1315,10 +1316,7 @@ def test_historical_aggregate_research_run_is_recovered_with_legacy_contracts(
     legacy_command = legacy_case.research
     assert legacy_command is not None
     legacy_outcome = freeze_research(legacy_command, legacy_envelope, legacy=True)
-    assert (
-        legacy_outcome.handoff.research_definition_version
-        == RESEARCH_LEGACY_DEFINITION_VERSION
-    )
+    assert legacy_outcome.handoff.research_definition_version == RESEARCH_LEGACY_DEFINITION_VERSION
     assert (
         legacy_outcome.handoff.research_output_contract_version
         == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
@@ -1388,9 +1386,9 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
     for member in payload["expected_external_result"]["research"]["members"]:
         for field_name in ("catalysts", "falsification_conditions", "unknowns"):
             member.pop(field_name, None)
-    payload["expected_external_result"]["research"]["handoff"][
-        "research_definition_version"
-    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"]["research_definition_version"] = (
+        RESEARCH_PRIOR_DEFINITION_VERSION
+    )
     payload["expected_external_result"]["research"]["handoff"][
         "research_output_contract_version"
     ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
@@ -1458,9 +1456,7 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
     )
     historical_stage_artifacts = [
         json.loads(output_item.item.content)["stage_artifact"]
-        for checkpoint in asyncio.run(
-            runtime.run_store.get_checkpoints(stored_member_run.run_id)
-        )
+        for checkpoint in asyncio.run(runtime.run_store.get_checkpoints(stored_member_run.run_id))
         if checkpoint.step_type is StepType.CONTEXT
         if (stage_result := parse_stage_result(checkpoint.output)) is not None
         for output_item in stage_result.output_items
@@ -1518,9 +1514,10 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
         for field_name in ("catalysts", "falsification_conditions", "unknowns")
     )
     assert historical_risk_input["member_handoffs"][0]["research_run_id"] is not None
-    assert historical_risk_input["member_handoffs"][0]["evidence"][0][
-        "evidence_contract_version"
-    ] == "2.0.0"
+    assert (
+        historical_risk_input["member_handoffs"][0]["evidence"][0]["evidence_contract_version"]
+        == "2.0.0"
+    )
     assert "effective_at" in historical_risk_input["member_handoffs"][0]["evidence"][0]
     historical_outcome = freeze_research(
         command,
@@ -1528,8 +1525,7 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
         historical=True,
     )
     assert (
-        historical_outcome.handoff.research_definition_version
-        == RESEARCH_PRIOR_DEFINITION_VERSION
+        historical_outcome.handoff.research_definition_version == RESEARCH_PRIOR_DEFINITION_VERSION
     )
     assert (
         historical_outcome.handoff.research_output_contract_version
@@ -1580,9 +1576,9 @@ def test_historical_current_definition_accepts_the_later_prior_member_schema(
     )
     payload["version_bundle"]["agent_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["version_bundle"]["output_contract_version"] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
-    payload["expected_external_result"]["research"]["handoff"][
-        "research_definition_version"
-    ] = RESEARCH_PRIOR_DEFINITION_VERSION
+    payload["expected_external_result"]["research"]["handoff"]["research_definition_version"] = (
+        RESEARCH_PRIOR_DEFINITION_VERSION
+    )
     payload["expected_external_result"]["research"]["handoff"][
         "research_output_contract_version"
     ] = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
@@ -1596,10 +1592,7 @@ def test_historical_current_definition_accepts_the_later_prior_member_schema(
         historical=True,
     )
 
-    assert (
-        definition.output_contract.schema_definition
-        == ResearchDraftMember.model_json_schema()
-    )
+    assert definition.output_contract.schema_definition == ResearchDraftMember.model_json_schema()
     assert (
         frozen_decision_case.frozen_capability_inventory(historical_case).definition_version
         == RESEARCH_PRIOR_DEFINITION_VERSION
@@ -3280,15 +3273,15 @@ def test_research_commit_failure_restores_auxiliary_risk_stage_history(
                 evidence_id=evidence_id,
                 source="synthetic-announcement-feed",
                 reference=f"synthetic://announcement/{evidence_id.removeprefix('announcement:')}",
-                    statement=(
-                        f"Synthetic announcement evidence {evidence_id} is read-only "
-                        "and contains no trade instruction."
-                    ),
-                    effective_at=command.knowledge_cutoff,
-                    source_published_at=command.knowledge_cutoff,
-                    acquired_at=command.knowledge_cutoff,
-                    validated_at=command.knowledge_cutoff,
-                    knowledge_cutoff=command.knowledge_cutoff,
+                statement=(
+                    f"Synthetic announcement evidence {evidence_id} is read-only "
+                    "and contains no trade instruction."
+                ),
+                effective_at=command.knowledge_cutoff,
+                source_published_at=command.knowledge_cutoff,
+                acquired_at=command.knowledge_cutoff,
+                validated_at=command.knowledge_cutoff,
+                knowledge_cutoff=command.knowledge_cutoff,
                 semantic_version=RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
                 validation_status="VALIDATED",
             )

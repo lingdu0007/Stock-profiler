@@ -409,19 +409,13 @@ class _FrozenResearchContextProvider(ContextProvider):  # type: ignore[misc]
                 else None
             ),
             catalysts=(
-                ("A fictional catalyst remains conditional.",)
-                if stage_id == "draft"
-                else ()
+                ("A fictional catalyst remains conditional.",) if stage_id == "draft" else ()
             ),
             falsification_conditions=(
-                ("A frozen downside fact would falsify the thesis.",)
-                if stage_id == "draft"
-                else ()
+                ("A frozen downside fact would falsify the thesis.",) if stage_id == "draft" else ()
             ),
             unknowns=(
-                ("Future external evidence remains unresolved.",)
-                if stage_id == "draft"
-                else ()
+                ("Future external evidence remains unresolved.",) if stage_id == "draft" else ()
             ),
         )
         content = json.dumps(
@@ -691,18 +685,14 @@ class _StagedResearchModelAdapter(DeterministicModelAdapter):  # type: ignore[mi
                 or not input_identities_valid
                 or set(candidate.security_ids)
                 != {
-                    self._member.security_id
-                    if self._member is not None
-                    else member.security_id
+                    self._member.security_id if self._member is not None else member.security_id
                     for member in self._command.members
                 }
                 or set(candidate.evidence_ids)
                 != {
                     evidence.evidence_id
                     for member in (
-                        (self._member,)
-                        if self._member is not None
-                        else self._command.members
+                        (self._member,) if self._member is not None else self._command.members
                     )
                     for evidence in member.evidence
                 }
@@ -976,8 +966,8 @@ def _research_definition(
     """Register one staged research Definition with a narrow capability surface."""
     command = case.research
     assert command is not None
-    historical_with_debate_fields = (
-        historical and _historical_research_draft_has_debate_fields(case)
+    historical_with_debate_fields = historical and _historical_research_draft_has_debate_fields(
+        case
     )
     adapter = _StagedResearchModelAdapter(
         _research_model_response(
@@ -995,9 +985,7 @@ def _research_definition(
     expected_members = (member,) if member is not None else command.members
     return AgentDefinition.for_adapter(
         definition_id=RESEARCH_DEFINITION_ID,
-        version=(
-            RESEARCH_PRIOR_DEFINITION_VERSION if historical else RESEARCH_DEFINITION_VERSION
-        ),
+        version=(RESEARCH_PRIOR_DEFINITION_VERSION if historical else RESEARCH_DEFINITION_VERSION),
         instructions=RESEARCH_DEFINITION_INSTRUCTIONS,
         model_adapter=adapter,
         context_provider=_FrozenResearchContextProvider(
@@ -1130,9 +1118,7 @@ def _risk_definition(
                         RiskGate(
                             gate_id="SYNTHETIC_RISK_VETO",
                             status=(
-                                "FAILED"
-                                if member.security_id in rejected_member_ids
-                                else "PASSED"
+                                "FAILED" if member.security_id in rejected_member_ids else "PASSED"
                             ),
                         ),
                     ),
@@ -1290,9 +1276,7 @@ async def validate_frozen_recovery_case(case: FrozenDecisionCase, runtime: Runti
             run_id = _research_member_run_id(case, index, member)
             run = await runtime.run_store.get_run(run_id)
             if run is None:
-                raise MappedDurableRunMissingError(
-                    "mapped research member Run is missing"
-                )
+                raise MappedDurableRunMissingError("mapped research member Run is missing")
             member_context_items = tuple(
                 item
                 for item in context_items
@@ -1671,19 +1655,13 @@ async def execute_research_run(
         all_runs_existed = all_runs_existed and existing_run is not None
         member_input = _research_member_input_payload(case, member)
         allow_create = (
-            (
-                not historical
-                and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
-                and (
-                    case.recovery_framework_run_id is None
-                    or index > 0
-                )
-            )
-            or (
-                historical
-                and case.recovery_framework_run_id is not None
-                and record_member_run_reservation is not None
-            )
+            not historical
+            and case.version_bundle.runtime_release == CURRENT_M_AGENT_RELEASE
+            and (case.recovery_framework_run_id is None or index > 0)
+        ) or (
+            historical
+            and case.recovery_framework_run_id is not None
+            and record_member_run_reservation is not None
         )
         if existing_run is None and allow_create and record_member_run_reservation is not None:
             allow_create = await record_member_run_reservation(run_id)
@@ -2252,8 +2230,7 @@ def _is_legacy_research_case(case: FrozenDecisionCase) -> bool:
     return (
         case.research is not None
         and case.version_bundle.agent_definition_version == RESEARCH_LEGACY_DEFINITION_VERSION
-        and case.version_bundle.output_contract_version
-        == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
+        and case.version_bundle.output_contract_version == RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
     )
 
 
@@ -2376,21 +2353,15 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
         if historical:
             expected_definition_version = RESEARCH_PRIOR_DEFINITION_VERSION
         expected_output_contract_version = (
-            RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION
-            if legacy
-            else RESEARCH_OUTPUT_CONTRACT_VERSION
+            RESEARCH_LEGACY_OUTPUT_CONTRACT_VERSION if legacy else RESEARCH_OUTPUT_CONTRACT_VERSION
         )
         if historical:
             expected_output_contract_version = RESEARCH_PRIOR_OUTPUT_CONTRACT_VERSION
         expected_routing_policy_version = (
-            RESEARCH_LEGACY_ROUTING_POLICY_VERSION
-            if legacy
-            else RESEARCH_ROUTING_POLICY_VERSION
+            RESEARCH_LEGACY_ROUTING_POLICY_VERSION if legacy else RESEARCH_ROUTING_POLICY_VERSION
         )
         expected_instructions = (
-            LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS
-            if legacy
-            else RESEARCH_DEFINITION_INSTRUCTIONS
+            LEGACY_RESEARCH_DEFINITION_INSTRUCTIONS if legacy else RESEARCH_DEFINITION_INSTRUCTIONS
         )
         expected_output_schema = (
             legacy_research_draft_json_schema()
@@ -2422,8 +2393,7 @@ def _assert_runtime_version_bundle(case: FrozenDecisionCase) -> None:
             or case.agent_definition.instructions != expected_instructions
             or case.agent_definition.output_contract.contract_id != RESEARCH_OUTPUT_CONTRACT_ID
             or case.agent_definition.output_contract.version != expected_output_contract_version
-            or case.agent_definition.output_contract.json_schema
-            != expected_output_schema
+            or case.agent_definition.output_contract.json_schema != expected_output_schema
         ):
             raise ValueError("research version bundle is not supported by this runtime")
         if version(

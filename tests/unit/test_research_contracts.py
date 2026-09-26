@@ -419,9 +419,7 @@ def test_historical_research_command_recovers_missing_audit_provenance() -> None
     assert len(decoded.raw_score_model.code_sha256) == 64
     assert len(decoded.raw_score_model.model_artifact_sha256) == 64
     assert len(decoded.raw_score_model.environment_sha256) == 64
-    assert decoded.raw_score_model.randomness_control == (
-        "deterministic-synthetic-seed-1616"
-    )
+    assert decoded.raw_score_model.randomness_control == ("deterministic-synthetic-seed-1616")
 
 
 def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> None:
@@ -434,9 +432,7 @@ def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> 
     decoded = decode_historical_research_command(payload)
 
     assert all(member._historical_decoded for member in decoded.members)
-    assert all(
-        not member.structured_facts.money_flow.is_complete for member in decoded.members
-    )
+    assert all(not member.structured_facts.money_flow.is_complete for member in decoded.members)
 
 
 def test_historical_handoff_fingerprint_preserves_the_original_command_payload() -> None:
@@ -603,9 +599,7 @@ def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
     assert len(decoded.raw_score_model.code_sha256) == 64
     assert len(decoded.raw_score_model.model_artifact_sha256) == 64
     assert len(decoded.raw_score_model.environment_sha256) == 64
-    assert decoded.raw_score_model.randomness_control == (
-        "deterministic-synthetic-seed-1616"
-    )
+    assert decoded.raw_score_model.randomness_control == ("deterministic-synthetic-seed-1616")
 
 
 def test_legacy_research_command_preserves_existing_training_provenance() -> None:
@@ -698,8 +692,7 @@ def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
         "tool_evidence_refs": (),
         "tool_evidence": (),
         "member_handoffs": tuple(
-            research_member_handoff_payload(member, legacy=True)
-            for member in member_handoffs
+            research_member_handoff_payload(member, legacy=True) for member in member_handoffs
         ),
     }
     expected_risk_run_id = (

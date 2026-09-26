@@ -834,9 +834,7 @@ class FrozenDecisionCase(FrozenContract):
         if isinstance(research_payload, dict):
             payload["research"] = _decode_research_command_for_mode(research_payload, mode)
         expected_result = payload.get("expected_external_result")
-        if (
-            isinstance(expected_result, dict)
-        ):
+        if isinstance(expected_result, dict):
             expected_research = expected_result.get("research")
             if isinstance(expected_research, dict):
                 normalized_expected_result = dict(expected_result)
@@ -875,10 +873,13 @@ class FrozenDecisionCase(FrozenContract):
             research_mode = research_contract_mode_for_case(self) or "current"
             if not research_input_matches and isinstance(research_input, dict):
                 try:
-                    research_input_matches = _decode_research_command_for_mode(
-                        research_input,
-                        research_mode,
-                    ) == self.research
+                    research_input_matches = (
+                        _decode_research_command_for_mode(
+                            research_input,
+                            research_mode,
+                        )
+                        == self.research
+                    )
                 except ValueError:
                     research_input_matches = False
             if (
@@ -1120,8 +1121,7 @@ class FrozenDecisionCase(FrozenContract):
             self.agent_definition.definition_id
             != (RESEARCH_DEFINITION_ID if research_governed else FROZEN_AGENT_DEFINITION_ID)
             or self.agent_definition.version not in allowed_definition_versions
-            or self.agent_definition.output_contract.version
-            not in allowed_output_contract_versions
+            or self.agent_definition.output_contract.version not in allowed_output_contract_versions
         ):
             raise ValueError("frozen AgentDefinition does not match the supported contract")
         return self
@@ -1494,9 +1494,7 @@ def host_validation_result(case: FrozenDecisionCase, result: ExternalResult) -> 
             has_complete_synthetic_input(case.input)
             or has_complete_research_synthetic_input(
                 case.input,
-                legacy=(
-                    research_contract_mode_for_case(case) == "legacy"
-                ),
+                legacy=(research_contract_mode_for_case(case) == "legacy"),
                 historical=research_contract_mode_for_case(case) == "historical",
             )
         )

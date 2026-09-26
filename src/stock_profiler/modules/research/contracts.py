@@ -92,9 +92,7 @@ RAW_SCORE_L1_RATIO = Decimal("0.25")
 RAW_SCORE_L2_RATIO = Decimal("0.75")
 RAW_SCORE_FIT_DIAGNOSTICS_STATUS: Literal["SYNTHETIC_NOT_FIT"] = "SYNTHETIC_NOT_FIT"
 RAW_SCORE_CODE_SHA256 = sha256(b"synthetic-raw-score-code-v1").hexdigest()
-RAW_SCORE_ENVIRONMENT_SHA256 = sha256(
-    b"synthetic-python-runtime-raw-score-v1"
-).hexdigest()
+RAW_SCORE_ENVIRONMENT_SHA256 = sha256(b"synthetic-python-runtime-raw-score-v1").hexdigest()
 RAW_SCORE_RANDOMNESS_CONTROL = "deterministic-synthetic-seed-1616"
 _RAW_SCORE_DECIMAL_CONTEXT = Context(prec=38)
 _RAW_SCORE_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -225,8 +223,7 @@ def is_legacy_research_version_pair(
 ) -> bool:
     """Return whether a persisted research pair uses the pre-member-Run contract."""
     return (
-        research_contract_mode_for_versions(definition_version, output_contract_version)
-        == "legacy"
+        research_contract_mode_for_versions(definition_version, output_contract_version) == "legacy"
     )
 
 
@@ -316,9 +313,7 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
     re.compile(r"(?:已获|获得|通过|授予|具备).{0,8}(?:资格|能力资格)"),
     re.compile(r"(?:买入|卖出|持有|清仓|下单|交易)\s*\d+(?:\.\d+)?\s*(?:股|份|手|元)?"),
     re.compile(r"(?:建议|推荐|应当|应该|宜|适合|不建议|不要)\s*(?:买入|卖出|持有|清仓|下单|交易)"),
-    re.compile(
-        r"(?:操作|交易|投资)?结论\s*(?:是|为|:|：)\s*(?:买入|卖出|持有|清仓|下单|交易)"
-    ),
+    re.compile(r"(?:操作|交易|投资)?结论\s*(?:是|为|:|：)\s*(?:买入|卖出|持有|清仓|下单|交易)"),
     re.compile(
         r"\b(?:my|your|our|personal)\s+(?:position|holding|quantity|allocation|shares?|units?|lots?)\b"
         r".{0,24}\b\d[\d,]*(?:\.\d+)?\s*(?:shares?|units?|lots?)?\b",
@@ -633,9 +628,7 @@ class RawScoreModelSnapshot(ResearchContract):
                 if cohort is None:
                     raise ValueError("raw-score training record must bind to a frozen cohort")
                 if record.month != cohort.month:
-                    raise ValueError(
-                        "raw-score training record month must match its frozen cohort"
-                    )
+                    raise ValueError("raw-score training record month must match its frozen cohort")
                 if record.security_id not in cohort.completed_research_ids:
                     raise ValueError(
                         "raw-score training record must bind to a frozen cohort member"
@@ -1015,9 +1008,13 @@ class ResearchEvidence(ResearchContract):
         ):
             raise ValueError("legacy research evidence requires a historical case boundary")
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
-            if self.acquired_at is not None and self.validated_at is not None and (
-                self.acquired_at > self.validated_at
-                or self.validated_at > self.knowledge_cutoff
+            if (
+                self.acquired_at is not None
+                and self.validated_at is not None
+                and (
+                    self.acquired_at > self.validated_at
+                    or self.validated_at > self.knowledge_cutoff
+                )
             ):
                 raise ValueError("research evidence must be available by the knowledge cutoff")
             return self
@@ -1063,9 +1060,13 @@ class ResearchToolEvidence(ResearchContract):
         ):
             raise ValueError("legacy research Tool evidence requires a historical case boundary")
         if self.evidence_contract_version == RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION:
-            if self.acquired_at is not None and self.validated_at is not None and (
-                self.acquired_at > self.validated_at
-                or self.validated_at > self.knowledge_cutoff
+            if (
+                self.acquired_at is not None
+                and self.validated_at is not None
+                and (
+                    self.acquired_at > self.validated_at
+                    or self.validated_at > self.knowledge_cutoff
+                )
             ):
                 raise ValueError("research Tool evidence must be available by the knowledge cutoff")
             return self
@@ -1265,9 +1266,7 @@ class ResearchStageArtifact(ResearchContract):
         if len(set(self.input_item_ids)) != len(self.input_item_ids):
             raise ValueError("research stage artifact input identities must be unique")
         if self.stage_id == "draft" and (
-            not self.catalysts
-            or not self.falsification_conditions
-            or not self.unknowns
+            not self.catalysts or not self.falsification_conditions or not self.unknowns
         ):
             raise ValueError(
                 "research draft artifacts require catalysts, falsification, and unknowns"
@@ -1561,7 +1560,8 @@ class ResearchMemberInput(ResearchContract):
                 "verified-empty institutional activity requires zero institutional signals"
             )
         if any(
-            evidence.evidence_contract_version not in {
+            evidence.evidence_contract_version
+            not in {
                 RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION,
                 RESEARCH_EVIDENCE_CONTRACT_VERSION,
             }
@@ -1676,8 +1676,7 @@ class ResearchCommand(ResearchContract):
                 self.raw_score_model.training_months != expected_training_months
                 or self.raw_score_model.training_window_kind != expected_window_kind
                 or self.raw_score_model.training_window_month_count != len(expected_training_months)
-                or self.raw_score_model.training_window_start_month
-                != expected_training_months[0]
+                or self.raw_score_model.training_window_start_month != expected_training_months[0]
             ):
                 raise ValueError("raw-score mature training window does not match the cutoff")
             if self.raw_score_model.training_window_end_month != expected_training_months[-1]:
@@ -1704,18 +1703,13 @@ class ResearchCommand(ResearchContract):
         }
         version_override = _RESEARCH_DEFINITION_VERSION_OVERRIDE.get()
         if evidence_contract_versions == {RESEARCH_EVIDENCE_CONTRACT_VERSION}:
-            expected_definition_version = (
-                version_override
-                or (
-                    RESEARCH_PRIOR_DEFINITION_VERSION
-                    if self._historical_decoded
-                    else RESEARCH_DEFINITION_VERSION
-                )
+            expected_definition_version = version_override or (
+                RESEARCH_PRIOR_DEFINITION_VERSION
+                if self._historical_decoded
+                else RESEARCH_DEFINITION_VERSION
             )
         elif evidence_contract_versions == {RESEARCH_LEGACY_EVIDENCE_CONTRACT_VERSION}:
-            expected_definition_version = (
-                version_override or RESEARCH_LEGACY_DEFINITION_VERSION
-            )
+            expected_definition_version = version_override or RESEARCH_LEGACY_DEFINITION_VERSION
         else:
             raise ValueError("research evidence contracts must use one Definition version")
         if any(
@@ -1777,9 +1771,7 @@ def _legacy_structured_facts_payload(value: object) -> dict[str, object]:
         "leverage_ratio_current": value["leverage_ratio_change"],
         "leverage_ratio_prior": 0 if value["leverage_ratio_change"] is not None else None,
         "stock_return_20d": value["industry_relative_return_20d"],
-        "industry_return_20d": 0
-        if value["industry_relative_return_20d"] is not None
-        else None,
+        "industry_return_20d": 0 if value["industry_relative_return_20d"] is not None else None,
         "downside_semivariance_60d": value["downside_semivariance_60d"],
         "max_drawdown_60d": value["max_drawdown_60d"],
         "turnover_change": value["turnover_change"],
@@ -1939,9 +1931,9 @@ def _legacy_raw_score_model_payload(
                 selection_cutoff = datetime.fromisoformat(
                     selection_cutoff_at.replace("Z", "+00:00")
                 )
-                normalized_record["evaluation_entry_at"] = (
-                    _raw_score_evaluation_entry_at(selection_cutoff).isoformat()
-                )
+                normalized_record["evaluation_entry_at"] = _raw_score_evaluation_entry_at(
+                    selection_cutoff
+                ).isoformat()
             normalized_records.append(normalized_record)
         payload["training_records"] = normalized_records
     else:
@@ -2030,9 +2022,7 @@ def decode_legacy_research_command(value: object) -> ResearchCommand:
         )
     evidence_token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
     command_token = _LEGACY_RESEARCH_COMMAND_DECODING.set(True)
-    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
-        RESEARCH_LEGACY_DEFINITION_VERSION
-    )
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(RESEARCH_LEGACY_DEFINITION_VERSION)
     try:
         payload["raw_score_model"] = _legacy_raw_score_model_payload(
             payload.get("raw_score_model"),
@@ -2092,9 +2082,7 @@ def decode_historical_research_command(value: object) -> ResearchCommand:
                 "outflow_amount": None,
             },
         )
-    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
-        RESEARCH_PRIOR_DEFINITION_VERSION
-    )
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(RESEARCH_PRIOR_DEFINITION_VERSION)
     try:
         command = ResearchCommand.model_validate(payload)
         object.__setattr__(command, "_historical_decoded", True)
@@ -2143,8 +2131,7 @@ def decode_legacy_research_member_input(value: object) -> ResearchMemberInput:
     if not isinstance(evidence_items, (list, tuple)):
         raise ValueError("legacy research member evidence must be a list")
     payload["evidence"] = [
-        _normalize_legacy_evidence_payload(evidence)
-        for evidence in evidence_items
+        _normalize_legacy_evidence_payload(evidence) for evidence in evidence_items
     ]
     token = _LEGACY_RESEARCH_EVIDENCE_DECODING.set(True)
     command_token = _LEGACY_RESEARCH_COMMAND_DECODING.set(True)
@@ -2188,9 +2175,7 @@ def decode_historical_research_member_input(value: object) -> ResearchMemberInpu
             "outflow_amount": None,
         },
     )
-    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(
-        RESEARCH_PRIOR_DEFINITION_VERSION
-    )
+    version_token = _RESEARCH_DEFINITION_VERSION_OVERRIDE.set(RESEARCH_PRIOR_DEFINITION_VERSION)
     try:
         member = ResearchMemberInput.model_validate(payload)
         object.__setattr__(member, "_historical_decoded", True)
@@ -2739,9 +2724,11 @@ class ResearchHandoff(ResearchContract):
                 raise ValueError("research member Run identities must be unique")
             if self.research_run_ids[0] != self.research_run_id:
                 raise ValueError("research handoff primary Run must be the first member Run")
-            if self.member_handoffs and tuple(
-                member.research_run_id for member in self.member_handoffs
-            ) != self.research_run_ids:
+            if (
+                self.member_handoffs
+                and tuple(member.research_run_id for member in self.member_handoffs)
+                != self.research_run_ids
+            ):
                 raise ValueError("research member handoffs must bind the member Run identities")
         return self
 
@@ -2826,9 +2813,7 @@ def decode_legacy_research_outcome(value: object) -> ResearchOutcome:
         ]
     handoff = payload.get("handoff")
     handoff_raw_score_payloads = (
-        deepcopy(handoff.get("raw_scores"))
-        if isinstance(handoff, dict)
-        else None
+        deepcopy(handoff.get("raw_scores")) if isinstance(handoff, dict) else None
     )
     if isinstance(handoff, dict):
         normalized_handoff = dict(handoff)
@@ -2995,8 +2980,7 @@ def research_outcome_payload(
     if legacy:
         if outcome.raw_scores is not None:
             payload["raw_scores"] = [
-                research_raw_score_payload(score, legacy=True)
-                for score in outcome.raw_scores
+                research_raw_score_payload(score, legacy=True) for score in outcome.raw_scores
             ]
         payload["tool_evidence"] = [
             _legacy_evidence_payload(evidence) for evidence in payload.get("tool_evidence", ())
@@ -3032,9 +3016,7 @@ def research_outcome_raw_score_payloads(
     payload = research_outcome_payload(outcome)
     handoff = payload.get("handoff")
     raw_scores = (
-        handoff.get("raw_scores")
-        if isinstance(handoff, dict)
-        else payload.get("raw_scores")
+        handoff.get("raw_scores") if isinstance(handoff, dict) else payload.get("raw_scores")
     )
     if not isinstance(raw_scores, (list, tuple)) or not all(
         isinstance(score, dict) for score in raw_scores

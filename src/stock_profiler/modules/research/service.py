@@ -117,12 +117,10 @@ def prepare_research_risk_plan(
         ),
         "tool_evidence_refs": tool_evidence_refs,
         "tool_evidence": tuple(
-            research_evidence_payload(evidence, legacy=legacy)
-            for evidence in tool_evidence
+            research_evidence_payload(evidence, legacy=legacy) for evidence in tool_evidence
         ),
         "member_handoffs": tuple(
-            research_member_handoff_payload(member, legacy=legacy)
-            for member in member_handoffs
+            research_member_handoff_payload(member, legacy=legacy) for member in member_handoffs
         ),
     }
     if not legacy:
@@ -245,9 +243,7 @@ def freeze_research(
         research_model_adapter_id=RESEARCH_MODEL_ADAPTER_ID,
         risk_model_adapter_id=RISK_MODEL_ADAPTER_ID,
         research_routing_policy_version=(
-            RESEARCH_LEGACY_ROUTING_POLICY_VERSION
-            if legacy
-            else RESEARCH_ROUTING_POLICY_VERSION
+            RESEARCH_LEGACY_ROUTING_POLICY_VERSION if legacy else RESEARCH_ROUTING_POLICY_VERSION
         ),
         research_output_contract_id=RESEARCH_OUTPUT_CONTRACT_ID,
         research_output_contract_version=(
@@ -396,9 +392,7 @@ def _member_handoffs_for_command(
             research_id=member.research_id,
             evidence=member.evidence,
             risk_flags=member.risk_flags,
-            research_run_id=(
-                research_run_ids[index] if research_run_ids else None
-            ),
+            research_run_id=(research_run_ids[index] if research_run_ids else None),
         )
         for index, member in enumerate(command.members)
     )
