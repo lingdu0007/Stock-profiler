@@ -7927,6 +7927,22 @@
             "title": "Phase",
             "type": "string"
           },
+          "raw_score_payloads": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable raw-score payloads saved with a successful RAW_SCORE stage.",
+            "title": "Raw Score Payloads"
+          },
           "reasons": {
             "items": {
               "type": "string"

@@ -2768,9 +2768,11 @@ def test_risk_waiting_preserves_raw_score_without_a_risk_failure(
         and stage.status == "SUCCEEDED"
         and stage.raw_score_payloads is not None
     )
-    assert len(raw_score_stage.raw_score_payloads) == len(command.members)
-    assert raw_score_stage.raw_score_payloads[0]["security_id"] == command.members[0].security_id
-    assert raw_score_stage.raw_score_payloads[0]["z20"]
+    raw_score_payloads = raw_score_stage.raw_score_payloads
+    assert raw_score_payloads is not None
+    assert len(raw_score_payloads) == len(command.members)
+    assert raw_score_payloads[0]["security_id"] == command.members[0].security_id
+    assert raw_score_payloads[0]["z20"]
     assert not any(stage.phase == "RISK_VETO" for stage in execution.stage_results)
     assert not any(stage.phase == "HOST_VALIDATION" for stage in execution.stage_results)
 
@@ -2827,7 +2829,9 @@ def test_failed_risk_recovery_saves_a_failed_framework_gate(
         and stage.status == "SUCCEEDED"
         and stage.raw_score_payloads is not None
     )
-    assert len(raw_score_stage.raw_score_payloads) == len(command.members)
+    raw_score_payloads = raw_score_stage.raw_score_payloads
+    assert raw_score_payloads is not None
+    assert len(raw_score_payloads) == len(command.members)
 
 
 def test_pending_risk_reservation_can_be_reused_after_creation_gap(
