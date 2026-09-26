@@ -2096,6 +2096,41 @@ def test_failed_provider_member_does_not_claim_complete_data_gates_passed() -> N
     assert data_gates["RESEARCH_DATA:synthetic-security-01:DAILY_MARKET"] == "PASSED"
 
 
+def test_waiting_member_run_gate_remains_unknown_when_another_member_fails() -> None:
+    command = research_command(risk_scenario="ACCEPT")
+
+    gate_results = decision_case_service._research_data_gate_results(
+        command,
+        "RESEARCH_OUTPUT_INVALID",
+        (
+            ResearchMemberRunResult(
+                security_id=command.members[0].security_id,
+                research_id=command.members[0].research_id,
+                run_id="failed-member-run",
+                status="FAILED",
+                error_code="RESEARCH_OUTPUT_INVALID",
+            ),
+            ResearchMemberRunResult(
+                security_id=command.members[1].security_id,
+                research_id=command.members[1].research_id,
+                run_id="waiting-member-run",
+                status="WAITING",
+                error_code="RESEARCH_MEMBER_RUN_WAITING",
+            ),
+        ),
+    )
+
+    run_gates = {
+        gate.gate_id: gate.status
+        for gate in gate_results
+        if gate.gate_id.startswith("RESEARCH_RUN:")
+    }
+    assert run_gates == {
+        "RESEARCH_RUN:synthetic-security-00": "FAILED",
+        "RESEARCH_RUN:synthetic-security-01": "UNKNOWN",
+    }
+
+
 def test_duplicate_member_research_output_is_recorded_as_output_contract_failure(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

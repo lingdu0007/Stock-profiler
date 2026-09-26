@@ -200,7 +200,13 @@ def _research_data_gate_results(
     member_run_gate_results = tuple(
         GateResult(
             gate_id=f"RESEARCH_RUN:{member.security_id}",
-            status="PASSED" if member.status == "SUCCEEDED" else "FAILED",
+            status=(
+                "PASSED"
+                if member.status == "SUCCEEDED"
+                else "UNKNOWN"
+                if member.status == "WAITING"
+                else "FAILED"
+            ),
         )
         for member in member_runs
     )

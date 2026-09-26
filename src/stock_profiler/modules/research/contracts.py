@@ -272,6 +272,11 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
+        r"\b(?:six[-\s]+month\s+)?success\s+(?:chance|likelihood|odds)\s*"
+        r"(?:is|of|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"\b(?:p20|pr20)\s*(?:is|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?\b",
         re.IGNORECASE,
     ),
@@ -287,21 +292,42 @@ _RESEARCH_TEXT_CAPABILITY_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:recommend(?:ed|ation)?|advice|conclusion|decision)\b.{0,24}\b"
-        r"(?:buy|sell|hold|close|order|trade|purchase)\b",
+        r"\b(?:recommend(?:ed|ation)?|advise|advice|suggest(?:ed|ion)?|conclusion|decision)\b"
+        r".{0,24}\b(?:buy|buying|sell|selling|hold|holding|close|closing|order|ordering|"
+        r"trade|trading|purchase|purchasing)\b",
         re.IGNORECASE,
     ),
-    re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:buy|buying|sell|selling|hold|holding|close|closing)\s+"
+        r"(?:this|the|a|our|your)\s+(?:stock|share|position|security|asset|name|ticker)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:buy|sell|hold|close)\s+(?:now|today|immediately)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"(?:正式|成功)?概率(?:为|是|=|:)\s*(?:0?\.\d+|\d+(?:\.\d+)?)\s*%?"),
     re.compile(r"(?:已获|获得|通过|授予|具备).{0,8}(?:资格|能力资格)"),
     re.compile(r"(?:买入|卖出|持有|清仓|下单|交易)\s*\d+(?:\.\d+)?\s*(?:股|份|手|元)?"),
+    re.compile(r"(?:建议|推荐|应当|应该|宜|适合|不建议|不要)\s*(?:买入|卖出|持有|清仓|下单|交易)"),
 )
+_RESEARCH_STANDALONE_TRADE_PATTERN = re.compile(r"(?<!\w)(?:BUY|SELL|HOLD|CLOSE)(?!\w)")
+_RESEARCH_STANDALONE_TRADE_WORDS = frozenset({"buy", "sell", "hold", "close"})
 
 
 def validate_research_text_capabilities(*values: str | None) -> None:
     """Reject explicit probability, qualification, quantity, or trade conclusions."""
-    normalized = " ".join(value.casefold() for value in values if value)
-    if any(pattern.search(normalized) for pattern in _RESEARCH_TEXT_CAPABILITY_PATTERNS):
+    raw_text = " ".join(value for value in values if value)
+    normalized = raw_text.casefold()
+    standalone_word = any(
+        value is not None and value.strip().casefold() in _RESEARCH_STANDALONE_TRADE_WORDS
+        for value in values
+    )
+    if (
+        any(pattern.search(normalized) for pattern in _RESEARCH_TEXT_CAPABILITY_PATTERNS)
+        or _RESEARCH_STANDALONE_TRADE_PATTERN.search(raw_text) is not None
+        or standalone_word
+    ):
         raise ValueError("RESEARCH_TEXT_CAPABILITY_VIOLATION")
 
 

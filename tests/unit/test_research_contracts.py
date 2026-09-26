@@ -1434,6 +1434,48 @@ def test_research_draft_member_rejects_a_standalone_trading_conclusion() -> None
         )
 
 
+def test_research_draft_member_rejects_success_chance_and_chinese_trade_advice() -> None:
+    member = _command().members[0]
+
+    def draft_member(thesis: str) -> ResearchDraftMember:
+        return ResearchDraftMember(
+            security_id=member.security_id,
+            research_id=member.research_id,
+            evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+            thesis=thesis,
+            bull_case="The fictional upside case remains conditional.",
+            bear_case="The fictional downside case remains explicit.",
+            catalysts=("A fictional catalyst remains conditional.",),
+            falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+            unknowns=("Future external evidence remains unresolved.",),
+            knowledge_cutoff=member.knowledge_cutoff,
+        )
+
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        draft_member("The six-month success chance is 95%.")
+    with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
+        draft_member("建议买入该股票。")
+
+
+def test_research_draft_member_allows_non_directive_evidence_language() -> None:
+    member = _command().members[0]
+
+    draft_member = ResearchDraftMember(
+        security_id=member.security_id,
+        research_id=member.research_id,
+        evidence_refs=tuple(evidence.evidence_id for evidence in member.evidence),
+        thesis="The company may sell a subsidiary while demand remains close to current levels.",
+        bull_case="The fictional upside case remains conditional.",
+        bear_case="The fictional downside case remains explicit.",
+        catalysts=("A fictional catalyst remains conditional.",),
+        falsification_conditions=("A frozen downside fact would falsify the thesis.",),
+        unknowns=("Future external evidence remains unresolved.",),
+        knowledge_cutoff=member.knowledge_cutoff,
+    )
+
+    assert draft_member.thesis.startswith("The company may sell")
+
+
 def test_research_stage_artifact_rejects_capability_claims_in_model_text() -> None:
     with pytest.raises(ValueError, match="RESEARCH_TEXT_CAPABILITY_VIOLATION"):
         ResearchStageArtifact(
