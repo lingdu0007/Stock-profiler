@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from calendar import monthrange
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -156,6 +157,17 @@ def _synthetic_entry_window_end(month: str) -> datetime:
     next_month = month_number % 12 + 1
     next_year = year + int(month_number == 12)
     return datetime(next_year, next_month, 5, 8, tzinfo=UTC)
+
+
+def _synthetic_raw_score_frozen_at(month: str) -> datetime:
+    year, month_number = (int(part) for part in month.split("-"))
+    return datetime(
+        year,
+        month_number,
+        monthrange(year, month_number)[1],
+        7,
+        tzinfo=UTC,
+    )
 
 
 def _structured_facts(index: int) -> ResearchStructuredFacts:
@@ -3375,6 +3387,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
+        ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
         ("ACCEPT", "UNRELATED_QUALIFICATION_SCOPE"),
@@ -3392,6 +3405,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_PUBLICATION",
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
+        "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
@@ -3424,6 +3438,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         CalibrationRecord(
             record_id=f"synthetic-calibration-label-{month}-{member:02d}",
             month=month,
+            source_research_event_id=f"synthetic-calibration-event-{month}",
+            raw_score_model_version="synthetic-elastic-net-v1",
+            raw_score_frozen_at=_synthetic_raw_score_frozen_at(month),
+            raw_score_training_watermark_at=(
+                _synthetic_raw_score_frozen_at(month) - timedelta(days=1)
+            ),
             raw_success_score=Decimal(member) / Decimal("10"),
             terminal_success=(member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5),
             entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
@@ -3516,6 +3536,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     if candidate_scenario in {
         "AT_RISK_QUALIFICATION",
+        "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
@@ -3635,8 +3656,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 )
             }
         )
-        if candidate_scenario == "REVOKED_AFTER_CUTOFF":
-            revoked_at = qualification_record.recorded_at
+        if candidate_scenario in {"REVOKED_SAME_TIMESTAMP", "REVOKED_AFTER_CUTOFF"}:
+            revoked_at = (
+                cutoff + timedelta(minutes=3)
+                if candidate_scenario == "REVOKED_AFTER_CUTOFF"
+                else qualification_record.recorded_at
+            )
             revoked_record = qualification_record.model_copy(
                 update={
                     "decision_id": "synthetic-candidate-qualification-revoked",
@@ -3727,11 +3752,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             lambda self, connection, access_scope: qualification_history,
         )
     resolved_command = command
-    if candidate_scenario in {"AT_RISK_QUALIFICATION", "REVOKED_AFTER_CUTOFF"}:
+    if candidate_scenario in {
+        "AT_RISK_QUALIFICATION",
+        "REVOKED_SAME_TIMESTAMP",
+        "REVOKED_AFTER_CUTOFF",
+    }:
         current_qualification_record = qualification_history[-1].qualification
         assert current_qualification_record is not None
         resolved_status: Literal["AT_RISK", "REVOKED"] = (
-            "REVOKED" if candidate_scenario == "REVOKED_AFTER_CUTOFF" else "AT_RISK"
+            "REVOKED"
+            if candidate_scenario in {"REVOKED_SAME_TIMESTAMP", "REVOKED_AFTER_CUTOFF"}
+            else "AT_RISK"
         )
         resolved_command = command.model_copy(
             update={
@@ -3776,6 +3807,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_PUBLICATION": "FAILED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
+        "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
@@ -3802,7 +3834,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.result.candidate_release.members == direct.members
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True
-    elif candidate_scenario == "REVOKED_AFTER_CUTOFF":
+    elif candidate_scenario in {"REVOKED_SAME_TIMESTAMP", "REVOKED_AFTER_CUTOFF"}:
         assert direct.members[0].market_state_qualified is False
     elif candidate_scenario == "NO_CANDIDATES":
         assert direct.members[0].market_state_qualified is True

@@ -43,6 +43,10 @@ class CalibrationRecord(UniverseContract):
 
     record_id: str = Field(min_length=1)
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    source_research_event_id: str = Field(min_length=1)
+    raw_score_model_version: str = Field(min_length=1)
+    raw_score_frozen_at: AwareDatetime
+    raw_score_training_watermark_at: AwareDatetime
     raw_success_score: Decimal
     terminal_success: bool
     entry_at: AwareDatetime | None = None
@@ -215,22 +219,9 @@ def freeze_candidate_release(
     command = command.model_copy(update={"published_at": publication_time})
     window, window_failure = _candidate_window(command)
     window_dates = tuple(session.market_date for session in window)
-    if window_failure == "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE":
-        return _release_outcome(
-            command,
-            window_dates,
-            disposition="FAILED",
-            reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
-            availability_failure="DATA",
-        )
-    if window_failure == "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID":
-        return _release_outcome(
-            command,
-            window_dates,
-            disposition="FAILED",
-            reasons=("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",),
-            availability_failure="DATA",
-        )
+    calendar_failure = _candidate_window_failure(command, window, window_failure)
+    if calendar_failure is not None:
+        return calendar_failure
     if any(not candidate.data_complete for candidate in command.candidates):
         return _release_outcome(
             command,
@@ -345,22 +336,9 @@ def candidate_release_availability_failure(
     """Freeze a non-actionable availability result when host-side version checks fail."""
     command = command.model_copy(update={"published_at": published_at})
     window, window_failure = _candidate_window(command)
-    if window_failure == "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE":
-        return _release_outcome(
-            command,
-            tuple(session.market_date for session in window),
-            disposition="FAILED",
-            reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
-            availability_failure="DATA",
-        )
-    if window_failure == "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID":
-        return _release_outcome(
-            command,
-            tuple(session.market_date for session in window),
-            disposition="FAILED",
-            reasons=("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",),
-            availability_failure="DATA",
-        )
+    calendar_failure = _candidate_window_failure(command, window, window_failure)
+    if calendar_failure is not None:
+        return calendar_failure
     return _release_outcome(
         command,
         tuple(session.market_date for session in window),
@@ -387,6 +365,47 @@ def candidate_release_blocked_by_business_prerequisite(
     )
 
 
+def finalize_candidate_release_publication(
+    command: CandidateReleaseCommand,
+    outcome: CandidateReleaseOutcome,
+    *,
+    published_at: datetime,
+) -> CandidateReleaseOutcome:
+    """Fail an otherwise valid batch if its durable publication time misses the window."""
+    window, _ = _candidate_window(command)
+    if (
+        outcome.disposition in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+        and len(window) == 5
+        and published_at > window[-1].closes_at
+    ):
+        late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+        members = tuple(
+            member.model_copy(
+                update={
+                    "candidate": False,
+                    "reasons": tuple(dict.fromkeys((*member.reasons, late_reason))),
+                }
+            )
+            for member in outcome.members
+        )
+        return outcome.model_copy(
+            update={
+                "published_at": published_at,
+                "disposition": "FAILED",
+                "members": members,
+                "population": outcome.population.model_copy(
+                    update={
+                        "valid_monthly": False,
+                        "recommendation_coverage_denominator": False,
+                        "recommendation_coverage_pass": False,
+                    }
+                ),
+                "reasons": (late_reason,),
+            }
+        )
+    return outcome.model_copy(update={"published_at": published_at})
+
+
 def _candidate_window(
     command: CandidateReleaseCommand,
 ) -> tuple[tuple[MarketSession, ...], str | None]:
@@ -403,6 +422,22 @@ def _candidate_window(
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     return window, None
+
+
+def _candidate_window_failure(
+    command: CandidateReleaseCommand,
+    window: tuple[MarketSession, ...],
+    failure: str | None,
+) -> CandidateReleaseOutcome | None:
+    if failure is None:
+        return None
+    return _release_outcome(
+        command,
+        tuple(session.market_date for session in window),
+        disposition="FAILED",
+        reasons=(failure,),
+        availability_failure="DATA",
+    )
 
 
 def _release_outcome(
@@ -447,13 +482,14 @@ def _release_outcome(
 
 def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     months = command.training_window_months
-    if len(months) != _MINIMUM_MATURE_MONTHS or any(
-        _month_index(right) != _month_index(left) + 1
-        for left, right in zip(months, months[1:], strict=False)
-    ):
-        raise ValueError("CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS")
+    if len(months) != _MINIMUM_MATURE_MONTHS:
+        raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
+        if record.raw_score_frozen_at.strftime("%Y-%m") != record.month:
+            raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
+        if record.raw_score_training_watermark_at >= record.raw_score_frozen_at:
+            raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
         if record.entry_window_ends_at.date() <= _month_end(record.month):
             raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
         if record.entry_at is None:
@@ -484,7 +520,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         )
     )
     if len(mature_months) < _MINIMUM_MATURE_MONTHS:
-        raise ValueError("CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS")
+        raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
     records = tuple(record for month in months for record in by_month[month])
@@ -565,10 +601,14 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
                 break
             scale /= 2.0
         if scale < 1e-8:
-            break
+            if max(abs(delta_a), abs(delta_b)) < 1e-9:
+                break
+            raise ValueError("CALIBRATION_FIT_DID_NOT_CONVERGE")
         intercept, slope = next_a, next_b
         if max(abs(scale * delta_a), abs(scale * delta_b)) < 1e-9:
             break
+    else:
+        raise ValueError("CALIBRATION_FIT_DID_NOT_CONVERGE")
     if not math.isfinite(intercept) or not math.isfinite(slope) or slope < 0:
         raise ValueError("CALIBRATION_FIT_FAILED")
     return intercept, slope
@@ -587,10 +627,6 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
         context.prec = 32
         exponent = -(calibration.intercept + calibration.slope * score)
         return (Decimal(1) / (Decimal(1) + exponent.exp())).quantize(Decimal("0.00000001"))
-
-
-def _month_index(month: str) -> int:
-    return int(month[:4]) * 12 + int(month[5:])
 
 
 def _month_end(month: str) -> date:

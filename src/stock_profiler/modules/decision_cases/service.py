@@ -19,6 +19,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketStateQualificationStatus,
     candidate_release_availability_failure,
     candidate_release_blocked_by_business_prerequisite,
+    finalize_candidate_release_publication,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
@@ -78,7 +79,10 @@ from stock_profiler.modules.position_management.concentration import assess_conc
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
-from stock_profiler.modules.qualification.service import qualification_is_current
+from stock_profiler.modules.qualification.service import (
+    current_qualification,
+    qualification_is_current,
+)
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
     RawScore,
@@ -107,6 +111,21 @@ from stock_profiler.modules.research.service import (
     prepare_research_risk_plan,
     validate_research_draft,
 )
+
+
+class CandidateQualificationVersionMismatch(ValueError):
+    """Persist an availability failure when the saved qualification version is stale."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_QUALIFICATION_VERSION_MISMATCH")
+
+
+class CandidateQualificationHistoryAmbiguous(ValueError):
+    """Reject conflicting terminal revisions instead of selecting by timestamp order."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_QUALIFICATION_HISTORY_AMBIGUOUS")
+
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -486,34 +505,28 @@ def _validate_candidate_qualification_snapshots(
         )
         if record is None:
             raise ValueError("CANDIDATE_QUALIFICATION_NOT_IN_LEDGER")
-        current_records = tuple(
-            item.qualification
-            for item in history
-            if item.qualification is not None
-            and item.qualification.recorded_at <= observed_at
-            and item.qualification.scope.same_scope_as(record.scope)
-            and item.qualification.version.version_id == record.version.version_id
+        visible_history = tuple(
+            outcome
+            for outcome in history
+            if outcome.qualification is not None
+            and outcome.qualification.recorded_at <= observed_at
         )
-        superseded_decisions = {
-            item.previous_decision_id for item in current_records if item.previous_decision_id
-        }
-        terminal_records = tuple(
-            item for item in current_records if item.decision_id not in superseded_decisions
-        )
-        latest = terminal_records[0] if len(terminal_records) == 1 else None
+        try:
+            latest = current_qualification(visible_history, record.scope, record.version)
+        except ValueError as error:
+            raise CandidateQualificationHistoryAmbiguous() from error
         basis = record.formal_passing_evidence or record.authorization_evidence
+        if latest is None:
+            raise CandidateQualificationHistoryAmbiguous()
         if (
             record.version.version_id != snapshot.capability_version
             or record.version.version_id != command.capability_version
             or record.version.implementation != case.version_bundle
             or record.version.implementation.m_agent_release_commit
             != CURRENT_M_AGENT_RELEASE.m_agent_release_commit
-            or latest is None
             or latest.version != record.version
         ):
-            if latest is None and len(terminal_records) != 1:
-                raise ValueError("CANDIDATE_QUALIFICATION_HISTORY_AMBIGUOUS")
-            raise ValueError("CANDIDATE_QUALIFICATION_VERSION_MISMATCH")
+            raise CandidateQualificationVersionMismatch()
         if (
             record.status != snapshot.status
             or record.recorded_at != snapshot.recorded_at
@@ -1531,8 +1544,8 @@ def _commit_framework_result(
     framework: FrameworkRunResult,
 ) -> DecisionEventFact | DecisionCaseExecution:
     """Validate one terminal framework result and append its host business fact."""
-    committed_at = ledger.observed_at()
-    publication_time = datetime.fromisoformat(committed_at.replace("Z", "+00:00"))
+    qualification_observed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+    committed_at: str | None = None
     candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
     candidate_version_failure: str | None = None
 
@@ -1592,14 +1605,13 @@ def _commit_framework_result(
             candidate_qualifications = _validate_candidate_qualification_snapshots(
                 execution_case,
                 ledger.governance_history(connection, execution_case.access_scope),
-                publication_time,
+                qualification_observed_at,
             )
+        except CandidateQualificationVersionMismatch:
+            candidate_version_failure = "CANDIDATE_QUALIFICATION_VERSION_MISMATCH"
+            candidate_qualifications = ()
         except ValueError as error:
-            if str(error) == "CANDIDATE_QUALIFICATION_VERSION_MISMATCH":
-                candidate_version_failure = str(error)
-                candidate_qualifications = ()
-            else:
-                return unpublished_candidate_validation_failure(error)
+            return unpublished_candidate_validation_failure(error)
         try:
             _validate_candidate_release_source(
                 execution_case,
@@ -2056,6 +2068,9 @@ def _commit_framework_result(
                         update={"selection": selection}
                     )
             if business_result is not None and execution_case.candidate_release is not None:
+                publication_time = datetime.fromisoformat(
+                    ledger.observed_at().replace("Z", "+00:00")
+                )
                 successful_prerequisite = business_result.status == "SUCCEEDED"
                 if not successful_prerequisite:
                     candidate_release = candidate_release_blocked_by_business_prerequisite(
@@ -2077,6 +2092,12 @@ def _commit_framework_result(
                         ),
                         published_at=publication_time,
                     )
+                committed_at = ledger.observed_at()
+                candidate_release = finalize_candidate_release_publication(
+                    execution_case.candidate_release,
+                    candidate_release,
+                    published_at=datetime.fromisoformat(committed_at.replace("Z", "+00:00")),
+                )
                 result_updates: dict[str, object] = {"candidate_release": candidate_release}
                 if successful_prerequisite:
                     result_updates.update(
@@ -2240,6 +2261,7 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
+    committed_at = committed_at or ledger.observed_at()
     stage_results = (
         *stage_results_before_commit,
         StageResult(

@@ -15,6 +15,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketSession,
     MarketStateQualification,
     candidate_release_availability_failure,
+    finalize_candidate_release_publication,
     freeze_candidate_release,
 )
 
@@ -27,6 +28,7 @@ def training_records() -> tuple[CalibrationRecord, ...]:
     for month in months:
         year, month_number = (int(part) for part in month.split("-"))
         month_end = datetime(year, month_number, monthrange(year, month_number)[1], 8, tzinfo=UTC)
+        raw_score_frozen_at = month_end - timedelta(hours=1)
         entry_window_ends_at = month_end + timedelta(days=5)
         maturity = _six_month_anniversary(entry_window_ends_at)
         for member in range(10):
@@ -34,6 +36,10 @@ def training_records() -> tuple[CalibrationRecord, ...]:
                 CalibrationRecord(
                     record_id=f"synthetic-label-{month}-{member:02d}",
                     month=month,
+                    source_research_event_id=f"synthetic-research-event-{month}",
+                    raw_score_model_version="synthetic-elastic-net-v1",
+                    raw_score_frozen_at=raw_score_frozen_at,
+                    raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
                     raw_success_score=Decimal(member) / Decimal("10"),
                     terminal_success=member >= 5,
                     entry_window_ends_at=entry_window_ends_at,
@@ -58,6 +64,13 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
         entry_window_ends_at = datetime(
             year, month_number, monthrange(year, month_number)[1], 8, tzinfo=UTC
         ) + timedelta(days=5)
+        raw_score_frozen_at = datetime(
+            year,
+            month_number,
+            monthrange(year, month_number)[1],
+            7,
+            tzinfo=UTC,
+        )
         maturity = _six_month_anniversary(entry_window_ends_at)
         for member in range(10):
             score = Decimal(member) / Decimal("10")
@@ -66,6 +79,10 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
                 CalibrationRecord(
                     record_id=f"positive-label-{month}-{member:02d}",
                     month=month,
+                    source_research_event_id=f"synthetic-positive-research-event-{month}",
+                    raw_score_model_version="synthetic-elastic-net-v1",
+                    raw_score_frozen_at=raw_score_frozen_at,
+                    raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
                     raw_success_score=score,
                     terminal_success=generator.random() < probability,
                     entry_window_ends_at=entry_window_ends_at,
@@ -456,6 +473,9 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             update={
                 "record_id": f"synthetic-label-{outside_month}-{index:02d}",
                 "month": outside_month,
+                "source_research_event_id": f"synthetic-research-event-{outside_month}",
+                "raw_score_frozen_at": datetime(2040, 11, 30, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2040, 11, 29, 7, tzinfo=UTC),
                 "entry_window_ends_at": datetime(2040, 12, 6, 8, tzinfo=UTC),
                 "entry_at": datetime(2040, 12, 5, 8, tzinfo=UTC),
                 "unified_maturity_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
@@ -493,7 +513,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             update={"training_records": (beyond_watermark, *original.training_records[1:])}
         )
     )
-    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
     bad_entry_maturity = original.training_records[-1].model_copy(
         update={
@@ -512,7 +532,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
 
     incomplete = tuple(record for record in original.training_records if record.month != "2041-01")
     release = freeze_candidate_release(original.model_copy(update={"training_records": incomplete}))
-    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
     duplicate = original.training_records[0].model_copy(
         update={"record_id": original.training_records[1].record_id}
@@ -585,14 +605,14 @@ def test_firth_solver_keeps_the_slope_nonnegative_for_inverse_training_signal() 
     assert slope >= 0
 
 
-def test_firth_solver_bounds_its_iteration_count(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_firth_solver_fails_when_iteration_limit_is_reached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(candidate_module, "_sigmoid", lambda _: 0.5)
     monkeypatch.setattr(math, "log1p", lambda _: 0.0)
 
-    intercept, slope = candidate_module._firth_logistic(training_records())
-
-    assert intercept < 0
-    assert slope > 0
+    with pytest.raises(ValueError, match="CALIBRATION_FIT_DID_NOT_CONVERGE"):
+        candidate_module._firth_logistic(training_records())
 
 
 def test_firth_solver_shrinks_rejected_steps_and_stops_at_the_scale_floor(
@@ -607,10 +627,22 @@ def test_firth_solver_shrinks_rejected_steps_and_stops_at_the_scale_floor(
 
     monkeypatch.setattr(math, "log1p", reject_nonzero_steps)
 
-    intercept, slope = candidate_module._firth_logistic(training_records())
+    with pytest.raises(ValueError, match="CALIBRATION_FIT_DID_NOT_CONVERGE"):
+        candidate_module._firth_logistic(training_records())
 
-    assert intercept == 0
-    assert slope == 0
+
+def test_firth_solver_rejects_training_scores_without_temporal_provenance() -> None:
+    original = command()
+    first = original.training_records[0].model_copy(
+        update={"raw_score_training_watermark_at": original.training_records[0].raw_score_frozen_at}
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": (first, *original.training_records[1:])})
+    )
+
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE",)
 
 
 def test_firth_solver_rejects_nonfinite_final_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -642,7 +674,7 @@ def test_unmatured_training_label_is_calibration_availability_failure() -> None:
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
-    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
 
 def test_expired_late_publication_keeps_original_window_and_records_failure() -> None:
@@ -665,7 +697,25 @@ def test_late_publication_does_not_hide_calibration_availability_failure() -> No
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
     assert release.population.valid_monthly is False
-    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
+
+
+def test_publication_that_crosses_window_while_calibrating_is_failed() -> None:
+    original = command()
+    frozen = freeze_candidate_release(original, published_at=original.published_at)
+
+    finalized = finalize_candidate_release_publication(
+        original,
+        frozen,
+        published_at=datetime(2046, 7, 7, 9, tzinfo=UTC),
+    )
+
+    assert frozen.disposition == "CANDIDATES"
+    assert finalized.disposition == "FAILED"
+    assert finalized.published_at == datetime(2046, 7, 7, 9, tzinfo=UTC)
+    assert finalized.population.valid_monthly is False
+    assert finalized.members[0].candidate is False
+    assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in finalized.reasons
 
 
 def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> None:
@@ -674,7 +724,7 @@ def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> No
     release = freeze_candidate_release(candidate)
 
     assert release.disposition == "FAILED"
-    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
 
 def test_training_window_must_use_latest_mature_months() -> None:
@@ -684,6 +734,9 @@ def test_training_window_must_use_latest_mature_months() -> None:
             update={
                 "record_id": f"synthetic-label-2045-12-{index:02d}",
                 "month": "2045-12",
+                "source_research_event_id": "synthetic-research-event-2045-12",
+                "raw_score_frozen_at": datetime(2045, 12, 31, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2045, 12, 30, 7, tzinfo=UTC),
                 "entry_window_ends_at": datetime(2046, 1, 5, 8, tzinfo=UTC),
                 "entry_at": datetime(2046, 1, 4, 8, tzinfo=UTC),
                 "unified_maturity_at": datetime(2046, 7, 5, 8, tzinfo=UTC),
@@ -717,3 +770,36 @@ def test_training_window_must_use_latest_mature_months() -> None:
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
     assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons
+
+
+def test_latest_sixty_mature_months_do_not_require_calendar_contiguity() -> None:
+    original = command()
+    missing_month = "2042-01"
+    earlier_month = "2040-11"
+    earlier_records = tuple(
+        record.model_copy(
+            update={
+                "record_id": f"synthetic-label-{earlier_month}-{index:02d}",
+                "month": earlier_month,
+                "source_research_event_id": f"synthetic-research-event-{earlier_month}",
+                "raw_score_frozen_at": datetime(2040, 11, 30, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2040, 11, 29, 7, tzinfo=UTC),
+                "entry_window_ends_at": datetime(2040, 12, 6, 8, tzinfo=UTC),
+                "entry_at": datetime(2040, 12, 5, 8, tzinfo=UTC),
+                "unified_maturity_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
+                "label_available_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
+            }
+        )
+        for index, record in enumerate(original.training_records[:10])
+    )
+    records = tuple(record for record in original.training_records if record.month != missing_month)
+    records = (*records, *earlier_records)
+    months = tuple(sorted({record.month for record in records}))
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_window_months": months, "training_records": records})
+    )
+
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == months
