@@ -5533,6 +5533,18 @@
             "title": "Kind",
             "type": "string"
           },
+          "market_calendar_version": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Calendar Version"
+          },
           "maturity_sufficient": {
             "anyOf": [
               {

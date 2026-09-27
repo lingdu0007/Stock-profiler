@@ -2296,6 +2296,8 @@ export interface components {
              * @enum {string}
              */
             kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED" | "REQUALIFICATION_APPLICATION_REGISTERED" | "ALERT_REPLAY_RECORDED";
+            /** Market Calendar Version */
+            market_calendar_version?: string | null;
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
             /** Requalification Application Id */
