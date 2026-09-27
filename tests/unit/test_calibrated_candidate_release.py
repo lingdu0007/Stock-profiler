@@ -1,4 +1,5 @@
 import math
+import random
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
@@ -27,7 +28,32 @@ def training_records() -> tuple[CalibrationRecord, ...]:
                     month=month,
                     raw_success_score=Decimal(member) / Decimal("10"),
                     terminal_success=member >= 5,
+                    unified_maturity_at=datetime(2046, 6, 30, 23, 59, 59, tzinfo=UTC),
                     label_available_at=datetime(2046, 6, 30, 23, 59, 59, tzinfo=UTC),
+                )
+            )
+    return tuple(records)
+
+
+def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
+    generator = random.Random(10417)
+    threshold = generator.random()
+    strength = generator.uniform(-3, 3)
+    records: list[CalibrationRecord] = []
+    maturity = datetime(2046, 6, 30, 23, 59, 59, tzinfo=UTC)
+    months = tuple(f"{year}-{month:02d}" for year in range(2041, 2046) for month in range(1, 13))
+    for month in months:
+        for member in range(10):
+            score = Decimal(member) / Decimal("10")
+            probability = 1 / (1 + math.exp(-strength * (float(score) - threshold)))
+            records.append(
+                CalibrationRecord(
+                    record_id=f"positive-label-{month}-{member:02d}",
+                    month=month,
+                    raw_success_score=score,
+                    terminal_success=generator.random() < probability,
+                    unified_maturity_at=maturity,
+                    label_available_at=maturity,
                 )
             )
     return tuple(records)
@@ -122,12 +148,51 @@ def test_probability_below_threshold_forms_valid_no_candidate() -> None:
     assert "PROBABILITY_BELOW_THRESHOLD" in release.members[0].reasons
 
 
+def test_inverse_signal_is_fitted_at_nonnegative_slope_boundary() -> None:
+    original = command()
+    inverse_signal = tuple(
+        record.model_copy(
+            update={"terminal_success": int(record.record_id[-2:]) < 8}
+        )
+        for record in original.training_records
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": inverse_signal})
+    )
+
+    assert release.disposition == "VALID_NO_CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.slope == Decimal("0E-8")
+    assert release.members[0].calibrated_probability is not None
+    assert release.members[0].calibrated_probability < Decimal("0.80")
+
+
+def test_weak_positive_signal_converges_without_crossing_slope_boundary() -> None:
+    original = command()
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": weak_positive_signal_records()})
+    )
+
+    assert release.calibration is not None
+    assert release.calibration.slope > 0
+
+
 def test_unqualified_market_state_abstains_without_lowering_probability_gate() -> None:
     release = freeze_candidate_release(command(state_status="NOT_OBTAINED"))
 
     assert release.disposition == "RECOMMENDATION_ABSTAINED"
     assert release.members[0].candidate is False
     assert "MARKET_STATE_NOT_QUALIFIED" in release.members[0].reasons
+
+
+def test_at_risk_qualification_remains_effective_while_within_validity() -> None:
+    release = freeze_candidate_release(command(state_status="AT_RISK"))
+
+    assert release.disposition == "CANDIDATES"
+    assert release.members[0].market_state_qualified is True
+    assert release.members[0].candidate is True
+    assert "MARKET_STATE_QUALIFICATION_AT_RISK" in release.members[0].reasons
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:
@@ -249,6 +314,21 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
         original.model_copy(update={"training_records": (immature, *original.training_records[1:])})
     )
     assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
+
+    beyond_watermark = original.training_records[0].model_copy(
+        update={
+            "unified_maturity_at": datetime(2046, 7, 2, tzinfo=UTC),
+            "label_available_at": datetime(2046, 7, 2, tzinfo=UTC),
+        }
+    )
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={
+                "training_records": (beyond_watermark, *original.training_records[1:])
+            }
+        )
+    )
+    assert "LABEL_NOT_MATURE_AT_WATERMARK" in release.reasons
 
     incomplete = tuple(record for record in original.training_records if record.month != "2041-01")
     release = freeze_candidate_release(original.model_copy(update={"training_records": incomplete}))
@@ -391,6 +471,23 @@ def test_expired_late_publication_keeps_original_window_and_records_failure() ->
     assert release.disposition == "FAILED"
     assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in release.reasons
     assert release.valid_market_dates[-1].isoformat() == "2046-07-06"
+    assert release.population.valid_monthly is False
+    assert release.calibration is not None
+    assert release.members[0].candidate is False
+
+
+def test_late_publication_does_not_hide_calibration_availability_failure() -> None:
+    original = command(published=datetime(2046, 7, 7, 9, tzinfo=UTC))
+    invalid_training = original.model_copy(
+        update={"training_window_months": ("2045-01",)}
+    )
+
+    release = freeze_candidate_release(invalid_training)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.population.valid_monthly is False
+    assert "CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS" in release.reasons
 
 
 def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> None:

@@ -1237,8 +1237,6 @@ class FrozenDecisionCase(FrozenContract):
                     "owner": self.access_scope.user_id,
                     "accounts": sorted(self.access_scope.account_ids),
                     "visibility": self.access_scope.visibility,
-                    "batch_id": self.candidate_release.batch_id,
-                    "research_event_id": self.candidate_release.research_event_id,
                     "month": self.candidate_release.knowledge_cutoff.astimezone(
                         ZoneInfo("Asia/Shanghai")
                     ).strftime("%Y-%m"),

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import math
-from calendar import monthrange
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal, localcontext
 from typing import Literal
 
@@ -21,6 +20,9 @@ CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
 CandidateAvailabilityFailure = Literal["DATA", "CALIBRATION", "VERSION"]
+MarketStateQualificationStatus = Literal[
+    "NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED", "EXPIRED"
+]
 
 
 class CalibrationRecord(UniverseContract):
@@ -30,6 +32,7 @@ class CalibrationRecord(UniverseContract):
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     raw_success_score: Decimal
     terminal_success: bool
+    unified_maturity_at: AwareDatetime
     label_available_at: AwareDatetime
 
 
@@ -37,7 +40,7 @@ class MarketStateQualification(UniverseContract):
     """Snapshot of one persisted qualification decision for one market state."""
 
     market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
-    status: Literal["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED"]
+    status: MarketStateQualificationStatus
     qualification_id: str = Field(min_length=1)
     qualification_scope: Literal["D0_SYNTHETIC_CONTRACT_ONLY"] = "D0_SYNTHETIC_CONTRACT_ONLY"
     capability_version: str = Field(min_length=1)
@@ -175,8 +178,14 @@ class CandidateReleaseOutcome(UniverseContract):
     actionable: Literal[False] = False
 
 
-def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateReleaseOutcome:
+def freeze_candidate_release(
+    command: CandidateReleaseCommand,
+    *,
+    published_at: datetime | None = None,
+) -> CandidateReleaseOutcome:
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
+    publication_time = published_at or command.published_at
+    command = command.model_copy(update={"published_at": publication_time})
     window = tuple(
         session
         for session in command.market_sessions
@@ -190,13 +199,6 @@ def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateRelea
             disposition="FAILED",
             reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
             availability_failure="DATA",
-        )
-    if command.published_at > window[-1].closes_at:
-        return _release_outcome(
-            command,
-            window_dates,
-            disposition="FAILED",
-            reasons=("PUBLICATION_AFTER_CANDIDATE_WINDOW",),
         )
     if any(not candidate.data_complete for candidate in command.candidates):
         return _release_outcome(
@@ -219,7 +221,7 @@ def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateRelea
         ),
         None,
     )
-    state_qualified = qualification is not None and qualification.status == "VALID"
+    state_qualified = qualification is not None and qualification.status in {"VALID", "AT_RISK"}
     try:
         calibration = _fit_calibrator(command)
     except ValueError as error:
@@ -238,6 +240,8 @@ def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateRelea
             reasons.append("PROBABILITY_BELOW_THRESHOLD")
         if not state_qualified:
             reasons.append("MARKET_STATE_NOT_QUALIFIED")
+        elif qualification is not None and qualification.status == "AT_RISK":
+            reasons.append("MARKET_STATE_QUALIFICATION_AT_RISK")
         if candidate.risk_status == "REJECTED":
             reasons.append("INDEPENDENT_RISK_VETO")
         elif candidate.risk_status == "FAILED":
@@ -248,7 +252,11 @@ def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateRelea
                 research_id=candidate.research_id,
                 raw_success_score=candidate.raw_success_score,
                 calibrated_probability=probability,
-                candidate=not reasons,
+                candidate=(
+                    probability >= PROBABILITY_THRESHOLD
+                    and state_qualified
+                    and candidate.risk_status == "ACCEPTED"
+                ),
                 risk_status=candidate.risk_status,
                 market_state_qualified=state_qualified,
                 data_complete=candidate.data_complete,
@@ -266,6 +274,25 @@ def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateRelea
         if not state_qualified
         else "VALID_NO_CANDIDATES"
     )
+    if publication_time > window[-1].closes_at:
+        late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+        historical_members = tuple(
+            member.model_copy(
+                update={
+                    "candidate": False,
+                    "reasons": tuple(dict.fromkeys((*member.reasons, late_reason))),
+                }
+            )
+            for member in members
+        )
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            calibration=calibration,
+            members=historical_members,
+            reasons=(late_reason,),
+        )
     return _release_outcome(
         command,
         window_dates,
@@ -293,7 +320,6 @@ def _release_outcome(
             "VALID_NO_CANDIDATES",
             "RECOMMENDATION_ABSTAINED",
         }
-        or "PUBLICATION_AFTER_CANDIDATE_WINDOW" in reasons
     )
     return CandidateReleaseOutcome(
         batch_id=command.batch_id,
@@ -331,8 +357,10 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     for record in command.training_records:
         if record.month not in months:
             raise ValueError("TRAINING_RECORD_OUTSIDE_WINDOW")
-        if record.label_available_at < _earliest_label_maturity(record.month):
+        if record.label_available_at < record.unified_maturity_at:
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
+        if record.unified_maturity_at > command.label_watermark_at:
+            raise ValueError("LABEL_NOT_MATURE_AT_WATERMARK")
         if record.label_available_at > command.label_watermark_at:
             raise ValueError("LABEL_NOT_MATURE_AT_WATERMARK")
         by_month.setdefault(record.month, []).append(record)
@@ -371,7 +399,7 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
         raise ValueError("CALIBRATION_SCORE_VARIATION_REQUIRED")
     intercept = slope = 0.0
 
-    def state(a: float, b: float) -> tuple[float, float, float, float, float, float]:
+    def state(a: float, b: float) -> tuple[float, float, float, float, float, float, float]:
         probabilities = tuple(_sigmoid(a + b * score) for score in scores)
         weights = tuple(probability * (1.0 - probability) for probability in probabilities)
         i00 = sum(weights)
@@ -393,14 +421,18 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
             label * (a + b * raw) - math.log1p(math.exp(min(700.0, a + b * raw)))
             for label, raw in zip(labels, scores, strict=True)
         ) + 0.5 * math.log(determinant)
-        return score0, score1, inv00, inv01, inv11, objective
+        return score0, score1, i00, inv00, inv01, inv11, objective
 
     for _ in range(100):
-        score0, score1, inv00, inv01, inv11, objective = state(intercept, slope)
+        score0, score1, i00, inv00, inv01, inv11, objective = state(intercept, slope)
         delta_a = inv00 * score0 + inv01 * score1
         delta_b = inv01 * score0 + inv11 * score1
-        if slope + delta_b < 0:
-            delta_b = -slope
+        if slope == 0 and delta_b <= 0:
+            # At the nonnegative-slope boundary, a negative score direction
+            # must not influence the intercept update through the inverse
+            # information's off-diagonal term.
+            delta_a = score0 / i00
+            delta_b = 0.0
         scale = 1.0
         while scale >= 1e-8:
             next_a = intercept + scale * delta_a
@@ -440,19 +472,3 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
 
 def _month_index(month: str) -> int:
     return int(month[:4]) * 12 + int(month[5:])
-
-
-def _earliest_label_maturity(month: str) -> datetime:
-    year, month_number = (int(part) for part in month.split("-"))
-    maturity_index = year * 12 + month_number - 1 + 6
-    maturity_year, maturity_month_zero = divmod(maturity_index, 12)
-    maturity_month = maturity_month_zero + 1
-    return datetime(
-        maturity_year,
-        maturity_month,
-        monthrange(maturity_year, maturity_month)[1],
-        23,
-        59,
-        59,
-        tzinfo=UTC,
-    )

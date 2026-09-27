@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
 
@@ -47,6 +47,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import (
 )
 from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
+from stock_profiler.foundation.clock import UtcClock
 from stock_profiler.foundation.decision_versions import (
     CURRENT_M_AGENT_RELEASE,
     HISTORICAL_M_AGENT_RELEASE,
@@ -57,6 +58,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CandidateInput,
     CandidateReleaseCommand,
     MarketSession,
+    MarketStateQualification,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import (
@@ -86,6 +88,14 @@ from stock_profiler.modules.decision_cases.ports import (
     ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
+from stock_profiler.modules.qualification.contracts import (
+    CapabilityVersion,
+    GovernanceOutcome,
+    QualificationEvidence,
+    QualificationPolicy,
+    QualificationRecord,
+    QualificationScope,
+)
 from stock_profiler.modules.research import service as research_service
 from stock_profiler.modules.research.contracts import (
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
@@ -3347,10 +3357,40 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
     assert sum(stage.phase == "BUSINESS_COMMIT" for stage in second.stage_results) == 1
 
 
+@pytest.mark.parametrize(
+    ("risk_scenario", "candidate_scenario"),
+    [
+        ("ACCEPT", "NORMAL"),
+        ("REJECT", "NORMAL"),
+        ("ACCEPT", "CALIBRATION_FAILURE"),
+        ("ACCEPT", "LATE_PUBLICATION"),
+        ("ACCEPT", "WINDOW_EXPIRED"),
+        ("ACCEPT", "AT_RISK_QUALIFICATION"),
+        ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
+        ("ACCEPT", "NO_CANDIDATES"),
+    ],
+)
 def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abstention(
     migrated_settings: Settings,
+    risk_scenario: Literal["ACCEPT", "REJECT"],
+    candidate_scenario: Literal[
+        "NORMAL",
+        "CALIBRATION_FAILURE",
+        "LATE_PUBLICATION",
+        "WINDOW_EXPIRED",
+        "AT_RISK_QUALIFICATION",
+        "REVOKED_AFTER_CUTOFF",
+        "NO_CANDIDATES",
+    ],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    research_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    publication_time = datetime.fromisoformat(
+        "2042-07-07T09:00:00+00:00"
+        if candidate_scenario == "LATE_PUBLICATION"
+        else "2042-07-01T00:04:00+00:00"
+    )
+    monkeypatch.setattr(UtcClock, "now", lambda self: publication_time)
+    research_case = _case(migrated_settings, risk_scenario=risk_scenario)
     research_execution = run_frozen_decision_case(
         migrated_settings, research_case.model_dump(mode="json")
     )
@@ -3368,7 +3408,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             record_id=f"synthetic-calibration-label-{month}-{member:02d}",
             month=month,
             raw_success_score=Decimal(member) / Decimal("10"),
-            terminal_success=member >= 5,
+            terminal_success=(
+                member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5
+            ),
+            unified_maturity_at=cutoff,
             label_available_at=cutoff,
         )
         for month in training_months
@@ -3414,16 +3457,31 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         research_event_id=research_execution.decision_event_id,
         purpose="CANDIDATE_BUY",
         knowledge_cutoff=cutoff,
-        published_at=datetime.fromisoformat("2042-07-01T00:04:00+00:00"),
+        published_at=datetime.fromisoformat("2042-07-02T00:04:00+00:00"),
         market_state="BULL",
         market_calendar_version="synthetic-market-calendar-v1",
         label_watermark_at=cutoff,
-        training_window_months=training_months,
+        training_window_months=(
+            training_months[:-1]
+            if candidate_scenario == "CALIBRATION_FAILURE"
+            else training_months
+        ),
         training_records=training_records,
         candidates=candidates,
-        market_sessions=sessions,
+        market_sessions=(
+            tuple(
+                MarketSession(
+                    market_date=datetime(2042, 6, day, tzinfo=UTC).date(),
+                    opens_at=datetime(2042, 6, day, 1, tzinfo=UTC),
+                    closes_at=datetime(2042, 6, day, 8, tzinfo=UTC),
+                )
+                for day in range(1, 6)
+            )
+            if candidate_scenario == "WINDOW_EXPIRED"
+            else sessions
+        ),
     )
-    report_time = datetime.fromisoformat("2042-07-01T00:04:00+00:00")
+    report_time = datetime.fromisoformat("2042-07-02T00:04:00+00:00")
     candidate_version = "candidate-release.1.0.0"
     version_bundle = research_case.version_bundle.model_copy(
         update={
@@ -3437,6 +3495,112 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "report_projection_contract_version": candidate_version,
         }
     )
+    qualification_history: tuple[GovernanceOutcome, ...] = ()
+    if candidate_scenario in {
+        "AT_RISK_QUALIFICATION",
+        "REVOKED_AFTER_CUTOFF",
+        "NO_CANDIDATES",
+    }:
+        assert research_case.access_scope is not None
+        qualification_scope = QualificationScope(
+            capability="candidate-release",
+            purpose="CANDIDATE_BUY",
+            evidence_level="D0",
+            user_id=research_case.access_scope.user_id,
+            account_ids=research_case.access_scope.account_ids,
+            account_type="SYNTHETIC",
+            source="SYNTHETIC_D0",
+            market_state="BULL",
+            board="SYNTHETIC",
+            target="SIX_MONTH_TERMINAL_20_PERCENT",
+        )
+        qualification_policy = QualificationPolicy(
+            contract_version="1.0.0",
+            policy_version="candidate-release-policy-v1",
+            synthetic=True,
+            generator_version="candidate-qualification-v1",
+            seed=1717,
+            evaluation_max_age_months=12,
+            state_activity_max_age_months=12,
+            require_state_activity=False,
+        )
+        capability_version = CapabilityVersion(
+            version_id=command.capability_version,
+            policy_version=qualification_policy.policy_version,
+            implementation=version_bundle,
+            qualification_policy=qualification_policy,
+        )
+        qualification_recorded_at = cutoff - timedelta(seconds=1)
+        qualification_expires_at = datetime.fromisoformat("2042-12-31T23:59:59+00:00")
+        qualification_evidence = QualificationEvidence(
+            evidence_id="synthetic-candidate-qualification-evidence",
+            synthetic=True,
+            generator_version="candidate-qualification-v1",
+            seed=1717,
+            version=capability_version,
+            scope=qualification_scope,
+            kind="QUALIFICATION_PASS",
+            digest="a" * 64,
+            evaluation_end=qualification_recorded_at,
+            available_at=qualification_recorded_at,
+            expires_at=qualification_expires_at,
+        )
+        qualification_status: Literal["AT_RISK", "VALID"] = (
+            "AT_RISK" if candidate_scenario == "AT_RISK_QUALIFICATION" else "VALID"
+        )
+        qualification_record = QualificationRecord(
+            decision_id="synthetic-candidate-qualification",
+            authorization_id="synthetic-candidate-qualification",
+            scope=qualification_scope,
+            version=capability_version,
+            status=qualification_status,
+            cause="DIAGNOSTIC_ALERT" if qualification_status == "AT_RISK" else "QUALIFICATION_PASS",
+            authorization_evidence=qualification_evidence,
+            recorded_at=qualification_recorded_at,
+            evidence=qualification_evidence,
+            formal_evidence=qualification_evidence,
+            formal_passing_evidence=qualification_evidence,
+        )
+        qualification_outcome = GovernanceOutcome(
+            disposition="APPROVED",
+            reasons=("QUALIFICATION_PASS",),
+            qualification=qualification_record,
+        )
+        qualification_history = (qualification_outcome,)
+        command = command.model_copy(
+            update={
+                "qualifications": (
+                    MarketStateQualification(
+                        market_state="BULL",
+                        status=qualification_status,
+                        qualification_id=qualification_record.decision_id,
+                        capability_version=capability_version.version_id,
+                        market_calendar_version=command.market_calendar_version,
+                        recorded_at=qualification_recorded_at,
+                        valid_through=qualification_expires_at,
+                    ),
+                )
+            }
+        )
+        if candidate_scenario == "REVOKED_AFTER_CUTOFF":
+            revoked_at = publication_time - timedelta(seconds=1)
+            revoked_record = qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-revoked",
+                    "status": "REVOKED",
+                    "cause": "AUTHORIZATION_REVOKED",
+                    "previous_decision_id": qualification_record.decision_id,
+                    "recorded_at": revoked_at,
+                }
+            )
+            qualification_history = (
+                qualification_outcome,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("AUTHORIZATION_REVOKED",),
+                    qualification=revoked_record,
+                ),
+            )
     candidate_case = FrozenDecisionCase(
         synthetic=True,
         generator_version="synthetic-candidate-release-case-v1",
@@ -3474,19 +3638,98 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         candidate_release=command,
         access_scope=research_case.access_scope,
     )
+    alternate_batch_command = command.model_copy(
+        update={
+            "batch_id": "caller-chosen-retry-id",
+            "research_event_id": "different-research-event-same-plan-month",
+        }
+    )
+    alternate_batch_case = candidate_case.model_copy(
+        update={
+            "candidate_release": alternate_batch_command,
+            "input": {
+                **candidate_case.input,
+                "candidate_release": alternate_batch_command.model_dump(mode="json"),
+            },
+        }
+    )
+    assert alternate_batch_case.business_object_id == candidate_case.business_object_id
 
-    direct = freeze_candidate_release(command)
+    if qualification_history:
+        monkeypatch.setattr(
+            DecisionLedger,
+            "governance_history",
+            lambda self, connection, access_scope: qualification_history,
+        )
+    resolved_command = command
+    if candidate_scenario == "REVOKED_AFTER_CUTOFF":
+        current_qualification_record = qualification_history[-1].qualification
+        assert current_qualification_record is not None
+        resolved_command = command.model_copy(
+            update={
+                "qualifications": (
+                    command.qualifications[0].model_copy(
+                        update={
+                            "qualification_id": current_qualification_record.decision_id,
+                            "status": "REVOKED",
+                            "recorded_at": current_qualification_record.recorded_at,
+                        }
+                    ),
+                )
+            }
+        )
+    direct = freeze_candidate_release(resolved_command, published_at=publication_time)
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
-    assert direct.disposition == "RECOMMENDATION_ABSTAINED"
-    assert direct.calibration is not None and direct.calibration.slope >= 0
-    assert direct.population.valid_monthly
-    assert direct.population.recommendation_coverage_denominator
+    expected_disposition = {
+        "NORMAL": "RECOMMENDATION_ABSTAINED",
+        "CALIBRATION_FAILURE": "FAILED",
+        "LATE_PUBLICATION": "FAILED",
+        "WINDOW_EXPIRED": "FAILED",
+        "AT_RISK_QUALIFICATION": direct.disposition,
+        "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
+        "NO_CANDIDATES": "VALID_NO_CANDIDATES",
+    }[candidate_scenario]
+    assert direct.disposition == expected_disposition
+    if candidate_scenario == "CALIBRATION_FAILURE":
+        assert direct.availability_failure == "CALIBRATION"
+    elif candidate_scenario == "WINDOW_EXPIRED":
+        assert direct.availability_failure == "DATA"
+    elif candidate_scenario == "LATE_PUBLICATION":
+        assert direct.population.valid_monthly is False
+        assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in direct.reasons
+    assert direct.population.recommendation_coverage_denominator == direct.population.valid_monthly
+    if direct.calibration is not None:
+        assert direct.calibration.slope >= 0
     assert execution.report is not None
     assert execution.report.result.candidate_release == direct
-    assert execution.report.result.candidate_release.members[0].candidate is False
-    assert execution.report.result.candidate_release.members[0].calibrated_probability is not None
+    assert execution.report.result.candidate_release.published_at == publication_time
+    assert execution.report.result.candidate_release.members == direct.members
+    if candidate_scenario == "AT_RISK_QUALIFICATION":
+        assert direct.members[0].market_state_qualified is True
+    elif candidate_scenario == "REVOKED_AFTER_CUTOFF":
+        assert direct.members[0].market_state_qualified is False
+    elif candidate_scenario == "NO_CANDIDATES":
+        assert direct.members[0].market_state_qualified is True
+        assert all(member.candidate is False for member in direct.members)
+        assert all(
+            member.calibrated_probability is not None
+            and member.calibrated_probability < Decimal("0.80")
+            for member in direct.members
+        )
+    if direct.members:
+        assert direct.members[0].calibrated_probability is not None
+    if direct.members:
+        assert execution.report.result.candidate_release.members[0].risk_status == (
+            "REJECTED" if risk_scenario == "REJECT" else "ACCEPTED"
+        )
+        if risk_scenario == "REJECT":
+            assert "INDEPENDENT_RISK_VETO" in execution.report.result.candidate_release.members[
+                0
+            ].reasons
     assert execution.report.stage_results[-1].phase == "PUBLICATION"
-    assert execution.report.result.candidate_release.valid_market_dates == tuple(
-        datetime(2042, 7, day, tzinfo=UTC).date() for day in range(1, 6)
+    assert execution.report.result.candidate_release.valid_market_dates == (
+        ()
+        if candidate_scenario == "WINDOW_EXPIRED"
+        else tuple(datetime(2042, 7, day, tzinfo=UTC).date() for day in range(1, 6))
     )

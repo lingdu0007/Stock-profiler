@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    MarketStateQualification,
+    MarketStateQualificationStatus,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
@@ -424,7 +426,7 @@ def _validate_candidate_release_source(
     research = source_event.result.research
     risk = research.risk_veto
     raw_scores = research.raw_scores
-    if research.disposition != "FROZEN" or risk is None or raw_scores is None:
+    if research.disposition not in {"FROZEN", "REJECTED"} or risk is None or raw_scores is None:
         raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
     members = {member.security_id: member for member in research.members}
     scores = {score.security_id: score for score in raw_scores}
@@ -462,7 +464,8 @@ def _validate_candidate_release_source(
 def _validate_candidate_qualification_snapshots(
     case: FrozenDecisionCase,
     history: tuple[GovernanceOutcome, ...],
-) -> None:
+    observed_at: datetime,
+) -> tuple[MarketStateQualification, ...]:
     """Bind market-state qualifications to saved, scope-matched governance facts."""
     command = case.candidate_release
     scope = case.access_scope
@@ -475,15 +478,31 @@ def _validate_candidate_qualification_snapshots(
         if outcome.qualification is not None
         and outcome.qualification.recorded_at <= command.knowledge_cutoff
     )
+    resolved: list[MarketStateQualification] = []
     for snapshot in command.qualifications:
         record = next(
             (item for item in records if item.decision_id == snapshot.qualification_id), None
         )
         if record is None:
             raise ValueError("CANDIDATE_QUALIFICATION_NOT_IN_LEDGER")
+        current_records = tuple(
+            item.qualification
+            for item in history
+            if item.qualification is not None
+            and item.qualification.scope.user_id == record.scope.user_id
+            and set(item.qualification.scope.account_ids) == set(record.scope.account_ids)
+            and item.qualification.scope.purpose == record.scope.purpose
+            and item.qualification.scope.target == record.scope.target
+            and item.qualification.scope.evidence_level == record.scope.evidence_level
+            and item.qualification.scope.market_state == record.scope.market_state
+            and item.qualification.version.version_id == record.version.version_id
+        )
+        latest = max(current_records, key=lambda item: item.recorded_at, default=None)
         basis = record.formal_passing_evidence or record.authorization_evidence
         if (
-            record.status != snapshot.status
+            latest is None
+            or latest.version != record.version
+            or record.status != snapshot.status
             or record.recorded_at != snapshot.recorded_at
             or record.scope.market_state != snapshot.market_state
             or record.scope.user_id != scope.user_id
@@ -501,10 +520,27 @@ def _validate_candidate_qualification_snapshots(
             or snapshot.market_calendar_version != command.market_calendar_version
         ):
             raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
-        if record.status == "VALID" and not qualification_is_current(
-            record, command.knowledge_cutoff
+        current_basis = latest.formal_passing_evidence or latest.authorization_evidence
+        current_status: MarketStateQualificationStatus = latest.status
+        if current_status in {"VALID", "AT_RISK"} and not qualification_is_current(
+            latest, observed_at
         ):
-            raise ValueError("CANDIDATE_QUALIFICATION_EXPIRED")
+            current_status = "EXPIRED"
+        resolved.append(
+            snapshot.model_copy(
+                update={
+                    "qualification_id": latest.decision_id,
+                    "status": current_status,
+                    "recorded_at": latest.recorded_at,
+                    "valid_through": (
+                        current_basis.expires_at
+                        if current_basis is not None
+                        else snapshot.valid_through
+                    ),
+                }
+            )
+        )
+    return tuple(resolved)
 
 
 def _research_data_gate_results(
@@ -1472,6 +1508,9 @@ def _commit_framework_result(
     framework: FrameworkRunResult,
 ) -> DecisionEventFact | DecisionCaseExecution:
     """Validate one terminal framework result and append its host business fact."""
+    committed_at = ledger.observed_at()
+    publication_time = datetime.fromisoformat(committed_at.replace("Z", "+00:00"))
+    candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
         len(framework.transitions) if framework.transitions_durably_recorded else 0
@@ -1497,9 +1536,10 @@ def _commit_framework_result(
         try:
             if execution_case.access_scope is None:
                 raise ValueError("CANDIDATE_ACCESS_SCOPE_MISSING")
-            _validate_candidate_qualification_snapshots(
+            candidate_qualifications = _validate_candidate_qualification_snapshots(
                 execution_case,
                 ledger.governance_history(connection, execution_case.access_scope),
+                publication_time,
             )
             _validate_candidate_release_source(
                 execution_case,
@@ -1983,7 +2023,12 @@ def _commit_framework_result(
                         update={"selection": selection}
                     )
             if business_result is not None and execution_case.candidate_release is not None:
-                candidate_release = freeze_candidate_release(execution_case.candidate_release)
+                candidate_release = freeze_candidate_release(
+                    execution_case.candidate_release.model_copy(
+                        update={"qualifications": candidate_qualifications}
+                    ),
+                    published_at=publication_time,
+                )
                 result = result.model_copy(
                     update={
                         "candidate_release": candidate_release,
@@ -1992,44 +2037,38 @@ def _commit_framework_result(
                         "key_reasons": candidate_release.reasons or ("CANDIDATE_RELEASE_FROZEN",),
                     }
                 )
+                candidate_status: Literal[
+                    "FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"
+                ] = (
+                    "FAILED"
+                    if candidate_release.disposition == "FAILED"
+                    else "REJECTED"
+                    if candidate_release.disposition == "BLOCKED"
+                    else "ABSTAINED"
+                    if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
+                    else "SUCCEEDED"
+                )
+                candidate_gate_status: Literal["FAILED", "PASSED"] = (
+                    "FAILED" if candidate_status in {"FAILED", "REJECTED"} else "PASSED"
+                )
                 candidate_release_result = StageResult(
                     phase="CANDIDATE_RELEASE",
-                    status=(
-                        "FAILED"
-                        if candidate_release.disposition == "FAILED"
-                        else "REJECTED"
-                        if candidate_release.disposition == "BLOCKED"
-                        else "ABSTAINED"
-                        if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
-                        else "SUCCEEDED"
-                    ),
+                    status=candidate_status,
                     gate_results=(
                         GateResult(
                             gate_id="CALIBRATED_CANDIDATE_RELEASE",
-                            status="FAILED"
-                            if candidate_release.disposition in {"FAILED", "BLOCKED"}
-                            else "PASSED",
+                            status=candidate_gate_status,
                         ),
                     ),
                     reasons=candidate_release.reasons,
                 )
                 business_result = StageResult(
                     phase="BUSINESS_DECISION",
-                    status=(
-                        "FAILED"
-                        if candidate_release.disposition == "FAILED"
-                        else "REJECTED"
-                        if candidate_release.disposition == "BLOCKED"
-                        else "ABSTAINED"
-                        if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
-                        else "SUCCEEDED"
-                    ),
+                    status=candidate_status,
                     gate_results=(
                         GateResult(
                             gate_id="CANDIDATE_RELEASE_OUTCOME",
-                            status="FAILED"
-                            if candidate_release.disposition in {"FAILED", "BLOCKED"}
-                            else "PASSED",
+                            status=candidate_gate_status,
                         ),
                     ),
                     reasons=candidate_release.reasons,
@@ -2158,7 +2197,6 @@ def _commit_framework_result(
             reasons=(),
         ),
     )
-    committed_at = ledger.observed_at()
     attempted_fact = ledger.build_event_fact(
         case=execution_case,
         framework_run_id=framework.run_id,
