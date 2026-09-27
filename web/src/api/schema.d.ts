@@ -431,6 +431,128 @@ export interface components {
             /** Substitute Basis Digest */
             substitute_basis_digest: string;
         };
+        /** CalibratedMember */
+        CalibratedMember: {
+            /** Calibrated Probability */
+            calibrated_probability: string | null;
+            /** Candidate */
+            candidate: boolean;
+            /** Data Complete */
+            data_complete: boolean;
+            /** Evidence Freshness */
+            evidence_freshness: string;
+            /** Market State Qualified */
+            market_state_qualified: boolean;
+            /** Principal Risks */
+            principal_risks: string[];
+            /** Raw Success Score */
+            raw_success_score: string;
+            /** Reasons */
+            reasons: string[];
+            /** Research Id */
+            research_id: string;
+            /**
+             * Risk Status
+             * @enum {string}
+             */
+            risk_status: "ACCEPTED" | "REJECTED" | "FAILED";
+            /** Security Id */
+            security_id: string;
+            /** Thesis */
+            thesis: string;
+            /** Valid Market Dates */
+            valid_market_dates: string[];
+        };
+        /** CalibrationSnapshot */
+        CalibrationSnapshot: {
+            /**
+             * Calibrator Version
+             * @constant
+             */
+            calibrator_version: "monotone-firth-logistic-v1";
+            /** Intercept */
+            intercept: string;
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
+            /** Negative Record Count */
+            negative_record_count: number;
+            /** Positive Record Count */
+            positive_record_count: number;
+            /** Slope */
+            slope: string;
+            /** Training Record Count */
+            training_record_count: number;
+            /** Training Window Months */
+            training_window_months: string[];
+        };
+        /** CandidatePopulation */
+        CandidatePopulation: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "CALIBRATION" | "VERSION") | null;
+            /** Recommendation Coverage Denominator */
+            recommendation_coverage_denominator: boolean;
+            /** Recommendation Coverage Pass */
+            recommendation_coverage_pass: boolean;
+            /** Valid Monthly */
+            valid_monthly: boolean;
+        };
+        /** CandidateReleaseOutcome */
+        CandidateReleaseOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "CALIBRATION" | "VERSION") | null;
+            /** Batch Id */
+            batch_id: string;
+            calibration: components["schemas"]["CalibrationSnapshot"] | null;
+            /** Capability Version */
+            capability_version: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "CANDIDATES" | "VALID_NO_CANDIDATES" | "RECOMMENDATION_ABSTAINED" | "FAILED" | "BLOCKED";
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /**
+             * Market State
+             * @enum {string}
+             */
+            market_state: "BULL" | "BEAR" | "SIDEWAYS";
+            /** Members */
+            members: components["schemas"]["CalibratedMember"][];
+            population: components["schemas"]["CandidatePopulation"];
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /**
+             * Qualification Scope
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /** Reasons */
+            reasons: string[];
+            /** Research Event Id */
+            research_event_id: string;
+            /** Research Object Id */
+            research_object_id: string;
+            /** Valid Market Dates */
+            valid_market_dates: string[];
+        };
         /** CapabilityVersion */
         CapabilityVersion: {
             implementation: components["schemas"]["DecisionCaseVersionBundle"];
@@ -1189,6 +1311,7 @@ export interface components {
          * @description The user-visible result expected from this original synthetic fixture.
          */
         ExternalResult: {
+            candidate_release?: components["schemas"]["CandidateReleaseOutcome"] | null;
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
             drawdown?: components["schemas"]["DrawdownOutcome"] | null;
@@ -3247,7 +3370,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

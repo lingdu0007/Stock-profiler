@@ -528,6 +528,320 @@
         "title": "BasisSubstitutionCheck",
         "type": "object"
       },
+      "CalibratedMember": {
+        "additionalProperties": false,
+        "properties": {
+          "calibrated_probability": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibrated Probability"
+          },
+          "candidate": {
+            "title": "Candidate",
+            "type": "boolean"
+          },
+          "data_complete": {
+            "title": "Data Complete",
+            "type": "boolean"
+          },
+          "evidence_freshness": {
+            "title": "Evidence Freshness",
+            "type": "string"
+          },
+          "market_state_qualified": {
+            "title": "Market State Qualified",
+            "type": "boolean"
+          },
+          "principal_risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Principal Risks",
+            "type": "array"
+          },
+          "raw_success_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Raw Success Score",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_id": {
+            "title": "Research Id",
+            "type": "string"
+          },
+          "risk_status": {
+            "enum": ["ACCEPTED", "REJECTED", "FAILED"],
+            "title": "Risk Status",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "thesis": {
+            "title": "Thesis",
+            "type": "string"
+          },
+          "valid_market_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Valid Market Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "security_id",
+          "research_id",
+          "raw_success_score",
+          "calibrated_probability",
+          "candidate",
+          "risk_status",
+          "market_state_qualified",
+          "data_complete",
+          "thesis",
+          "principal_risks",
+          "evidence_freshness",
+          "valid_market_dates",
+          "reasons"
+        ],
+        "title": "CalibratedMember",
+        "type": "object"
+      },
+      "CalibrationSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "calibrator_version": {
+            "const": "monotone-firth-logistic-v1",
+            "title": "Calibrator Version",
+            "type": "string"
+          },
+          "intercept": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Intercept",
+            "type": "string"
+          },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
+          "negative_record_count": {
+            "title": "Negative Record Count",
+            "type": "integer"
+          },
+          "positive_record_count": {
+            "title": "Positive Record Count",
+            "type": "integer"
+          },
+          "slope": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Slope",
+            "type": "string"
+          },
+          "training_record_count": {
+            "title": "Training Record Count",
+            "type": "integer"
+          },
+          "training_window_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Training Window Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "calibrator_version",
+          "intercept",
+          "slope",
+          "training_window_months",
+          "label_watermark_at",
+          "training_record_count",
+          "positive_record_count",
+          "negative_record_count"
+        ],
+        "title": "CalibrationSnapshot",
+        "type": "object"
+      },
+      "CandidatePopulation": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "CALIBRATION", "VERSION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "recommendation_coverage_denominator": {
+            "title": "Recommendation Coverage Denominator",
+            "type": "boolean"
+          },
+          "recommendation_coverage_pass": {
+            "title": "Recommendation Coverage Pass",
+            "type": "boolean"
+          },
+          "valid_monthly": {
+            "title": "Valid Monthly",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid_monthly",
+          "recommendation_coverage_denominator",
+          "recommendation_coverage_pass"
+        ],
+        "title": "CandidatePopulation",
+        "type": "object"
+      },
+      "CandidateReleaseOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "CALIBRATION", "VERSION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability_version": {
+            "title": "Capability Version",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "CANDIDATES",
+              "VALID_NO_CANDIDATES",
+              "RECOMMENDATION_ABSTAINED",
+              "FAILED",
+              "BLOCKED"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "market_calendar_version": {
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "market_state": {
+            "enum": ["BULL", "BEAR", "SIDEWAYS"],
+            "title": "Market State",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CalibratedMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "population": {
+            "$ref": "#/components/schemas/CandidatePopulation"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_event_id": {
+            "title": "Research Event Id",
+            "type": "string"
+          },
+          "research_object_id": {
+            "title": "Research Object Id",
+            "type": "string"
+          },
+          "valid_market_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Valid Market Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "disposition",
+          "knowledge_cutoff",
+          "published_at",
+          "qualification_scope",
+          "capability_version",
+          "research_object_id",
+          "research_event_id",
+          "market_calendar_version",
+          "market_state",
+          "calibration",
+          "members",
+          "population",
+          "valid_market_dates",
+          "reasons"
+        ],
+        "title": "CandidateReleaseOutcome",
+        "type": "object"
+      },
       "CapabilityVersion": {
         "additionalProperties": false,
         "properties": {
@@ -2391,6 +2705,16 @@
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
         "properties": {
+          "candidate_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateReleaseOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "concentration": {
             "anyOf": [
               {
@@ -7910,6 +8234,7 @@
               "ISSUER_CONCENTRATION",
               "DRAWDOWN_PROTECTION",
               "LIQUIDITY_PROTECTION",
+              "CANDIDATE_RELEASE",
               "PORTFOLIO_STRESS",
               "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",

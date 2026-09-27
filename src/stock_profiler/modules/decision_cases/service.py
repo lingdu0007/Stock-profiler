@@ -13,6 +13,10 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
+from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    freeze_candidate_release,
+)
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
 from stock_profiler.modules.decision_cases.domain import (
@@ -68,7 +72,9 @@ from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_po
 from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
+from stock_profiler.modules.qualification.service import qualification_is_current
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
     RawScore,
@@ -393,6 +399,112 @@ def _validate_research_selection_event(
         or source_terminal_percentiles != command.screening.terminal_percentiles
     ):
         raise ValueError("RESEARCH_SELECTION_PERCENTILE_MISMATCH")
+
+
+def _validate_candidate_release_source(
+    case: FrozenDecisionCase,
+    source_event: DecisionEventFact | None,
+) -> None:
+    """Require every candidate input to match one committed research and risk result."""
+    command = case.candidate_release
+    assert command is not None
+    if (
+        source_event is None
+        or source_event.decision_event_id != command.research_event_id
+        or source_event.business_object_id != command.research_object_id
+        or source_event.corrects_event_id is not None
+        or source_event.validation_status != "PASSED"
+        or source_event.case.access_scope is None
+        or case.access_scope is None
+        or not source_event.case.access_scope.same_scope_as(case.access_scope)
+        or source_event.case.knowledge_cutoff != case.knowledge_cutoff
+        or source_event.result.research is None
+    ):
+        raise ValueError("CANDIDATE_RESEARCH_EVENT_INVALID")
+    research = source_event.result.research
+    risk = research.risk_veto
+    raw_scores = research.raw_scores
+    if research.disposition != "FROZEN" or risk is None or raw_scores is None:
+        raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
+    members = {member.security_id: member for member in research.members}
+    scores = {score.security_id: score for score in raw_scores}
+    vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
+    if (
+        len(members) != len(research.members)
+        or len(scores) != len(raw_scores)
+        or set(members) != set(scores)
+        or set(members) != set(vetoes)
+        or set(members) != {member.security_id for member in command.candidates}
+        or len(command.candidates) != 10
+    ):
+        raise ValueError("CANDIDATE_RESEARCH_COHORT_MISMATCH")
+    for candidate in command.candidates:
+        member = members[candidate.security_id]
+        score = scores[candidate.security_id]
+        veto = vetoes[candidate.security_id]
+        if candidate.research_id != member.research_id:
+            raise ValueError("CANDIDATE_RESEARCH_ID_MISMATCH")
+        if candidate.raw_success_score != score.z20:
+            raise ValueError("CANDIDATE_RAW_SCORE_MISMATCH")
+        if candidate.risk_status != veto.disposition:
+            raise ValueError("CANDIDATE_RISK_VETO_MISMATCH")
+        if candidate.thesis != member.thesis or candidate.principal_risks != (member.bear_case,):
+            raise ValueError("CANDIDATE_THESIS_OR_RISK_MISMATCH")
+        expected_freshness = (
+            "FRESH_AT_KNOWLEDGE_CUTOFF"
+            if member.knowledge_cutoff == source_event.case.knowledge_cutoff
+            else "STALE_AT_KNOWLEDGE_CUTOFF"
+        )
+        if candidate.evidence_freshness != expected_freshness:
+            raise ValueError("CANDIDATE_EVIDENCE_FRESHNESS_MISMATCH")
+
+
+def _validate_candidate_qualification_snapshots(
+    case: FrozenDecisionCase,
+    history: tuple[GovernanceOutcome, ...],
+) -> None:
+    """Bind market-state qualifications to saved, scope-matched governance facts."""
+    command = case.candidate_release
+    scope = case.access_scope
+    assert command is not None and scope is not None
+    if len({item.market_state for item in command.qualifications}) != len(command.qualifications):
+        raise ValueError("CANDIDATE_MARKET_STATE_QUALIFICATION_DUPLICATE")
+    records = tuple(
+        outcome.qualification
+        for outcome in history
+        if outcome.qualification is not None
+        and outcome.qualification.recorded_at <= command.knowledge_cutoff
+    )
+    for snapshot in command.qualifications:
+        record = next(
+            (item for item in records if item.decision_id == snapshot.qualification_id), None
+        )
+        if record is None:
+            raise ValueError("CANDIDATE_QUALIFICATION_NOT_IN_LEDGER")
+        basis = record.formal_passing_evidence or record.authorization_evidence
+        if (
+            record.status != snapshot.status
+            or record.recorded_at != snapshot.recorded_at
+            or record.scope.market_state != snapshot.market_state
+            or record.scope.user_id != scope.user_id
+            or set(record.scope.account_ids) != set(scope.account_ids)
+            or record.scope.purpose != command.purpose
+            or record.scope.target != "SIX_MONTH_TERMINAL_20_PERCENT"
+            or record.scope.evidence_level != "D0"
+            or record.version.version_id != snapshot.capability_version
+            or record.version.implementation != case.version_bundle
+            or record.version.version_id != command.capability_version
+            or record.version.implementation.m_agent_release_commit
+            != CURRENT_M_AGENT_RELEASE.m_agent_release_commit
+            or basis is None
+            or basis.expires_at != snapshot.valid_through
+            or snapshot.market_calendar_version != command.market_calendar_version
+        ):
+            raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+        if record.status == "VALID" and not qualification_is_current(
+            record, command.knowledge_cutoff
+        ):
+            raise ValueError("CANDIDATE_QUALIFICATION_EXPIRED")
 
 
 def _research_data_gate_results(
@@ -937,7 +1049,10 @@ def _run_frozen_decision_case(
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
         if (
-            case.monitoring is not None or case.universe is not None or case.selection is not None
+            case.monitoring is not None
+            or case.universe is not None
+            or case.selection is not None
+            or case.candidate_release is not None
         ) and has_existing_mapping:
             mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
             if mapping is not None and mapping.case is not None:
@@ -1378,6 +1493,50 @@ def _commit_framework_result(
             framework_stage_results,
             durable_transition_count,
         )
+    if execution_case.candidate_release is not None:
+        try:
+            if execution_case.access_scope is None:
+                raise ValueError("CANDIDATE_ACCESS_SCOPE_MISSING")
+            _validate_candidate_qualification_snapshots(
+                execution_case,
+                ledger.governance_history(connection, execution_case.access_scope),
+            )
+            _validate_candidate_release_source(
+                execution_case,
+                ledger.get_original_decision_event(
+                    execution_case.candidate_release.research_object_id,
+                    connection,
+                ),
+            )
+        except ValueError as error:
+            failed = StageResult(
+                phase="CANDIDATE_RELEASE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="FROZEN_RESEARCH_HANDOFF", status="FAILED"),),
+                reasons=(str(error),),
+            )
+            ledger.record_stage_result(
+                connection,
+                case=execution_case,
+                stage_result=failed,
+                framework_run_id=execution_case.framework_run_id,
+            )
+            ledger.record_stage_result(
+                connection,
+                case=execution_case,
+                stage_result=_failed_host_validation(str(error)),
+                framework_run_id=execution_case.framework_run_id,
+            )
+            return _unpublished_execution(
+                execution_case,
+                framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
+                business_result_status=None,
+                business_lifecycle=None,
+                business_commit_status="NOT_ATTEMPTED",
+                stage_results=ledger.get_stage_results(
+                    execution_case.business_object_id, connection
+                ),
+            )
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
         return _unpublished_execution(
@@ -1405,6 +1564,7 @@ def _commit_framework_result(
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
     execution_plan_result: StageResult | None = None
+    candidate_release_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -1822,6 +1982,58 @@ def _commit_framework_result(
                     result = execution_case.expected_external_result.model_copy(
                         update={"selection": selection}
                     )
+            if business_result is not None and execution_case.candidate_release is not None:
+                candidate_release = freeze_candidate_release(execution_case.candidate_release)
+                result = result.model_copy(
+                    update={
+                        "candidate_release": candidate_release,
+                        "outcome_code": f"CANDIDATE_RELEASE_{candidate_release.disposition}",
+                        "summary": "Synthetic calibrated candidate release.",
+                        "key_reasons": candidate_release.reasons or ("CANDIDATE_RELEASE_FROZEN",),
+                    }
+                )
+                candidate_release_result = StageResult(
+                    phase="CANDIDATE_RELEASE",
+                    status=(
+                        "FAILED"
+                        if candidate_release.disposition == "FAILED"
+                        else "REJECTED"
+                        if candidate_release.disposition == "BLOCKED"
+                        else "ABSTAINED"
+                        if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
+                        else "SUCCEEDED"
+                    ),
+                    gate_results=(
+                        GateResult(
+                            gate_id="CALIBRATED_CANDIDATE_RELEASE",
+                            status="FAILED"
+                            if candidate_release.disposition in {"FAILED", "BLOCKED"}
+                            else "PASSED",
+                        ),
+                    ),
+                    reasons=candidate_release.reasons,
+                )
+                business_result = StageResult(
+                    phase="BUSINESS_DECISION",
+                    status=(
+                        "FAILED"
+                        if candidate_release.disposition == "FAILED"
+                        else "REJECTED"
+                        if candidate_release.disposition == "BLOCKED"
+                        else "ABSTAINED"
+                        if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
+                        else "SUCCEEDED"
+                    ),
+                    gate_results=(
+                        GateResult(
+                            gate_id="CANDIDATE_RELEASE_OUTCOME",
+                            status="FAILED"
+                            if candidate_release.disposition in {"FAILED", "BLOCKED"}
+                            else "PASSED",
+                        ),
+                    ),
+                    reasons=candidate_release.reasons,
+                )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -1893,6 +2105,13 @@ def _commit_framework_result(
             stage_result=execution_plan_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if candidate_release_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=candidate_release_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -1906,6 +2125,7 @@ def _commit_framework_result(
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
         *((execution_plan_result,) if execution_plan_result is not None else ()),
+        *((candidate_release_result,) if candidate_release_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,

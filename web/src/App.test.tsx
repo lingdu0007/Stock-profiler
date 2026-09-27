@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import correctionFixture from "../../tests/fixtures/synthetic/frozen_correction_evidence.json";
 import portfolioFixture from "../../tests/fixtures/synthetic/portfolio_authorization.json";
 import { App } from "./App";
+import type { FormalReport } from "./api/client";
 import { syntheticReport as report } from "./test-support/synthetic-report";
 
 describe("App", () => {
@@ -43,6 +44,98 @@ describe("App", () => {
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(
       `/api/v1/reports/${report.report_version_id}`
     );
+  });
+
+  it("renders the frozen candidate batch and per-security evidence without personal allocation", async () => {
+    const candidateReport: FormalReport = {
+      ...report,
+      result: {
+        ...report.result,
+        outcome_code: "CANDIDATE_RELEASE_CANDIDATES",
+        candidate_release: {
+          batch_id: "synthetic-candidate-batch-001",
+          disposition: "CANDIDATES",
+          knowledge_cutoff: "2046-07-01T08:00:00Z",
+          published_at: "2046-07-01T09:00:00Z",
+          qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY",
+          capability_version: "candidate-v1",
+          research_object_id: "synthetic-research-object-001",
+          research_event_id: "synthetic-research-event-001",
+          market_calendar_version: "synthetic-calendar-v1",
+          market_state: "BULL",
+          calibration: {
+            calibrator_version: "monotone-firth-logistic-v1",
+            intercept: "-1.2",
+            slope: "2.7",
+            training_window_months: ["2041-01", "2045-12"],
+            label_watermark_at: "2046-07-01T08:00:00Z",
+            training_record_count: 600,
+            positive_record_count: 300,
+            negative_record_count: 300
+          },
+          members: [
+            {
+              security_id: "SYNTH-ALPHA",
+              research_id: "synthetic-research-alpha",
+              raw_success_score: "0.95",
+              calibrated_probability: "0.87",
+              candidate: true,
+              risk_status: "ACCEPTED",
+              market_state_qualified: true,
+              data_complete: true,
+              thesis: "Original synthetic investment thesis.",
+              principal_risks: ["Original synthetic risk."],
+              evidence_freshness: "FRESH_AT_CUTOFF",
+              valid_market_dates: [
+                "2046-07-02",
+                "2046-07-03",
+                "2046-07-04",
+                "2046-07-05",
+                "2046-07-06"
+              ],
+              reasons: ["ALL_CANDIDATE_GATES_PASSED"]
+            }
+          ],
+          population: {
+            valid_monthly: true,
+            recommendation_coverage_denominator: true,
+            recommendation_coverage_pass: true,
+            availability_failure: null
+          },
+          valid_market_dates: [
+            "2046-07-02",
+            "2046-07-03",
+            "2046-07-04",
+            "2046-07-05",
+            "2046-07-06"
+          ],
+          reasons: [],
+          availability_failure: null,
+          actionable: false
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(candidateReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+
+    render(<App />);
+
+    const release = await screen.findByRole("region", { name: "Candidate batch release" });
+    expect(release).toHaveTextContent("CANDIDATES");
+    expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
+    expect(release).toHaveTextContent("0.87");
+    expect(release).toHaveTextContent("Independent risk veto");
+    expect(release).toHaveTextContent("Original synthetic investment thesis.");
+    expect(release).not.toHaveTextContent("account route");
+    expect(release).not.toHaveTextContent("position quantity");
   });
 
   it("renders the research rejection projection and its durable stages", async () => {

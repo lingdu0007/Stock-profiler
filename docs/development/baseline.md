@@ -100,6 +100,23 @@ All universe reports remain non-actionable, including simulated real-candidate
 purpose cases. The first committed scope/purpose/month snapshot is immutable;
 changed retry identities or later evidence do not replace it.
 
+The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
+research event with ten independently risk-vetted members. The host fits the
+versioned monotone Firth logistic calibrator only from the declared 60
+consecutive mature months, with its label watermark no later than the research
+knowledge cutoff. It freezes fitted parameters, per-security probabilities and
+the five-session window selected from the saved market calendar. A candidate
+requires probability at least 0.80, complete data, an accepted independent
+risk result and a scope-, version-, state- and calendar-matched persisted
+qualification valid at the cutoff. Missing qualification yields
+`RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains
+`VALID_NO_CANDIDATES`. Calibration or data failures remain visible and do not
+reuse older probabilities. A report published after the frozen window fails
+without moving it. The authenticated report projection shows the original
+research thesis, principal risks, evidence freshness, market qualification,
+calibration and fixed validity dates. These synthetic D0 cases remain
+non-actionable and expose no personal position information.
+
 `stock-profiler decision-case-replay --business-identity <identity>` reuses the
 saved business mapping and frozen snapshot. For an older unmapped Run whose
 build provenance differs, add `--recovery-case /absolute/path/original-case.json`

@@ -1,0 +1,458 @@
+"""Frozen, deterministic candidate calibration and release contracts."""
+
+from __future__ import annotations
+
+import math
+from calendar import monthrange
+from datetime import UTC, date, datetime
+from decimal import Decimal, localcontext
+from typing import Literal
+
+from pydantic import AwareDatetime, Field, model_validator
+
+from stock_profiler.modules.candidate_selection.universe import UniverseContract
+
+CALIBRATOR_VERSION: Literal["monotone-firth-logistic-v1"] = "monotone-firth-logistic-v1"
+PROBABILITY_THRESHOLD = Decimal("0.80")
+_MINIMUM_MATURE_MONTHS = 60
+_MINIMUM_TRAINING_RECORDS = 500
+_MINIMUM_CLASS_RECORDS = 50
+CandidateReleaseDisposition = Literal[
+    "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
+]
+CandidateAvailabilityFailure = Literal["DATA", "CALIBRATION", "VERSION"]
+
+
+class CalibrationRecord(UniverseContract):
+    """One already matured raw-score label in the calibration population."""
+
+    record_id: str = Field(min_length=1)
+    month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    raw_success_score: Decimal
+    terminal_success: bool
+    label_available_at: AwareDatetime
+
+
+class MarketStateQualification(UniverseContract):
+    """Snapshot of one persisted qualification decision for one market state."""
+
+    market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
+    status: Literal["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED"]
+    qualification_id: str = Field(min_length=1)
+    qualification_scope: Literal["D0_SYNTHETIC_CONTRACT_ONLY"] = "D0_SYNTHETIC_CONTRACT_ONLY"
+    capability_version: str = Field(min_length=1)
+    market_calendar_version: str = Field(min_length=1)
+    recorded_at: AwareDatetime
+    valid_through: AwareDatetime
+
+
+class CandidateInput(UniverseContract):
+    """Frozen member evidence handed from research and independent risk."""
+
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
+    raw_success_score: Decimal
+    data_complete: bool
+    risk_status: Literal["ACCEPTED", "REJECTED", "FAILED"]
+    thesis: str = Field(min_length=1)
+    principal_risks: tuple[str, ...] = Field(min_length=1)
+    evidence_freshness: str = Field(min_length=1)
+
+
+class MarketSession(UniverseContract):
+    """A market session from the immutable calendar used for the candidate batch."""
+
+    market_date: date
+    opens_at: AwareDatetime
+    closes_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_session(self) -> MarketSession:
+        if self.opens_at.date() != self.market_date or self.closes_at.date() != self.market_date:
+            raise ValueError("market session date must match its open and close clocks")
+        if self.closes_at <= self.opens_at:
+            raise ValueError("market session must close after it opens")
+        return self
+
+
+class CandidateReleaseCommand(UniverseContract):
+    """Complete D0 input for one immutable, calibrated candidate publication."""
+
+    contract_version: Literal["1.0.0"]
+    synthetic: Literal[True]
+    generator_version: str = Field(min_length=1)
+    seed: int
+    batch_id: str = Field(min_length=1)
+    qualification_scope: Literal["D0_SYNTHETIC_CONTRACT_ONLY"]
+    capability_version: str = Field(min_length=1)
+    research_object_id: str = Field(min_length=1)
+    research_event_id: str = Field(min_length=1)
+    purpose: Literal["CANDIDATE_BUY"]
+    knowledge_cutoff: AwareDatetime
+    published_at: AwareDatetime
+    market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
+    market_calendar_version: str = Field(min_length=1)
+    qualifications: tuple[MarketStateQualification, ...] = ()
+    calibrator_version: Literal["monotone-firth-logistic-v1"] = CALIBRATOR_VERSION
+    label_watermark_at: AwareDatetime
+    training_window_months: tuple[str, ...] = Field(min_length=1)
+    training_records: tuple[CalibrationRecord, ...] = Field(min_length=1)
+    candidates: tuple[CandidateInput, ...] = Field(min_length=1)
+    market_sessions: tuple[MarketSession, ...] = Field(min_length=5)
+
+    @model_validator(mode="after")
+    def validate_frozen_inputs(self) -> CandidateReleaseCommand:
+        if self.label_watermark_at > self.knowledge_cutoff:
+            raise ValueError("label watermark cannot follow the frozen knowledge cutoff")
+        if len(set(self.training_window_months)) != len(self.training_window_months):
+            raise ValueError("calibration training months must be unique")
+        if len({candidate.security_id for candidate in self.candidates}) != len(self.candidates):
+            raise ValueError("candidate release members must have unique securities")
+        if len({candidate.research_id for candidate in self.candidates}) != len(self.candidates):
+            raise ValueError("candidate release members must have unique research identities")
+        if tuple(sorted(self.market_sessions, key=lambda session: session.opens_at)) != (
+            self.market_sessions
+        ):
+            raise ValueError("market sessions must be in chronological order")
+        if len({session.market_date for session in self.market_sessions}) != len(
+            self.market_sessions
+        ):
+            raise ValueError("market session dates must be unique")
+        return self
+
+
+class CalibratedMember(UniverseContract):
+    security_id: str
+    research_id: str
+    raw_success_score: Decimal
+    calibrated_probability: Decimal | None
+    candidate: bool
+    risk_status: Literal["ACCEPTED", "REJECTED", "FAILED"]
+    market_state_qualified: bool
+    data_complete: bool
+    thesis: str
+    principal_risks: tuple[str, ...]
+    evidence_freshness: str
+    valid_market_dates: tuple[date, ...]
+    reasons: tuple[str, ...]
+
+
+class CalibrationSnapshot(UniverseContract):
+    calibrator_version: Literal["monotone-firth-logistic-v1"]
+    intercept: Decimal
+    slope: Decimal
+    training_window_months: tuple[str, ...]
+    label_watermark_at: AwareDatetime
+    training_record_count: int
+    positive_record_count: int
+    negative_record_count: int
+
+
+class CandidatePopulation(UniverseContract):
+    valid_monthly: bool
+    recommendation_coverage_denominator: bool
+    recommendation_coverage_pass: bool
+    availability_failure: CandidateAvailabilityFailure | None = None
+
+
+class CandidateReleaseOutcome(UniverseContract):
+    batch_id: str
+    disposition: CandidateReleaseDisposition
+    knowledge_cutoff: AwareDatetime
+    published_at: AwareDatetime
+    qualification_scope: Literal["D0_SYNTHETIC_CONTRACT_ONLY"]
+    capability_version: str
+    research_object_id: str
+    research_event_id: str
+    market_calendar_version: str
+    market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
+    calibration: CalibrationSnapshot | None
+    members: tuple[CalibratedMember, ...]
+    population: CandidatePopulation
+    valid_market_dates: tuple[date, ...]
+    reasons: tuple[str, ...]
+    availability_failure: CandidateAvailabilityFailure | None = None
+    actionable: Literal[False] = False
+
+
+def freeze_candidate_release(command: CandidateReleaseCommand) -> CandidateReleaseOutcome:
+    """Calibrate each frozen member, combine independent gates, and fix its only window."""
+    window = tuple(
+        session
+        for session in command.market_sessions
+        if session.opens_at > command.knowledge_cutoff
+    )[:5]
+    window_dates = tuple(session.market_date for session in window)
+    if len(window) != 5:
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
+            availability_failure="DATA",
+        )
+    if command.published_at > window[-1].closes_at:
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("PUBLICATION_AFTER_CANDIDATE_WINDOW",),
+        )
+    if any(not candidate.data_complete for candidate in command.candidates):
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("CANDIDATE_DATA_INCOMPLETE",),
+            availability_failure="DATA",
+        )
+    qualification = next(
+        (
+            item
+            for item in command.qualifications
+            if item.market_state == command.market_state
+            and item.capability_version == command.capability_version
+            and item.market_calendar_version == command.market_calendar_version
+            and item.qualification_scope == command.qualification_scope
+            and item.recorded_at <= command.knowledge_cutoff
+            and item.valid_through >= command.knowledge_cutoff
+        ),
+        None,
+    )
+    state_qualified = qualification is not None and qualification.status == "VALID"
+    try:
+        calibration = _fit_calibrator(command)
+    except ValueError as error:
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=(str(error),),
+            availability_failure="CALIBRATION",
+        )
+    members: list[CalibratedMember] = []
+    for candidate in command.candidates:
+        probability = _probability(calibration, candidate.raw_success_score)
+        reasons: list[str] = []
+        if probability < PROBABILITY_THRESHOLD:
+            reasons.append("PROBABILITY_BELOW_THRESHOLD")
+        if not state_qualified:
+            reasons.append("MARKET_STATE_NOT_QUALIFIED")
+        if candidate.risk_status == "REJECTED":
+            reasons.append("INDEPENDENT_RISK_VETO")
+        elif candidate.risk_status == "FAILED":
+            reasons.append("INDEPENDENT_RISK_UNAVAILABLE")
+        members.append(
+            CalibratedMember(
+                security_id=candidate.security_id,
+                research_id=candidate.research_id,
+                raw_success_score=candidate.raw_success_score,
+                calibrated_probability=probability,
+                candidate=not reasons,
+                risk_status=candidate.risk_status,
+                market_state_qualified=state_qualified,
+                data_complete=candidate.data_complete,
+                thesis=candidate.thesis,
+                principal_risks=candidate.principal_risks,
+                evidence_freshness=candidate.evidence_freshness,
+                valid_market_dates=window_dates,
+                reasons=tuple(reasons) or ("ALL_CANDIDATE_GATES_PASSED",),
+            )
+        )
+    disposition: CandidateReleaseDisposition = (
+        "CANDIDATES"
+        if any(member.candidate for member in members)
+        else "RECOMMENDATION_ABSTAINED"
+        if not state_qualified
+        else "VALID_NO_CANDIDATES"
+    )
+    return _release_outcome(
+        command,
+        window_dates,
+        disposition=disposition,
+        calibration=calibration,
+        members=tuple(members),
+        reasons=() if disposition == "CANDIDATES" else (disposition,),
+    )
+
+
+def _release_outcome(
+    command: CandidateReleaseCommand,
+    valid_market_dates: tuple[date, ...],
+    *,
+    disposition: CandidateReleaseDisposition,
+    reasons: tuple[str, ...],
+    calibration: CalibrationSnapshot | None = None,
+    members: tuple[CalibratedMember, ...] = (),
+    availability_failure: CandidateAvailabilityFailure | None = None,
+) -> CandidateReleaseOutcome:
+    valid_monthly = (
+        disposition
+        in {
+            "CANDIDATES",
+            "VALID_NO_CANDIDATES",
+            "RECOMMENDATION_ABSTAINED",
+        }
+        or "PUBLICATION_AFTER_CANDIDATE_WINDOW" in reasons
+    )
+    return CandidateReleaseOutcome(
+        batch_id=command.batch_id,
+        disposition=disposition,
+        knowledge_cutoff=command.knowledge_cutoff,
+        published_at=command.published_at,
+        qualification_scope=command.qualification_scope,
+        capability_version=command.capability_version,
+        research_object_id=command.research_object_id,
+        research_event_id=command.research_event_id,
+        market_calendar_version=command.market_calendar_version,
+        market_state=command.market_state,
+        calibration=calibration,
+        members=members,
+        population=CandidatePopulation(
+            valid_monthly=valid_monthly,
+            recommendation_coverage_denominator=valid_monthly,
+            recommendation_coverage_pass=disposition == "CANDIDATES",
+            availability_failure=availability_failure,
+        ),
+        valid_market_dates=valid_market_dates,
+        reasons=reasons,
+        availability_failure=availability_failure,
+    )
+
+
+def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
+    months = command.training_window_months
+    if len(months) != _MINIMUM_MATURE_MONTHS or any(
+        _month_index(right) != _month_index(left) + 1
+        for left, right in zip(months, months[1:], strict=False)
+    ):
+        raise ValueError("CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS")
+    by_month: dict[str, list[CalibrationRecord]] = {}
+    for record in command.training_records:
+        if record.month not in months:
+            raise ValueError("TRAINING_RECORD_OUTSIDE_WINDOW")
+        if record.label_available_at < _earliest_label_maturity(record.month):
+            raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
+        if record.label_available_at > command.label_watermark_at:
+            raise ValueError("LABEL_NOT_MATURE_AT_WATERMARK")
+        by_month.setdefault(record.month, []).append(record)
+    if set(by_month) != set(months):
+        raise ValueError("CALIBRATION_TRAINING_MONTHS_INCOMPLETE")
+    records = command.training_records
+    if len({record.record_id for record in records}) != len(records):
+        raise ValueError("CALIBRATION_RECORD_IDENTITIES_NOT_UNIQUE")
+    positives = sum(record.terminal_success for record in records)
+    negatives = len(records) - positives
+    if len(records) < _MINIMUM_TRAINING_RECORDS or min(positives, negatives) < (
+        _MINIMUM_CLASS_RECORDS
+    ):
+        raise ValueError("CALIBRATION_TRAINING_WATERMARK_NOT_MET")
+    try:
+        intercept, slope = _firth_logistic(records)
+    except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError) as error:
+        raise ValueError("CALIBRATION_FIT_FAILED") from error
+    return CalibrationSnapshot(
+        calibrator_version=command.calibrator_version,
+        intercept=Decimal(str(intercept)).quantize(Decimal("0.00000001")),
+        slope=Decimal(str(slope)).quantize(Decimal("0.00000001")),
+        training_window_months=months,
+        label_watermark_at=command.label_watermark_at,
+        training_record_count=len(records),
+        positive_record_count=positives,
+        negative_record_count=negatives,
+    )
+
+
+def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, float]:
+    """Fit two-parameter Firth logistic regression with a nonnegative slope."""
+    scores = tuple(float(record.raw_success_score) for record in records)
+    labels = tuple(float(record.terminal_success) for record in records)
+    if not all(math.isfinite(score) for score in scores) or len(set(scores)) < 2:
+        raise ValueError("CALIBRATION_SCORE_VARIATION_REQUIRED")
+    intercept = slope = 0.0
+
+    def state(a: float, b: float) -> tuple[float, float, float, float, float, float]:
+        probabilities = tuple(_sigmoid(a + b * score) for score in scores)
+        weights = tuple(probability * (1.0 - probability) for probability in probabilities)
+        i00 = sum(weights)
+        i01 = sum(weight * score for weight, score in zip(weights, scores, strict=True))
+        i11 = sum(weight * score * score for weight, score in zip(weights, scores, strict=True))
+        determinant = i00 * i11 - i01 * i01
+        if determinant <= 1e-18:
+            raise ValueError("CALIBRATION_INFORMATION_SINGULAR")
+        inv00, inv01, inv11 = i11 / determinant, -i01 / determinant, i00 / determinant
+        adjusted: list[float] = []
+        for probability, weight, score, label in zip(
+            probabilities, weights, scores, labels, strict=True
+        ):
+            leverage = weight * (inv00 + 2.0 * score * inv01 + score * score * inv11)
+            adjusted.append(label - probability + leverage * (0.5 - probability))
+        score0 = sum(adjusted)
+        score1 = sum(value * raw for value, raw in zip(adjusted, scores, strict=True))
+        objective = sum(
+            label * (a + b * raw) - math.log1p(math.exp(min(700.0, a + b * raw)))
+            for label, raw in zip(labels, scores, strict=True)
+        ) + 0.5 * math.log(determinant)
+        return score0, score1, inv00, inv01, inv11, objective
+
+    for _ in range(100):
+        score0, score1, inv00, inv01, inv11, objective = state(intercept, slope)
+        delta_a = inv00 * score0 + inv01 * score1
+        delta_b = inv01 * score0 + inv11 * score1
+        if slope + delta_b < 0:
+            delta_b = -slope
+        scale = 1.0
+        while scale >= 1e-8:
+            next_a = intercept + scale * delta_a
+            next_b = max(0.0, slope + scale * delta_b)
+            try:
+                next_objective = state(next_a, next_b)[-1]
+            except ValueError:
+                scale /= 2.0
+                continue
+            if next_objective >= objective - 1e-12:
+                break
+            scale /= 2.0
+        if scale < 1e-8:
+            break
+        intercept, slope = next_a, next_b
+        if max(abs(scale * delta_a), abs(scale * delta_b)) < 1e-9:
+            break
+    if not math.isfinite(intercept) or not math.isfinite(slope) or slope < 0:
+        raise ValueError("CALIBRATION_FIT_FAILED")
+    return intercept, slope
+
+
+def _sigmoid(value: float) -> float:
+    if value >= 0:
+        inverse = math.exp(-min(value, 745.0))
+        return 1.0 / (1.0 + inverse)
+    exponent = math.exp(max(value, -745.0))
+    return exponent / (1.0 + exponent)
+
+
+def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
+    with localcontext() as context:
+        context.prec = 32
+        exponent = -(calibration.intercept + calibration.slope * score)
+        return (Decimal(1) / (Decimal(1) + exponent.exp())).quantize(Decimal("0.00000001"))
+
+
+def _month_index(month: str) -> int:
+    return int(month[:4]) * 12 + int(month[5:])
+
+
+def _earliest_label_maturity(month: str) -> datetime:
+    year, month_number = (int(part) for part in month.split("-"))
+    maturity_index = year * 12 + month_number - 1 + 6
+    maturity_year, maturity_month_zero = divmod(maturity_index, 12)
+    maturity_month = maturity_month_zero + 1
+    return datetime(
+        maturity_year,
+        maturity_month,
+        monthrange(maturity_year, maturity_month)[1],
+        23,
+        59,
+        59,
+        tzinfo=UTC,
+    )

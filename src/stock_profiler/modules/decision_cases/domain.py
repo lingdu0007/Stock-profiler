@@ -23,6 +23,10 @@ from stock_profiler.foundation.decision_versions import (
 from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
+from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    CandidateReleaseCommand,
+    CandidateReleaseOutcome,
+)
 from stock_profiler.modules.candidate_selection.selection import SelectionCommand, SelectionOutcome
 from stock_profiler.modules.candidate_selection.universe import UniverseCommand, UniverseOutcome
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
@@ -99,6 +103,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "universe.1.0.0",
         "selection.1.0.0",
         "research.1.0.0",
+        "candidate-release.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -122,6 +127,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("universe.1.0.0", "universe.1.0.0"),
         ("selection.1.0.0", "selection.1.0.0"),
         ("research.1.0.0", "research.1.0.0"),
+        ("candidate-release.1.0.0", "candidate-release.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -207,6 +213,9 @@ class ExternalResult(FrozenContract):
     key_reasons: tuple[str, ...]
     universe: UniverseOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
+    candidate_release: CandidateReleaseOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     correction_evidence: CorrectionEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -274,6 +283,7 @@ StagePhase = Literal[
     "ISSUER_CONCENTRATION",
     "DRAWDOWN_PROTECTION",
     "LIQUIDITY_PROTECTION",
+    "CANDIDATE_RELEASE",
     "PORTFOLIO_STRESS",
     "EXECUTION_PLAN",
     "ADJUDICATION_LIFECYCLE",
@@ -350,6 +360,15 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "RESEARCH": frozenset({"SUCCEEDED", "FAILED", "REJECTED"}),
     "RAW_SCORE": frozenset({"SUCCEEDED", "FAILED"}),
     "RISK_VETO": frozenset({"SUCCEEDED", "REJECTED", "FAILED"}),
+    "CANDIDATE_RELEASE": frozenset(
+        {
+            "SUCCEEDED",
+            "REJECTED",
+            "ABSTAINED",
+            "FAILED",
+            "UNKNOWN",
+        }
+    ),
 }
 
 
@@ -807,6 +826,9 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    candidate_release: CandidateReleaseCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     research: ResearchCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
     access_scope: ResultAccessScope | None = Field(
@@ -874,6 +896,9 @@ class FrozenDecisionCase(FrozenContract):
         universe_governed = self.version_bundle.case_contract_version == "universe.1.0.0"
         selection_governed = self.version_bundle.case_contract_version == "selection.1.0.0"
         research_governed = self.version_bundle.case_contract_version == "research.1.0.0"
+        candidate_release_governed = (
+            self.version_bundle.case_contract_version == "candidate-release.1.0.0"
+        )
         if selection_governed != (self.selection is not None):
             raise ValueError("selection requires its own frozen contract")
         if self.selection is not None and self.selection.cutoff_at != datetime.fromisoformat(
@@ -882,6 +907,17 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("selection and frozen cutoff must agree")
         if research_governed != (self.research is not None):
             raise ValueError("research requires its own frozen contract")
+        if candidate_release_governed != (self.candidate_release is not None):
+            raise ValueError("candidate release requires its own frozen contract")
+        if self.candidate_release is not None and (
+            self.candidate_release.knowledge_cutoff != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.candidate_release.published_at
+            != datetime.fromisoformat(self.report_generated_at)
+            or self.input.get("candidate_release") != self.candidate_release.model_dump(mode="json")
+        ):
+            raise ValueError(
+                "candidate release and frozen cutoff, publication, and input must agree"
+            )
         if self.research is not None:
             research_input = self.input.get("research")
             research_input_matches = research_input == self.research.model_dump(mode="json")
@@ -953,6 +989,7 @@ class FrozenDecisionCase(FrozenContract):
             or universe_governed
             or selection_governed
             or research_governed
+            or candidate_release_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -982,6 +1019,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.universe,
                     self.selection,
                     self.research,
+                    self.candidate_release,
                 )
             )
             > 1
@@ -1011,6 +1049,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.candidate_release is not None
             or (self.expected_external_result.research is not None and not research_governed)
         ):
             raise ValueError("host decisions are never framework output")
@@ -1188,6 +1227,22 @@ class FrozenDecisionCase(FrozenContract):
                         ZoneInfo("Asia/Shanghai")
                     ).strftime("%Y-%m"),
                     "contract": "selection",
+                },
+            )
+        if self.candidate_release is not None:
+            assert self.access_scope is not None
+            return _stable_id(
+                "business-object",
+                {
+                    "owner": self.access_scope.user_id,
+                    "accounts": sorted(self.access_scope.account_ids),
+                    "visibility": self.access_scope.visibility,
+                    "batch_id": self.candidate_release.batch_id,
+                    "research_event_id": self.candidate_release.research_event_id,
+                    "month": self.candidate_release.knowledge_cutoff.astimezone(
+                        ZoneInfo("Asia/Shanghai")
+                    ).strftime("%Y-%m"),
+                    "contract": "candidate-release",
                 },
             )
         if self.universe is not None:
@@ -1562,6 +1617,11 @@ class _SyntheticOutcomeDefinition:
 
 
 _SYNTHETIC_OUTCOMES: dict[str, _SyntheticOutcomeDefinition] = {
+    "CANDIDATE_RELEASE_REQUESTED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "SUCCEEDED",
+        GateResult(gate_id="CANDIDATE_RELEASE_REQUESTED", status="PASSED"),
+    ),
     "SYNTHETIC_REVIEW_COMPLETE": _SyntheticOutcomeDefinition(
         "BUSINESS_DECISION",
         "SUCCEEDED",
@@ -1738,6 +1798,9 @@ def synthetic_outcome_code_from_input(
         return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    candidate_release = input_without_scenario.pop("candidate_release", None)
+    if candidate_release is not None and not isinstance(candidate_release, dict):
+        return None
     account = input_without_scenario.get("account")
     if (
         isinstance(account, dict)

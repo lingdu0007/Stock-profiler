@@ -28,6 +28,8 @@ from sqlalchemy import select
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 import stock_profiler.bootstrap.decision_cases as case_bootstrap
 from stock_profiler.adapters.m_agent.frozen_decision_case import (
+    FROZEN_DEFINITION_INSTRUCTIONS,
+    FROZEN_OUTPUT_SCHEMA,
     RESEARCH_DEFINITION_INSTRUCTIONS,
     _read_announcement_tool,
     execute_research_decision_case,
@@ -50,6 +52,13 @@ from stock_profiler.foundation.decision_versions import (
     HISTORICAL_M_AGENT_RELEASE,
     DecisionCaseVersionBundle,
 )
+from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    CalibrationRecord,
+    CandidateInput,
+    CandidateReleaseCommand,
+    MarketSession,
+    freeze_candidate_release,
+)
 from stock_profiler.modules.candidate_selection.selection import (
     ScreeningRank,
     ScreeningRow,
@@ -60,6 +69,7 @@ from stock_profiler.modules.candidate_selection.selection import (
 )
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import (
+    _COMPLETE_SYNTHETIC_INPUT,
     FROZEN_AGENT_DEFINITION_ID,
     EvidenceClock,
     ExternalResult,
@@ -3335,3 +3345,148 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
     assert first.report.result.research.risk_veto is not None
     assert first.report.result.research.risk_veto.disposition == "ACCEPTED"
     assert sum(stage.phase == "BUSINESS_COMMIT" for stage in second.stage_results) == 1
+
+
+def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abstention(
+    migrated_settings: Settings,
+) -> None:
+    research_case = _case(migrated_settings, risk_scenario="ACCEPT")
+    research_execution = run_frozen_decision_case(
+        migrated_settings, research_case.model_dump(mode="json")
+    )
+    assert research_execution.report is not None
+    research = research_execution.report.result.research
+    assert research is not None and research.raw_scores is not None
+    assert research.risk_veto is not None
+
+    cutoff = datetime.fromisoformat(research_case.knowledge_cutoff)
+    training_months = tuple(
+        f"{year}-{month:02d}" for year in range(2036, 2042) for month in range(1, 13)
+    )[-60:]
+    training_records = tuple(
+        CalibrationRecord(
+            record_id=f"synthetic-calibration-label-{month}-{member:02d}",
+            month=month,
+            raw_success_score=Decimal(member) / Decimal("10"),
+            terminal_success=member >= 5,
+            label_available_at=cutoff,
+        )
+        for month in training_months
+        for member in range(10)
+    )
+    raw_scores = {score.security_id: score for score in research.raw_scores}
+    research_members = {member.security_id: member for member in research.members}
+    risk_vetoes = {item.security_id: item for item in research.risk_veto.member_vetoes}
+    candidates = tuple(
+        CandidateInput(
+            security_id=security_id,
+            research_id=member.research_id,
+            raw_success_score=raw_scores[security_id].z20,
+            data_complete=True,
+            risk_status=risk_vetoes[security_id].disposition,
+            thesis=member.thesis,
+            principal_risks=(member.bear_case,),
+            evidence_freshness=(
+                "FRESH_AT_KNOWLEDGE_CUTOFF"
+                if member.knowledge_cutoff == cutoff.isoformat()
+                else "STALE_AT_KNOWLEDGE_CUTOFF"
+            ),
+        )
+        for security_id, member in research_members.items()
+    )
+    sessions = tuple(
+        MarketSession(
+            market_date=datetime(2042, 7, day, tzinfo=UTC).date(),
+            opens_at=datetime(2042, 7, day, 1, tzinfo=UTC),
+            closes_at=datetime(2042, 7, day, 8, tzinfo=UTC),
+        )
+        for day in range(1, 6)
+    )
+    command = CandidateReleaseCommand(
+        contract_version="1.0.0",
+        synthetic=True,
+        generator_version="synthetic-candidate-release-case-v1",
+        seed=1717,
+        batch_id="synthetic-candidate-batch-1717",
+        qualification_scope="D0_SYNTHETIC_CONTRACT_ONLY",
+        capability_version="synthetic-candidate-capability-v1",
+        research_object_id=research_execution.business_object_id,
+        research_event_id=research_execution.decision_event_id,
+        purpose="CANDIDATE_BUY",
+        knowledge_cutoff=cutoff,
+        published_at=datetime.fromisoformat("2042-07-01T00:04:00+00:00"),
+        market_state="BULL",
+        market_calendar_version="synthetic-market-calendar-v1",
+        label_watermark_at=cutoff,
+        training_window_months=training_months,
+        training_records=training_records,
+        candidates=candidates,
+        market_sessions=sessions,
+    )
+    report_time = datetime.fromisoformat("2042-07-01T00:04:00+00:00")
+    candidate_version = "candidate-release.1.0.0"
+    version_bundle = research_case.version_bundle.model_copy(
+        update={
+            "case_contract_version": candidate_version,
+            "host_contract_version": candidate_version,
+            "agent_definition_id": FROZEN_AGENT_DEFINITION_ID,
+            "agent_definition_version": "2.0.0",
+            "model_adapter_id": "m-agent-deterministic-model-adapter",
+            "routing_policy_version": "d0-single-definition-route-v1",
+            "output_contract_version": "1.0.0",
+            "report_projection_contract_version": candidate_version,
+        }
+    )
+    candidate_case = FrozenDecisionCase(
+        synthetic=True,
+        generator_version="synthetic-candidate-release-case-v1",
+        seed=1717,
+        case_id="synthetic-candidate-release-case-1717",
+        business_identity="synthetic-candidate-release-1717",
+        knowledge_cutoff=cutoff.isoformat(),
+        report_generated_at=report_time.isoformat(),
+        evidence_clock=research_case.evidence_clock,
+        qualification_scope="D0_SYNTHETIC_CONTRACT_ONLY",
+        version_bundle=version_bundle,
+        agent_definition=FrozenAgentDefinition(
+            definition_id=FROZEN_AGENT_DEFINITION_ID,
+            version="2.0.0",
+            instructions=FROZEN_DEFINITION_INSTRUCTIONS,
+            model_adapter_id="m-agent-deterministic-model-adapter",
+            output_contract=FrozenOutputContract(
+                contract_id="synthetic-decision-case-output",
+                version="1.0.0",
+                schema=FROZEN_OUTPUT_SCHEMA,
+            ),
+        ),
+        input={
+            **_COMPLETE_SYNTHETIC_INPUT,
+            "scenario": "CANDIDATE_RELEASE_REQUESTED",
+            "candidate_release": command.model_dump(mode="json"),
+        },
+        expected_external_result=ExternalResult(
+            outcome_code="CANDIDATE_RELEASE_REQUESTED",
+            summary="Frozen synthetic result CANDIDATE_RELEASE_REQUESTED.",
+            key_reasons=(
+                "The frozen synthetic candidate release request is ready for host evaluation.",
+            ),
+        ),
+        candidate_release=command,
+        access_scope=research_case.access_scope,
+    )
+
+    direct = freeze_candidate_release(command)
+    execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
+
+    assert direct.disposition == "RECOMMENDATION_ABSTAINED"
+    assert direct.calibration is not None and direct.calibration.slope >= 0
+    assert direct.population.valid_monthly
+    assert direct.population.recommendation_coverage_denominator
+    assert execution.report is not None
+    assert execution.report.result.candidate_release == direct
+    assert execution.report.result.candidate_release.members[0].candidate is False
+    assert execution.report.result.candidate_release.members[0].calibrated_probability is not None
+    assert execution.report.stage_results[-1].phase == "PUBLICATION"
+    assert execution.report.result.candidate_release.valid_market_dates == tuple(
+        datetime(2042, 7, day, tzinfo=UTC).date() for day in range(1, 6)
+    )

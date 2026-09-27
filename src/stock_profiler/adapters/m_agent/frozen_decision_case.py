@@ -2394,6 +2394,9 @@ def _deterministic_model_response(case: FrozenDecisionCase) -> str:
 
 
 _SYNTHETIC_OUTCOME_REASONS: dict[str, str] = {
+    "CANDIDATE_RELEASE_REQUESTED": (
+        "The frozen synthetic candidate release request is ready for host evaluation."
+    ),
     "SYNTHETIC_INPUT_REJECTED": (
         "The scenario's D0 host-input gate rejects the requested decision."
     ),
