@@ -17,6 +17,7 @@ from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketStateQualification,
     MarketStateQualificationStatus,
+    candidate_release_availability_failure,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
@@ -475,8 +476,7 @@ def _validate_candidate_qualification_snapshots(
     records = tuple(
         outcome.qualification
         for outcome in history
-        if outcome.qualification is not None
-        and outcome.qualification.recorded_at <= command.knowledge_cutoff
+        if outcome.qualification is not None and outcome.qualification.recorded_at <= observed_at
     )
     resolved: list[MarketStateQualification] = []
     for snapshot in command.qualifications:
@@ -489,20 +489,33 @@ def _validate_candidate_qualification_snapshots(
             item.qualification
             for item in history
             if item.qualification is not None
+            and item.qualification.recorded_at <= observed_at
             and item.qualification.scope.user_id == record.scope.user_id
             and set(item.qualification.scope.account_ids) == set(record.scope.account_ids)
             and item.qualification.scope.purpose == record.scope.purpose
             and item.qualification.scope.target == record.scope.target
             and item.qualification.scope.evidence_level == record.scope.evidence_level
             and item.qualification.scope.market_state == record.scope.market_state
+            and item.qualification.scope.capability == record.scope.capability
+            and item.qualification.scope.source == record.scope.source
+            and item.qualification.scope.account_type == record.scope.account_type
+            and item.qualification.scope.board == record.scope.board
             and item.qualification.version.version_id == record.version.version_id
         )
         latest = max(current_records, key=lambda item: item.recorded_at, default=None)
         basis = record.formal_passing_evidence or record.authorization_evidence
         if (
-            latest is None
+            record.version.version_id != snapshot.capability_version
+            or record.version.version_id != command.capability_version
+            or record.version.implementation != case.version_bundle
+            or record.version.implementation.m_agent_release_commit
+            != CURRENT_M_AGENT_RELEASE.m_agent_release_commit
+            or latest is None
             or latest.version != record.version
-            or record.status != snapshot.status
+        ):
+            raise ValueError("CANDIDATE_QUALIFICATION_VERSION_MISMATCH")
+        if (
+            record.status != snapshot.status
             or record.recorded_at != snapshot.recorded_at
             or record.scope.market_state != snapshot.market_state
             or record.scope.user_id != scope.user_id
@@ -510,16 +523,19 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.purpose != command.purpose
             or record.scope.target != "SIX_MONTH_TERMINAL_20_PERCENT"
             or record.scope.evidence_level != "D0"
-            or record.version.version_id != snapshot.capability_version
-            or record.version.implementation != case.version_bundle
-            or record.version.version_id != command.capability_version
-            or record.version.implementation.m_agent_release_commit
-            != CURRENT_M_AGENT_RELEASE.m_agent_release_commit
             or basis is None
             or basis.expires_at != snapshot.valid_through
             or snapshot.market_calendar_version != command.market_calendar_version
         ):
             raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+        if (
+            record.scope.capability != "candidate-release"
+            or record.scope.source != "SYNTHETIC_D0"
+            or record.scope.account_type != "SYNTHETIC"
+            or record.scope.board != "SYNTHETIC"
+        ):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
         current_basis = latest.formal_passing_evidence or latest.authorization_evidence
         current_status: MarketStateQualificationStatus = latest.status
         if current_status in {"VALID", "AT_RISK"} and not qualification_is_current(
@@ -1511,6 +1527,36 @@ def _commit_framework_result(
     committed_at = ledger.observed_at()
     publication_time = datetime.fromisoformat(committed_at.replace("Z", "+00:00"))
     candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
+    candidate_version_failure: str | None = None
+
+    def unpublished_candidate_validation_failure(error: ValueError) -> DecisionCaseExecution:
+        failed = StageResult(
+            phase="CANDIDATE_RELEASE",
+            status="FAILED",
+            gate_results=(GateResult(gate_id="FROZEN_RESEARCH_HANDOFF", status="FAILED"),),
+            reasons=(str(error),),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=failed,
+            framework_run_id=execution_case.framework_run_id,
+        )
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=_failed_host_validation(str(error)),
+            framework_run_id=execution_case.framework_run_id,
+        )
+        return _unpublished_execution(
+            execution_case,
+            framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
+            business_result_status=None,
+            business_lifecycle=None,
+            business_commit_status="NOT_ATTEMPTED",
+            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
+        )
+
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
         len(framework.transitions) if framework.transitions_durably_recorded else 0
@@ -1541,6 +1587,13 @@ def _commit_framework_result(
                 ledger.governance_history(connection, execution_case.access_scope),
                 publication_time,
             )
+        except ValueError as error:
+            if str(error) == "CANDIDATE_QUALIFICATION_VERSION_MISMATCH":
+                candidate_version_failure = str(error)
+                candidate_qualifications = ()
+            else:
+                return unpublished_candidate_validation_failure(error)
+        try:
             _validate_candidate_release_source(
                 execution_case,
                 ledger.get_original_decision_event(
@@ -1549,34 +1602,7 @@ def _commit_framework_result(
                 ),
             )
         except ValueError as error:
-            failed = StageResult(
-                phase="CANDIDATE_RELEASE",
-                status="FAILED",
-                gate_results=(GateResult(gate_id="FROZEN_RESEARCH_HANDOFF", status="FAILED"),),
-                reasons=(str(error),),
-            )
-            ledger.record_stage_result(
-                connection,
-                case=execution_case,
-                stage_result=failed,
-                framework_run_id=execution_case.framework_run_id,
-            )
-            ledger.record_stage_result(
-                connection,
-                case=execution_case,
-                stage_result=_failed_host_validation(str(error)),
-                framework_run_id=execution_case.framework_run_id,
-            )
-            return _unpublished_execution(
-                execution_case,
-                framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
-                business_result_status=None,
-                business_lifecycle=None,
-                business_commit_status="NOT_ATTEMPTED",
-                stage_results=ledger.get_stage_results(
-                    execution_case.business_object_id, connection
-                ),
-            )
+            return unpublished_candidate_validation_failure(error)
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
         return _unpublished_execution(
@@ -2023,12 +2049,20 @@ def _commit_framework_result(
                         update={"selection": selection}
                     )
             if business_result is not None and execution_case.candidate_release is not None:
-                candidate_release = freeze_candidate_release(
-                    execution_case.candidate_release.model_copy(
-                        update={"qualifications": candidate_qualifications}
-                    ),
-                    published_at=publication_time,
-                )
+                if candidate_version_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        execution_case.candidate_release,
+                        published_at=publication_time,
+                        reason=candidate_version_failure,
+                        availability_failure="VERSION",
+                    )
+                else:
+                    candidate_release = freeze_candidate_release(
+                        execution_case.candidate_release.model_copy(
+                            update={"qualifications": candidate_qualifications}
+                        ),
+                        published_at=publication_time,
+                    )
                 result = result.model_copy(
                     update={
                         "candidate_release": candidate_release,
@@ -2037,9 +2071,7 @@ def _commit_framework_result(
                         "key_reasons": candidate_release.reasons or ("CANDIDATE_RELEASE_FROZEN",),
                     }
                 )
-                candidate_status: Literal[
-                    "FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"
-                ] = (
+                candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
                     "FAILED"
                     if candidate_release.disposition == "FAILED"
                     else "REJECTED"

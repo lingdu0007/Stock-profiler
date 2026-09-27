@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime
+from calendar import monthrange
+from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -20,6 +21,18 @@ CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
 CandidateAvailabilityFailure = Literal["DATA", "CALIBRATION", "VERSION"]
+
+
+class _LogisticState(NamedTuple):
+    score_intercept: float
+    score_slope: float
+    information_intercept: float
+    inverse_intercept: float
+    inverse_cross: float
+    inverse_slope: float
+    objective: float
+
+
 MarketStateQualificationStatus = Literal[
     "NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED", "EXPIRED"
 ]
@@ -32,6 +45,8 @@ class CalibrationRecord(UniverseContract):
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     raw_success_score: Decimal
     terminal_success: bool
+    entry_at: AwareDatetime
+    entry_window_ends_at: AwareDatetime
     unified_maturity_at: AwareDatetime
     label_available_at: AwareDatetime
 
@@ -68,6 +83,7 @@ class MarketSession(UniverseContract):
     market_date: date
     opens_at: AwareDatetime
     closes_at: AwareDatetime
+    session_sequence: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_session(self) -> MarketSession:
@@ -93,6 +109,7 @@ class CandidateReleaseCommand(UniverseContract):
     purpose: Literal["CANDIDATE_BUY"]
     knowledge_cutoff: AwareDatetime
     published_at: AwareDatetime
+    last_completed_market_session_sequence: int = Field(gt=0)
     market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
     market_calendar_version: str = Field(min_length=1)
     qualifications: tuple[MarketStateQualification, ...] = ()
@@ -200,6 +217,17 @@ def freeze_candidate_release(
             reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
             availability_failure="DATA",
         )
+    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
+        right.session_sequence != left.session_sequence + 1
+        for left, right in zip(window, window[1:], strict=False)
+    ):
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",),
+            availability_failure="DATA",
+        )
     if any(not candidate.data_complete for candidate in command.candidates):
         return _release_outcome(
             command,
@@ -216,8 +244,8 @@ def freeze_candidate_release(
             and item.capability_version == command.capability_version
             and item.market_calendar_version == command.market_calendar_version
             and item.qualification_scope == command.qualification_scope
-            and item.recorded_at <= command.knowledge_cutoff
-            and item.valid_through >= command.knowledge_cutoff
+            and item.recorded_at <= publication_time
+            and item.valid_through >= publication_time
         ),
         None,
     )
@@ -303,6 +331,48 @@ def freeze_candidate_release(
     )
 
 
+def candidate_release_availability_failure(
+    command: CandidateReleaseCommand,
+    *,
+    published_at: datetime,
+    reason: str,
+    availability_failure: CandidateAvailabilityFailure,
+) -> CandidateReleaseOutcome:
+    """Freeze a non-actionable availability result when host-side version checks fail."""
+    command = command.model_copy(update={"published_at": published_at})
+    window = tuple(
+        session
+        for session in command.market_sessions
+        if session.opens_at > command.knowledge_cutoff
+    )[:5]
+    if len(window) != 5:
+        return _release_outcome(
+            command,
+            tuple(session.market_date for session in window),
+            disposition="FAILED",
+            reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
+            availability_failure="DATA",
+        )
+    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
+        right.session_sequence != left.session_sequence + 1
+        for left, right in zip(window, window[1:], strict=False)
+    ):
+        return _release_outcome(
+            command,
+            tuple(session.market_date for session in window),
+            disposition="FAILED",
+            reasons=("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",),
+            availability_failure="DATA",
+        )
+    return _release_outcome(
+        command,
+        tuple(session.market_date for session in window),
+        disposition="FAILED",
+        reasons=(reason,),
+        availability_failure=availability_failure,
+    )
+
+
 def _release_outcome(
     command: CandidateReleaseCommand,
     valid_market_dates: tuple[date, ...],
@@ -313,14 +383,11 @@ def _release_outcome(
     members: tuple[CalibratedMember, ...] = (),
     availability_failure: CandidateAvailabilityFailure | None = None,
 ) -> CandidateReleaseOutcome:
-    valid_monthly = (
-        disposition
-        in {
-            "CANDIDATES",
-            "VALID_NO_CANDIDATES",
-            "RECOMMENDATION_ABSTAINED",
-        }
-    )
+    valid_monthly = disposition in {
+        "CANDIDATES",
+        "VALID_NO_CANDIDATES",
+        "RECOMMENDATION_ABSTAINED",
+    }
     return CandidateReleaseOutcome(
         batch_id=command.batch_id,
         disposition=disposition,
@@ -355,20 +422,37 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
-        if record.month not in months:
-            raise ValueError("TRAINING_RECORD_OUTSIDE_WINDOW")
+        if record.entry_window_ends_at.date() <= _month_end(record.month):
+            raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
+        if record.entry_at >= record.entry_window_ends_at or record.entry_at.date() <= _month_end(
+            record.month
+        ):
+            raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
+        if record.unified_maturity_at < _six_month_anniversary(record.entry_window_ends_at):
+            raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
         if record.label_available_at < record.unified_maturity_at:
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
-        if record.unified_maturity_at > command.label_watermark_at:
-            raise ValueError("LABEL_NOT_MATURE_AT_WATERMARK")
-        if record.label_available_at > command.label_watermark_at:
-            raise ValueError("LABEL_NOT_MATURE_AT_WATERMARK")
         by_month.setdefault(record.month, []).append(record)
-    if set(by_month) != set(months):
-        raise ValueError("CALIBRATION_TRAINING_MONTHS_INCOMPLETE")
-    records = command.training_records
-    if len({record.record_id for record in records}) != len(records):
+    if len({record.record_id for record in command.training_records}) != len(
+        command.training_records
+    ):
         raise ValueError("CALIBRATION_RECORD_IDENTITIES_NOT_UNIQUE")
+    mature_months = tuple(
+        sorted(
+            month
+            for month, month_records in by_month.items()
+            if all(
+                record.unified_maturity_at <= command.label_watermark_at
+                and record.label_available_at <= command.label_watermark_at
+                for record in month_records
+            )
+        )
+    )
+    if len(mature_months) < _MINIMUM_MATURE_MONTHS:
+        raise ValueError("CALIBRATION_REQUIRES_60_CONSECUTIVE_MATURE_MONTHS")
+    if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
+    records = tuple(record for month in months for record in by_month[month])
     positives = sum(record.terminal_success for record in records)
     negatives = len(records) - positives
     if len(records) < _MINIMUM_TRAINING_RECORDS or min(positives, negatives) < (
@@ -399,7 +483,7 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
         raise ValueError("CALIBRATION_SCORE_VARIATION_REQUIRED")
     intercept = slope = 0.0
 
-    def state(a: float, b: float) -> tuple[float, float, float, float, float, float, float]:
+    def state(a: float, b: float) -> _LogisticState:
         probabilities = tuple(_sigmoid(a + b * score) for score in scores)
         weights = tuple(probability * (1.0 - probability) for probability in probabilities)
         i00 = sum(weights)
@@ -421,7 +505,7 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
             label * (a + b * raw) - math.log1p(math.exp(min(700.0, a + b * raw)))
             for label, raw in zip(labels, scores, strict=True)
         ) + 0.5 * math.log(determinant)
-        return score0, score1, i00, inv00, inv01, inv11, objective
+        return _LogisticState(score0, score1, i00, inv00, inv01, inv11, objective)
 
     for _ in range(100):
         score0, score1, i00, inv00, inv01, inv11, objective = state(intercept, slope)
@@ -438,7 +522,7 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
             next_a = intercept + scale * delta_a
             next_b = max(0.0, slope + scale * delta_b)
             try:
-                next_objective = state(next_a, next_b)[-1]
+                next_objective = state(next_a, next_b).objective
             except ValueError:
                 scale /= 2.0
                 continue
@@ -472,3 +556,20 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
 
 def _month_index(month: str) -> int:
     return int(month[:4]) * 12 + int(month[5:])
+
+
+def _month_end(month: str) -> date:
+    year, month_number = (int(part) for part in month.split("-"))
+    return date(year, month_number, monthrange(year, month_number)[1])
+
+
+def _six_month_anniversary(value: datetime) -> datetime:
+    month_index = value.year * 12 + value.month - 1 + 6
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    return value.astimezone(UTC).replace(
+        year=year,
+        month=month,
+        day=min(value.day, monthrange(year, month)[1]),
+        microsecond=0,
+    )

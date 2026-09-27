@@ -59,6 +59,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CandidateReleaseCommand,
     MarketSession,
     MarketStateQualification,
+    candidate_release_availability_failure,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import (
@@ -147,6 +148,13 @@ from stock_profiler.modules.research.contracts import (
     selection_binding_sha256,
 )
 from stock_profiler.modules.research.service import freeze_research
+
+
+def _synthetic_entry_window_end(month: str) -> datetime:
+    year, month_number = (int(part) for part in month.split("-"))
+    next_month = month_number % 12 + 1
+    next_year = year + int(month_number == 12)
+    return datetime(next_year, next_month, 5, 8, tzinfo=UTC)
 
 
 def _structured_facts(index: int) -> ResearchStructuredFacts:
@@ -3368,6 +3376,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
+        ("ACCEPT", "UNRELATED_QUALIFICATION_SCOPE"),
+        ("ACCEPT", "VERSION_MISMATCH"),
     ],
 )
 def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abstention(
@@ -3381,6 +3391,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
+        "UNRELATED_QUALIFICATION_SCOPE",
+        "VERSION_MISMATCH",
     ],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3401,16 +3413,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
 
     cutoff = datetime.fromisoformat(research_case.knowledge_cutoff)
     training_months = tuple(
-        f"{year}-{month:02d}" for year in range(2036, 2042) for month in range(1, 13)
-    )[-60:]
+        f"{year}-{month:02d}" for year in range(2035, 2042) for month in range(1, 13)
+    )[:-1][-60:]
     training_records = tuple(
         CalibrationRecord(
             record_id=f"synthetic-calibration-label-{month}-{member:02d}",
             month=month,
             raw_success_score=Decimal(member) / Decimal("10"),
-            terminal_success=(
-                member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5
-            ),
+            terminal_success=(member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5),
+            entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
+            entry_window_ends_at=_synthetic_entry_window_end(month),
             unified_maturity_at=cutoff,
             label_available_at=cutoff,
         )
@@ -3442,6 +3454,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             market_date=datetime(2042, 7, day, tzinfo=UTC).date(),
             opens_at=datetime(2042, 7, day, 1, tzinfo=UTC),
             closes_at=datetime(2042, 7, day, 8, tzinfo=UTC),
+            session_sequence=100 + day,
         )
         for day in range(1, 6)
     )
@@ -3458,13 +3471,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         purpose="CANDIDATE_BUY",
         knowledge_cutoff=cutoff,
         published_at=datetime.fromisoformat("2042-07-02T00:04:00+00:00"),
+        last_completed_market_session_sequence=100,
         market_state="BULL",
         market_calendar_version="synthetic-market-calendar-v1",
         label_watermark_at=cutoff,
         training_window_months=(
-            training_months[:-1]
-            if candidate_scenario == "CALIBRATION_FAILURE"
-            else training_months
+            training_months[:-1] if candidate_scenario == "CALIBRATION_FAILURE" else training_months
         ),
         training_records=training_records,
         candidates=candidates,
@@ -3474,6 +3486,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     market_date=datetime(2042, 6, day, tzinfo=UTC).date(),
                     opens_at=datetime(2042, 6, day, 1, tzinfo=UTC),
                     closes_at=datetime(2042, 6, day, 8, tzinfo=UTC),
+                    session_sequence=95 + day,
                 )
                 for day in range(1, 6)
             )
@@ -3500,10 +3513,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
+        "UNRELATED_QUALIFICATION_SCOPE",
+        "VERSION_MISMATCH",
     }:
         assert research_case.access_scope is not None
         qualification_scope = QualificationScope(
-            capability="candidate-release",
+            capability=(
+                "unrelated-capability"
+                if candidate_scenario == "UNRELATED_QUALIFICATION_SCOPE"
+                else "candidate-release"
+            ),
             purpose="CANDIDATE_BUY",
             evidence_level="D0",
             user_id=research_case.access_scope.user_id,
@@ -3527,10 +3546,18 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         capability_version = CapabilityVersion(
             version_id=command.capability_version,
             policy_version=qualification_policy.policy_version,
-            implementation=version_bundle,
+            implementation=(
+                research_case.version_bundle
+                if candidate_scenario == "VERSION_MISMATCH"
+                else version_bundle
+            ),
             qualification_policy=qualification_policy,
         )
-        qualification_recorded_at = cutoff - timedelta(seconds=1)
+        qualification_recorded_at = (
+            cutoff + timedelta(minutes=2)
+            if candidate_scenario == "AT_RISK_QUALIFICATION"
+            else cutoff - timedelta(seconds=1)
+        )
         qualification_expires_at = datetime.fromisoformat("2042-12-31T23:59:59+00:00")
         qualification_evidence = QualificationEvidence(
             evidence_id="synthetic-candidate-qualification-evidence",
@@ -3678,7 +3705,23 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 )
             }
         )
-    direct = freeze_candidate_release(resolved_command, published_at=publication_time)
+    if candidate_scenario == "UNRELATED_QUALIFICATION_SCOPE":
+        resolved_command = command.model_copy(
+            update={
+                "qualifications": (
+                    command.qualifications[0].model_copy(update={"status": "NOT_OBTAINED"}),
+                )
+            }
+        )
+    if candidate_scenario == "VERSION_MISMATCH":
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
+            availability_failure="VERSION",
+        )
+    else:
+        direct = freeze_candidate_release(resolved_command, published_at=publication_time)
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -3689,12 +3732,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION": direct.disposition,
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
+        "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
+        "VERSION_MISMATCH": "FAILED",
     }[candidate_scenario]
     assert direct.disposition == expected_disposition
     if candidate_scenario == "CALIBRATION_FAILURE":
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario == "WINDOW_EXPIRED":
         assert direct.availability_failure == "DATA"
+    elif candidate_scenario == "VERSION_MISMATCH":
+        assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "LATE_PUBLICATION":
         assert direct.population.valid_monthly is False
         assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in direct.reasons
@@ -3717,6 +3764,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             and member.calibrated_probability < Decimal("0.80")
             for member in direct.members
         )
+    elif candidate_scenario == "UNRELATED_QUALIFICATION_SCOPE":
+        assert direct.members[0].market_state_qualified is False
     if direct.members:
         assert direct.members[0].calibrated_probability is not None
     if direct.members:
@@ -3724,9 +3773,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "REJECTED" if risk_scenario == "REJECT" else "ACCEPTED"
         )
         if risk_scenario == "REJECT":
-            assert "INDEPENDENT_RISK_VETO" in execution.report.result.candidate_release.members[
-                0
-            ].reasons
+            assert (
+                "INDEPENDENT_RISK_VETO"
+                in execution.report.result.candidate_release.members[0].reasons
+            )
     assert execution.report.stage_results[-1].phase == "PUBLICATION"
     assert execution.report.result.candidate_release.valid_market_dates == (
         ()
