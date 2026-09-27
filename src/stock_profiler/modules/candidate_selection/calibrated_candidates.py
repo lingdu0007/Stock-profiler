@@ -549,13 +549,14 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
             raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
         if record.raw_score_training_watermark_at >= record.raw_score_frozen_at:
             raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
-        if record.entry_window_ends_at.date() <= _month_end(record.month):
+        if record.entry_window_ends_at.astimezone(UTC).date() <= _month_end(record.month):
             raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
         if record.entry_at is None:
             if record.terminal_success:
                 raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
-        elif record.entry_at >= record.entry_window_ends_at or record.entry_at.date() <= _month_end(
-            record.month
+        elif (
+            record.entry_at >= record.entry_window_ends_at
+            or record.entry_at.astimezone(UTC).date() <= _month_end(record.month)
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         if record.unified_maturity_at < _six_month_anniversary(record.entry_window_ends_at):
