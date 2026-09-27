@@ -657,8 +657,11 @@ def _validate_candidate_qualification_snapshots(
         except ValueError as error:
             raise CandidateQualificationHistoryAmbiguous() from error
         basis = record.formal_passing_evidence or record.authorization_evidence
-        if latest is None or qualification_at_cutoff is None:
+        if latest is None:
             raise CandidateQualificationHistoryAmbiguous()
+        if qualification_at_cutoff is None:
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
         if (
             record.version.version_id != snapshot.capability_version
             or record.version.version_id != command.capability_version

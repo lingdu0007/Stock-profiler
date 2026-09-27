@@ -3401,6 +3401,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
         ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF"),
         ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF"),
+        ("ACCEPT", "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF"),
         ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
@@ -3441,6 +3442,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3704,6 +3706,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3751,7 +3754,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             ),
             qualification_policy=qualification_policy,
         )
-        qualification_recorded_at = cutoff - timedelta(seconds=1)
+        qualification_recorded_at = (
+            cutoff + timedelta(seconds=1)
+            if candidate_scenario == "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF"
+            else cutoff - timedelta(seconds=1)
+        )
         qualification_expires_at = datetime.fromisoformat(
             "2042-07-01T00:05:00+00:00"
             if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT"
@@ -4055,6 +4062,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UNRELATED_CALENDAR_QUALIFICATION",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
     }:
         resolved_command = command.model_copy(
@@ -4231,6 +4239,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
