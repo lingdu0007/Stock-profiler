@@ -3397,6 +3397,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
         ("ACCEPT", "LATE_REPORT_COMMIT"),
+        ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
@@ -3404,6 +3405,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
         ("ACCEPT", "UNRELATED_QUALIFICATION_SCOPE"),
+        ("ACCEPT", "UNRELATED_CALENDAR_QUALIFICATION"),
         ("ACCEPT", "UNRELATED_LATEST_SCOPE"),
         ("ACCEPT", "VERSION_MISMATCH"),
         ("ACCEPT", "ORIGINAL_REJECTED"),
@@ -3426,6 +3428,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_PUBLICATION",
         "LATE_COMMIT",
         "LATE_REPORT_COMMIT",
+        "COMMIT_CLOCK_ADVANCE",
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
@@ -3433,6 +3436,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
+        "UNRELATED_CALENDAR_QUALIFICATION",
         "UNRELATED_LATEST_SCOPE",
         "VERSION_MISMATCH",
         "ORIGINAL_REJECTED",
@@ -3689,6 +3693,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
+        "UNRELATED_CALENDAR_QUALIFICATION",
         "UNRELATED_LATEST_SCOPE",
         "VERSION_MISMATCH",
         "ORIGINAL_REJECTED",
@@ -3748,6 +3753,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             evaluation_end=qualification_recorded_at,
             available_at=qualification_recorded_at,
             expires_at=qualification_expires_at,
+            market_calendar_version=(
+                "different-synthetic-market-calendar-v1"
+                if candidate_scenario == "UNRELATED_CALENDAR_QUALIFICATION"
+                else command.market_calendar_version
+            ),
         )
         qualification_status: Literal["AT_RISK", "VALID"] = "VALID"
         qualification_record = QualificationRecord(
@@ -3955,7 +3965,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 )
             }
         )
-    if candidate_scenario == "UNRELATED_QUALIFICATION_SCOPE":
+    if candidate_scenario in {
+        "UNRELATED_QUALIFICATION_SCOPE",
+        "UNRELATED_CALENDAR_QUALIFICATION",
+    }:
         resolved_command = command.model_copy(
             update={
                 "qualifications": (
@@ -4007,10 +4020,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     else:
         direct = freeze_candidate_release(resolved_command, published_at=publication_time)
-        if candidate_scenario in {"QUALIFICATION_EXPIRES_DURING_FIT", "LATE_COMMIT"}:
+        if candidate_scenario in {
+            "QUALIFICATION_EXPIRES_DURING_FIT",
+            "LATE_COMMIT",
+            "COMMIT_CLOCK_ADVANCE",
+        }:
             final_publication_time = (
                 datetime.fromisoformat("2042-07-07T09:00:00+00:00")
                 if candidate_scenario == "LATE_COMMIT"
+                else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
+                if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
                 else publication_time
             )
             finalization_command = resolved_command.model_copy(
@@ -4030,11 +4049,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 direct,
                 published_at=final_publication_time,
             )
-    if candidate_scenario in {"LATE_COMMIT", "LATE_REPORT_COMMIT"}:
-        commit_time = datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+    if candidate_scenario in {
+        "LATE_COMMIT",
+        "LATE_REPORT_COMMIT",
+        "COMMIT_CLOCK_ADVANCE",
+    }:
+        commit_time = datetime.fromisoformat(
+            "2042-07-02T00:04:00+00:00"
+            if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
+            else "2042-07-07T09:00:00+00:00"
+        )
         clock_state = {"now": publication_time}
         monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
-        if candidate_scenario == "LATE_COMMIT":
+        if candidate_scenario in {"LATE_COMMIT", "COMMIT_CLOCK_ADVANCE"}:
             record_stage_result = DecisionLedger.record_stage_result
 
             def advance_clock_after_candidate_stage(
@@ -4076,6 +4103,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_PUBLICATION": "FAILED",
         "LATE_COMMIT": "FAILED",
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
+        "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
@@ -4083,6 +4111,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
+        "UNRELATED_CALENDAR_QUALIFICATION": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
         "VERSION_MISMATCH": "FAILED",
         "ORIGINAL_REJECTED": "BLOCKED",
@@ -4122,6 +4151,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.result.candidate_release.published_at == (
         datetime.fromisoformat("2042-07-07T09:00:00+00:00")
         if candidate_scenario == "LATE_COMMIT"
+        else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
+        if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
         else publication_time
     )
     assert execution.report.result.candidate_release.members == direct.members

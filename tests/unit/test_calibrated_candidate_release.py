@@ -853,7 +853,7 @@ def test_training_window_must_use_latest_mature_months() -> None:
     assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons
 
 
-def test_latest_sixty_mature_months_do_not_require_calendar_contiguity() -> None:
+def test_latest_sixty_mature_months_reject_calendar_gaps() -> None:
     original = command()
     missing_month = "2042-01"
     earlier_month = "2040-11"
@@ -881,6 +881,6 @@ def test_latest_sixty_mature_months_do_not_require_calendar_contiguity() -> None
         original.model_copy(update={"training_window_months": months, "training_records": records})
     )
 
-    assert release.disposition == "CANDIDATES"
-    assert release.calibration is not None
-    assert release.calibration.training_window_months == months
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons

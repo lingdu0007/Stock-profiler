@@ -678,6 +678,8 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.renewal_ordinal is not None
             or record.scope.probability_grid is not None
             or record.scope.portfolio_scope is not None
+            or basis is None
+            or basis.market_calendar_version != snapshot.market_calendar_version
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
@@ -2454,43 +2456,84 @@ def _commit_framework_result(
             published_at=commit_time,
         )
         if commit_candidate_release != result.candidate_release:
+            release_content_changed = (
+                commit_candidate_release.model_copy(
+                    update={"published_at": result.candidate_release.published_at}
+                )
+                != result.candidate_release
+            )
             result = result.model_copy(
                 update={
                     "candidate_release": commit_candidate_release,
-                    "outcome_code": f"CANDIDATE_RELEASE_{commit_candidate_release.disposition}",
-                    "summary": "Synthetic calibrated candidate release.",
-                    "key_reasons": commit_candidate_release.reasons,
+                    **(
+                        {
+                            "outcome_code": (
+                                f"CANDIDATE_RELEASE_{commit_candidate_release.disposition}"
+                            ),
+                            "summary": "Synthetic calibrated candidate release.",
+                            "key_reasons": commit_candidate_release.reasons,
+                        }
+                        if release_content_changed
+                        else {}
+                    ),
                 }
             )
-            candidate_release_result = StageResult(
-                phase="CANDIDATE_RELEASE",
-                status="FAILED",
-                gate_results=(GateResult(gate_id="CALIBRATED_CANDIDATE_RELEASE", status="FAILED"),),
-                reasons=commit_candidate_release.reasons,
-            )
-            business_result = StageResult(
-                phase="BUSINESS_DECISION",
-                status="FAILED",
-                gate_results=(GateResult(gate_id="CANDIDATE_RELEASE_OUTCOME", status="FAILED"),),
-                reasons=commit_candidate_release.reasons,
-            )
-            for stage_result in (business_result, candidate_release_result):
-                ledger.record_stage_result(
-                    connection,
-                    case=execution_case,
-                    stage_result=stage_result,
-                    framework_run_id=execution_case.framework_run_id,
-                    allow_repeated_occurrence=True,
+            if release_content_changed:
+                commit_candidate_status: Literal[
+                    "FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"
+                ] = (
+                    "FAILED"
+                    if commit_candidate_release.disposition == "FAILED"
+                    else "REJECTED"
+                    if commit_candidate_release.disposition == "BLOCKED"
+                    else "ABSTAINED"
+                    if commit_candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
+                    else "SUCCEEDED"
                 )
-            stage_results_before_commit = ledger.get_stage_results(
-                execution_case.business_object_id,
-                connection,
-            )
-            current_stage_results_before_commit = (
-                *current_stage_results_before_commit,
-                business_result,
-                candidate_release_result,
-            )
+                commit_candidate_gate_status: Literal["FAILED", "PASSED"] = (
+                    "FAILED"
+                    if commit_candidate_status in {"FAILED", "REJECTED"}
+                    else "PASSED"
+                )
+                candidate_release_result = StageResult(
+                    phase="CANDIDATE_RELEASE",
+                    status=commit_candidate_status,
+                    gate_results=(
+                        GateResult(
+                            gate_id="CALIBRATED_CANDIDATE_RELEASE",
+                            status=commit_candidate_gate_status,
+                        ),
+                    ),
+                    reasons=commit_candidate_release.reasons,
+                )
+                business_result = StageResult(
+                    phase="BUSINESS_DECISION",
+                    status=commit_candidate_status,
+                    gate_results=(
+                        GateResult(
+                            gate_id="CANDIDATE_RELEASE_OUTCOME",
+                            status=commit_candidate_gate_status,
+                        ),
+                    ),
+                    reasons=commit_candidate_release.reasons,
+                )
+                for stage_result in (business_result, candidate_release_result):
+                    ledger.record_stage_result(
+                        connection,
+                        case=execution_case,
+                        stage_result=stage_result,
+                        framework_run_id=execution_case.framework_run_id,
+                        allow_repeated_occurrence=True,
+                    )
+                stage_results_before_commit = ledger.get_stage_results(
+                    execution_case.business_object_id,
+                    connection,
+                )
+                current_stage_results_before_commit = (
+                    *current_stage_results_before_commit,
+                    business_result,
+                    candidate_release_result,
+                )
     committed_at = commit_observed_at
     stage_results = (
         *stage_results_before_commit,

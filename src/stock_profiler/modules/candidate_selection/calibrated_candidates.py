@@ -582,6 +582,8 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
+    if not _are_consecutive_months(months):
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
     records = tuple(record for month in months for record in by_month[month])
     positives = sum(record.terminal_success for record in records)
     negatives = len(records) - positives
@@ -602,6 +604,16 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         training_record_count=len(records),
         positive_record_count=positives,
         negative_record_count=negatives,
+    )
+
+
+def _are_consecutive_months(months: tuple[str, ...]) -> bool:
+    month_indices = tuple(
+        int(month[:4]) * 12 + int(month[5:]) - 1 for month in months
+    )
+    return all(
+        month_indices[index + 1] == month_indices[index] + 1
+        for index in range(len(month_indices) - 1)
     )
 
 

@@ -184,6 +184,9 @@ class QualificationEvidence(GovernanceContract):
     seed: int
     version: CapabilityVersion
     scope: QualificationScope
+    market_calendar_version: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
     kind: Literal[
         "QUALIFICATION_PASS",
         "DIAGNOSTIC_ALERT",
