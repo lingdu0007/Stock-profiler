@@ -588,7 +588,7 @@ def _validate_candidate_calibration_sources(
         and datetime.fromisoformat(fact.committed_at) <= candidate_cutoff
         and datetime.fromisoformat(fact.case.knowledge_cutoff) <= candidate_cutoff
         and _calibration_month_mature_by(
-            records_by_event.get(fact.decision_event_id, ()), command.label_watermark_at
+            records_by_event.get(fact.decision_event_id, []), command.label_watermark_at
         )
     }
     expected_months = tuple(sorted(source_months)[-60:])
