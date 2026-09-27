@@ -21,6 +21,36 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 from stock_profiler.modules.decision_cases.service import _calibration_month_mature_by
 
 
+def _calibration_record(
+    month: str,
+    member: int,
+    *,
+    record_prefix: str,
+    research_prefix: str,
+    security_prefix: str,
+    source_prefix: str,
+    raw_score_frozen_at: datetime,
+    entry_window_ends_at: datetime,
+    terminal_success: bool,
+) -> CalibrationRecord:
+    return CalibrationRecord(
+        record_id=f"{record_prefix}-label-{month}-{member:02d}",
+        month=month,
+        source_research_event_id=f"{source_prefix}-research-event-{month}",
+        security_id=f"{security_prefix}-{member:02d}",
+        research_id=f"{research_prefix}-{month}-{member:02d}",
+        raw_score_model_version="synthetic-elastic-net-v1",
+        raw_score_frozen_at=raw_score_frozen_at,
+        raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
+        raw_success_score=Decimal(member) / Decimal("10"),
+        terminal_success=terminal_success,
+        entry_window_ends_at=entry_window_ends_at,
+        entry_at=entry_window_ends_at - timedelta(days=1),
+        unified_maturity_at=_six_month_anniversary(entry_window_ends_at),
+        label_available_at=_six_month_anniversary(entry_window_ends_at),
+    )
+
+
 def training_records() -> tuple[CalibrationRecord, ...]:
     records: list[CalibrationRecord] = []
     months = tuple(f"{year}-{month:02d}" for year in range(2040, 2046) for month in range(1, 13))[
@@ -31,24 +61,18 @@ def training_records() -> tuple[CalibrationRecord, ...]:
         month_end = datetime(year, month_number, monthrange(year, month_number)[1], 8, tzinfo=UTC)
         raw_score_frozen_at = month_end - timedelta(hours=1)
         entry_window_ends_at = month_end + timedelta(days=5)
-        maturity = _six_month_anniversary(entry_window_ends_at)
         for member in range(10):
             records.append(
-                CalibrationRecord(
-                    record_id=f"synthetic-label-{month}-{member:02d}",
-                    month=month,
-                    source_research_event_id=f"synthetic-research-event-{month}",
-                    security_id=f"SYNTH-SECURITY-{member:02d}",
-                    research_id=f"synthetic-research-{month}-{member:02d}",
-                    raw_score_model_version="synthetic-elastic-net-v1",
+                _calibration_record(
+                    month,
+                    member,
+                    record_prefix="synthetic",
+                    source_prefix="synthetic",
+                    security_prefix="SYNTH-SECURITY",
+                    research_prefix="synthetic-research",
                     raw_score_frozen_at=raw_score_frozen_at,
-                    raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
-                    raw_success_score=Decimal(member) / Decimal("10"),
-                    terminal_success=member >= 5,
                     entry_window_ends_at=entry_window_ends_at,
-                    entry_at=entry_window_ends_at - timedelta(days=1),
-                    unified_maturity_at=maturity,
-                    label_available_at=maturity,
+                    terminal_success=member >= 5,
                 )
             )
     return tuple(records)
@@ -74,26 +98,20 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
             7,
             tzinfo=UTC,
         )
-        maturity = _six_month_anniversary(entry_window_ends_at)
         for member in range(10):
             score = Decimal(member) / Decimal("10")
             probability = 1 / (1 + math.exp(-strength * (float(score) - threshold)))
             records.append(
-                CalibrationRecord(
-                    record_id=f"positive-label-{month}-{member:02d}",
-                    month=month,
-                    source_research_event_id=f"synthetic-positive-research-event-{month}",
-                    security_id=f"SYNTH-POSITIVE-{member:02d}",
-                    research_id=f"synthetic-positive-research-{month}-{member:02d}",
-                    raw_score_model_version="synthetic-elastic-net-v1",
+                _calibration_record(
+                    month,
+                    member,
+                    record_prefix="positive",
+                    source_prefix="synthetic-positive",
+                    security_prefix="SYNTH-POSITIVE",
+                    research_prefix="synthetic-positive-research",
                     raw_score_frozen_at=raw_score_frozen_at,
-                    raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
-                    raw_success_score=score,
-                    terminal_success=generator.random() < probability,
                     entry_window_ends_at=entry_window_ends_at,
-                    entry_at=entry_window_ends_at - timedelta(days=1),
-                    unified_maturity_at=maturity,
-                    label_available_at=maturity,
+                    terminal_success=generator.random() < probability,
                 )
             )
     return tuple(records)
@@ -232,6 +250,22 @@ def test_candidate_threshold_uses_unrounded_probability(monkeypatch: pytest.Monk
     assert release.members[0].calibrated_probability == Decimal("0.80000000")
     assert release.members[0].candidate is False
     assert "PROBABILITY_BELOW_THRESHOLD" in release.members[0].reasons
+
+
+def test_extreme_negative_finite_score_yields_a_calibrated_non_candidate() -> None:
+    release = freeze_candidate_release(command(score="-100000"))
+
+    assert release.disposition == "VALID_NO_CANDIDATES"
+    assert release.members[0].calibrated_probability == Decimal("0E-8")
+    assert release.members[0].candidate is False
+
+
+def test_probability_arithmetic_overflow_is_a_visible_calibration_failure() -> None:
+    release = freeze_candidate_release(command(score="1e999999"))
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert "CALIBRATION_PROBABILITY_FAILED" in release.reasons
 
 
 def test_weak_positive_signal_converges_without_crossing_slope_boundary() -> None:

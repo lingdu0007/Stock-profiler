@@ -3399,6 +3399,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "LATE_REPORT_COMMIT"),
         ("ACCEPT", "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE"),
         ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
+        ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF"),
+        ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF"),
         ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
@@ -3437,6 +3439,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3698,6 +3702,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3884,6 +3890,42 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     qualification=revoked_record,
                 ),
             )
+        if candidate_scenario in {
+            "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+            "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        }:
+            original_evidence = qualification_record.formal_passing_evidence
+            assert original_evidence is not None
+            changed_calendar_evidence = original_evidence.model_copy(
+                update={
+                    "evidence_id": "synthetic-candidate-qualification-other-calendar",
+                    "market_calendar_version": "different-synthetic-market-calendar-v1",
+                }
+            )
+            revision_at = (
+                cutoff
+                if candidate_scenario == "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF"
+                else cutoff + timedelta(seconds=1)
+            )
+            revised_qualification = qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-calendar-revised",
+                    "previous_decision_id": qualification_record.decision_id,
+                    "recorded_at": revision_at,
+                    "authorization_evidence": changed_calendar_evidence,
+                    "evidence": changed_calendar_evidence,
+                    "formal_evidence": changed_calendar_evidence,
+                    "formal_passing_evidence": changed_calendar_evidence,
+                }
+            )
+            qualification_history = (
+                qualification_outcome,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("QUALIFICATION_UPDATED",),
+                    qualification=revised_qualification,
+                ),
+            )
     candidate_case = FrozenDecisionCase(
         synthetic=True,
         generator_version="synthetic-candidate-release-case-v1",
@@ -4011,6 +4053,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "UNRELATED_QUALIFICATION_SCOPE",
         "UNRELATED_CALENDAR_QUALIFICATION",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
     }:
         resolved_command = command.model_copy(
@@ -4185,6 +4229,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,

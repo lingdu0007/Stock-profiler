@@ -27,6 +27,7 @@ import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 import { UniverseEvidence } from "./UniverseEvidence";
 import { SelectionEvidence } from "./SelectionEvidence";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
+import { ReportRecord as Record } from "./ReportRecord";
 
 function createQueryClient() {
   return new QueryClient({
@@ -1027,15 +1028,6 @@ function formatCashObligation(
     `latest ${obligation.latest_usable_at}`,
     `account ${obligation.target_account_id}`
   ].join(" | ");
-}
-
-function Record({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="record-row">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
 }
 
 function SignInPage() {

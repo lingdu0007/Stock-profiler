@@ -1,4 +1,5 @@
 import type { FormalReport } from "./api/client";
+import { ReportRecord as Record } from "./ReportRecord";
 
 type CandidateRelease = NonNullable<FormalReport["result"]["candidate_release"]>;
 
@@ -97,14 +98,5 @@ export function CandidateReleaseEvidence({ release }: { release: CandidateReleas
         )}
       </div>
     </section>
-  );
-}
-
-function Record({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="record-row">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
   );
 }

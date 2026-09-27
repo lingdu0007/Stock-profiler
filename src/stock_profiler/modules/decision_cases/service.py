@@ -696,6 +696,19 @@ def _validate_candidate_qualification_snapshots(
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
+        cutoff_basis = (
+            qualification_at_cutoff.formal_passing_evidence
+            or qualification_at_cutoff.authorization_evidence
+        )
+        latest_basis = latest.formal_passing_evidence or latest.authorization_evidence
+        if (
+            cutoff_basis is None
+            or cutoff_basis.market_calendar_version != command.market_calendar_version
+            or latest_basis is None
+            or latest_basis.market_calendar_version != command.market_calendar_version
+        ):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
         if qualification_at_cutoff.status not in {
             "VALID",
             "AT_RISK",
@@ -2316,39 +2329,17 @@ def _commit_framework_result(
                 candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
                     "REJECTED"
                     if not successful_prerequisite
-                    else "FAILED"
-                    if candidate_release.disposition == "FAILED"
-                    else "REJECTED"
-                    if candidate_release.disposition == "BLOCKED"
-                    else "ABSTAINED"
-                    if candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
-                    else "SUCCEEDED"
+                    else _candidate_release_stage_status(candidate_release.disposition)
                 )
-                candidate_gate_status: Literal["FAILED", "PASSED"] = (
-                    "FAILED" if candidate_status in {"FAILED", "REJECTED"} else "PASSED"
-                )
-                candidate_release_result = StageResult(
-                    phase="CANDIDATE_RELEASE",
-                    status=candidate_status,
-                    gate_results=(
-                        GateResult(
-                            gate_id="CALIBRATED_CANDIDATE_RELEASE",
-                            status=candidate_gate_status,
-                        ),
-                    ),
-                    reasons=candidate_release.reasons,
+                candidate_release_result = _candidate_release_stage_result(
+                    candidate_status,
+                    candidate_release.reasons,
                 )
                 if successful_prerequisite:
-                    business_result = StageResult(
+                    business_result = _candidate_release_stage_result(
+                        candidate_status,
+                        candidate_release.reasons,
                         phase="BUSINESS_DECISION",
-                        status=candidate_status,
-                        gate_results=(
-                            GateResult(
-                                gate_id="CANDIDATE_RELEASE_OUTCOME",
-                                status=candidate_gate_status,
-                            ),
-                        ),
-                        reasons=candidate_release.reasons,
                     )
     ledger.record_stage_result(
         connection,
@@ -2498,39 +2489,17 @@ def _commit_framework_result(
                 }
             )
             if release_content_changed:
-                commit_candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
-                    "FAILED"
-                    if commit_candidate_release.disposition == "FAILED"
-                    else "REJECTED"
-                    if commit_candidate_release.disposition == "BLOCKED"
-                    else "ABSTAINED"
-                    if commit_candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
-                    else "SUCCEEDED"
+                commit_candidate_status = _candidate_release_stage_status(
+                    commit_candidate_release.disposition
                 )
-                commit_candidate_gate_status: Literal["FAILED", "PASSED"] = (
-                    "FAILED" if commit_candidate_status in {"FAILED", "REJECTED"} else "PASSED"
+                candidate_release_result = _candidate_release_stage_result(
+                    commit_candidate_status,
+                    commit_candidate_release.reasons,
                 )
-                candidate_release_result = StageResult(
-                    phase="CANDIDATE_RELEASE",
-                    status=commit_candidate_status,
-                    gate_results=(
-                        GateResult(
-                            gate_id="CALIBRATED_CANDIDATE_RELEASE",
-                            status=commit_candidate_gate_status,
-                        ),
-                    ),
-                    reasons=commit_candidate_release.reasons,
-                )
-                business_result = StageResult(
+                business_result = _candidate_release_stage_result(
+                    commit_candidate_status,
+                    commit_candidate_release.reasons,
                     phase="BUSINESS_DECISION",
-                    status=commit_candidate_status,
-                    gate_results=(
-                        GateResult(
-                            gate_id="CANDIDATE_RELEASE_OUTCOME",
-                            status=commit_candidate_gate_status,
-                        ),
-                    ),
-                    reasons=commit_candidate_release.reasons,
                 )
                 for stage_result in (business_result, candidate_release_result):
                     ledger.record_stage_result(
@@ -3190,6 +3159,49 @@ def _record_publication_failure(
         fact,
         _publication_failure_stage(reason),
         allow_repeated_occurrence=True,
+    )
+
+
+_CANDIDATE_RELEASE_STAGE_STATUSES: dict[
+    str, Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"]
+] = {
+    "FAILED": "FAILED",
+    "BLOCKED": "REJECTED",
+    "RECOMMENDATION_ABSTAINED": "ABSTAINED",
+    "CANDIDATES": "SUCCEEDED",
+    "VALID_NO_CANDIDATES": "SUCCEEDED",
+}
+
+
+def _candidate_release_stage_status(
+    disposition: str,
+) -> Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"]:
+    return _CANDIDATE_RELEASE_STAGE_STATUSES[disposition]
+
+
+def _candidate_release_stage_result(
+    status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"],
+    reasons: tuple[str, ...],
+    *,
+    phase: Literal["CANDIDATE_RELEASE", "BUSINESS_DECISION"] = "CANDIDATE_RELEASE",
+) -> StageResult:
+    gate_status: Literal["FAILED", "PASSED"] = (
+        "FAILED" if status in {"FAILED", "REJECTED"} else "PASSED"
+    )
+    return StageResult(
+        phase=phase,
+        status=status,
+        gate_results=(
+            GateResult(
+                gate_id=(
+                    "CANDIDATE_RELEASE_OUTCOME"
+                    if phase == "BUSINESS_DECISION"
+                    else "CALIBRATED_CANDIDATE_RELEASE"
+                ),
+                status=gate_status,
+            ),
+        ),
+        reasons=reasons,
     )
 
 

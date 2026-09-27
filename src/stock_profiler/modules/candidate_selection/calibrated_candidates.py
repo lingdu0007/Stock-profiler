@@ -248,7 +248,17 @@ def freeze_candidate_release(
         )
     members: list[CalibratedMember] = []
     for candidate in command.candidates:
-        probability = _probability(calibration, candidate.raw_success_score)
+        try:
+            probability = _probability(calibration, candidate.raw_success_score)
+        except ArithmeticError:
+            return _release_outcome(
+                command,
+                window_dates,
+                disposition="FAILED",
+                calibration=calibration,
+                reasons=("CALIBRATION_PROBABILITY_FAILED",),
+                availability_failure="CALIBRATION",
+            )
         displayed_probability = probability.quantize(Decimal("0.00000001"))
         reasons: list[str] = []
         if probability < PROBABILITY_THRESHOLD:
@@ -694,8 +704,12 @@ def _sigmoid(value: float) -> float:
 def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
     with localcontext() as context:
         context.prec = 32
-        exponent = -(calibration.intercept + calibration.slope * score)
-        return Decimal(1) / (Decimal(1) + exponent.exp())
+        value = calibration.intercept + calibration.slope * score
+        if value >= 0:
+            inverse_odds = (-value).exp()
+            return Decimal(1) / (Decimal(1) + inverse_odds)
+        odds = value.exp()
+        return odds / (Decimal(1) + odds)
 
 
 def _month_end(month: str) -> date:
