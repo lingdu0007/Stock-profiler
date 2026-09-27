@@ -18,6 +18,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     finalize_candidate_release_publication,
     freeze_candidate_release,
 )
+from stock_profiler.modules.decision_cases.service import _calibration_month_mature_by
 
 
 def training_records() -> tuple[CalibrationRecord, ...]:
@@ -216,6 +217,21 @@ def test_inverse_signal_is_fitted_at_nonnegative_slope_boundary() -> None:
     assert release.calibration.slope == Decimal("0E-8")
     assert release.members[0].calibrated_probability is not None
     assert release.members[0].calibrated_probability < Decimal("0.80")
+
+
+def test_candidate_threshold_uses_unrounded_probability(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = command()
+    monkeypatch.setattr(
+        candidate_module,
+        "_probability",
+        lambda _calibration, _score: Decimal("0.799999999"),
+    )
+
+    release = freeze_candidate_release(original)
+
+    assert release.members[0].calibrated_probability == Decimal("0.80000000")
+    assert release.members[0].candidate is False
+    assert "PROBABILITY_BELOW_THRESHOLD" in release.members[0].reasons
 
 
 def test_weak_positive_signal_converges_without_crossing_slope_boundary() -> None:
@@ -525,9 +541,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
 
     utc_boundary = next(
-        index
-        for index, record in enumerate(original.training_records)
-        if record.month == "2045-08"
+        index for index, record in enumerate(original.training_records) if record.month == "2045-08"
     )
     timezone_maturity = original.training_records[utc_boundary].model_copy(
         update={
@@ -758,6 +772,24 @@ def test_unmatured_training_label_is_calibration_availability_failure() -> None:
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
+
+
+def test_source_month_maturity_uses_actual_entry_and_label_dates() -> None:
+    entry_window_ends_at = datetime(2045, 12, 8, 8, tzinfo=UTC)
+    actual_maturity = _six_month_anniversary(entry_window_ends_at)
+    records = [
+        record.model_copy(
+            update={
+                "entry_window_ends_at": entry_window_ends_at,
+                "unified_maturity_at": actual_maturity,
+                "label_available_at": actual_maturity,
+            }
+        )
+        for record in training_records()[-10:]
+    ]
+
+    assert not _calibration_month_mature_by(records, datetime(2046, 6, 5, 8, tzinfo=UTC))
+    assert _calibration_month_mature_by(records, actual_maturity)
 
 
 def test_expired_late_publication_keeps_original_window_and_records_failure() -> None:

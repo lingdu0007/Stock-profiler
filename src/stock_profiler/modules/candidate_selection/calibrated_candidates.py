@@ -232,20 +232,9 @@ def freeze_candidate_release(
             reasons=("CANDIDATE_DATA_INCOMPLETE",),
             availability_failure="DATA",
         )
-    qualification = next(
-        (
-            item
-            for item in command.qualifications
-            if item.market_state == command.market_state
-            and item.capability_version == command.capability_version
-            and item.market_calendar_version == command.market_calendar_version
-            and item.qualification_scope == command.qualification_scope
-            and item.recorded_at <= command.knowledge_cutoff
-            and (item.current_status_recorded_at or item.recorded_at) <= publication_time
-            and item.valid_through >= publication_time
-        ),
-        None,
-    )
+    qualification = _matching_qualification(command, publication_time)
+    if qualification is not None and qualification.valid_through < publication_time:
+        qualification = None
     state_qualified = qualification is not None and qualification.status in {"VALID", "AT_RISK"}
     try:
         calibration = _fit_calibrator(command)
@@ -260,6 +249,7 @@ def freeze_candidate_release(
     members: list[CalibratedMember] = []
     for candidate in command.candidates:
         probability = _probability(calibration, candidate.raw_success_score)
+        displayed_probability = probability.quantize(Decimal("0.00000001"))
         reasons: list[str] = []
         if probability < PROBABILITY_THRESHOLD:
             reasons.append("PROBABILITY_BELOW_THRESHOLD")
@@ -276,7 +266,7 @@ def freeze_candidate_release(
                 security_id=candidate.security_id,
                 research_id=candidate.research_id,
                 raw_success_score=candidate.raw_success_score,
-                calibrated_probability=probability,
+                calibrated_probability=displayed_probability,
                 candidate=(
                     probability >= PROBABILITY_THRESHOLD
                     and state_qualified
@@ -397,18 +387,9 @@ def finalize_candidate_release_publication(
     }:
         return published
 
-    qualification = next(
-        (
-            item
-            for item in command.qualifications
-            if item.market_state == command.market_state
-            and item.capability_version == command.capability_version
-            and item.market_calendar_version == command.market_calendar_version
-            and item.qualification_scope == command.qualification_scope
-            and item.recorded_at <= command.knowledge_cutoff
-            and (item.current_status_recorded_at or item.recorded_at) <= published_at
-        ),
-        None,
+    qualification = _matching_qualification(
+        command,
+        published_at,
     )
     qualification_current = (
         qualification is not None
@@ -437,6 +418,25 @@ def finalize_candidate_release_publication(
             ),
             "reasons": added_reasons,
         }
+    )
+
+
+def _matching_qualification(
+    command: CandidateReleaseCommand,
+    observed_at: datetime,
+) -> MarketStateQualification | None:
+    return next(
+        (
+            item
+            for item in command.qualifications
+            if item.market_state == command.market_state
+            and item.capability_version == command.capability_version
+            and item.market_calendar_version == command.market_calendar_version
+            and item.qualification_scope == command.qualification_scope
+            and item.recorded_at <= command.knowledge_cutoff
+            and (item.current_status_recorded_at or item.recorded_at) <= observed_at
+        ),
+        None,
     )
 
 
@@ -554,10 +554,9 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         if record.entry_at is None:
             if record.terminal_success:
                 raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
-        elif (
-            record.entry_at >= record.entry_window_ends_at
-            or record.entry_at.astimezone(UTC).date() <= _month_end(record.month)
-        ):
+        elif record.entry_at >= record.entry_window_ends_at or record.entry_at.astimezone(
+            UTC
+        ).date() <= _month_end(record.month):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         if record.unified_maturity_at < _six_month_anniversary(record.entry_window_ends_at):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
@@ -609,9 +608,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
 
 
 def _are_consecutive_months(months: tuple[str, ...]) -> bool:
-    month_indices = tuple(
-        int(month[:4]) * 12 + int(month[5:]) - 1 for month in months
-    )
+    month_indices = tuple(int(month[:4]) * 12 + int(month[5:]) - 1 for month in months)
     return all(
         month_indices[index + 1] == month_indices[index] + 1
         for index in range(len(month_indices) - 1)
@@ -698,7 +695,7 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
     with localcontext() as context:
         context.prec = 32
         exponent = -(calibration.intercept + calibration.slope * score)
-        return (Decimal(1) / (Decimal(1) + exponent.exp())).quantize(Decimal("0.00000001"))
+        return Decimal(1) / (Decimal(1) + exponent.exp())
 
 
 def _month_end(month: str) -> date:

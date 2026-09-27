@@ -587,7 +587,9 @@ def _validate_candidate_calibration_sources(
         and len({score.research_id for score in fact.result.research.raw_scores}) == 10
         and datetime.fromisoformat(fact.committed_at) <= candidate_cutoff
         and datetime.fromisoformat(fact.case.knowledge_cutoff) <= candidate_cutoff
-        and _calibration_month_mature_by(fact.case.knowledge_cutoff[:7], command.label_watermark_at)
+        and _calibration_month_mature_by(
+            records_by_event.get(fact.decision_event_id, ()), command.label_watermark_at
+        )
     }
     expected_months = tuple(sorted(source_months)[-60:])
     if len(command.training_window_months) == 60 and (
@@ -596,18 +598,16 @@ def _validate_candidate_calibration_sources(
         raise CandidateCalibrationProvenanceInvalid()
 
 
-def _calibration_month_mature_by(month: str, watermark: datetime) -> bool:
-    """Require the standard next-month entry window plus six-month outcome window to mature."""
-    year, month_number = (int(part) for part in month.split("-"))
-    month_index = year * 12 + month_number - 1 + 7
-    maturity_year, zero_based_month = divmod(month_index, 12)
-    maturity_at = datetime(
-        maturity_year,
-        zero_based_month + 1,
-        5,
-        tzinfo=watermark.tzinfo,
+def _calibration_month_mature_by(records: list[CalibrationRecord], watermark: datetime) -> bool:
+    """Require the complete source cohort's actual maturity and label-availability evidence."""
+    return (
+        len(records) == 10
+        and len({(record.security_id, record.research_id) for record in records}) == 10
+        and all(
+            record.unified_maturity_at <= watermark and record.label_available_at <= watermark
+            for record in records
+        )
     )
-    return maturity_at <= watermark
 
 
 def _validate_candidate_qualification_snapshots(
@@ -696,10 +696,10 @@ def _validate_candidate_qualification_snapshots(
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
-        if (
-            qualification_at_cutoff.status not in {"VALID", "AT_RISK"}
-            or not qualification_is_current(qualification_at_cutoff, knowledge_cutoff)
-        ):
+        if qualification_at_cutoff.status not in {
+            "VALID",
+            "AT_RISK",
+        } or not qualification_is_current(qualification_at_cutoff, knowledge_cutoff):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
         if record.recorded_at > datetime.fromisoformat(case.knowledge_cutoff):
@@ -2498,9 +2498,7 @@ def _commit_framework_result(
                 }
             )
             if release_content_changed:
-                commit_candidate_status: Literal[
-                    "FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"
-                ] = (
+                commit_candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
                     "FAILED"
                     if commit_candidate_release.disposition == "FAILED"
                     else "REJECTED"
@@ -2510,9 +2508,7 @@ def _commit_framework_result(
                     else "SUCCEEDED"
                 )
                 commit_candidate_gate_status: Literal["FAILED", "PASSED"] = (
-                    "FAILED"
-                    if commit_candidate_status in {"FAILED", "REJECTED"}
-                    else "PASSED"
+                    "FAILED" if commit_candidate_status in {"FAILED", "REJECTED"} else "PASSED"
                 )
                 candidate_release_result = StageResult(
                     phase="CANDIDATE_RELEASE",
@@ -3117,10 +3113,33 @@ def _publish_report_or_record_failure(
     assert report is not None
     candidate_command = fact.case.candidate_release
     candidate_outcome = fact.result.candidate_release
-    if candidate_command is not None and candidate_outcome is not None:
+    if (
+        candidate_command is not None
+        and candidate_outcome is not None
+        and fact.corrects_event_id is None
+        and candidate_outcome.disposition
+        in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+    ):
         confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+        assert fact.case.access_scope is not None
+        try:
+            current_qualifications = _validate_candidate_qualification_snapshots(
+                fact.case,
+                ledger.governance_history(connection, fact.case.access_scope),
+                confirmed_at,
+            )
+        except (ValueError, CandidateQualificationHistoryAmbiguous):
+            _record_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+            )
+            return None, DecisionEventCommitError(
+                "candidate qualification changed before publication"
+            )
         confirmed_outcome = finalize_candidate_release_publication(
-            candidate_command,
+            candidate_command.model_copy(update={"qualifications": current_qualifications}),
             candidate_outcome,
             published_at=confirmed_at,
         )
@@ -3137,6 +3156,19 @@ def _publish_report_or_record_failure(
                 "PUBLICATION_AFTER_CANDIDATE_WINDOW",
             )
             return None, DecisionEventCommitError("candidate publication window expired")
+        if (
+            confirmed_outcome.model_copy(update={"published_at": candidate_outcome.published_at})
+            != candidate_outcome
+        ):
+            _record_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+            )
+            return None, DecisionEventCommitError(
+                "candidate qualification changed before publication"
+            )
     _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None

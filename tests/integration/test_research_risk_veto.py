@@ -3397,6 +3397,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
         ("ACCEPT", "LATE_REPORT_COMMIT"),
+        ("ACCEPT", "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE"),
+        ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
         ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
@@ -3433,6 +3435,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
+        "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3473,7 +3477,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         prior_index = first_year * 12 + first_month - 2
         prior_year, prior_month_zero_based = divmod(prior_index, 12)
         omitted_training_months = (
-            f"{prior_year}-{prior_month_zero_based + 1:02d}", *training_months[:-1]
+            f"{prior_year}-{prior_month_zero_based + 1:02d}",
+            *training_months[:-1],
         )
         last_year, last_month = (int(part) for part in training_months[-1].split("-"))
         following_year, following_month = divmod(last_year * 12 + last_month, 12)
@@ -3691,6 +3696,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
+        "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
@@ -3943,11 +3950,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     )
     assert alternate_batch_case.business_object_id == candidate_case.business_object_id
 
+    qualification_history_state = {"value": qualification_history}
     if qualification_history:
         monkeypatch.setattr(
             DecisionLedger,
             "governance_history",
-            lambda self, connection, access_scope: qualification_history,
+            lambda self, connection, access_scope: qualification_history_state["value"],
         )
     if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         validate_qualification_snapshots = (
@@ -4123,6 +4131,42 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 return report
 
             monkeypatch.setattr(DecisionLedger, "publish_report", advance_clock_after_report_save)
+    if candidate_scenario == "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE":
+        publish_report = DecisionLedger.publish_report
+        clock_state = {"now": publication_time}
+        monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
+
+        def revoke_qualification_after_report_save(
+            ledger: DecisionLedger, connection: Any, fact: DecisionEventFact, *args: Any
+        ) -> Any:
+            report = publish_report(ledger, connection, fact, *args)
+            clock_state["now"] = publication_time + timedelta(seconds=2)
+            original_qualification = qualification_history[0].qualification
+            assert original_qualification is not None
+            revoked = original_qualification.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-revoked-at-publication",
+                    "status": "REVOKED",
+                    "cause": "AUTHORIZATION_REVOKED",
+                    "previous_decision_id": original_qualification.decision_id,
+                    "recorded_at": publication_time + timedelta(seconds=1),
+                }
+            )
+            qualification_history_state["value"] = (
+                *qualification_history,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("AUTHORIZATION_REVOKED",),
+                    qualification=revoked,
+                ),
+            )
+            return report
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "publish_report",
+            revoke_qualification_after_report_save,
+        )
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -4139,6 +4183,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_PUBLICATION": "FAILED",
         "LATE_COMMIT": "FAILED",
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
+        "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
@@ -4174,13 +4220,35 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert direct.population.recommendation_coverage_denominator == direct.population.valid_monthly
     if direct.calibration is not None:
         assert direct.calibration.slope >= 0
-    if candidate_scenario == "LATE_REPORT_COMMIT":
+    if candidate_scenario in {
+        "LATE_REPORT_COMMIT",
+        "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
+    }:
         assert execution.report is None
         assert any(
             stage.phase == "PUBLICATION"
             and stage.status == "FAILED"
-            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in stage.reasons
+            and (
+                "PUBLICATION_AFTER_CANDIDATE_WINDOW" in stage.reasons
+                if candidate_scenario == "LATE_REPORT_COMMIT"
+                else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION" in stage.reasons
+            )
             for stage in execution.stage_results
+        )
+        return
+    if candidate_scenario == "CORRECTION_AFTER_CANDIDATE_WINDOW":
+        assert execution.report is not None
+        correction_time = datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+        monkeypatch.setattr(UtcClock, "now", lambda self: correction_time)
+        correction = decision_case_service.correct_default_frozen_decision_case(
+            candidate_case,
+            DecisionLedger.from_settings(migrated_settings),
+            candidate_case.business_identity,
+        )
+        assert correction.report is not None
+        assert correction.report.corrects_event_id == execution.report.event_id
+        assert (
+            correction.report.result.candidate_release == execution.report.result.candidate_release
         )
         return
     assert execution.report is not None
