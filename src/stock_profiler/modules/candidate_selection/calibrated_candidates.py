@@ -726,5 +726,4 @@ def _six_month_anniversary(value: datetime) -> datetime:
         year=year,
         month=month,
         day=min(utc_value.day, monthrange(year, month)[1]),
-        microsecond=0,
     )

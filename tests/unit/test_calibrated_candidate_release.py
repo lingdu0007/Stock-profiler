@@ -808,6 +808,51 @@ def test_unmatured_training_label_is_calibration_availability_failure() -> None:
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
 
+def test_fractional_six_month_maturity_does_not_round_down_before_watermark() -> None:
+    original = command()
+    target_month = original.training_window_months[-1]
+    entry_window_ends_at = datetime(2045, 12, 5, 8, 0, 0, 500_000, tzinfo=UTC)
+    maturity = _six_month_anniversary(entry_window_ends_at)
+    records = tuple(
+        record.model_copy(
+            update={
+                "entry_window_ends_at": entry_window_ends_at,
+                "unified_maturity_at": maturity,
+                "label_available_at": maturity,
+            }
+        )
+        if record.month == target_month
+        else record
+        for record in original.training_records
+    )
+    early_watermark = maturity - timedelta(milliseconds=250)
+    claimed_early_maturity = maturity.replace(microsecond=0)
+    early_records = tuple(
+        record.model_copy(
+            update={
+                "unified_maturity_at": claimed_early_maturity,
+                "label_available_at": claimed_early_maturity,
+            }
+        )
+        if record.month == target_month
+        else record
+        for record in records
+    )
+
+    early = freeze_candidate_release(
+        original.model_copy(
+            update={"training_records": early_records, "label_watermark_at": early_watermark}
+        )
+    )
+    mature = freeze_candidate_release(
+        original.model_copy(update={"training_records": records, "label_watermark_at": maturity})
+    )
+
+    assert early.disposition == "FAILED"
+    assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in early.reasons
+    assert mature.disposition == "CANDIDATES"
+
+
 def test_source_month_maturity_uses_actual_entry_and_label_dates() -> None:
     entry_window_ends_at = datetime(2045, 12, 8, 8, tzinfo=UTC)
     actual_maturity = _six_month_anniversary(entry_window_ends_at)
