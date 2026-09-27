@@ -44,6 +44,8 @@ class CalibrationRecord(UniverseContract):
     record_id: str = Field(min_length=1)
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     source_research_event_id: str = Field(min_length=1)
+    security_id: str = Field(min_length=1)
+    research_id: str = Field(min_length=1)
     raw_score_model_version: str = Field(min_length=1)
     raw_score_frozen_at: AwareDatetime
     raw_score_training_watermark_at: AwareDatetime
@@ -299,15 +301,7 @@ def freeze_candidate_release(
     )
     if publication_time > window[-1].closes_at:
         late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
-        historical_members = tuple(
-            member.model_copy(
-                update={
-                    "candidate": False,
-                    "reasons": tuple(dict.fromkeys((*member.reasons, late_reason))),
-                }
-            )
-            for member in members
-        )
+        historical_members = _exclude_candidates(tuple(members), (late_reason,))
         return _release_outcome(
             command,
             window_dates,
@@ -379,15 +373,7 @@ def finalize_candidate_release_publication(
         and published_at > window[-1].closes_at
     ):
         late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
-        members = tuple(
-            member.model_copy(
-                update={
-                    "candidate": False,
-                    "reasons": tuple(dict.fromkeys((*member.reasons, late_reason))),
-                }
-            )
-            for member in outcome.members
-        )
+        members = _exclude_candidates(outcome.members, (late_reason,))
         return outcome.model_copy(
             update={
                 "published_at": published_at,
@@ -403,7 +389,55 @@ def finalize_candidate_release_publication(
                 "reasons": (late_reason,),
             }
         )
-    return outcome.model_copy(update={"published_at": published_at})
+    published = outcome.model_copy(update={"published_at": published_at})
+    if published.disposition not in {
+        "CANDIDATES",
+        "VALID_NO_CANDIDATES",
+        "RECOMMENDATION_ABSTAINED",
+    }:
+        return published
+
+    qualification = next(
+        (
+            item
+            for item in command.qualifications
+            if item.market_state == command.market_state
+            and item.capability_version == command.capability_version
+            and item.market_calendar_version == command.market_calendar_version
+            and item.qualification_scope == command.qualification_scope
+            and item.recorded_at <= command.knowledge_cutoff
+            and (item.current_status_recorded_at or item.recorded_at) <= published_at
+        ),
+        None,
+    )
+    qualification_current = (
+        qualification is not None
+        and qualification.status in {"VALID", "AT_RISK"}
+        and qualification.valid_through >= published_at
+    )
+    if qualification_current or published.disposition == "RECOMMENDATION_ABSTAINED":
+        return published
+
+    expired = qualification is not None and qualification.valid_through < published_at
+    added_reasons: tuple[str, ...] = ("MARKET_STATE_NOT_QUALIFIED",)
+    if expired:
+        added_reasons = (*added_reasons, "MARKET_STATE_QUALIFICATION_EXPIRED")
+    members = _exclude_candidates(
+        published.members,
+        added_reasons,
+        market_state_qualified=False,
+        remove_all_passed_reason=True,
+    )
+    return published.model_copy(
+        update={
+            "disposition": "RECOMMENDATION_ABSTAINED",
+            "members": members,
+            "population": published.population.model_copy(
+                update={"recommendation_coverage_pass": False}
+            ),
+            "reasons": added_reasons,
+        }
+    )
 
 
 def _candidate_window(
@@ -422,6 +456,31 @@ def _candidate_window(
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     return window, None
+
+
+def _exclude_candidates(
+    members: tuple[CalibratedMember, ...],
+    reasons: tuple[str, ...],
+    *,
+    market_state_qualified: bool | None = None,
+    remove_all_passed_reason: bool = False,
+) -> tuple[CalibratedMember, ...]:
+    """Remove candidate eligibility while retaining the original score and other evidence."""
+    excluded: list[CalibratedMember] = []
+    for member in members:
+        member_reasons = (
+            tuple(reason for reason in member.reasons if reason != "ALL_CANDIDATE_GATES_PASSED")
+            if remove_all_passed_reason
+            else member.reasons
+        )
+        updates: dict[str, object] = {
+            "candidate": False,
+            "reasons": tuple(dict.fromkeys((*member_reasons, *reasons))),
+        }
+        if market_state_qualified is not None:
+            updates["market_state_qualified"] = market_state_qualified
+        excluded.append(member.model_copy(update=updates))
+    return tuple(excluded)
 
 
 def _candidate_window_failure(

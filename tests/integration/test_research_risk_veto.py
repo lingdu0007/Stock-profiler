@@ -62,6 +62,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketStateQualification,
     candidate_release_availability_failure,
     candidate_release_blocked_by_business_prerequisite,
+    finalize_candidate_release_publication,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import (
@@ -76,6 +77,7 @@ from stock_profiler.modules.decision_cases import service as decision_case_servi
 from stock_profiler.modules.decision_cases.domain import (
     _COMPLETE_SYNTHETIC_INPUT,
     FROZEN_AGENT_DEFINITION_ID,
+    DecisionEventFact,
     EvidenceClock,
     ExternalResult,
     FrozenAgentDefinition,
@@ -3384,9 +3386,16 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "NORMAL"),
         ("REJECT", "NORMAL"),
         ("ACCEPT", "CALIBRATION_FAILURE"),
+        ("ACCEPT", "CALIBRATION_SOURCE_MISSING"),
+        ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
+        ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
+        ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
+        ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
+        ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
+        ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
@@ -3402,9 +3411,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     candidate_scenario: Literal[
         "NORMAL",
         "CALIBRATION_FAILURE",
+        "CALIBRATION_SOURCE_MISSING",
+        "CALIBRATION_MODEL_MISMATCH",
+        "CALIBRATION_COHORT_INCOMPLETE",
+        "UPSTREAM_RESEARCH_DATA_FAILED",
+        "UPSTREAM_RESEARCH_SYSTEM_FAILED",
+        "UPSTREAM_RESEARCH_BLOCKED",
         "LATE_PUBLICATION",
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
+        "QUALIFICATION_EXPIRES_DURING_FIT",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
@@ -3431,6 +3447,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert research.risk_veto is not None
 
     cutoff = datetime.fromisoformat(research_case.knowledge_cutoff)
+    raw_scores = {score.security_id: score for score in research.raw_scores}
+    research_members = {member.security_id: member for member in research.members}
+    security_ids = tuple(research_members)
     training_months = tuple(
         f"{year}-{month:02d}" for year in range(2035, 2042) for month in range(1, 13)
     )[:-1][-60:]
@@ -3439,7 +3458,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             record_id=f"synthetic-calibration-label-{month}-{member:02d}",
             month=month,
             source_research_event_id=f"synthetic-calibration-event-{month}",
-            raw_score_model_version="synthetic-elastic-net-v1",
+            security_id=security_ids[member],
+            research_id=research_members[security_ids[member]].research_id,
+            raw_score_model_version=raw_scores[security_ids[member]].model_version,
             raw_score_frozen_at=_synthetic_raw_score_frozen_at(month),
             raw_score_training_watermark_at=(
                 _synthetic_raw_score_frozen_at(month) - timedelta(days=1)
@@ -3454,8 +3475,101 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         for month in training_months
         for member in range(10)
     )
-    raw_scores = {score.security_id: score for score in research.raw_scores}
-    research_members = {member.security_id: member for member in research.members}
+    if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
+        training_records = (
+            training_records[0].model_copy(
+                update={"raw_score_model_version": "unrelated-model-version"}
+            ),
+            *training_records[1:],
+        )
+    elif candidate_scenario == "CALIBRATION_COHORT_INCOMPLETE":
+        missing_member_record = training_records[0]
+        training_records = tuple(
+            record
+            for record in training_records
+            if record.record_id != missing_member_record.record_id
+        )
+    runtime = initialize_runtime_storage(migrated_settings)
+    source_ledger = DecisionLedger(runtime.engine)
+    with runtime.engine.connect() as connection:
+        source_fact = source_ledger.get_decision_event(
+            research_execution.decision_event_id,
+            connection,
+        )
+    assert source_fact is not None
+    calibration_source_facts: dict[str, DecisionEventFact] = {}
+    for month in training_months:
+        source_event_id = f"synthetic-calibration-event-{month}"
+        frozen_at = _synthetic_raw_score_frozen_at(month)
+        training_watermark = frozen_at - timedelta(days=1)
+        source_research = source_fact.result.research
+        assert source_research is not None and source_research.raw_scores is not None
+        monthly_scores = tuple(
+            score.model_copy(
+                update={
+                    "label_watermark_at": training_watermark,
+                    "label_watermark_month": training_watermark.strftime("%Y-%m"),
+                    "z20": Decimal(member) / Decimal("10"),
+                }
+            )
+            for member, score in enumerate(source_research.raw_scores)
+        )
+        calibration_source_facts[source_event_id] = source_fact.model_copy(
+            update={
+                "decision_event_id": source_event_id,
+                "business_object_id": f"synthetic-calibration-object-{month}",
+                "framework_run_id": f"synthetic-calibration-run-{month}",
+                "case": source_fact.case.model_copy(
+                    update={"knowledge_cutoff": frozen_at.isoformat()}
+                ),
+                "result": source_fact.result.model_copy(
+                    update={
+                        "research": source_research.model_copy(
+                            update={"raw_scores": monthly_scores}
+                        )
+                    }
+                ),
+                "committed_at": frozen_at.isoformat(),
+            }
+        )
+    if candidate_scenario == "CALIBRATION_SOURCE_MISSING":
+        calibration_source_facts.pop(f"synthetic-calibration-event-{training_months[0]}")
+    get_decision_event = DecisionLedger.get_decision_event
+
+    def get_calibration_source_event(
+        ledger: DecisionLedger, event_id: str, connection: Any
+    ) -> DecisionEventFact | None:
+        return calibration_source_facts.get(event_id) or get_decision_event(
+            ledger, event_id, connection
+        )
+
+    monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
+    if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
+        original_get_original_event = DecisionLedger.get_original_decision_event
+        upstream_disposition = candidate_scenario.removeprefix("UPSTREAM_RESEARCH_")
+
+        def get_failed_research_source(
+            ledger: DecisionLedger, business_object_id: str, connection: Any
+        ) -> DecisionEventFact | None:
+            fact = original_get_original_event(ledger, business_object_id, connection)
+            if fact is None or business_object_id != research_execution.business_object_id:
+                return fact
+            research_outcome = fact.result.research
+            assert research_outcome is not None
+            failed_research = research_outcome.model_copy(
+                update={
+                    "disposition": upstream_disposition,
+                    "raw_scores": None,
+                    "risk_veto": None,
+                }
+            )
+            return fact.model_copy(
+                update={"result": fact.result.model_copy(update={"research": failed_research})}
+            )
+
+        monkeypatch.setattr(
+            DecisionLedger, "get_original_decision_event", get_failed_research_source
+        )
     risk_vetoes = {item.security_id: item for item in research.risk_veto.member_vetoes}
     candidates = tuple(
         CandidateInput(
@@ -3536,6 +3650,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     if candidate_scenario in {
         "AT_RISK_QUALIFICATION",
+        "QUALIFICATION_EXPIRES_DURING_FIT",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
@@ -3582,7 +3697,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             qualification_policy=qualification_policy,
         )
         qualification_recorded_at = cutoff - timedelta(seconds=1)
-        qualification_expires_at = datetime.fromisoformat("2042-12-31T23:59:59+00:00")
+        qualification_expires_at = datetime.fromisoformat(
+            "2042-07-01T00:05:00+00:00"
+            if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT"
+            else "2042-12-31T23:59:59+00:00"
+        )
         qualification_evidence = QualificationEvidence(
             evidence_id="synthetic-candidate-qualification-evidence",
             synthetic=True,
@@ -3751,6 +3870,32 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "governance_history",
             lambda self, connection, access_scope: qualification_history,
         )
+    if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
+        validate_qualification_snapshots = (
+            decision_case_service._validate_candidate_qualification_snapshots
+        )
+        validation_count = 0
+
+        def expire_qualification_on_final_check(
+            *args: Any, **kwargs: Any
+        ) -> tuple[MarketStateQualification, ...]:
+            nonlocal validation_count
+            snapshots = validate_qualification_snapshots(*args, **kwargs)
+            validation_count += 1
+            if validation_count == 2:
+                return tuple(
+                    snapshot.model_copy(
+                        update={"valid_through": publication_time - timedelta(seconds=1)}
+                    )
+                    for snapshot in snapshots
+                )
+            return snapshots
+
+        monkeypatch.setattr(
+            decision_case_service,
+            "_validate_candidate_qualification_snapshots",
+            expire_qualification_on_final_check,
+        )
     resolved_command = command
     if candidate_scenario in {
         "AT_RISK_QUALIFICATION",
@@ -3797,16 +3942,68 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
             availability_failure="VERSION",
         )
+    elif candidate_scenario in {
+        "CALIBRATION_SOURCE_MISSING",
+        "CALIBRATION_MODEL_MISMATCH",
+        "CALIBRATION_COHORT_INCOMPLETE",
+    }:
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_CALIBRATION_LINEAGE_INVALID",
+            availability_failure="CALIBRATION",
+        )
+    elif candidate_scenario in {
+        "UPSTREAM_RESEARCH_DATA_FAILED",
+        "UPSTREAM_RESEARCH_SYSTEM_FAILED",
+    }:
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE",
+            availability_failure="DATA",
+        )
+    elif candidate_scenario == "UPSTREAM_RESEARCH_BLOCKED":
+        direct = candidate_release_blocked_by_business_prerequisite(
+            command,
+            published_at=publication_time,
+            reason="RESEARCH_PREREQUISITE_BLOCKED",
+        )
     else:
         direct = freeze_candidate_release(resolved_command, published_at=publication_time)
+        if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
+            finalization_command = resolved_command.model_copy(
+                update={
+                    "qualifications": tuple(
+                        qualification.model_copy(
+                            update={
+                                "valid_through": publication_time - timedelta(seconds=1),
+                            }
+                        )
+                        for qualification in resolved_command.qualifications
+                    )
+                }
+            )
+            direct = finalize_candidate_release_publication(
+                finalization_command,
+                direct,
+                published_at=publication_time,
+            )
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
         "NORMAL": "RECOMMENDATION_ABSTAINED",
         "CALIBRATION_FAILURE": "FAILED",
+        "CALIBRATION_SOURCE_MISSING": "FAILED",
+        "CALIBRATION_MODEL_MISMATCH": "FAILED",
+        "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
+        "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
+        "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
+        "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
         "LATE_PUBLICATION": "FAILED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
+        "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
@@ -3816,12 +4013,18 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "ORIGINAL_REJECTED": "BLOCKED",
     }[candidate_scenario]
     assert direct.disposition == expected_disposition
-    if candidate_scenario == "CALIBRATION_FAILURE":
+    if candidate_scenario == "CALIBRATION_FAILURE" or candidate_scenario in {
+        "CALIBRATION_SOURCE_MISSING",
+        "CALIBRATION_MODEL_MISMATCH",
+        "CALIBRATION_COHORT_INCOMPLETE",
+    }:
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario == "WINDOW_EXPIRED":
         assert direct.availability_failure == "DATA"
     elif candidate_scenario == "VERSION_MISMATCH":
         assert direct.availability_failure == "VERSION"
+    elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
+        assert direct.members[0].market_state_qualified is False
     elif candidate_scenario == "LATE_PUBLICATION":
         assert direct.population.valid_monthly is False
         assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in direct.reasons

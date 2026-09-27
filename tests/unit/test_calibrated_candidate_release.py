@@ -37,6 +37,8 @@ def training_records() -> tuple[CalibrationRecord, ...]:
                     record_id=f"synthetic-label-{month}-{member:02d}",
                     month=month,
                     source_research_event_id=f"synthetic-research-event-{month}",
+                    security_id=f"SYNTH-SECURITY-{member:02d}",
+                    research_id=f"synthetic-research-{month}-{member:02d}",
                     raw_score_model_version="synthetic-elastic-net-v1",
                     raw_score_frozen_at=raw_score_frozen_at,
                     raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
@@ -80,6 +82,8 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
                     record_id=f"positive-label-{month}-{member:02d}",
                     month=month,
                     source_research_event_id=f"synthetic-positive-research-event-{month}",
+                    security_id=f"SYNTH-POSITIVE-{member:02d}",
+                    research_id=f"synthetic-positive-research-{month}-{member:02d}",
                     raw_score_model_version="synthetic-elastic-net-v1",
                     raw_score_frozen_at=raw_score_frozen_at,
                     raw_score_training_watermark_at=raw_score_frozen_at - timedelta(days=1),
@@ -253,6 +257,24 @@ def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
 
     assert release.disposition == "RECOMMENDATION_ABSTAINED"
     assert release.members[0].market_state_qualified is False
+
+
+def test_final_publication_turns_unqualified_no_candidate_batch_into_abstention() -> None:
+    original = command(score="0.01")
+    frozen = freeze_candidate_release(original, published_at=original.published_at)
+    assert frozen.disposition == "VALID_NO_CANDIDATES"
+    revoked = original.qualifications[0].model_copy(update={"status": "REVOKED"})
+
+    finalized = finalize_candidate_release_publication(
+        original.model_copy(update={"qualifications": (revoked,)}),
+        frozen,
+        published_at=original.published_at + timedelta(hours=1),
+    )
+
+    assert finalized.disposition == "RECOMMENDATION_ABSTAINED"
+    assert finalized.members[0].market_state_qualified is False
+    assert "MARKET_STATE_NOT_QUALIFIED" in finalized.reasons
+    assert "MARKET_STATE_QUALIFICATION_EXPIRED" not in finalized.reasons
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:
@@ -631,6 +653,29 @@ def test_firth_solver_shrinks_rejected_steps_and_stops_at_the_scale_floor(
         candidate_module._firth_logistic(training_records())
 
 
+def test_firth_solver_accepts_a_stalled_step_at_the_numerical_tolerance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = tuple(
+        record.model_copy(update={"terminal_success": (index // 10) % 2 == 0})
+        for index, record in enumerate(training_records())
+    )
+    original_log1p = math.log1p
+    calls = 0
+
+    def degrade_trial_objective(value: float) -> float:
+        nonlocal calls
+        calls += 1
+        return original_log1p(value) if calls <= len(records) else 1000.0
+
+    monkeypatch.setattr(math, "log1p", degrade_trial_objective)
+
+    intercept, slope = candidate_module._firth_logistic(records)
+
+    assert intercept == 0
+    assert slope == 0
+
+
 def test_firth_solver_rejects_training_scores_without_temporal_provenance() -> None:
     original = command()
     first = original.training_records[0].model_copy(
@@ -643,6 +688,20 @@ def test_firth_solver_rejects_training_scores_without_temporal_provenance() -> N
 
     assert release.availability_failure == "CALIBRATION"
     assert release.reasons == ("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE",)
+
+
+def test_firth_solver_rejects_raw_score_timestamp_from_a_different_month() -> None:
+    original = command()
+    first = original.training_records[0].model_copy(
+        update={"raw_score_frozen_at": datetime(2037, 1, 30, 7, tzinfo=UTC)}
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": (first, *original.training_records[1:])})
+    )
+
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_RAW_SCORE_MONTH_MISMATCH",)
 
 
 def test_firth_solver_rejects_nonfinite_final_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -716,6 +775,28 @@ def test_publication_that_crosses_window_while_calibrating_is_failed() -> None:
     assert finalized.population.valid_monthly is False
     assert finalized.members[0].candidate is False
     assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in finalized.reasons
+
+
+def test_qualification_expiring_before_final_publication_removes_candidates() -> None:
+    original = command()
+    qualification = original.qualifications[0].model_copy(
+        update={"valid_through": datetime(2046, 7, 2, 0, tzinfo=UTC)}
+    )
+    original = original.model_copy(update={"qualifications": (qualification,)})
+    frozen = freeze_candidate_release(original, published_at=original.published_at)
+
+    finalized = finalize_candidate_release_publication(
+        original,
+        frozen,
+        published_at=datetime(2046, 7, 3, 0, tzinfo=UTC),
+    )
+
+    assert frozen.disposition == "CANDIDATES"
+    assert finalized.disposition == "RECOMMENDATION_ABSTAINED"
+    assert finalized.members[0].candidate is False
+    assert finalized.members[0].market_state_qualified is False
+    assert "MARKET_STATE_NOT_QUALIFIED" in finalized.members[0].reasons
+    assert "MARKET_STATE_QUALIFICATION_EXPIRED" in finalized.members[0].reasons
 
 
 def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> None:

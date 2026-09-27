@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    CalibrationRecord,
+    CandidateReleaseCommand,
     MarketStateQualification,
     MarketStateQualificationStatus,
     candidate_release_availability_failure,
@@ -40,6 +42,7 @@ from stock_profiler.modules.decision_cases.domain import (
     GateResult,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
     business_lifecycle_from_stage,
     business_outcome_result,
@@ -125,6 +128,26 @@ class CandidateQualificationHistoryAmbiguous(ValueError):
 
     def __init__(self) -> None:
         super().__init__("CANDIDATE_QUALIFICATION_HISTORY_AMBIGUOUS")
+
+
+class CandidateCalibrationProvenanceInvalid(ValueError):
+    """Persist a calibration availability failure when frozen source lineage is invalid."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_CALIBRATION_LINEAGE_INVALID")
+
+
+class CandidateResearchHandoffUnavailable(ValueError):
+    """Preserve an unavailable upstream research result in its candidate batch."""
+
+    def __init__(self, disposition: str):
+        self.disposition = disposition
+        self.reason = (
+            "RESEARCH_PREREQUISITE_BLOCKED"
+            if disposition == "BLOCKED"
+            else "CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE"
+        )
+        super().__init__(self.reason)
 
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
@@ -445,10 +468,14 @@ def _validate_candidate_release_source(
     ):
         raise ValueError("CANDIDATE_RESEARCH_EVENT_INVALID")
     research = source_event.result.research
+    if research.disposition in {"DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"}:
+        raise CandidateResearchHandoffUnavailable(research.disposition)
     risk = research.risk_veto
     raw_scores = research.raw_scores
-    if research.disposition not in {"FROZEN", "REJECTED"} or risk is None or raw_scores is None:
+    if research.disposition not in {"FROZEN", "REJECTED"}:
         raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
+    if risk is None or raw_scores is None:
+        raise CandidateResearchHandoffUnavailable("INCOMPLETE")
     members = {member.security_id: member for member in research.members}
     scores = {score.security_id: score for score in raw_scores}
     vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
@@ -480,6 +507,69 @@ def _validate_candidate_release_source(
         )
         if candidate.evidence_freshness != expected_freshness:
             raise ValueError("CANDIDATE_EVIDENCE_FRESHNESS_MISMATCH")
+
+
+def _validate_candidate_calibration_sources(
+    command: CandidateReleaseCommand,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    access_scope: ResultAccessScope,
+) -> None:
+    """Bind all calibration labels to complete, persisted raw-score research cohorts."""
+    records_by_event: dict[str, list[CalibrationRecord]] = {}
+    events_by_month: dict[str, str] = {}
+    for record in command.training_records:
+        if (
+            record.month in events_by_month
+            and events_by_month[record.month] != record.source_research_event_id
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        events_by_month[record.month] = record.source_research_event_id
+        records_by_event.setdefault(record.source_research_event_id, []).append(record)
+
+    for event_id, records in records_by_event.items():
+        source_event = ledger.get_decision_event(event_id, connection)
+        if (
+            source_event is None
+            or source_event.decision_event_id != event_id
+            or source_event.corrects_event_id is not None
+            or source_event.validation_status != "PASSED"
+            or source_event.case.access_scope is None
+            or not source_event.case.access_scope.same_scope_as(access_scope)
+            or source_event.result.research is None
+            or source_event.case.knowledge_cutoff[:7] != records[0].month
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        research = source_event.result.research
+        raw_scores = research.raw_scores
+        if (
+            research.disposition not in {"FROZEN", "REJECTED"}
+            or raw_scores is None
+            or len(raw_scores) != 10
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        scores_by_security = {score.security_id: score for score in raw_scores}
+        if len(scores_by_security) != len(raw_scores):
+            raise CandidateCalibrationProvenanceInvalid()
+        records_by_identity = {
+            (record.security_id, record.research_id): record for record in records
+        }
+        if len(records_by_identity) != len(records) or set(records_by_identity) != {
+            (score.security_id, score.research_id) for score in raw_scores
+        }:
+            raise CandidateCalibrationProvenanceInvalid()
+        frozen_at = datetime.fromisoformat(source_event.case.knowledge_cutoff)
+        for score in raw_scores:
+            record = records_by_identity[(score.security_id, score.research_id)]
+            if (
+                score.model_version != record.raw_score_model_version
+                or score.z20 != record.raw_success_score
+                or record.raw_score_frozen_at != frozen_at
+                or score.label_watermark_at is None
+                or record.raw_score_training_watermark_at != score.label_watermark_at
+                or score.label_watermark_at >= frozen_at
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
 
 
 def _validate_candidate_qualification_snapshots(
@@ -1548,6 +1638,8 @@ def _commit_framework_result(
     committed_at: str | None = None
     candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
     candidate_version_failure: str | None = None
+    candidate_calibration_failure: str | None = None
+    candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
 
     def unpublished_candidate_validation_failure(error: ValueError) -> DecisionCaseExecution:
         failed = StageResult(
@@ -1620,8 +1712,21 @@ def _commit_framework_result(
                     connection,
                 ),
             )
+        except CandidateResearchHandoffUnavailable as error:
+            candidate_research_failure = error
         except ValueError as error:
             return unpublished_candidate_validation_failure(error)
+        if candidate_research_failure is None:
+            try:
+                assert execution_case.access_scope is not None
+                _validate_candidate_calibration_sources(
+                    execution_case.candidate_release,
+                    ledger,
+                    connection,
+                    execution_case.access_scope,
+                )
+            except CandidateCalibrationProvenanceInvalid as error:
+                candidate_calibration_failure = str(error)
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
         return _unpublished_execution(
@@ -2085,6 +2190,27 @@ def _commit_framework_result(
                         reason=candidate_version_failure,
                         availability_failure="VERSION",
                     )
+                elif candidate_research_failure is not None:
+                    if candidate_research_failure.disposition == "BLOCKED":
+                        candidate_release = candidate_release_blocked_by_business_prerequisite(
+                            execution_case.candidate_release,
+                            published_at=publication_time,
+                            reason=candidate_research_failure.reason,
+                        )
+                    else:
+                        candidate_release = candidate_release_availability_failure(
+                            execution_case.candidate_release,
+                            published_at=publication_time,
+                            reason=candidate_research_failure.reason,
+                            availability_failure="DATA",
+                        )
+                elif candidate_calibration_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        execution_case.candidate_release,
+                        published_at=publication_time,
+                        reason=candidate_calibration_failure,
+                        availability_failure="CALIBRATION",
+                    )
                 else:
                     candidate_release = freeze_candidate_release(
                         execution_case.candidate_release.model_copy(
@@ -2093,8 +2219,27 @@ def _commit_framework_result(
                         published_at=publication_time,
                     )
                 committed_at = ledger.observed_at()
+                publication_command = execution_case.candidate_release
+                if (
+                    successful_prerequisite
+                    and candidate_version_failure is None
+                    and candidate_calibration_failure is None
+                    and candidate_research_failure is None
+                ):
+                    assert execution_case.access_scope is not None
+                    final_publication_time = datetime.fromisoformat(
+                        committed_at.replace("Z", "+00:00")
+                    )
+                    final_qualifications = _validate_candidate_qualification_snapshots(
+                        execution_case,
+                        ledger.governance_history(connection, execution_case.access_scope),
+                        final_publication_time,
+                    )
+                    publication_command = publication_command.model_copy(
+                        update={"qualifications": final_qualifications}
+                    )
                 candidate_release = finalize_candidate_release_publication(
-                    execution_case.candidate_release,
+                    publication_command,
                     candidate_release,
                     published_at=datetime.fromisoformat(committed_at.replace("Z", "+00:00")),
                 )
