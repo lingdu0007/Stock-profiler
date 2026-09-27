@@ -3389,10 +3389,14 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_SOURCE_MISSING"),
         ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
+        ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
+        ("ACCEPT", "CALIBRATION_NEWEST_MONTH_OMITTED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "LATE_PUBLICATION"),
+        ("ACCEPT", "LATE_COMMIT"),
+        ("ACCEPT", "LATE_REPORT_COMMIT"),
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
@@ -3414,10 +3418,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
+        "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_NEWEST_MONTH_OMITTED",
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
         "LATE_PUBLICATION",
+        "LATE_COMMIT",
+        "LATE_REPORT_COMMIT",
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
@@ -3453,6 +3461,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     training_months = tuple(
         f"{year}-{month:02d}" for year in range(2035, 2042) for month in range(1, 13)
     )[:-1][-60:]
+    source_months = training_months
+    if candidate_scenario == "CALIBRATION_NEWEST_MONTH_OMITTED":
+        first_year, first_month = (int(part) for part in training_months[0].split("-"))
+        prior_index = first_year * 12 + first_month - 2
+        prior_year, prior_month_zero_based = divmod(prior_index, 12)
+        omitted_training_months = (
+            f"{prior_year}-{prior_month_zero_based + 1:02d}", *training_months[:-1]
+        )
+        last_year, last_month = (int(part) for part in training_months[-1].split("-"))
+        following_year, following_month = divmod(last_year * 12 + last_month, 12)
+        source_months = (*training_months, f"{following_year}-{following_month + 1:02d}")
+    else:
+        omitted_training_months = training_months
     training_records = tuple(
         CalibrationRecord(
             record_id=f"synthetic-calibration-label-{month}-{member:02d}",
@@ -3472,7 +3493,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             unified_maturity_at=cutoff,
             label_available_at=cutoff,
         )
-        for month in training_months
+        for month in omitted_training_months
         for member in range(10)
     )
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
@@ -3498,7 +3519,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     assert source_fact is not None
     calibration_source_facts: dict[str, DecisionEventFact] = {}
-    for month in training_months:
+    for month in source_months:
         source_event_id = f"synthetic-calibration-event-{month}"
         frozen_at = _synthetic_raw_score_frozen_at(month)
         training_watermark = frozen_at - timedelta(days=1)
@@ -3532,6 +3553,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 "committed_at": frozen_at.isoformat(),
             }
         )
+    if candidate_scenario == "CALIBRATION_SOURCE_AFTER_CUTOFF":
+        newest = training_months[-1]
+        source_id = f"synthetic-calibration-event-{newest}"
+        calibration_source_facts[source_id] = calibration_source_facts[source_id].model_copy(
+            update={"committed_at": (cutoff + timedelta(seconds=1)).isoformat()}
+        )
     if candidate_scenario == "CALIBRATION_SOURCE_MISSING":
         calibration_source_facts.pop(f"synthetic-calibration-event-{training_months[0]}")
     get_decision_event = DecisionLedger.get_decision_event
@@ -3544,6 +3571,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
 
     monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
+    monkeypatch.setattr(
+        DecisionLedger,
+        "candidate_calibration_source_history",
+        lambda ledger, connection, access_scope: tuple(calibration_source_facts.values()),
+    )
     if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
         upstream_disposition = candidate_scenario.removeprefix("UPSTREAM_RESEARCH_")
@@ -3615,7 +3647,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         market_calendar_version="synthetic-market-calendar-v1",
         label_watermark_at=cutoff,
         training_window_months=(
-            training_months[:-1] if candidate_scenario == "CALIBRATION_FAILURE" else training_months
+            training_months[:-1]
+            if candidate_scenario == "CALIBRATION_FAILURE"
+            else omitted_training_months
         ),
         training_records=training_records,
         candidates=candidates,
@@ -3946,6 +3980,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
+        "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_NEWEST_MONTH_OMITTED",
     }:
         direct = candidate_release_availability_failure(
             command,
@@ -3971,13 +4007,18 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     else:
         direct = freeze_candidate_release(resolved_command, published_at=publication_time)
-        if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
+        if candidate_scenario in {"QUALIFICATION_EXPIRES_DURING_FIT", "LATE_COMMIT"}:
+            final_publication_time = (
+                datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+                if candidate_scenario == "LATE_COMMIT"
+                else publication_time
+            )
             finalization_command = resolved_command.model_copy(
                 update={
                     "qualifications": tuple(
                         qualification.model_copy(
                             update={
-                                "valid_through": publication_time - timedelta(seconds=1),
+                                "valid_through": final_publication_time - timedelta(seconds=1),
                             }
                         )
                         for qualification in resolved_command.qualifications
@@ -3987,8 +4028,38 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             direct = finalize_candidate_release_publication(
                 finalization_command,
                 direct,
-                published_at=publication_time,
+                published_at=final_publication_time,
             )
+    if candidate_scenario in {"LATE_COMMIT", "LATE_REPORT_COMMIT"}:
+        commit_time = datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+        clock_state = {"now": publication_time}
+        monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
+        if candidate_scenario == "LATE_COMMIT":
+            record_stage_result = DecisionLedger.record_stage_result
+
+            def advance_clock_after_candidate_stage(
+                ledger: DecisionLedger, connection: Any, **kwargs: Any
+            ) -> Any:
+                result = record_stage_result(ledger, connection, **kwargs)
+                stage_result = kwargs.get("stage_result")
+                if stage_result is not None and stage_result.phase == "CANDIDATE_RELEASE":
+                    clock_state["now"] = commit_time
+                return result
+
+            monkeypatch.setattr(
+                DecisionLedger, "record_stage_result", advance_clock_after_candidate_stage
+            )
+        else:
+            publish_report = DecisionLedger.publish_report
+
+            def advance_clock_after_report_save(
+                ledger: DecisionLedger, connection: Any, fact: DecisionEventFact, *args: Any
+            ) -> Any:
+                report = publish_report(ledger, connection, fact, *args)
+                clock_state["now"] = commit_time
+                return report
+
+            monkeypatch.setattr(DecisionLedger, "publish_report", advance_clock_after_report_save)
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -3997,10 +4068,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING": "FAILED",
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
+        "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
+        "CALIBRATION_NEWEST_MONTH_OMITTED": "FAILED",
         "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
         "LATE_PUBLICATION": "FAILED",
+        "LATE_COMMIT": "FAILED",
+        "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
@@ -4017,6 +4092,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
+        "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_NEWEST_MONTH_OMITTED",
     }:
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario == "WINDOW_EXPIRED":
@@ -4025,15 +4102,28 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         assert direct.members[0].market_state_qualified is False
-    elif candidate_scenario == "LATE_PUBLICATION":
+    elif candidate_scenario in {"LATE_PUBLICATION", "LATE_COMMIT"}:
         assert direct.population.valid_monthly is False
         assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in direct.reasons
     assert direct.population.recommendation_coverage_denominator == direct.population.valid_monthly
     if direct.calibration is not None:
         assert direct.calibration.slope >= 0
+    if candidate_scenario == "LATE_REPORT_COMMIT":
+        assert execution.report is None
+        assert any(
+            stage.phase == "PUBLICATION"
+            and stage.status == "FAILED"
+            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in stage.reasons
+            for stage in execution.stage_results
+        )
+        return
     assert execution.report is not None
     assert execution.report.result.candidate_release == direct
-    assert execution.report.result.candidate_release.published_at == publication_time
+    assert execution.report.result.candidate_release.published_at == (
+        datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+        if candidate_scenario == "LATE_COMMIT"
+        else publication_time
+    )
     assert execution.report.result.candidate_release.members == direct.members
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True

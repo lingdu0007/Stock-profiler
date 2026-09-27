@@ -516,6 +516,7 @@ def _validate_candidate_calibration_sources(
     access_scope: ResultAccessScope,
 ) -> None:
     """Bind all calibration labels to complete, persisted raw-score research cohorts."""
+    candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
     for record in command.training_records:
@@ -534,6 +535,8 @@ def _validate_candidate_calibration_sources(
             or source_event.decision_event_id != event_id
             or source_event.corrects_event_id is not None
             or source_event.validation_status != "PASSED"
+            or datetime.fromisoformat(source_event.committed_at) > candidate_cutoff
+            or datetime.fromisoformat(source_event.case.knowledge_cutoff) > candidate_cutoff
             or source_event.case.access_scope is None
             or not source_event.case.access_scope.same_scope_as(access_scope)
             or source_event.result.research is None
@@ -570,6 +573,41 @@ def _validate_candidate_calibration_sources(
                 or score.label_watermark_at >= frozen_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+
+    source_months = {
+        fact.case.knowledge_cutoff[:7]
+        for fact in ledger.candidate_calibration_source_history(connection, access_scope)
+        if fact.validation_status == "PASSED"
+        and fact.corrects_event_id is None
+        and fact.result.research is not None
+        and fact.result.research.disposition in {"FROZEN", "REJECTED"}
+        and fact.result.research.raw_scores is not None
+        and len(fact.result.research.raw_scores) == 10
+        and len({score.security_id for score in fact.result.research.raw_scores}) == 10
+        and len({score.research_id for score in fact.result.research.raw_scores}) == 10
+        and datetime.fromisoformat(fact.committed_at) <= candidate_cutoff
+        and datetime.fromisoformat(fact.case.knowledge_cutoff) <= candidate_cutoff
+        and _calibration_month_mature_by(fact.case.knowledge_cutoff[:7], command.label_watermark_at)
+    }
+    expected_months = tuple(sorted(source_months)[-60:])
+    if len(command.training_window_months) == 60 and (
+        len(expected_months) != 60 or tuple(command.training_window_months) != expected_months
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _calibration_month_mature_by(month: str, watermark: datetime) -> bool:
+    """Require the standard next-month entry window plus six-month outcome window to mature."""
+    year, month_number = (int(part) for part in month.split("-"))
+    month_index = year * 12 + month_number - 1 + 7
+    maturity_year, zero_based_month = divmod(month_index, 12)
+    maturity_at = datetime(
+        maturity_year,
+        zero_based_month + 1,
+        5,
+        tzinfo=watermark.tzinfo,
+    )
+    return maturity_at <= watermark
 
 
 def _validate_candidate_qualification_snapshots(
@@ -2406,7 +2444,54 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
-    committed_at = committed_at or ledger.observed_at()
+    commit_observed_at = ledger.observed_at()
+    if execution_case.candidate_release is not None:
+        assert result.candidate_release is not None
+        commit_time = datetime.fromisoformat(commit_observed_at.replace("Z", "+00:00"))
+        commit_candidate_release = finalize_candidate_release_publication(
+            publication_command,
+            result.candidate_release,
+            published_at=commit_time,
+        )
+        if commit_candidate_release != result.candidate_release:
+            result = result.model_copy(
+                update={
+                    "candidate_release": commit_candidate_release,
+                    "outcome_code": f"CANDIDATE_RELEASE_{commit_candidate_release.disposition}",
+                    "summary": "Synthetic calibrated candidate release.",
+                    "key_reasons": commit_candidate_release.reasons,
+                }
+            )
+            candidate_release_result = StageResult(
+                phase="CANDIDATE_RELEASE",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="CALIBRATED_CANDIDATE_RELEASE", status="FAILED"),),
+                reasons=commit_candidate_release.reasons,
+            )
+            business_result = StageResult(
+                phase="BUSINESS_DECISION",
+                status="FAILED",
+                gate_results=(GateResult(gate_id="CANDIDATE_RELEASE_OUTCOME", status="FAILED"),),
+                reasons=commit_candidate_release.reasons,
+            )
+            for stage_result in (business_result, candidate_release_result):
+                ledger.record_stage_result(
+                    connection,
+                    case=execution_case,
+                    stage_result=stage_result,
+                    framework_run_id=execution_case.framework_run_id,
+                    allow_repeated_occurrence=True,
+                )
+            stage_results_before_commit = ledger.get_stage_results(
+                execution_case.business_object_id,
+                connection,
+            )
+            current_stage_results_before_commit = (
+                *current_stage_results_before_commit,
+                business_result,
+                candidate_release_result,
+            )
+    committed_at = commit_observed_at
     stage_results = (
         *stage_results_before_commit,
         StageResult(
@@ -2968,6 +3053,28 @@ def _publish_report_or_record_failure(
         )
         return None, error
     assert report is not None
+    candidate_command = fact.case.candidate_release
+    candidate_outcome = fact.result.candidate_release
+    if candidate_command is not None and candidate_outcome is not None:
+        confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+        confirmed_outcome = finalize_candidate_release_publication(
+            candidate_command,
+            candidate_outcome,
+            published_at=confirmed_at,
+        )
+        if (
+            candidate_outcome.disposition
+            in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+            and confirmed_outcome.disposition == "FAILED"
+            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
+        ):
+            _record_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+            )
+            return None, DecisionEventCommitError("candidate publication window expired")
     _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None

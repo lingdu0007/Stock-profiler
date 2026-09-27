@@ -346,6 +346,19 @@ class DecisionLedger:
             )
         )
 
+    def candidate_calibration_source_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]:
+        """Return original research facts in one exact scope for calibration lineage checks."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection, "candidate calibration history is unavailable"
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+        )
+
     def portfolio_authorization_history(
         self,
         connection: Connection,
