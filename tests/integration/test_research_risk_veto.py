@@ -3401,6 +3401,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "WINDOW_EXPIRED"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
+        ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
@@ -3432,6 +3433,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "WINDOW_EXPIRED",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
@@ -3689,6 +3691,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
@@ -3779,6 +3782,38 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             qualification=qualification_record,
         )
         qualification_history = (qualification_outcome,)
+        if candidate_scenario == "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER":
+            suspended_record = qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-suspended",
+                    "status": "SUSPENDED",
+                    "cause": "QUALIFICATION_SUSPENDED",
+                    "previous_decision_id": qualification_record.decision_id,
+                    "recorded_at": cutoff,
+                }
+            )
+            restored_record = suspended_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-restored",
+                    "status": "VALID",
+                    "cause": "QUALIFICATION_RESTORED",
+                    "previous_decision_id": suspended_record.decision_id,
+                    "recorded_at": cutoff + timedelta(minutes=2),
+                }
+            )
+            qualification_history = (
+                qualification_outcome,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("QUALIFICATION_SUSPENDED",),
+                    qualification=suspended_record,
+                ),
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("QUALIFICATION_RESTORED",),
+                    qualification=restored_record,
+                ),
+            )
         if candidate_scenario in {"AT_RISK_QUALIFICATION", "UNRELATED_LATEST_SCOPE"}:
             later_risk_record = qualification_record.model_copy(
                 update={
@@ -3968,6 +4003,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "UNRELATED_QUALIFICATION_SCOPE",
         "UNRELATED_CALENDAR_QUALIFICATION",
+        "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER",
     }:
         resolved_command = command.model_copy(
             update={
@@ -4107,6 +4143,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "WINDOW_EXPIRED": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",

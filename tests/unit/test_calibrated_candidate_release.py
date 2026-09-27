@@ -524,6 +524,30 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     )
     assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
 
+    utc_boundary = next(
+        index
+        for index, record in enumerate(original.training_records)
+        if record.month == "2045-08"
+    )
+    timezone_maturity = original.training_records[utc_boundary].model_copy(
+        update={
+            "entry_at": datetime.fromisoformat("2045-09-01T06:00:00+00:00"),
+            "entry_window_ends_at": datetime.fromisoformat("2045-08-31T23:00:00-08:00"),
+            "unified_maturity_at": datetime.fromisoformat("2046-02-28T07:00:00+00:00"),
+            "label_available_at": datetime.fromisoformat("2046-02-28T07:00:00+00:00"),
+        }
+    )
+    records_with_timezone_maturity = (
+        *original.training_records[:utc_boundary],
+        timezone_maturity,
+        *original.training_records[utc_boundary + 1 :],
+    )
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": records_with_timezone_maturity})
+    )
+    assert release.disposition == "FAILED"
+    assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
+
     beyond_watermark = original.training_records[0].model_copy(
         update={
             "unified_maturity_at": datetime(2046, 7, 2, tzinfo=UTC),

@@ -643,8 +643,21 @@ def _validate_candidate_qualification_snapshots(
             latest = current_qualification(visible_history, record.scope, record.version)
         except ValueError as error:
             raise CandidateQualificationHistoryAmbiguous() from error
+        knowledge_cutoff = datetime.fromisoformat(case.knowledge_cutoff)
+        cutoff_history = tuple(
+            outcome
+            for outcome in history
+            if outcome.qualification is not None
+            and outcome.qualification.recorded_at <= knowledge_cutoff
+        )
+        try:
+            qualification_at_cutoff = current_qualification(
+                cutoff_history, record.scope, record.version
+            )
+        except ValueError as error:
+            raise CandidateQualificationHistoryAmbiguous() from error
         basis = record.formal_passing_evidence or record.authorization_evidence
-        if latest is None:
+        if latest is None or qualification_at_cutoff is None:
             raise CandidateQualificationHistoryAmbiguous()
         if (
             record.version.version_id != snapshot.capability_version
@@ -680,6 +693,12 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.portfolio_scope is not None
             or basis is None
             or basis.market_calendar_version != snapshot.market_calendar_version
+        ):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if (
+            qualification_at_cutoff.status not in {"VALID", "AT_RISK"}
+            or not qualification_is_current(qualification_at_cutoff, knowledge_cutoff)
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue

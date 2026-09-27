@@ -706,12 +706,13 @@ def _month_end(month: str) -> date:
 
 
 def _six_month_anniversary(value: datetime) -> datetime:
-    month_index = value.year * 12 + value.month - 1 + 6
+    utc_value = value.astimezone(UTC)
+    month_index = utc_value.year * 12 + utc_value.month - 1 + 6
     year, zero_based_month = divmod(month_index, 12)
     month = zero_based_month + 1
-    return value.astimezone(UTC).replace(
+    return utc_value.replace(
         year=year,
         month=month,
-        day=min(value.day, monthrange(year, month)[1]),
+        day=min(utc_value.day, monthrange(year, month)[1]),
         microsecond=0,
     )
