@@ -60,6 +60,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketSession,
     MarketStateQualification,
     candidate_release_availability_failure,
+    candidate_release_blocked_by_business_prerequisite,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import (
@@ -3377,7 +3378,9 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
         ("ACCEPT", "UNRELATED_QUALIFICATION_SCOPE"),
+        ("ACCEPT", "UNRELATED_LATEST_SCOPE"),
         ("ACCEPT", "VERSION_MISMATCH"),
+        ("ACCEPT", "ORIGINAL_REJECTED"),
     ],
 )
 def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abstention(
@@ -3392,7 +3395,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
+        "UNRELATED_LATEST_SCOPE",
         "VERSION_MISMATCH",
+        "ORIGINAL_REJECTED",
     ],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3514,7 +3519,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE",
+        "UNRELATED_LATEST_SCOPE",
         "VERSION_MISMATCH",
+        "ORIGINAL_REJECTED",
     }:
         assert research_case.access_scope is not None
         qualification_scope = QualificationScope(
@@ -3553,11 +3560,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             ),
             qualification_policy=qualification_policy,
         )
-        qualification_recorded_at = (
-            cutoff + timedelta(minutes=2)
-            if candidate_scenario == "AT_RISK_QUALIFICATION"
-            else cutoff - timedelta(seconds=1)
-        )
+        qualification_recorded_at = cutoff - timedelta(seconds=1)
         qualification_expires_at = datetime.fromisoformat("2042-12-31T23:59:59+00:00")
         qualification_evidence = QualificationEvidence(
             evidence_id="synthetic-candidate-qualification-evidence",
@@ -3572,9 +3575,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             available_at=qualification_recorded_at,
             expires_at=qualification_expires_at,
         )
-        qualification_status: Literal["AT_RISK", "VALID"] = (
-            "AT_RISK" if candidate_scenario == "AT_RISK_QUALIFICATION" else "VALID"
-        )
+        qualification_status: Literal["AT_RISK", "VALID"] = "VALID"
         qualification_record = QualificationRecord(
             decision_id="synthetic-candidate-qualification",
             authorization_id="synthetic-candidate-qualification",
@@ -3594,6 +3595,31 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             qualification=qualification_record,
         )
         qualification_history = (qualification_outcome,)
+        if candidate_scenario in {"AT_RISK_QUALIFICATION", "UNRELATED_LATEST_SCOPE"}:
+            later_risk_record = qualification_record.model_copy(
+                update={
+                    "decision_id": f"{qualification_record.decision_id}-at-risk",
+                    "status": "AT_RISK",
+                    "cause": "DIAGNOSTIC_ALERT",
+                    "previous_decision_id": qualification_record.decision_id,
+                    "recorded_at": cutoff + timedelta(minutes=2),
+                    "scope": (
+                        qualification_scope.model_copy(
+                            update={"portfolio_scope": "different-portfolio"}
+                        )
+                        if candidate_scenario == "UNRELATED_LATEST_SCOPE"
+                        else qualification_scope
+                    ),
+                }
+            )
+            qualification_history = (
+                qualification_outcome,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("DIAGNOSTIC_ALERT",),
+                    qualification=later_risk_record,
+                ),
+            )
         command = command.model_copy(
             update={
                 "qualifications": (
@@ -3610,7 +3636,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             }
         )
         if candidate_scenario == "REVOKED_AFTER_CUTOFF":
-            revoked_at = publication_time - timedelta(seconds=1)
+            revoked_at = qualification_record.recorded_at
             revoked_record = qualification_record.model_copy(
                 update={
                     "decision_id": "synthetic-candidate-qualification-revoked",
@@ -3652,15 +3678,27 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         ),
         input={
             **_COMPLETE_SYNTHETIC_INPUT,
-            "scenario": "CANDIDATE_RELEASE_REQUESTED",
+            "scenario": (
+                "SYNTHETIC_INPUT_REJECTED"
+                if candidate_scenario == "ORIGINAL_REJECTED"
+                else "CANDIDATE_RELEASE_REQUESTED"
+            ),
             "candidate_release": command.model_dump(mode="json"),
         },
-        expected_external_result=ExternalResult(
-            outcome_code="CANDIDATE_RELEASE_REQUESTED",
-            summary="Frozen synthetic result CANDIDATE_RELEASE_REQUESTED.",
-            key_reasons=(
-                "The frozen synthetic candidate release request is ready for host evaluation.",
-            ),
+        expected_external_result=(
+            ExternalResult(
+                outcome_code="SYNTHETIC_INPUT_REJECTED",
+                summary="Frozen synthetic result SYNTHETIC_INPUT_REJECTED.",
+                key_reasons=("The scenario's D0 host-input gate rejects the requested decision.",),
+            )
+            if candidate_scenario == "ORIGINAL_REJECTED"
+            else ExternalResult(
+                outcome_code="CANDIDATE_RELEASE_REQUESTED",
+                summary="Frozen synthetic result CANDIDATE_RELEASE_REQUESTED.",
+                key_reasons=(
+                    "The frozen synthetic candidate release request is ready for host evaluation.",
+                ),
+            )
         ),
         candidate_release=command,
         access_scope=research_case.access_scope,
@@ -3689,17 +3727,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             lambda self, connection, access_scope: qualification_history,
         )
     resolved_command = command
-    if candidate_scenario == "REVOKED_AFTER_CUTOFF":
+    if candidate_scenario in {"AT_RISK_QUALIFICATION", "REVOKED_AFTER_CUTOFF"}:
         current_qualification_record = qualification_history[-1].qualification
         assert current_qualification_record is not None
+        resolved_status: Literal["AT_RISK", "REVOKED"] = (
+            "REVOKED" if candidate_scenario == "REVOKED_AFTER_CUTOFF" else "AT_RISK"
+        )
         resolved_command = command.model_copy(
             update={
                 "qualifications": (
                     command.qualifications[0].model_copy(
                         update={
-                            "qualification_id": current_qualification_record.decision_id,
-                            "status": "REVOKED",
-                            "recorded_at": current_qualification_record.recorded_at,
+                            "status": resolved_status,
+                            "current_status_recorded_at": current_qualification_record.recorded_at,
                         }
                     ),
                 )
@@ -3713,7 +3753,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 )
             }
         )
-    if candidate_scenario == "VERSION_MISMATCH":
+    if candidate_scenario == "ORIGINAL_REJECTED":
+        direct = candidate_release_blocked_by_business_prerequisite(
+            command,
+            published_at=publication_time,
+            reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
+        )
+    elif candidate_scenario == "VERSION_MISMATCH":
         direct = candidate_release_availability_failure(
             command,
             published_at=publication_time,
@@ -3733,7 +3779,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
+        "UNRELATED_LATEST_SCOPE": "CANDIDATES",
         "VERSION_MISMATCH": "FAILED",
+        "ORIGINAL_REJECTED": "BLOCKED",
     }[candidate_scenario]
     assert direct.disposition == expected_disposition
     if candidate_scenario == "CALIBRATION_FAILURE":
@@ -3766,6 +3814,29 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     elif candidate_scenario == "UNRELATED_QUALIFICATION_SCOPE":
         assert direct.members[0].market_state_qualified is False
+    elif candidate_scenario == "UNRELATED_LATEST_SCOPE":
+        assert direct.members[0].market_state_qualified is True
+        assert "MARKET_STATE_QUALIFICATION_AT_RISK" not in direct.members[0].reasons
+    elif candidate_scenario == "ORIGINAL_REJECTED":
+        assert execution.report.result.outcome_code == "SYNTHETIC_INPUT_REJECTED"
+        assert (
+            next(
+                stage
+                for stage in execution.report.stage_results
+                if stage.phase == "BUSINESS_DECISION"
+            ).status
+            == "REJECTED"
+        )
+        assert (
+            next(
+                stage
+                for stage in execution.report.stage_results
+                if stage.phase == "CANDIDATE_RELEASE"
+            ).status
+            == "REJECTED"
+        )
+        assert direct.members == ()
+        assert direct.calibration is None
     if direct.members:
         assert direct.members[0].calibrated_probability is not None
     if direct.members:

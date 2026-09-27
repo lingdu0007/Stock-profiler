@@ -18,6 +18,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     MarketStateQualification,
     MarketStateQualificationStatus,
     candidate_release_availability_failure,
+    candidate_release_blocked_by_business_prerequisite,
     freeze_candidate_release,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
@@ -490,19 +491,16 @@ def _validate_candidate_qualification_snapshots(
             for item in history
             if item.qualification is not None
             and item.qualification.recorded_at <= observed_at
-            and item.qualification.scope.user_id == record.scope.user_id
-            and set(item.qualification.scope.account_ids) == set(record.scope.account_ids)
-            and item.qualification.scope.purpose == record.scope.purpose
-            and item.qualification.scope.target == record.scope.target
-            and item.qualification.scope.evidence_level == record.scope.evidence_level
-            and item.qualification.scope.market_state == record.scope.market_state
-            and item.qualification.scope.capability == record.scope.capability
-            and item.qualification.scope.source == record.scope.source
-            and item.qualification.scope.account_type == record.scope.account_type
-            and item.qualification.scope.board == record.scope.board
+            and item.qualification.scope.same_scope_as(record.scope)
             and item.qualification.version.version_id == record.version.version_id
         )
-        latest = max(current_records, key=lambda item: item.recorded_at, default=None)
+        superseded_decisions = {
+            item.previous_decision_id for item in current_records if item.previous_decision_id
+        }
+        terminal_records = tuple(
+            item for item in current_records if item.decision_id not in superseded_decisions
+        )
+        latest = terminal_records[0] if len(terminal_records) == 1 else None
         basis = record.formal_passing_evidence or record.authorization_evidence
         if (
             record.version.version_id != snapshot.capability_version
@@ -513,6 +511,8 @@ def _validate_candidate_qualification_snapshots(
             or latest is None
             or latest.version != record.version
         ):
+            if latest is None and len(terminal_records) != 1:
+                raise ValueError("CANDIDATE_QUALIFICATION_HISTORY_AMBIGUOUS")
             raise ValueError("CANDIDATE_QUALIFICATION_VERSION_MISMATCH")
         if (
             record.status != snapshot.status
@@ -533,7 +533,14 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.source != "SYNTHETIC_D0"
             or record.scope.account_type != "SYNTHETIC"
             or record.scope.board != "SYNTHETIC"
+            or record.scope.holding_age_domain is not None
+            or record.scope.renewal_ordinal is not None
+            or record.scope.probability_grid is not None
+            or record.scope.portfolio_scope is not None
         ):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if record.recorded_at > datetime.fromisoformat(case.knowledge_cutoff):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
         current_basis = latest.formal_passing_evidence or latest.authorization_evidence
@@ -547,7 +554,7 @@ def _validate_candidate_qualification_snapshots(
                 update={
                     "qualification_id": latest.decision_id,
                     "status": current_status,
-                    "recorded_at": latest.recorded_at,
+                    "current_status_recorded_at": latest.recorded_at,
                     "valid_through": (
                         current_basis.expires_at
                         if current_basis is not None
@@ -2049,7 +2056,14 @@ def _commit_framework_result(
                         update={"selection": selection}
                     )
             if business_result is not None and execution_case.candidate_release is not None:
-                if candidate_version_failure is not None:
+                successful_prerequisite = business_result.status == "SUCCEEDED"
+                if not successful_prerequisite:
+                    candidate_release = candidate_release_blocked_by_business_prerequisite(
+                        execution_case.candidate_release,
+                        published_at=publication_time,
+                        reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
+                    )
+                elif candidate_version_failure is not None:
                     candidate_release = candidate_release_availability_failure(
                         execution_case.candidate_release,
                         published_at=publication_time,
@@ -2063,16 +2077,21 @@ def _commit_framework_result(
                         ),
                         published_at=publication_time,
                     )
-                result = result.model_copy(
-                    update={
-                        "candidate_release": candidate_release,
-                        "outcome_code": f"CANDIDATE_RELEASE_{candidate_release.disposition}",
-                        "summary": "Synthetic calibrated candidate release.",
-                        "key_reasons": candidate_release.reasons or ("CANDIDATE_RELEASE_FROZEN",),
-                    }
-                )
+                result_updates: dict[str, object] = {"candidate_release": candidate_release}
+                if successful_prerequisite:
+                    result_updates.update(
+                        {
+                            "outcome_code": f"CANDIDATE_RELEASE_{candidate_release.disposition}",
+                            "summary": "Synthetic calibrated candidate release.",
+                            "key_reasons": candidate_release.reasons
+                            or ("CANDIDATE_RELEASE_FROZEN",),
+                        }
+                    )
+                result = result.model_copy(update=result_updates)
                 candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
-                    "FAILED"
+                    "REJECTED"
+                    if not successful_prerequisite
+                    else "FAILED"
                     if candidate_release.disposition == "FAILED"
                     else "REJECTED"
                     if candidate_release.disposition == "BLOCKED"
@@ -2094,17 +2113,18 @@ def _commit_framework_result(
                     ),
                     reasons=candidate_release.reasons,
                 )
-                business_result = StageResult(
-                    phase="BUSINESS_DECISION",
-                    status=candidate_status,
-                    gate_results=(
-                        GateResult(
-                            gate_id="CANDIDATE_RELEASE_OUTCOME",
-                            status=candidate_gate_status,
+                if successful_prerequisite:
+                    business_result = StageResult(
+                        phase="BUSINESS_DECISION",
+                        status=candidate_status,
+                        gate_results=(
+                            GateResult(
+                                gate_id="CANDIDATE_RELEASE_OUTCOME",
+                                status=candidate_gate_status,
+                            ),
                         ),
-                    ),
-                    reasons=candidate_release.reasons,
-                )
+                        reasons=candidate_release.reasons,
+                    )
     ledger.record_stage_result(
         connection,
         case=execution_case,

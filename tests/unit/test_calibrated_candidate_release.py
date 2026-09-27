@@ -224,7 +224,7 @@ def test_at_risk_qualification_remains_effective_while_within_validity() -> None
     assert "MARKET_STATE_QUALIFICATION_AT_RISK" in release.members[0].reasons
 
 
-def test_at_risk_qualification_recorded_after_cutoff_remains_current_at_publication() -> None:
+def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
     original = command(state_status="AT_RISK")
     qualification = original.qualifications[0].model_copy(
         update={"recorded_at": original.knowledge_cutoff + timedelta(minutes=2)}
@@ -234,8 +234,8 @@ def test_at_risk_qualification_recorded_after_cutoff_remains_current_at_publicat
         original.model_copy(update={"qualifications": (qualification,)})
     )
 
-    assert release.disposition == "CANDIDATES"
-    assert release.members[0].market_state_qualified is True
+    assert release.disposition == "RECOMMENDATION_ABSTAINED"
+    assert release.members[0].market_state_qualified is False
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:
@@ -341,8 +341,48 @@ def test_host_availability_failure_preserves_calendar_failures() -> None:
     assert invalid_sequence.reasons == ("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",)
 
 
+def test_entry_invalid_record_is_a_mature_negative_calibration_label() -> None:
+    original = command()
+    records = tuple(
+        record.model_copy(update={"entry_at": None, "terminal_success": False})
+        if record.record_id.endswith("-00")
+        else record
+        for record in original.training_records
+    )
+
+    release = freeze_candidate_release(original.model_copy(update={"training_records": records}))
+
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.training_record_count == len(records)
+    assert release.calibration.negative_record_count == 300
+
+    invalid_success = original.training_records[0].model_copy(
+        update={"entry_at": None, "terminal_success": True}
+    )
+    failed = freeze_candidate_release(
+        original.model_copy(
+            update={"training_records": (invalid_success, *original.training_records[1:])}
+        )
+    )
+    assert failed.availability_failure == "CALIBRATION"
+    assert failed.reasons == ("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED",)
+
+
 def test_release_command_rejects_inconsistent_frozen_inputs() -> None:
     original = command()
+    with pytest.raises(ValueError, match="cannot precede its authorization"):
+        MarketStateQualification(
+            market_state="BULL",
+            status="AT_RISK",
+            qualification_id="synthetic-bull-qualification",
+            capability_version="candidate-v1",
+            market_calendar_version="synthetic-calendar-v1",
+            recorded_at=datetime(2046, 1, 2, tzinfo=UTC),
+            current_status_recorded_at=datetime(2046, 1, 1, tzinfo=UTC),
+            valid_through=datetime(2046, 12, 1, tzinfo=UTC),
+        )
+
     payload = original.model_dump(mode="python")
     payload["label_watermark_at"] = datetime(2046, 7, 2, tzinfo=UTC)
     with pytest.raises(ValueError, match="label watermark"):

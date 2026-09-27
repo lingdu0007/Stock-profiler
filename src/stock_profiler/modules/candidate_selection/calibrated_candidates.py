@@ -45,7 +45,7 @@ class CalibrationRecord(UniverseContract):
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     raw_success_score: Decimal
     terminal_success: bool
-    entry_at: AwareDatetime
+    entry_at: AwareDatetime | None = None
     entry_window_ends_at: AwareDatetime
     unified_maturity_at: AwareDatetime
     label_available_at: AwareDatetime
@@ -61,7 +61,17 @@ class MarketStateQualification(UniverseContract):
     capability_version: str = Field(min_length=1)
     market_calendar_version: str = Field(min_length=1)
     recorded_at: AwareDatetime
+    current_status_recorded_at: AwareDatetime | None = None
     valid_through: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_status_timestamp(self) -> MarketStateQualification:
+        if (
+            self.current_status_recorded_at is not None
+            and self.current_status_recorded_at < self.recorded_at
+        ):
+            raise ValueError("qualification status cannot precede its authorization")
+        return self
 
 
 class CandidateInput(UniverseContract):
@@ -203,13 +213,9 @@ def freeze_candidate_release(
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
     publication_time = published_at or command.published_at
     command = command.model_copy(update={"published_at": publication_time})
-    window = tuple(
-        session
-        for session in command.market_sessions
-        if session.opens_at > command.knowledge_cutoff
-    )[:5]
+    window, window_failure = _candidate_window(command)
     window_dates = tuple(session.market_date for session in window)
-    if len(window) != 5:
+    if window_failure == "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE":
         return _release_outcome(
             command,
             window_dates,
@@ -217,10 +223,7 @@ def freeze_candidate_release(
             reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
             availability_failure="DATA",
         )
-    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
-        right.session_sequence != left.session_sequence + 1
-        for left, right in zip(window, window[1:], strict=False)
-    ):
+    if window_failure == "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID":
         return _release_outcome(
             command,
             window_dates,
@@ -244,7 +247,8 @@ def freeze_candidate_release(
             and item.capability_version == command.capability_version
             and item.market_calendar_version == command.market_calendar_version
             and item.qualification_scope == command.qualification_scope
-            and item.recorded_at <= publication_time
+            and item.recorded_at <= command.knowledge_cutoff
+            and (item.current_status_recorded_at or item.recorded_at) <= publication_time
             and item.valid_through >= publication_time
         ),
         None,
@@ -340,12 +344,8 @@ def candidate_release_availability_failure(
 ) -> CandidateReleaseOutcome:
     """Freeze a non-actionable availability result when host-side version checks fail."""
     command = command.model_copy(update={"published_at": published_at})
-    window = tuple(
-        session
-        for session in command.market_sessions
-        if session.opens_at > command.knowledge_cutoff
-    )[:5]
-    if len(window) != 5:
+    window, window_failure = _candidate_window(command)
+    if window_failure == "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE":
         return _release_outcome(
             command,
             tuple(session.market_date for session in window),
@@ -353,10 +353,7 @@ def candidate_release_availability_failure(
             reasons=("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",),
             availability_failure="DATA",
         )
-    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
-        right.session_sequence != left.session_sequence + 1
-        for left, right in zip(window, window[1:], strict=False)
-    ):
+    if window_failure == "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID":
         return _release_outcome(
             command,
             tuple(session.market_date for session in window),
@@ -371,6 +368,41 @@ def candidate_release_availability_failure(
         reasons=(reason,),
         availability_failure=availability_failure,
     )
+
+
+def candidate_release_blocked_by_business_prerequisite(
+    command: CandidateReleaseCommand,
+    *,
+    published_at: datetime,
+    reason: str,
+) -> CandidateReleaseOutcome:
+    """Record that an unsuccessful earlier business outcome prevented release."""
+    command = command.model_copy(update={"published_at": published_at})
+    window, _ = _candidate_window(command)
+    return _release_outcome(
+        command,
+        tuple(session.market_date for session in window),
+        disposition="BLOCKED",
+        reasons=(reason,),
+    )
+
+
+def _candidate_window(
+    command: CandidateReleaseCommand,
+) -> tuple[tuple[MarketSession, ...], str | None]:
+    window = tuple(
+        session
+        for session in command.market_sessions
+        if session.opens_at > command.knowledge_cutoff
+    )[:5]
+    if len(window) != 5:
+        return window, "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE"
+    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
+        right.session_sequence != left.session_sequence + 1
+        for left, right in zip(window, window[1:], strict=False)
+    ):
+        return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
+    return window, None
 
 
 def _release_outcome(
@@ -424,7 +456,10 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     for record in command.training_records:
         if record.entry_window_ends_at.date() <= _month_end(record.month):
             raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
-        if record.entry_at >= record.entry_window_ends_at or record.entry_at.date() <= _month_end(
+        if record.entry_at is None:
+            if record.terminal_success:
+                raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
+        elif record.entry_at >= record.entry_window_ends_at or record.entry_at.date() <= _month_end(
             record.month
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
