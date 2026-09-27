@@ -93,6 +93,7 @@ from stock_profiler.modules.decision_cases.ports import (
     ResearchMemberRunResult,
 )
 from stock_profiler.modules.decision_cases.service import execute_research_risk_journey
+from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 from stock_profiler.modules.qualification.contracts import (
     CapabilityVersion,
     GovernanceOutcome,
@@ -3388,6 +3389,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_FAILURE"),
         ("ACCEPT", "CALIBRATION_SOURCE_MISSING"),
         ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
+        ("ACCEPT", "CALIBRATION_INFERENCE_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
         ("ACCEPT", "CALIBRATION_NEWEST_MONTH_OMITTED"),
@@ -3425,6 +3427,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_FAILURE",
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
+        "CALIBRATION_INFERENCE_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_NEWEST_MONTH_OMITTED",
@@ -3456,7 +3459,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     publication_time = datetime.fromisoformat(
-        "2042-07-07T09:00:00+00:00"
+        "2042-07-07T16:00:00+00:00"
         if candidate_scenario == "LATE_PUBLICATION"
         else "2042-07-01T00:04:00+00:00"
     )
@@ -3520,6 +3523,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             ),
             *training_records[1:],
         )
+    elif candidate_scenario == "CALIBRATION_INFERENCE_MODEL_MISMATCH":
+        training_records = tuple(
+            record.model_copy(update={"raw_score_model_version": "historical-model-v0"})
+            for record in training_records
+        )
     elif candidate_scenario == "CALIBRATION_COHORT_INCOMPLETE":
         missing_member_record = training_records[0]
         training_records = tuple(
@@ -3548,6 +3556,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     "label_watermark_at": training_watermark,
                     "label_watermark_month": training_watermark.strftime("%Y-%m"),
                     "z20": Decimal(member) / Decimal("10"),
+                    **(
+                        {"model_version": "historical-model-v0"}
+                        if candidate_scenario == "CALIBRATION_INFERENCE_MODEL_MISMATCH"
+                        else {}
+                    ),
                 }
             )
             for member, score in enumerate(source_research.raw_scores)
@@ -3637,14 +3650,27 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         for security_id, member in research_members.items()
     )
+    market_calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    assert market_calendar is not None
+    saved_sessions = tuple(
+        session
+        for session in market_calendar.sessions
+        if session.closed_at - timedelta(hours=7) > cutoff
+    )
+    saved_window = saved_sessions[:5]
     sessions = tuple(
         MarketSession(
-            market_date=datetime(2042, 7, day, tzinfo=UTC).date(),
-            opens_at=datetime(2042, 7, day, 1, tzinfo=UTC),
-            closes_at=datetime(2042, 7, day, 8, tzinfo=UTC),
-            session_sequence=100 + day,
+            market_date=session.closed_at.date(),
+            opens_at=session.closed_at - timedelta(hours=7),
+            closes_at=session.closed_at,
+            session_sequence=session.ordinal,
         )
-        for day in range(1, 6)
+        for session in saved_window
+    )
+    last_completed_session = max(
+        session.ordinal
+        for session in market_calendar.sessions
+        if session.closed_at <= cutoff
     )
     command = CandidateReleaseCommand(
         contract_version="1.0.0",
@@ -3659,7 +3685,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         purpose="CANDIDATE_BUY",
         knowledge_cutoff=cutoff,
         published_at=datetime.fromisoformat("2042-07-02T00:04:00+00:00"),
-        last_completed_market_session_sequence=100,
+        last_completed_market_session_sequence=last_completed_session,
         market_state="BULL",
         market_calendar_version="synthetic-market-calendar-v1",
         label_watermark_at=cutoff,
@@ -4085,6 +4111,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
             availability_failure="VERSION",
         )
+    elif candidate_scenario == "CALIBRATION_INFERENCE_MODEL_MISMATCH":
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH",
+            availability_failure="VERSION",
+        )
     elif candidate_scenario in {
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
@@ -4122,7 +4155,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "COMMIT_CLOCK_ADVANCE",
         }:
             final_publication_time = (
-                datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+                datetime.fromisoformat("2042-07-07T16:00:00+00:00")
                 if candidate_scenario == "LATE_COMMIT"
                 else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
                 if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
@@ -4153,7 +4186,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         commit_time = datetime.fromisoformat(
             "2042-07-02T00:04:00+00:00"
             if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
-            else "2042-07-07T09:00:00+00:00"
+            else "2042-07-07T16:00:00+00:00"
         )
         clock_state = {"now": publication_time}
         monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
@@ -4226,6 +4259,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_FAILURE": "FAILED",
         "CALIBRATION_SOURCE_MISSING": "FAILED",
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
+        "CALIBRATION_INFERENCE_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
         "CALIBRATION_NEWEST_MONTH_OMITTED": "FAILED",
@@ -4265,7 +4299,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario == "WINDOW_EXPIRED":
         assert direct.availability_failure == "DATA"
-    elif candidate_scenario == "VERSION_MISMATCH":
+    elif candidate_scenario in {"VERSION_MISMATCH", "CALIBRATION_INFERENCE_MODEL_MISMATCH"}:
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         assert direct.members[0].market_state_qualified is False
@@ -4293,7 +4327,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         return
     if candidate_scenario == "CORRECTION_AFTER_CANDIDATE_WINDOW":
         assert execution.report is not None
-        correction_time = datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+        correction_time = datetime.fromisoformat("2042-07-08T09:00:00+00:00")
         monkeypatch.setattr(UtcClock, "now", lambda self: correction_time)
         correction = decision_case_service.correct_default_frozen_decision_case(
             candidate_case,
@@ -4309,7 +4343,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report is not None
     assert execution.report.result.candidate_release == direct
     assert execution.report.result.candidate_release.published_at == (
-        datetime.fromisoformat("2042-07-07T09:00:00+00:00")
+        datetime.fromisoformat("2042-07-07T16:00:00+00:00")
         if candidate_scenario == "LATE_COMMIT"
         else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
         if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
@@ -4368,5 +4402,5 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.result.candidate_release.valid_market_dates == (
         ()
         if candidate_scenario == "WINDOW_EXPIRED"
-        else tuple(datetime(2042, 7, day, tzinfo=UTC).date() for day in range(1, 6))
+        else tuple(session.market_date for session in sessions)
     )

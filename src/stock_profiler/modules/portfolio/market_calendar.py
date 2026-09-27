@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 
 def _utc(value: str) -> datetime:
@@ -88,7 +88,32 @@ _SYNTHETIC_MARKET_CALENDARS = (
             MarketSession(6119, _utc("2042-06-15T15:00:00+00:00")),
             MarketSession(6120, _utc("2042-06-16T15:00:00+00:00")),
             MarketSession(6121, _utc("2042-06-17T15:00:00+00:00")),
+            *(
+                MarketSession(
+                    6122 + index,
+                    _utc("2042-06-18T15:00:00+00:00") + timedelta(days=offset),
+                )
+                for index, offset in enumerate(
+                    (0, 1, *(4 + week * 7 + day for week in range(10) for day in range(5)))
+                )
+            ),
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
+    ),
+    SyntheticMarketCalendar(
+        version_id="synthetic-calendar-v1",
+        sessions=tuple(
+            MarketSession(
+                101 + index,
+                _utc("2046-07-02T08:00:00+00:00") + timedelta(days=offset),
+            )
+            for index, offset in enumerate(
+                offset
+                for offset in range(30)
+                if date(2046, 7, 2).weekday() < 5
+                and (date(2046, 7, 2) + timedelta(days=offset)).weekday() < 5
+            )
+        ),
+        monthly_selection_cutoffs=(),
     ),
 )

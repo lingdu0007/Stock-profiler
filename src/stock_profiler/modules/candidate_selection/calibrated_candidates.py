@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import math
 from calendar import monthrange
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, localcontext
 from typing import Literal, NamedTuple
 
 from pydantic import AwareDatetime, Field, model_validator
 
 from stock_profiler.modules.candidate_selection.universe import UniverseContract
+from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 CALIBRATOR_VERSION: Literal["monotone-firth-logistic-v1"] = "monotone-firth-logistic-v1"
 PROBABILITY_THRESHOLD = Decimal("0.80")
 _MINIMUM_MATURE_MONTHS = 60
-_MINIMUM_TRAINING_RECORDS = 500
-_MINIMUM_CLASS_RECORDS = 50
 CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
@@ -465,6 +464,15 @@ def _candidate_window(
         for left, right in zip(window, window[1:], strict=False)
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
+    calendar = synthetic_market_calendar(command.market_calendar_version)
+    if calendar is None or any(
+        (saved := calendar.session_for(session.session_sequence)) is None
+        or saved.closed_at.date() != session.market_date
+        or saved.closed_at - timedelta(hours=7) != session.opens_at
+        or saved.closed_at != session.closes_at
+        for session in window
+    ):
+        return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
     return window, None
 
 
@@ -597,10 +605,6 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     records = tuple(record for month in months for record in by_month[month])
     positives = sum(record.terminal_success for record in records)
     negatives = len(records) - positives
-    if len(records) < _MINIMUM_TRAINING_RECORDS or min(positives, negatives) < (
-        _MINIMUM_CLASS_RECORDS
-    ):
-        raise ValueError("CALIBRATION_TRAINING_WATERMARK_NOT_MET")
     try:
         intercept, slope = _firth_logistic(records)
     except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError) as error:

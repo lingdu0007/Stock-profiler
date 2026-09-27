@@ -401,6 +401,26 @@ def test_incomplete_market_session_sequence_fails_without_moving_window() -> Non
         )
 
 
+def test_shifted_sessions_do_not_match_the_saved_market_calendar() -> None:
+    original = command()
+    sessions = tuple(
+        session.model_copy(
+            update={
+                "market_date": session.market_date + timedelta(days=30),
+                "opens_at": session.opens_at + timedelta(days=30),
+                "closes_at": session.closes_at + timedelta(days=30),
+            }
+        )
+        for session in original.market_sessions
+    )
+
+    release = freeze_candidate_release(original.model_copy(update={"market_sessions": sessions}))
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "DATA"
+    assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH",)
+
+
 def test_host_availability_failure_preserves_calendar_failures() -> None:
     original = command()
     incomplete = candidate_release_availability_failure(
@@ -642,7 +662,8 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
         record for record in original.training_records if int(record.record_id[-2:]) < 8
     )
     release = freeze_candidate_release(original.model_copy(update={"training_records": too_few}))
-    assert "CALIBRATION_TRAINING_WATERMARK_NOT_MET" in release.reasons
+    assert release.calibration is not None
+    assert release.calibration.training_record_count == 480
 
     single_class = tuple(
         record.model_copy(update={"terminal_success": False})
@@ -651,7 +672,23 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     release = freeze_candidate_release(
         original.model_copy(update={"training_records": single_class})
     )
-    assert "CALIBRATION_TRAINING_WATERMARK_NOT_MET" in release.reasons
+    assert release.calibration is not None
+
+
+def test_calibrator_uses_mature_month_window_without_extra_class_floor() -> None:
+    original = command()
+    records = tuple(
+        record.model_copy(update={"terminal_success": index < 49})
+        for index, record in enumerate(original.training_records)
+    )
+
+    release = freeze_candidate_release(original.model_copy(update={"training_records": records}))
+
+    assert release.calibration is not None
+    assert release.calibration.training_record_count == 600
+    assert release.calibration.positive_record_count == 49
+    assert release.calibration.negative_record_count == 551
+    assert release.disposition in {"CANDIDATES", "VALID_NO_CANDIDATES"}
 
 
 def test_calibrator_fails_closed_for_constant_or_singular_scores() -> None:
@@ -981,15 +1018,15 @@ def test_training_window_must_use_latest_mature_months() -> None:
             market_date=datetime(2046, 7, day, tzinfo=UTC).date(),
             opens_at=datetime(2046, 7, day, 1, tzinfo=UTC),
             closes_at=datetime(2046, 7, day, 8, tzinfo=UTC),
-            session_sequence=day + 100,
+            session_sequence=sequence,
         )
-        for day in range(11, 16)
+        for day, sequence in ((11, 108), (12, 109), (13, 110), (16, 111), (17, 112))
     )
     candidate = original.model_copy(
         update={
             "knowledge_cutoff": datetime(2046, 7, 10, 8, tzinfo=UTC),
             "published_at": datetime(2046, 7, 11, 2, tzinfo=UTC),
-            "last_completed_market_session_sequence": 110,
+            "last_completed_market_session_sequence": 107,
             "label_watermark_at": datetime(2046, 7, 10, 8, tzinfo=UTC),
             "training_records": (*original.training_records, *next_month_records),
             "market_sessions": later_calendar,

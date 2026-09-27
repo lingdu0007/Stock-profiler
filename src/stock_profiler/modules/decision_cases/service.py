@@ -137,6 +137,13 @@ class CandidateCalibrationProvenanceInvalid(ValueError):
         super().__init__("CANDIDATE_CALIBRATION_LINEAGE_INVALID")
 
 
+class CandidateCalibrationVersionMismatch(ValueError):
+    """Fail visibly when calibration labels use a different raw-score model version."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH")
+
+
 class CandidateResearchHandoffUnavailable(ValueError):
     """Preserve an unavailable upstream research result in its candidate batch."""
 
@@ -450,7 +457,7 @@ def _validate_research_selection_event(
 def _validate_candidate_release_source(
     case: FrozenDecisionCase,
     source_event: DecisionEventFact | None,
-) -> None:
+) -> str:
     """Require every candidate input to match one committed research and risk result."""
     command = case.candidate_release
     assert command is not None
@@ -476,6 +483,9 @@ def _validate_candidate_release_source(
         raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
     if risk is None or raw_scores is None:
         raise CandidateResearchHandoffUnavailable("INCOMPLETE")
+    model_versions = {score.model_version for score in raw_scores}
+    if len(model_versions) != 1:
+        raise CandidateCalibrationVersionMismatch()
     members = {member.security_id: member for member in research.members}
     scores = {score.security_id: score for score in raw_scores}
     vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
@@ -507,6 +517,7 @@ def _validate_candidate_release_source(
         )
         if candidate.evidence_freshness != expected_freshness:
             raise ValueError("CANDIDATE_EVIDENCE_FRESHNESS_MISMATCH")
+    return next(iter(model_versions))
 
 
 def _validate_candidate_calibration_sources(
@@ -514,6 +525,7 @@ def _validate_candidate_calibration_sources(
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
     access_scope: ResultAccessScope,
+    candidate_model_version: str,
 ) -> None:
     """Bind all calibration labels to complete, persisted raw-score research cohorts."""
     candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
@@ -573,6 +585,12 @@ def _validate_candidate_calibration_sources(
                 or score.label_watermark_at >= frozen_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+
+    if any(
+        record.raw_score_model_version != candidate_model_version
+        for record in command.training_records
+    ):
+        raise CandidateCalibrationVersionMismatch()
 
     source_months = {
         fact.case.knowledge_cutoff[:7]
@@ -1715,6 +1733,7 @@ def _commit_framework_result(
     candidate_version_failure: str | None = None
     candidate_calibration_failure: str | None = None
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
+    candidate_model_version: str | None = None
 
     def unpublished_candidate_validation_failure(error: ValueError) -> DecisionCaseExecution:
         failed = StageResult(
@@ -1780,18 +1799,20 @@ def _commit_framework_result(
         except ValueError as error:
             return unpublished_candidate_validation_failure(error)
         try:
-            _validate_candidate_release_source(
+            candidate_model_version = _validate_candidate_release_source(
                 execution_case,
                 ledger.get_original_decision_event(
                     execution_case.candidate_release.research_object_id,
                     connection,
                 ),
             )
+        except CandidateCalibrationVersionMismatch as error:
+            candidate_version_failure = str(error)
         except CandidateResearchHandoffUnavailable as error:
             candidate_research_failure = error
         except ValueError as error:
             return unpublished_candidate_validation_failure(error)
-        if candidate_research_failure is None:
+        if candidate_research_failure is None and candidate_version_failure is None:
             try:
                 assert execution_case.access_scope is not None
                 _validate_candidate_calibration_sources(
@@ -1799,7 +1820,10 @@ def _commit_framework_result(
                     ledger,
                     connection,
                     execution_case.access_scope,
+                    candidate_model_version=candidate_model_version or "",
                 )
+            except CandidateCalibrationVersionMismatch as error:
+                candidate_version_failure = str(error)
             except CandidateCalibrationProvenanceInvalid as error:
                 candidate_calibration_failure = str(error)
     framework_result = framework_stage_results[-1]
