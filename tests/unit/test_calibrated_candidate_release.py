@@ -855,6 +855,21 @@ def test_qualification_expiring_before_final_publication_removes_candidates() ->
     assert "MARKET_STATE_QUALIFICATION_EXPIRED" in finalized.members[0].reasons
 
 
+def test_initial_publication_after_qualification_expiry_abstains() -> None:
+    original = command(published=datetime(2046, 7, 3, tzinfo=UTC))
+    qualification = original.qualifications[0].model_copy(
+        update={"valid_through": datetime(2046, 7, 2, tzinfo=UTC)}
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"qualifications": (qualification,)})
+    )
+
+    assert release.disposition == "RECOMMENDATION_ABSTAINED"
+    assert release.members[0].candidate is False
+    assert "MARKET_STATE_NOT_QUALIFIED" in release.members[0].reasons
+
+
 def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> None:
     candidate = command().model_copy(update={"training_window_months": ("2045-01",)})
 
