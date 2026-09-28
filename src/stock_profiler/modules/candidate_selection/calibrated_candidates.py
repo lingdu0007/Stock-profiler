@@ -80,6 +80,13 @@ class MarketStateQualification(UniverseContract):
         return self
 
 
+class CandidateRiskGate(UniverseContract):
+    """One frozen independent-risk gate carried into a candidate explanation."""
+
+    gate_id: str = Field(min_length=1)
+    status: Literal["PASSED", "FAILED"]
+
+
 class CandidateInput(UniverseContract):
     """Frozen member evidence handed from research and independent risk."""
 
@@ -88,6 +95,8 @@ class CandidateInput(UniverseContract):
     raw_success_score: Decimal
     data_complete: bool
     risk_status: Literal["ACCEPTED", "REJECTED", "FAILED"]
+    risk_gates: tuple[CandidateRiskGate, ...] = Field(min_length=1)
+    risk_reasons: tuple[str, ...] = Field(min_length=1)
     thesis: str = Field(min_length=1)
     principal_risks: tuple[str, ...] = Field(min_length=1)
     evidence_freshness: str = Field(min_length=1)
@@ -164,6 +173,8 @@ class CalibratedMember(UniverseContract):
     calibrated_probability: Decimal | None
     candidate: bool
     risk_status: Literal["ACCEPTED", "REJECTED", "FAILED"]
+    risk_gates: tuple[CandidateRiskGate, ...]
+    risk_reasons: tuple[str, ...]
     market_state_qualified: bool
     market_state_qualification_status: CandidateQualificationExplanationStatus
     data_complete: bool
@@ -300,6 +311,8 @@ def freeze_candidate_release(
                     and candidate.risk_status == "ACCEPTED"
                 ),
                 risk_status=candidate.risk_status,
+                risk_gates=candidate.risk_gates,
+                risk_reasons=candidate.risk_reasons,
                 market_state_qualified=state_qualified,
                 market_state_qualification_status=qualification_status,
                 data_complete=candidate.data_complete,
@@ -654,6 +667,8 @@ def _release_outcome(
                 evidence_freshness=candidate.evidence_freshness,
                 valid_market_dates=valid_market_dates,
                 reasons=unavailable_reasons,
+                risk_gates=candidate.risk_gates,
+                risk_reasons=candidate.risk_reasons,
             )
             for candidate in command.candidates
         )

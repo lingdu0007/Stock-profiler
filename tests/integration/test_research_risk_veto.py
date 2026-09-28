@@ -58,6 +58,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CalibrationRecord,
     CandidateInput,
     CandidateReleaseCommand,
+    CandidateRiskGate,
     MarketSession,
     MarketStateQualification,
     candidate_release_availability_failure,
@@ -3675,6 +3676,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             raw_success_score=raw_scores[security_id].z20,
             data_complete=True,
             risk_status=risk_vetoes[security_id].disposition,
+            risk_gates=tuple(
+                CandidateRiskGate(gate_id=gate.gate_id, status=gate.status)
+                for gate in risk_vetoes[security_id].gates
+            ),
+            risk_reasons=risk_vetoes[security_id].reasons,
             thesis=member.thesis,
             principal_risks=(member.bear_case,),
             evidence_freshness=(
@@ -4172,8 +4178,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "UNRELATED_CALENDAR_QUALIFICATION",
     }:
+        qualification_failure_command = (
+            command.model_copy(update={"qualifications": ()})
+            if candidate_scenario
+            in {
+                "VERSION_MISMATCH",
+                "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+                "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+                "UNRELATED_CALENDAR_QUALIFICATION",
+            }
+            else command
+        )
         direct = candidate_release_availability_failure(
-            command,
+            qualification_failure_command,
             published_at=publication_time,
             reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
             availability_failure="VERSION",
@@ -4468,6 +4485,15 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         else publication_time
     )
     assert execution.report.result.candidate_release.members == direct.members
+    source_risk_vetoes = {
+        item.security_id: item for item in research.risk_veto.member_vetoes
+    }
+    for member in execution.report.result.candidate_release.members:
+        source_veto = source_risk_vetoes[member.security_id]
+        assert tuple((gate.gate_id, gate.status) for gate in member.risk_gates) == tuple(
+            (gate.gate_id, gate.status) for gate in source_veto.gates
+        )
+        assert member.risk_reasons == source_veto.reasons
     if candidate_scenario == "NORMAL":
         assert all(
             member.evidence_freshness == "FRESH_AT_KNOWLEDGE_CUTOFF"
@@ -4476,6 +4502,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True
         assert direct.members[0].market_state_qualification_status == "AT_RISK"
+    elif candidate_scenario in {
+        "VERSION_MISMATCH",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "UNRELATED_CALENDAR_QUALIFICATION",
+    }:
+        assert direct.members[0].market_state_qualified is False
+        assert direct.members[0].market_state_qualification_status == "NOT_QUALIFIED"
     elif candidate_scenario == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION":
         assert direct.members[0].market_state_qualification_status == "AT_RISK"
         assert "MARKET_STATE_QUALIFICATION_AT_RISK" in direct.members[0].reasons

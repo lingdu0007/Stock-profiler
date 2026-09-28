@@ -456,6 +456,10 @@ export interface components {
             reasons: string[];
             /** Research Id */
             research_id: string;
+            /** Risk Gates */
+            risk_gates: components["schemas"]["CandidateRiskGate"][];
+            /** Risk Reasons */
+            risk_reasons: string[];
             /**
              * Risk Status
              * @enum {string}
@@ -557,6 +561,19 @@ export interface components {
             research_object_id: string;
             /** Valid Market Dates */
             valid_market_dates: string[];
+        };
+        /**
+         * CandidateRiskGate
+         * @description One frozen independent-risk gate carried into a candidate explanation.
+         */
+        CandidateRiskGate: {
+            /** Gate Id */
+            gate_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED";
         };
         /** CapabilityVersion */
         CapabilityVersion: {

@@ -510,7 +510,12 @@ def _validate_candidate_release_source(
             raise ValueError("CANDIDATE_RESEARCH_ID_MISMATCH")
         if candidate.raw_success_score != score.z20:
             raise ValueError("CANDIDATE_RAW_SCORE_MISMATCH")
-        if candidate.risk_status != veto.disposition:
+        if (
+            candidate.risk_status != veto.disposition
+            or tuple((gate.gate_id, gate.status) for gate in candidate.risk_gates)
+            != tuple((gate.gate_id, gate.status) for gate in veto.gates)
+            or candidate.risk_reasons != veto.reasons
+        ):
             raise ValueError("CANDIDATE_RISK_VETO_MISMATCH")
         if candidate.thesis != member.thesis or candidate.principal_risks != (member.bear_case,):
             raise ValueError("CANDIDATE_THESIS_OR_RISK_MISMATCH")
@@ -2267,15 +2272,19 @@ def _commit_framework_result(
                     ledger.observed_at().replace("Z", "+00:00")
                 )
                 successful_prerequisite = business_result.status == "SUCCEEDED"
+                assert candidate_qualifications is not None
+                publication_command = execution_case.candidate_release.model_copy(
+                    update={"qualifications": candidate_qualifications}
+                )
                 if not successful_prerequisite:
                     candidate_release = candidate_release_blocked_by_business_prerequisite(
-                        execution_case.candidate_release,
+                        publication_command,
                         published_at=publication_time,
                         reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
                     )
                 elif candidate_version_failure is not None:
                     candidate_release = candidate_release_availability_failure(
-                        execution_case.candidate_release,
+                        publication_command,
                         published_at=publication_time,
                         reason=candidate_version_failure,
                         availability_failure="VERSION",
@@ -2283,33 +2292,30 @@ def _commit_framework_result(
                 elif candidate_research_failure is not None:
                     if candidate_research_failure.disposition == "BLOCKED":
                         candidate_release = candidate_release_blocked_by_business_prerequisite(
-                            execution_case.candidate_release,
+                            publication_command,
                             published_at=publication_time,
                             reason=candidate_research_failure.reason,
                         )
                     else:
                         candidate_release = candidate_release_availability_failure(
-                            execution_case.candidate_release,
+                            publication_command,
                             published_at=publication_time,
                             reason=candidate_research_failure.reason,
                             availability_failure="DATA",
                         )
                 elif candidate_calibration_failure is not None:
                     candidate_release = candidate_release_availability_failure(
-                        execution_case.candidate_release,
+                        publication_command,
                         published_at=publication_time,
                         reason=candidate_calibration_failure,
                         availability_failure="CALIBRATION",
                     )
                 else:
                     candidate_release = freeze_candidate_release(
-                        execution_case.candidate_release.model_copy(
-                            update={"qualifications": candidate_qualifications}
-                        ),
+                        publication_command,
                         published_at=publication_time,
                     )
                 committed_at = ledger.observed_at()
-                publication_command = execution_case.candidate_release
                 if (
                     successful_prerequisite
                     and candidate_version_failure is None

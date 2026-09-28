@@ -12,6 +12,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CalibrationRecord,
     CandidateInput,
     CandidateReleaseCommand,
+    CandidateRiskGate,
     MarketSession,
     MarketStateQualification,
     candidate_release_availability_failure,
@@ -184,6 +185,8 @@ def command(
                 raw_success_score=Decimal(score),
                 data_complete=True,
                 risk_status="ACCEPTED",
+                risk_gates=(CandidateRiskGate(gate_id="RISK_REVIEW", status="PASSED"),),
+                risk_reasons=("INDEPENDENT_RISK_ACCEPTED",),
                 thesis="Original synthetic investment thesis.",
                 principal_risks=("Original synthetic risk.",),
                 evidence_freshness="FRESH_AT_CUTOFF",
@@ -433,16 +436,23 @@ def test_final_abstention_keeps_its_frozen_unqualified_status_on_replay() -> Non
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:
-    candidate = command().model_copy(
+    rejected = command().candidates[0].model_copy(
         update={
-            "candidates": (command().candidates[0].model_copy(update={"risk_status": "REJECTED"}),)
+            "risk_status": "REJECTED",
+            "risk_gates": (CandidateRiskGate(gate_id="LIQUIDITY", status="FAILED"),),
+            "risk_reasons": ("LIQUIDITY_BELOW_MINIMUM",),
         }
+    )
+    candidate = command().model_copy(
+        update={"candidates": (rejected,)}
     )
 
     release = freeze_candidate_release(candidate)
 
     assert release.disposition == "VALID_NO_CANDIDATES"
     assert "INDEPENDENT_RISK_VETO" in release.members[0].reasons
+    assert release.members[0].risk_gates == rejected.risk_gates
+    assert release.members[0].risk_reasons == ("LIQUIDITY_BELOW_MINIMUM",)
 
 
 def test_incomplete_candidate_data_fails_the_whole_release() -> None:

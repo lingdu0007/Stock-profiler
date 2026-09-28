@@ -73,7 +73,14 @@ export function CandidateReleaseEvidence({ release }: { release: CandidateReleas
                   label="Calibrated six-month probability"
                   value={member.calibrated_probability ?? "Unavailable"}
                 />
-                <Record label="Independent risk veto" value={member.risk_status} />
+                <Record label="Independent risk status" value={member.risk_status} />
+                <Record
+                  label="Independent risk gates"
+                  value={member.risk_gates
+                    .map((gate) => `${gate.gate_id}: ${gate.status}`)
+                    .join(", ")}
+                />
+                <Record label="Independent risk reasons" value={member.risk_reasons.join(", ")} />
                 <Record
                   label="Market-state qualification"
                   value={

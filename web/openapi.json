@@ -587,6 +587,20 @@
             "title": "Research Id",
             "type": "string"
           },
+          "risk_gates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateRiskGate"
+            },
+            "title": "Risk Gates",
+            "type": "array"
+          },
+          "risk_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risk Reasons",
+            "type": "array"
+          },
           "risk_status": {
             "enum": ["ACCEPTED", "REJECTED", "FAILED"],
             "title": "Risk Status",
@@ -616,6 +630,8 @@
           "calibrated_probability",
           "candidate",
           "risk_status",
+          "risk_gates",
+          "risk_reasons",
           "market_state_qualified",
           "market_state_qualification_status",
           "data_complete",
@@ -846,6 +862,25 @@
           "reasons"
         ],
         "title": "CandidateReleaseOutcome",
+        "type": "object"
+      },
+      "CandidateRiskGate": {
+        "additionalProperties": false,
+        "description": "One frozen independent-risk gate carried into a candidate explanation.",
+        "properties": {
+          "gate_id": {
+            "minLength": 1,
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PASSED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["gate_id", "status"],
+        "title": "CandidateRiskGate",
         "type": "object"
       },
       "CapabilityVersion": {

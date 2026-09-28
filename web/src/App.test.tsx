@@ -81,6 +81,8 @@ describe("App", () => {
               calibrated_probability: "0.87",
               candidate: true,
               risk_status: "ACCEPTED",
+              risk_gates: [{ gate_id: "RISK_REVIEW", status: "PASSED" }],
+              risk_reasons: ["INDEPENDENT_RISK_ACCEPTED"],
               market_state_qualified: true,
               market_state_qualification_status: "AT_RISK",
               data_complete: true,
@@ -133,7 +135,9 @@ describe("App", () => {
     expect(release).toHaveTextContent("CANDIDATES");
     expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
     expect(release).toHaveTextContent("0.87");
-    expect(release).toHaveTextContent("Independent risk veto");
+    expect(release).toHaveTextContent("Independent risk status");
+    expect(release).toHaveTextContent("RISK_REVIEW: PASSED");
+    expect(release).toHaveTextContent("INDEPENDENT_RISK_ACCEPTED");
     expect(release).toHaveTextContent("At risk");
     expect(release).toHaveTextContent("Original synthetic investment thesis.");
     expect(release).not.toHaveTextContent("account route");
