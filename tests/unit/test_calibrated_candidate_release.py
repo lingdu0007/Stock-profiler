@@ -326,7 +326,34 @@ def test_at_risk_qualification_remains_effective_while_within_validity() -> None
     assert release.disposition == "CANDIDATES"
     assert release.members[0].market_state_qualified is True
     assert release.members[0].candidate is True
+    assert release.members[0].market_state_qualification_status == "AT_RISK"
     assert "MARKET_STATE_QUALIFICATION_AT_RISK" in release.members[0].reasons
+
+
+def test_final_publication_freezes_a_new_at_risk_qualification_revision() -> None:
+    original = command()
+    frozen = freeze_candidate_release(original)
+    assert frozen.members[0].market_state_qualification_status == "VALID"
+    final_time = original.published_at + timedelta(minutes=1)
+    at_risk = original.qualifications[0].model_copy(
+        update={
+            "status": "AT_RISK",
+            "current_status_recorded_at": final_time - timedelta(seconds=1),
+        }
+    )
+
+    published = finalize_candidate_release_publication(
+        original.model_copy(update={"qualifications": (at_risk,)}),
+        frozen,
+        published_at=final_time,
+    )
+
+    assert published.disposition == "CANDIDATES"
+    assert published.members[0].candidate is True
+    assert published.members[0].market_state_qualified is True
+    assert published.members[0].market_state_qualification_status == "AT_RISK"
+    assert "ALL_CANDIDATE_GATES_PASSED" not in published.members[0].reasons
+    assert "MARKET_STATE_QUALIFICATION_AT_RISK" in published.members[0].reasons
 
 
 def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
@@ -341,6 +368,7 @@ def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
 
     assert release.disposition == "RECOMMENDATION_ABSTAINED"
     assert release.members[0].market_state_qualified is False
+    assert release.members[0].market_state_qualification_status == "NOT_QUALIFIED"
 
 
 def test_final_publication_turns_unqualified_no_candidate_batch_into_abstention() -> None:
@@ -357,8 +385,33 @@ def test_final_publication_turns_unqualified_no_candidate_batch_into_abstention(
 
     assert finalized.disposition == "RECOMMENDATION_ABSTAINED"
     assert finalized.members[0].market_state_qualified is False
+    assert finalized.members[0].market_state_qualification_status == "NOT_QUALIFIED"
     assert "MARKET_STATE_NOT_QUALIFIED" in finalized.reasons
     assert "MARKET_STATE_QUALIFICATION_EXPIRED" not in finalized.reasons
+
+
+def test_final_abstention_keeps_its_frozen_unqualified_status_on_replay() -> None:
+    original = command()
+    frozen = freeze_candidate_release(original)
+    final_time = original.published_at + timedelta(minutes=1)
+    expired = original.qualifications[0].model_copy(
+        update={"valid_through": final_time - timedelta(seconds=1)}
+    )
+    abstained = finalize_candidate_release_publication(
+        original.model_copy(update={"qualifications": (expired,)}),
+        frozen,
+        published_at=final_time,
+    )
+
+    replayed = finalize_candidate_release_publication(
+        original,
+        abstained,
+        published_at=final_time,
+    )
+
+    assert abstained.disposition == "RECOMMENDATION_ABSTAINED"
+    assert abstained.members[0].market_state_qualification_status == "NOT_QUALIFIED"
+    assert replayed == abstained
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:

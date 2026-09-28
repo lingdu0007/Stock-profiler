@@ -82,6 +82,7 @@ describe("App", () => {
               candidate: true,
               risk_status: "ACCEPTED",
               market_state_qualified: true,
+              market_state_qualification_status: "AT_RISK",
               data_complete: true,
               thesis: "Original synthetic investment thesis.",
               principal_risks: ["Original synthetic risk."],
@@ -93,7 +94,7 @@ describe("App", () => {
                 "2046-07-05",
                 "2046-07-06"
               ],
-              reasons: ["ALL_CANDIDATE_GATES_PASSED"]
+              reasons: ["MARKET_STATE_QUALIFICATION_AT_RISK"]
             }
           ],
           population: {
@@ -133,6 +134,7 @@ describe("App", () => {
     expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
     expect(release).toHaveTextContent("0.87");
     expect(release).toHaveTextContent("Independent risk veto");
+    expect(release).toHaveTextContent("At risk");
     expect(release).toHaveTextContent("Original synthetic investment thesis.");
     expect(release).not.toHaveTextContent("account route");
     expect(release).not.toHaveTextContent("position quantity");

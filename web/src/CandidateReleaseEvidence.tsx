@@ -76,7 +76,13 @@ export function CandidateReleaseEvidence({ release }: { release: CandidateReleas
                 <Record label="Independent risk veto" value={member.risk_status} />
                 <Record
                   label="Market-state qualification"
-                  value={member.market_state_qualified ? "Valid" : "Not qualified"}
+                  value={
+                    member.market_state_qualification_status === "AT_RISK"
+                      ? "At risk"
+                      : member.market_state_qualification_status === "VALID"
+                        ? "Valid"
+                        : "Not qualified"
+                  }
                 />
                 <Record label="Data" value={member.data_complete ? "Complete" : "Incomplete"} />
                 <Record label="Evidence freshness" value={member.evidence_freshness} />

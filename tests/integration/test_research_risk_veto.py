@@ -3412,6 +3412,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
         ("ACCEPT", "CALENDAR_WINDOW_MISSING"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
+        ("ACCEPT", "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
@@ -3450,6 +3451,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "COMMIT_CLOCK_ADVANCE",
         "CALENDAR_WINDOW_MISSING",
         "AT_RISK_QUALIFICATION",
+        "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -3741,6 +3743,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "AT_RISK_QUALIFICATION",
+        "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -4046,7 +4049,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "governance_history",
             lambda self, connection, access_scope: qualification_history_state["value"],
         )
-    if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
+    if candidate_scenario in {
+        "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
+    }:
         validate_qualification_snapshots = (
             decision_case_service._validate_candidate_qualification_snapshots
         )
@@ -4056,9 +4062,35 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             *args: Any, **kwargs: Any
         ) -> tuple[MarketStateQualification, ...]:
             nonlocal validation_count
-            snapshots = validate_qualification_snapshots(*args, **kwargs)
             validation_count += 1
-            if validation_count == 2:
+            if (
+                validation_count == 2
+                and candidate_scenario == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"
+            ):
+                original_qualification = qualification_history[0].qualification
+                assert original_qualification is not None
+                at_risk = original_qualification.model_copy(
+                    update={
+                        "decision_id": (
+                            f"{original_qualification.decision_id}-at-risk-before-publication"
+                        ),
+                        "status": "AT_RISK",
+                        "cause": "DIAGNOSTIC_ALERT",
+                        "previous_decision_id": original_qualification.decision_id,
+                        "recorded_at": publication_time - timedelta(seconds=1),
+                    }
+                )
+                qualification_history_state["value"] = (
+                    *qualification_history,
+                    GovernanceOutcome(
+                        disposition="APPROVED",
+                        reasons=("DIAGNOSTIC_ALERT",),
+                        qualification=at_risk,
+                    ),
+                )
+                args = (args[0], qualification_history_state["value"], *args[2:])
+            snapshots = validate_qualification_snapshots(*args, **kwargs)
+            if validation_count == 2 and candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
                 return tuple(
                     snapshot.model_copy(
                         update={"valid_through": publication_time - timedelta(seconds=1)}
@@ -4121,6 +4153,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     elif candidate_scenario == "VERSION_MISMATCH" or candidate_scenario in {
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "UNRELATED_CALENDAR_QUALIFICATION",
     }:
         direct = candidate_release_availability_failure(
             command,
@@ -4176,6 +4209,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         direct = freeze_candidate_release(resolved_command, published_at=publication_time)
         if candidate_scenario in {
             "QUALIFICATION_EXPIRES_DURING_FIT",
+            "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
             "LATE_COMMIT",
             "WINDOW_EXPIRED_AFTER_FREEZE",
             "COMMIT_CLOCK_ADVANCE",
@@ -4192,7 +4226,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     "qualifications": tuple(
                         qualification.model_copy(
                             update={
-                                "valid_through": final_publication_time - timedelta(seconds=1),
+                                **(
+                                    {
+                                        "status": "AT_RISK",
+                                        "current_status_recorded_at": final_publication_time
+                                        - timedelta(seconds=1),
+                                    }
+                                    if candidate_scenario
+                                    == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"
+                                    else {
+                                        "valid_through": final_publication_time
+                                        - timedelta(seconds=1)
+                                    }
+                                )
                             }
                         )
                         for qualification in resolved_command.qualifications
@@ -4313,13 +4359,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "CALENDAR_WINDOW_MISSING": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
+        "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION": "CANDIDATES",
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
-        "UNRELATED_CALENDAR_QUALIFICATION": "RECOMMENDATION_ABSTAINED",
+        "UNRELATED_CALENDAR_QUALIFICATION": "FAILED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
         "VERSION_MISMATCH": "FAILED",
         "ORIGINAL_REJECTED": "BLOCKED",
@@ -4342,6 +4389,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATOR_VERSION_UNSUPPORTED",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+        "UNRELATED_CALENDAR_QUALIFICATION",
     }:
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
@@ -4403,6 +4451,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.result.candidate_release.members == direct.members
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True
+        assert direct.members[0].market_state_qualification_status == "AT_RISK"
+    elif candidate_scenario == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION":
+        assert direct.members[0].market_state_qualification_status == "AT_RISK"
+        assert "MARKET_STATE_QUALIFICATION_AT_RISK" in direct.members[0].reasons
     elif candidate_scenario in {"REVOKED_SAME_TIMESTAMP", "REVOKED_AFTER_CUTOFF"}:
         assert direct.members[0].market_state_qualified is False
     elif candidate_scenario == "NO_CANDIDATES":

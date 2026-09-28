@@ -555,6 +555,11 @@
             "title": "Evidence Freshness",
             "type": "string"
           },
+          "market_state_qualification_status": {
+            "enum": ["VALID", "AT_RISK", "NOT_QUALIFIED"],
+            "title": "Market State Qualification Status",
+            "type": "string"
+          },
           "market_state_qualified": {
             "title": "Market State Qualified",
             "type": "boolean"
@@ -612,6 +617,7 @@
           "candidate",
           "risk_status",
           "market_state_qualified",
+          "market_state_qualification_status",
           "data_complete",
           "thesis",
           "principal_risks",

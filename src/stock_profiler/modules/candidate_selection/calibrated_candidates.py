@@ -20,6 +20,7 @@ CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
 CandidateAvailabilityFailure = Literal["DATA", "CALIBRATION", "VERSION"]
+CandidateQualificationExplanationStatus = Literal["VALID", "AT_RISK", "NOT_QUALIFIED"]
 
 
 class _LogisticState(NamedTuple):
@@ -164,6 +165,7 @@ class CalibratedMember(UniverseContract):
     candidate: bool
     risk_status: Literal["ACCEPTED", "REJECTED", "FAILED"]
     market_state_qualified: bool
+    market_state_qualification_status: CandidateQualificationExplanationStatus
     data_complete: bool
     thesis: str
     principal_risks: tuple[str, ...]
@@ -242,7 +244,8 @@ def freeze_candidate_release(
     qualification = _matching_qualification(command, publication_time)
     if qualification is not None and qualification.valid_through < publication_time:
         qualification = None
-    state_qualified = qualification is not None and qualification.status in {"VALID", "AT_RISK"}
+    qualification_status = _qualification_explanation_status(qualification, publication_time)
+    state_qualified = qualification_status != "NOT_QUALIFIED"
     try:
         calibration = _fit_calibrator(command)
     except ValueError as error:
@@ -290,6 +293,7 @@ def freeze_candidate_release(
                 ),
                 risk_status=candidate.risk_status,
                 market_state_qualified=state_qualified,
+                market_state_qualification_status=qualification_status,
                 data_complete=candidate.data_complete,
                 thesis=candidate.thesis,
                 principal_risks=candidate.principal_risks,
@@ -412,18 +416,23 @@ def finalize_candidate_release_publication(
         and qualification.status in {"VALID", "AT_RISK"}
         and qualification.valid_through >= published_at
     )
-    if qualification_current or published.disposition == "RECOMMENDATION_ABSTAINED":
+    if published.disposition == "RECOMMENDATION_ABSTAINED":
         return published
+    if qualification_current:
+        status = _qualification_explanation_status(qualification, published_at)
+        return published.model_copy(
+            update={"members": _members_with_qualification_status(published.members, status)}
+        )
 
     expired = qualification is not None and qualification.valid_through < published_at
-    added_reasons: tuple[str, ...] = ("MARKET_STATE_NOT_QUALIFIED",)
+    additional_reasons: tuple[str, ...] = ()
     if expired:
-        added_reasons = (*added_reasons, "MARKET_STATE_QUALIFICATION_EXPIRED")
-    members = _exclude_candidates(
+        additional_reasons = ("MARKET_STATE_QUALIFICATION_EXPIRED",)
+    added_reasons = ("MARKET_STATE_NOT_QUALIFIED", *additional_reasons)
+    members = _members_with_qualification_status(
         published.members,
-        added_reasons,
-        market_state_qualified=False,
-        remove_all_passed_reason=True,
+        "NOT_QUALIFIED",
+        additional_reasons=additional_reasons,
     )
     return published.model_copy(
         update={
@@ -454,6 +463,59 @@ def _matching_qualification(
         ),
         None,
     )
+
+
+def _qualification_explanation_status(
+    qualification: MarketStateQualification | None,
+    observed_at: datetime,
+) -> CandidateQualificationExplanationStatus:
+    if (
+        qualification is None
+        or qualification.status not in {"VALID", "AT_RISK"}
+        or qualification.valid_through < observed_at
+    ):
+        return "NOT_QUALIFIED"
+    if qualification.status == "AT_RISK":
+        return "AT_RISK"
+    return "VALID"
+
+
+def _members_with_qualification_status(
+    members: tuple[CalibratedMember, ...],
+    status: CandidateQualificationExplanationStatus,
+    *,
+    additional_reasons: tuple[str, ...] = (),
+) -> tuple[CalibratedMember, ...]:
+    updated: list[CalibratedMember] = []
+    for member in members:
+        reasons = tuple(
+            reason
+            for reason in member.reasons
+            if reason
+            not in {
+                "ALL_CANDIDATE_GATES_PASSED",
+                "MARKET_STATE_NOT_QUALIFIED",
+                "MARKET_STATE_QUALIFICATION_AT_RISK",
+            }
+        )
+        if status == "AT_RISK":
+            reasons = (*reasons, "MARKET_STATE_QUALIFICATION_AT_RISK")
+        elif status == "NOT_QUALIFIED":
+            reasons = (*reasons, "MARKET_STATE_NOT_QUALIFIED")
+        reasons = tuple(dict.fromkeys((*reasons, *additional_reasons)))
+        if not reasons:
+            reasons = ("ALL_CANDIDATE_GATES_PASSED",)
+        updated.append(
+            member.model_copy(
+                update={
+                    "candidate": member.candidate and status != "NOT_QUALIFIED",
+                    "market_state_qualified": status != "NOT_QUALIFIED",
+                    "market_state_qualification_status": status,
+                    "reasons": reasons,
+                }
+            )
+        )
+    return tuple(updated)
 
 
 def _candidate_window(
@@ -511,24 +573,17 @@ def _candidate_window(
 def _exclude_candidates(
     members: tuple[CalibratedMember, ...],
     reasons: tuple[str, ...],
-    *,
-    market_state_qualified: bool | None = None,
-    remove_all_passed_reason: bool = False,
 ) -> tuple[CalibratedMember, ...]:
     """Remove candidate eligibility while retaining the original score and other evidence."""
     excluded: list[CalibratedMember] = []
     for member in members:
-        member_reasons = (
-            tuple(reason for reason in member.reasons if reason != "ALL_CANDIDATE_GATES_PASSED")
-            if remove_all_passed_reason
-            else member.reasons
+        member_reasons = tuple(
+            reason for reason in member.reasons if reason != "ALL_CANDIDATE_GATES_PASSED"
         )
         updates: dict[str, object] = {
             "candidate": False,
             "reasons": tuple(dict.fromkeys((*member_reasons, *reasons))),
         }
-        if market_state_qualified is not None:
-            updates["market_state_qualified"] = market_state_qualified
         excluded.append(member.model_copy(update=updates))
     return tuple(excluded)
 
@@ -581,6 +636,10 @@ def _release_outcome(
                 candidate=False,
                 risk_status=candidate.risk_status,
                 market_state_qualified=state_qualified,
+                market_state_qualification_status=_qualification_explanation_status(
+                    qualification,
+                    command.published_at,
+                ),
                 data_complete=candidate.data_complete,
                 thesis=candidate.thesis,
                 principal_risks=candidate.principal_risks,

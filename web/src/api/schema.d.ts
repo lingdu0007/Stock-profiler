@@ -441,6 +441,11 @@ export interface components {
             data_complete: boolean;
             /** Evidence Freshness */
             evidence_freshness: string;
+            /**
+             * Market State Qualification Status
+             * @enum {string}
+             */
+            market_state_qualification_status: "VALID" | "AT_RISK" | "NOT_QUALIFIED";
             /** Market State Qualified */
             market_state_qualified: boolean;
             /** Principal Risks */

@@ -667,6 +667,11 @@ def _validate_candidate_qualification_snapshots(
             or latest.version != record.version
         ):
             raise CandidateQualificationVersionMismatch()
+        if snapshot.market_calendar_version != command.market_calendar_version or (
+            basis is not None
+            and basis.market_calendar_version != command.market_calendar_version
+        ):
+            raise CandidateQualificationVersionMismatch()
         if (
             record.status != snapshot.status
             or record.recorded_at != snapshot.recorded_at
@@ -678,7 +683,6 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.evidence_level != "D0"
             or basis is None
             or basis.expires_at != snapshot.valid_through
-            or snapshot.market_calendar_version != command.market_calendar_version
         ):
             raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
         if (
@@ -691,7 +695,6 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.probability_grid is not None
             or record.scope.portfolio_scope is not None
             or basis is None
-            or basis.market_calendar_version != snapshot.market_calendar_version
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
