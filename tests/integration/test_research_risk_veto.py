@@ -3400,6 +3400,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
+        ("ACCEPT", "UPSTREAM_RESEARCH_EVENT_MISSING"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
         ("ACCEPT", "WINDOW_EXPIRED_AFTER_FREEZE"),
@@ -3444,6 +3445,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
+        "UPSTREAM_RESEARCH_EVENT_MISSING",
         "LATE_PUBLICATION",
         "LATE_COMMIT",
         "WINDOW_EXPIRED_AFTER_FREEZE",
@@ -3626,30 +3628,45 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
     if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
-        upstream_disposition = candidate_scenario.removeprefix("UPSTREAM_RESEARCH_")
+        if candidate_scenario == "UPSTREAM_RESEARCH_EVENT_MISSING":
 
-        def get_failed_research_source(
-            ledger: DecisionLedger, business_object_id: str, connection: Any
-        ) -> DecisionEventFact | None:
-            fact = original_get_original_event(ledger, business_object_id, connection)
-            if fact is None or business_object_id != research_execution.business_object_id:
-                return fact
-            research_outcome = fact.result.research
-            assert research_outcome is not None
-            failed_research = research_outcome.model_copy(
-                update={
-                    "disposition": upstream_disposition,
-                    "raw_scores": None,
-                    "risk_veto": None,
-                }
-            )
-            return fact.model_copy(
-                update={"result": fact.result.model_copy(update={"research": failed_research})}
-            )
+            def get_missing_research_source(
+                ledger: DecisionLedger, business_object_id: str, connection: Any
+            ) -> DecisionEventFact | None:
+                if business_object_id == research_execution.business_object_id:
+                    return None
+                return original_get_original_event(ledger, business_object_id, connection)
 
-        monkeypatch.setattr(
-            DecisionLedger, "get_original_decision_event", get_failed_research_source
-        )
+            monkeypatch.setattr(
+                DecisionLedger,
+                "get_original_decision_event",
+                get_missing_research_source,
+            )
+        else:
+            upstream_disposition = candidate_scenario.removeprefix("UPSTREAM_RESEARCH_")
+
+            def get_failed_research_source(
+                ledger: DecisionLedger, business_object_id: str, connection: Any
+            ) -> DecisionEventFact | None:
+                fact = original_get_original_event(ledger, business_object_id, connection)
+                if fact is None or business_object_id != research_execution.business_object_id:
+                    return fact
+                research_outcome = fact.result.research
+                assert research_outcome is not None
+                failed_research = research_outcome.model_copy(
+                    update={
+                        "disposition": upstream_disposition,
+                        "raw_scores": None,
+                        "risk_veto": None,
+                    }
+                )
+                return fact.model_copy(
+                    update={"result": fact.result.model_copy(update={"research": failed_research})}
+                )
+
+            monkeypatch.setattr(
+                DecisionLedger, "get_original_decision_event", get_failed_research_source
+            )
     risk_vetoes = {item.security_id: item for item in research.risk_veto.member_vetoes}
     candidates = tuple(
         CandidateInput(
@@ -3662,7 +3679,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             principal_risks=(member.bear_case,),
             evidence_freshness=(
                 "FRESH_AT_KNOWLEDGE_CUTOFF"
-                if member.knowledge_cutoff == cutoff.isoformat()
+                if member.knowledge_cutoff == cutoff
                 else "STALE_AT_KNOWLEDGE_CUTOFF"
             ),
         )
@@ -4192,6 +4209,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     elif candidate_scenario in {
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
+        "UPSTREAM_RESEARCH_EVENT_MISSING",
     }:
         direct = candidate_release_availability_failure(
             command,
@@ -4347,6 +4365,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
+        "UPSTREAM_RESEARCH_EVENT_MISSING": "FAILED",
         "LATE_PUBLICATION": "FAILED",
         "LATE_COMMIT": "FAILED",
         "WINDOW_EXPIRED_AFTER_FREEZE": "FAILED",
@@ -4381,7 +4400,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
     }:
         assert direct.availability_failure == "CALIBRATION"
-    elif candidate_scenario == "CALENDAR_WINDOW_MISSING":
+    elif candidate_scenario in {"CALENDAR_WINDOW_MISSING", "UPSTREAM_RESEARCH_EVENT_MISSING"}:
         assert direct.availability_failure == "DATA"
     elif candidate_scenario in {
         "VERSION_MISMATCH",
@@ -4449,6 +4468,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         else publication_time
     )
     assert execution.report.result.candidate_release.members == direct.members
+    if candidate_scenario == "NORMAL":
+        assert all(
+            member.evidence_freshness == "FRESH_AT_KNOWLEDGE_CUTOFF"
+            for member in direct.members
+        )
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True
         assert direct.members[0].market_state_qualification_status == "AT_RISK"

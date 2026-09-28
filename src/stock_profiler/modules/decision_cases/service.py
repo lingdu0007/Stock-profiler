@@ -461,9 +461,10 @@ def _validate_candidate_release_source(
     """Require every candidate input to match one committed research and risk result."""
     command = case.candidate_release
     assert command is not None
+    if source_event is None:
+        raise CandidateResearchHandoffUnavailable("MISSING")
     if (
-        source_event is None
-        or source_event.decision_event_id != command.research_event_id
+        source_event.decision_event_id != command.research_event_id
         or source_event.business_object_id != command.research_object_id
         or source_event.corrects_event_id is not None
         or source_event.validation_status != "PASSED"
@@ -489,6 +490,9 @@ def _validate_candidate_release_source(
     members = {member.security_id: member for member in research.members}
     scores = {score.security_id: score for score in raw_scores}
     vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
+    source_knowledge_cutoff = datetime.fromisoformat(
+        source_event.case.knowledge_cutoff.replace("Z", "+00:00")
+    )
     if (
         len(members) != len(research.members)
         or len(scores) != len(raw_scores)
@@ -512,7 +516,7 @@ def _validate_candidate_release_source(
             raise ValueError("CANDIDATE_THESIS_OR_RISK_MISMATCH")
         expected_freshness = (
             "FRESH_AT_KNOWLEDGE_CUTOFF"
-            if member.knowledge_cutoff == source_event.case.knowledge_cutoff
+            if member.knowledge_cutoff == source_knowledge_cutoff
             else "STALE_AT_KNOWLEDGE_CUTOFF"
         )
         if candidate.evidence_freshness != expected_freshness:
