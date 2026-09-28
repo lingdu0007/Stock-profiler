@@ -212,6 +212,24 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
     )
 
 
+@pytest.mark.parametrize("published_at_override", [False, True])
+def test_publication_before_knowledge_cutoff_fails_without_calibrating(
+    published_at_override: bool,
+) -> None:
+    publication_time = datetime(2046, 7, 1, 7, tzinfo=UTC)
+    candidate_command = command(published=None if published_at_override else publication_time)
+
+    release = freeze_candidate_release(
+        candidate_command,
+        published_at=publication_time if published_at_override else None,
+    )
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "DATA"
+    assert release.calibration is None
+    assert release.reasons == ("CANDIDATE_KNOWLEDGE_CUTOFF_AFTER_PUBLICATION",)
+
+
 def test_intraday_cutoff_starts_at_the_next_purchasable_session() -> None:
     original = command()
     cutoff = datetime(2046, 7, 3, 2, tzinfo=UTC)

@@ -225,6 +225,14 @@ def freeze_candidate_release(
     calendar_failure = _candidate_window_failure(command, window, window_failure)
     if calendar_failure is not None:
         return calendar_failure
+    if command.knowledge_cutoff > publication_time:
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("CANDIDATE_KNOWLEDGE_CUTOFF_AFTER_PUBLICATION",),
+            availability_failure="DATA",
+        )
     if command.calibrator_version != CALIBRATOR_VERSION:
         return _release_outcome(
             command,
