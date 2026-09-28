@@ -466,7 +466,7 @@ def _candidate_window(
     )[:5]
     if len(window) != 5:
         return window, "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE"
-    if window[0].session_sequence != command.last_completed_market_session_sequence + 1 or any(
+    if any(
         right.session_sequence != left.session_sequence + 1
         for left, right in zip(window, window[1:], strict=False)
     ):
@@ -495,6 +495,16 @@ def _candidate_window(
         for session, saved in zip(window, saved_window, strict=True)
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
+    completed_sessions = tuple(
+        session for session in calendar.sessions if session.closed_at <= command.knowledge_cutoff
+    )
+    last_completed_sequence = (
+        max(session.ordinal for session in completed_sessions)
+        if completed_sessions
+        else saved_window[0].ordinal - 1
+    )
+    if last_completed_sequence != command.last_completed_market_session_sequence:
+        return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     return window, None
 
 
@@ -617,14 +627,15 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
             raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
         if record.raw_score_training_watermark_at > record.raw_score_frozen_at:
             raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
-        if record.entry_window_ends_at.astimezone(UTC).date() <= _month_end(record.month):
-            raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
+        if record.entry_window_ends_at <= record.raw_score_frozen_at:
+            raise ValueError("CALIBRATION_ENTRY_WINDOW_NOT_AFTER_PREDICTION")
         if record.entry_at is None:
             if record.terminal_success:
                 raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
-        elif record.entry_at >= record.entry_window_ends_at or record.entry_at.astimezone(
-            UTC
-        ).date() <= _month_end(record.month):
+        elif (
+            record.entry_at < record.raw_score_frozen_at
+            or record.entry_at >= record.entry_window_ends_at
+        ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         if record.unified_maturity_at < _six_month_anniversary(record.entry_window_ends_at):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
@@ -764,11 +775,6 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
             return Decimal(1) / (Decimal(1) + inverse_odds)
         odds = value.exp()
         return odds / (Decimal(1) + odds)
-
-
-def _month_end(month: str) -> date:
-    year, month_number = (int(part) for part in month.split("-"))
-    return date(year, month_number, monthrange(year, month_number)[1])
 
 
 def _six_month_anniversary(value: datetime) -> datetime:

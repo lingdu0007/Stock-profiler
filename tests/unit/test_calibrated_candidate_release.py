@@ -19,6 +19,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     freeze_candidate_release,
 )
 from stock_profiler.modules.decision_cases.service import _calibration_month_mature_by
+from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 
 def _calibration_record(
@@ -209,6 +210,37 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
         datetime(2046, 7, 5, 1, tzinfo=UTC).date(),
         datetime(2046, 7, 6, 1, tzinfo=UTC).date(),
     )
+
+
+def test_intraday_cutoff_starts_at_the_next_purchasable_session() -> None:
+    original = command()
+    cutoff = datetime(2046, 7, 3, 2, tzinfo=UTC)
+    calendar = synthetic_market_calendar(original.market_calendar_version)
+    assert calendar is not None
+    sessions = tuple(
+        MarketSession(
+            market_date=session.closed_at.date(),
+            opens_at=session.closed_at - timedelta(hours=7),
+            closes_at=session.closed_at,
+            session_sequence=session.ordinal,
+        )
+        for session in calendar.sessions
+        if session.closed_at - timedelta(hours=7) > cutoff
+    )[:5]
+
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={
+                "knowledge_cutoff": cutoff,
+                "published_at": cutoff + timedelta(minutes=1),
+                "last_completed_market_session_sequence": 101,
+                "market_sessions": sessions,
+            }
+        )
+    )
+
+    assert release.disposition == "CANDIDATES"
+    assert release.valid_market_dates == tuple(session.market_date for session in sessions)
 
 
 def test_probability_below_threshold_forms_valid_no_candidate() -> None:
@@ -468,6 +500,19 @@ def test_candidate_window_cannot_start_after_the_first_saved_post_cutoff_session
     assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH",)
 
 
+def test_candidate_window_rejects_mismatched_last_completed_session_anchor() -> None:
+    original = command()
+    incorrect_anchor = original.model_copy(
+        update={"last_completed_market_session_sequence": 99}
+    )
+
+    release = freeze_candidate_release(incorrect_anchor)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "DATA"
+    assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",)
+
+
 def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
     original = command()
     unsupported = CandidateReleaseCommand.model_validate(
@@ -625,7 +670,10 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     original = command()
 
     window_without_future_entry = original.training_records[0].model_copy(
-        update={"entry_window_ends_at": datetime(2040, 12, 31, 8, tzinfo=UTC)}
+        update={
+            "entry_window_ends_at": original.training_records[0].raw_score_frozen_at
+            - timedelta(seconds=1)
+        }
     )
     release = freeze_candidate_release(
         original.model_copy(
@@ -634,7 +682,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             }
         )
     )
-    assert "CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH" in release.reasons
+    assert "CALIBRATION_ENTRY_WINDOW_NOT_AFTER_PREDICTION" in release.reasons
 
     entry_outside_window = original.training_records[0].model_copy(
         update={"entry_at": original.training_records[0].entry_window_ends_at}
@@ -645,6 +693,33 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
         )
     )
     assert "CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW" in release.reasons
+
+    intramonth_mature_entry = original.training_records[0].model_copy(
+        update={
+            "raw_score_frozen_at": datetime(2040, 12, 14, 7, tzinfo=UTC),
+            "raw_score_training_watermark_at": datetime(2040, 12, 13, 7, tzinfo=UTC),
+            "entry_window_ends_at": datetime(2040, 12, 21, 8, tzinfo=UTC),
+            "entry_at": datetime(2040, 12, 17, 7, tzinfo=UTC),
+            "unified_maturity_at": _six_month_anniversary(
+                datetime(2040, 12, 21, 8, tzinfo=UTC)
+            ),
+            "label_available_at": _six_month_anniversary(
+                datetime(2040, 12, 21, 8, tzinfo=UTC)
+            ),
+        }
+    )
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={
+                "training_records": (
+                    intramonth_mature_entry,
+                    *original.training_records[1:],
+                )
+            }
+        )
+    )
+    assert release.availability_failure is None
+    assert release.calibration is not None
 
     outside_month = "2040-11"
     outside_month_records = tuple(
