@@ -582,7 +582,7 @@ def _validate_candidate_calibration_sources(
                 or record.raw_score_frozen_at != frozen_at
                 or score.label_watermark_at is None
                 or record.raw_score_training_watermark_at != score.label_watermark_at
-                or score.label_watermark_at >= frozen_at
+                or score.label_watermark_at > frozen_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
         if not _calibration_month_mature_by(records, command.label_watermark_at):

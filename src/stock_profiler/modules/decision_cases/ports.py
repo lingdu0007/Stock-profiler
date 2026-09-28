@@ -191,10 +191,6 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[GovernanceOutcome, ...]: ...
 
-    def candidate_calibration_source_history(
-        self, connection: Transaction, access_scope: ResultAccessScope
-    ) -> tuple[DecisionEventFact, ...]: ...
-
     def portfolio_authorization_history(
         self,
         connection: Transaction,

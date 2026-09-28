@@ -3392,6 +3392,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_INFERENCE_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_RECORDS_MISSING"),
         ("ACCEPT", "CALIBRATION_WINDOW_MISSING"),
+        ("ACCEPT", "CALIBRATION_EQUAL_TRAINING_WATERMARK"),
         ("ACCEPT", "CALIBRATOR_VERSION_UNSUPPORTED"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
@@ -3434,6 +3435,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_INFERENCE_MODEL_MISMATCH",
         "CALIBRATION_RECORDS_MISSING",
         "CALIBRATION_WINDOW_MISSING",
+        "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "CALIBRATOR_VERSION_UNSUPPORTED",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
@@ -3515,7 +3517,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             raw_score_model_version=raw_scores[security_ids[member]].model_version,
             raw_score_frozen_at=_synthetic_raw_score_frozen_at(month),
             raw_score_training_watermark_at=(
-                _synthetic_raw_score_frozen_at(month) - timedelta(days=1)
+                _synthetic_raw_score_frozen_at(month)
+                if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK"
+                else _synthetic_raw_score_frozen_at(month) - timedelta(days=1)
             ),
             raw_success_score=Decimal(member) / Decimal("10"),
             terminal_success=(member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5),
@@ -3560,7 +3564,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     for month in source_months:
         source_event_id = f"synthetic-calibration-event-{month}"
         frozen_at = _synthetic_raw_score_frozen_at(month)
-        training_watermark = frozen_at - timedelta(days=1)
+        training_watermark = (
+            frozen_at
+            if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK"
+            else frozen_at - timedelta(days=1)
+        )
         source_research = source_fact.result.research
         assert source_research is not None and source_research.raw_scores is not None
         monthly_scores = tuple(
@@ -3614,11 +3622,6 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
 
     monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
-    monkeypatch.setattr(
-        DecisionLedger,
-        "candidate_calibration_source_history",
-        lambda ledger, connection, access_scope: tuple(calibration_source_facts.values()),
-    )
     if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
         upstream_disposition = candidate_scenario.removeprefix("UPSTREAM_RESEARCH_")
@@ -3736,6 +3739,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     )
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     if candidate_scenario in {
+        "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
@@ -4289,6 +4293,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_INFERENCE_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_RECORDS_MISSING": "FAILED",
         "CALIBRATION_WINDOW_MISSING": "FAILED",
+        "CALIBRATION_EQUAL_TRAINING_WATERMARK": "CANDIDATES",
         "CALIBRATOR_VERSION_UNSUPPORTED": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
@@ -4431,9 +4436,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             ).status
             == "REJECTED"
         )
-        assert direct.members == ()
+        assert len(direct.members) == len(candidates)
         assert direct.calibration is None
-    if direct.members:
+        assert direct.members[0].calibrated_probability is None
+        assert direct.members[0].thesis == candidates[0].thesis
+    if direct.members and direct.calibration is not None:
         assert direct.members[0].calibrated_probability is not None
     if direct.members:
         assert execution.report.result.candidate_release.members[0].risk_status == (

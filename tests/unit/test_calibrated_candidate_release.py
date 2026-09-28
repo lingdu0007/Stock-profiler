@@ -237,7 +237,9 @@ def test_inverse_signal_is_fitted_at_nonnegative_slope_boundary() -> None:
     assert release.members[0].calibrated_probability < Decimal("0.80")
 
 
-def test_candidate_threshold_uses_unrounded_probability(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_candidate_freezes_the_probability_used_by_the_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original = command()
     monkeypatch.setattr(
         candidate_module,
@@ -247,7 +249,7 @@ def test_candidate_threshold_uses_unrounded_probability(monkeypatch: pytest.Monk
 
     release = freeze_candidate_release(original)
 
-    assert release.members[0].calibrated_probability == Decimal("0.80000000")
+    assert release.members[0].calibrated_probability == Decimal("0.799999999")
     assert release.members[0].candidate is False
     assert "PROBABILITY_BELOW_THRESHOLD" in release.members[0].reasons
 
@@ -256,7 +258,7 @@ def test_extreme_negative_finite_score_yields_a_calibrated_non_candidate() -> No
     release = freeze_candidate_release(command(score="-100000"))
 
     assert release.disposition == "VALID_NO_CANDIDATES"
-    assert release.members[0].calibrated_probability == Decimal("0E-8")
+    assert release.members[0].calibrated_probability == Decimal("0")
     assert release.members[0].candidate is False
 
 
@@ -349,7 +351,13 @@ def test_incomplete_candidate_data_fails_the_whole_release() -> None:
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "DATA"
-    assert release.members == ()
+    assert len(release.members) == 1
+    assert release.members[0].calibrated_probability is None
+    assert release.members[0].thesis == incomplete.thesis
+    assert release.members[0].principal_risks == incomplete.principal_risks
+    assert release.members[0].evidence_freshness == incomplete.evidence_freshness
+    assert release.members[0].risk_status == incomplete.risk_status
+    assert "CANDIDATE_DATA_INCOMPLETE" in release.members[0].reasons
 
 
 def test_fewer_than_five_post_cutoff_sessions_fail_without_moving_window() -> None:
@@ -483,6 +491,10 @@ def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
     assert version_failure.disposition == "FAILED"
     assert version_failure.availability_failure == "VERSION"
     assert version_failure.reasons == ("CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",)
+    for failed_release in (version_failure, data_failure, window_failure, calendar_failure):
+        assert len(failed_release.members) == len(original.candidates)
+        assert failed_release.members[0].calibrated_probability is None
+        assert failed_release.members[0].thesis == original.candidates[0].thesis
     with pytest.raises(ValueError, match="CALIBRATOR_VERSION_UNSUPPORTED"):
         candidate_module._fit_calibrator(unsupported)
     assert data_failure.disposition == "FAILED"
@@ -865,10 +877,27 @@ def test_firth_solver_accepts_a_stalled_step_at_the_numerical_tolerance(
     assert slope == 0
 
 
-def test_firth_solver_rejects_training_scores_without_temporal_provenance() -> None:
+def test_firth_solver_accepts_score_watermark_equal_to_freeze_time() -> None:
     original = command()
     first = original.training_records[0].model_copy(
         update={"raw_score_training_watermark_at": original.training_records[0].raw_score_frozen_at}
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": (first, *original.training_records[1:])})
+    )
+
+    assert release.availability_failure is None
+    assert release.calibration is not None
+
+
+def test_firth_solver_rejects_score_watermark_after_freeze_time() -> None:
+    original = command()
+    first = original.training_records[0].model_copy(
+        update={
+            "raw_score_training_watermark_at": original.training_records[0].raw_score_frozen_at
+            + timedelta(microseconds=1)
+        }
     )
 
     release = freeze_candidate_release(

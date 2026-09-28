@@ -266,7 +266,6 @@ def freeze_candidate_release(
                 reasons=("CALIBRATION_PROBABILITY_FAILED",),
                 availability_failure="CALIBRATION",
             )
-        displayed_probability = probability.quantize(Decimal("0.00000001"))
         reasons: list[str] = []
         if probability < PROBABILITY_THRESHOLD:
             reasons.append("PROBABILITY_BELOW_THRESHOLD")
@@ -283,7 +282,7 @@ def freeze_candidate_release(
                 security_id=candidate.security_id,
                 research_id=candidate.research_id,
                 raw_success_score=candidate.raw_success_score,
-                calibrated_probability=displayed_probability,
+                calibrated_probability=probability,
                 candidate=(
                     probability >= PROBABILITY_THRESHOLD
                     and state_qualified
@@ -547,7 +546,7 @@ def _release_outcome(
     disposition: CandidateReleaseDisposition,
     reasons: tuple[str, ...],
     calibration: CalibrationSnapshot | None = None,
-    members: tuple[CalibratedMember, ...] = (),
+    members: tuple[CalibratedMember, ...] | None = None,
     availability_failure: CandidateAvailabilityFailure | None = None,
 ) -> CandidateReleaseOutcome:
     valid_monthly = disposition in {
@@ -555,6 +554,32 @@ def _release_outcome(
         "VALID_NO_CANDIDATES",
         "RECOMMENDATION_ABSTAINED",
     }
+    if members is None:
+        qualification = _matching_qualification(command, command.published_at)
+        state_qualified = (
+            qualification is not None
+            and qualification.status in {"VALID", "AT_RISK"}
+            and qualification.valid_through >= command.published_at
+        )
+        unavailable_reasons = tuple(dict.fromkeys((*reasons, "PROBABILITY_UNAVAILABLE")))
+        members = tuple(
+            CalibratedMember(
+                security_id=candidate.security_id,
+                research_id=candidate.research_id,
+                raw_success_score=candidate.raw_success_score,
+                calibrated_probability=None,
+                candidate=False,
+                risk_status=candidate.risk_status,
+                market_state_qualified=state_qualified,
+                data_complete=candidate.data_complete,
+                thesis=candidate.thesis,
+                principal_risks=candidate.principal_risks,
+                evidence_freshness=candidate.evidence_freshness,
+                valid_market_dates=valid_market_dates,
+                reasons=unavailable_reasons,
+            )
+            for candidate in command.candidates
+        )
     return CandidateReleaseOutcome(
         batch_id=command.batch_id,
         disposition=disposition,
@@ -590,7 +615,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     for record in command.training_records:
         if record.raw_score_frozen_at.strftime("%Y-%m") != record.month:
             raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
-        if record.raw_score_training_watermark_at >= record.raw_score_frozen_at:
+        if record.raw_score_training_watermark_at > record.raw_score_frozen_at:
             raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
         if record.entry_window_ends_at.astimezone(UTC).date() <= _month_end(record.month):
             raise ValueError("CALIBRATION_ENTRY_WINDOW_PRECEDES_PREDICTION_MONTH")
