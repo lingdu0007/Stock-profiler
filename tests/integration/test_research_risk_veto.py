@@ -3391,15 +3391,17 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_INFERENCE_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_RECORDS_MISSING"),
+        ("ACCEPT", "CALIBRATION_WINDOW_MISSING"),
         ("ACCEPT", "CALIBRATOR_VERSION_UNSUPPORTED"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
-        ("ACCEPT", "CALIBRATION_NEWEST_MONTH_OMITTED"),
+        ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
+        ("ACCEPT", "WINDOW_EXPIRED_AFTER_FREEZE"),
         ("ACCEPT", "LATE_REPORT_COMMIT"),
         ("ACCEPT", "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE"),
         ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
@@ -3407,7 +3409,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF"),
         ("ACCEPT", "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF"),
         ("ACCEPT", "COMMIT_CLOCK_ADVANCE"),
-        ("ACCEPT", "WINDOW_EXPIRED"),
+        ("ACCEPT", "CALENDAR_WINDOW_MISSING"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
@@ -3431,18 +3433,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH",
         "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATION_WINDOW_MISSING",
         "CALIBRATOR_VERSION_UNSUPPORTED",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
-        "CALIBRATION_NEWEST_MONTH_OMITTED",
+        "CALIBRATION_DECLARED_OLDER_WINDOW",
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
         "LATE_PUBLICATION",
         "LATE_COMMIT",
+        "WINDOW_EXPIRED_AFTER_FREEZE",
         "LATE_REPORT_COMMIT",
         "COMMIT_CLOCK_ADVANCE",
-        "WINDOW_EXPIRED",
+        "CALENDAR_WINDOW_MISSING",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
@@ -3485,7 +3489,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         f"{year}-{month:02d}" for year in range(2035, 2042) for month in range(1, 13)
     )[:-1][-60:]
     source_months = training_months
-    if candidate_scenario == "CALIBRATION_NEWEST_MONTH_OMITTED":
+    if candidate_scenario == "CALIBRATION_DECLARED_OLDER_WINDOW":
         first_year, first_month = (int(part) for part in training_months[0].split("-"))
         prior_index = first_year * 12 + first_month - 2
         prior_year, prior_month_zero_based = divmod(prior_index, 12)
@@ -3495,7 +3499,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         last_year, last_month = (int(part) for part in training_months[-1].split("-"))
         following_year, following_month = divmod(last_year * 12 + last_month, 12)
-        source_months = (*training_months, f"{following_year}-{following_month + 1:02d}")
+        source_months = (
+            *omitted_training_months,
+            f"{following_year}-{following_month + 1:02d}",
+        )
     else:
         omitted_training_months = training_months
     training_records = tuple(
@@ -3701,24 +3708,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             else "monotone-firth-logistic-v1"
         ),
         training_window_months=(
-            training_months[:-1]
+            ()
+            if candidate_scenario == "CALIBRATION_WINDOW_MISSING"
+            else training_months[:-1]
             if candidate_scenario == "CALIBRATION_FAILURE"
             else omitted_training_months
         ),
         training_records=training_records,
         candidates=candidates,
         market_sessions=(
-            tuple(
-                MarketSession(
-                    market_date=datetime(2042, 6, day, tzinfo=UTC).date(),
-                    opens_at=datetime(2042, 6, day, 1, tzinfo=UTC),
-                    closes_at=datetime(2042, 6, day, 8, tzinfo=UTC),
-                    session_sequence=95 + day,
-                )
-                for day in range(1, 6)
-            )
-            if candidate_scenario == "WINDOW_EXPIRED"
-            else sessions
+            () if candidate_scenario == "CALENDAR_WINDOW_MISSING" else sessions
         ),
     )
     report_time = datetime.fromisoformat("2042-07-02T00:04:00+00:00")
@@ -4139,12 +4138,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",
             availability_failure="VERSION",
         )
-    elif candidate_scenario == "CALIBRATION_RECORDS_MISSING" or candidate_scenario in {
+    elif candidate_scenario == "CALIBRATION_RECORDS_MISSING":
+        direct = freeze_candidate_release(command, published_at=publication_time)
+    elif candidate_scenario in {
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
-        "CALIBRATION_NEWEST_MONTH_OMITTED",
     }:
         direct = candidate_release_availability_failure(
             command,
@@ -4173,11 +4173,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if candidate_scenario in {
             "QUALIFICATION_EXPIRES_DURING_FIT",
             "LATE_COMMIT",
+            "WINDOW_EXPIRED_AFTER_FREEZE",
             "COMMIT_CLOCK_ADVANCE",
         }:
             final_publication_time = (
                 datetime.fromisoformat("2042-07-07T16:00:00+00:00")
-                if candidate_scenario == "LATE_COMMIT"
+                if candidate_scenario in {"LATE_COMMIT", "WINDOW_EXPIRED_AFTER_FREEZE"}
                 else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
                 if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
                 else publication_time
@@ -4201,6 +4202,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             )
     if candidate_scenario in {
         "LATE_COMMIT",
+        "WINDOW_EXPIRED_AFTER_FREEZE",
         "LATE_REPORT_COMMIT",
         "COMMIT_CLOCK_ADVANCE",
     }:
@@ -4211,7 +4213,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         clock_state = {"now": publication_time}
         monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
-        if candidate_scenario in {"LATE_COMMIT", "COMMIT_CLOCK_ADVANCE"}:
+        if candidate_scenario in {
+            "LATE_COMMIT",
+            "WINDOW_EXPIRED_AFTER_FREEZE",
+            "COMMIT_CLOCK_ADVANCE",
+        }:
             record_stage_result = DecisionLedger.record_stage_result
 
             def advance_clock_after_candidate_stage(
@@ -4282,15 +4288,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_RECORDS_MISSING": "FAILED",
+        "CALIBRATION_WINDOW_MISSING": "FAILED",
         "CALIBRATOR_VERSION_UNSUPPORTED": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
-        "CALIBRATION_NEWEST_MONTH_OMITTED": "FAILED",
+        "CALIBRATION_DECLARED_OLDER_WINDOW": "RECOMMENDATION_ABSTAINED",
         "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
         "LATE_PUBLICATION": "FAILED",
         "LATE_COMMIT": "FAILED",
+        "WINDOW_EXPIRED_AFTER_FREEZE": "FAILED",
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
@@ -4298,7 +4306,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF": "FAILED",
         "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
-        "WINDOW_EXPIRED": "FAILED",
+        "CALENDAR_WINDOW_MISSING": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
@@ -4317,11 +4325,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATION_WINDOW_MISSING",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
-        "CALIBRATION_NEWEST_MONTH_OMITTED",
     }:
         assert direct.availability_failure == "CALIBRATION"
-    elif candidate_scenario == "WINDOW_EXPIRED":
+    elif candidate_scenario == "CALENDAR_WINDOW_MISSING":
         assert direct.availability_failure == "DATA"
     elif candidate_scenario in {
         "VERSION_MISMATCH",
@@ -4333,12 +4341,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         assert direct.members[0].market_state_qualified is False
-    elif candidate_scenario in {"LATE_PUBLICATION", "LATE_COMMIT"}:
+    elif candidate_scenario in {
+        "LATE_PUBLICATION",
+        "LATE_COMMIT",
+        "WINDOW_EXPIRED_AFTER_FREEZE",
+    }:
         assert direct.population.valid_monthly is False
         assert "PUBLICATION_AFTER_CANDIDATE_WINDOW" in direct.reasons
     assert direct.population.recommendation_coverage_denominator == direct.population.valid_monthly
     if direct.calibration is not None:
         assert direct.calibration.slope >= 0
+    if candidate_scenario == "CALIBRATION_DECLARED_OLDER_WINDOW":
+        assert direct.availability_failure is None
+        assert direct.calibration is not None
+        assert direct.calibration.training_window_months == command.training_window_months
     if candidate_scenario in {
         "LATE_REPORT_COMMIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
@@ -4374,7 +4390,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.result.candidate_release == direct
     assert execution.report.result.candidate_release.published_at == (
         datetime.fromisoformat("2042-07-07T16:00:00+00:00")
-        if candidate_scenario == "LATE_COMMIT"
+        if candidate_scenario in {"LATE_COMMIT", "WINDOW_EXPIRED_AFTER_FREEZE"}
         else datetime.fromisoformat("2042-07-02T00:04:00+00:00")
         if candidate_scenario == "COMMIT_CLOCK_ADVANCE"
         else publication_time
@@ -4431,6 +4447,6 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert execution.report.stage_results[-1].phase == "PUBLICATION"
     assert execution.report.result.candidate_release.valid_market_dates == (
         ()
-        if candidate_scenario == "WINDOW_EXPIRED"
+        if candidate_scenario == "CALENDAR_WINDOW_MISSING"
         else tuple(session.market_date for session in sessions)
     )

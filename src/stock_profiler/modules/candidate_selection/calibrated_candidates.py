@@ -130,10 +130,10 @@ class CandidateReleaseCommand(UniverseContract):
     qualifications: tuple[MarketStateQualification, ...] = ()
     calibrator_version: str = Field(default=CALIBRATOR_VERSION, min_length=1)
     label_watermark_at: AwareDatetime
-    training_window_months: tuple[str, ...] = Field(min_length=1)
+    training_window_months: tuple[str, ...]
     training_records: tuple[CalibrationRecord, ...]
     candidates: tuple[CandidateInput, ...] = Field(min_length=1)
-    market_sessions: tuple[MarketSession, ...] = Field(min_length=5)
+    market_sessions: tuple[MarketSession, ...]
 
     @model_validator(mode="after")
     def validate_frozen_inputs(self) -> CandidateReleaseCommand:
@@ -623,10 +623,10 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     )
     if len(mature_months) < _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
-    if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
-        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
+    if not set(months).issubset(mature_months):
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_MATURE")
     if not _are_consecutive_months(months):
-        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS")
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_CONSECUTIVE")
     records = tuple(record for month in months for record in by_month[month])
     positives = sum(record.terminal_success for record in records)
     negatives = len(records) - positives

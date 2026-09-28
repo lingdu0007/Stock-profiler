@@ -468,9 +468,17 @@ def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
     missing_records = CandidateReleaseCommand.model_validate(
         original.model_dump(mode="python") | {"training_records": ()}
     )
+    missing_window = CandidateReleaseCommand.model_validate(
+        original.model_dump(mode="python") | {"training_window_months": ()}
+    )
+    missing_sessions = CandidateReleaseCommand.model_validate(
+        original.model_dump(mode="python") | {"market_sessions": ()}
+    )
 
     version_failure = freeze_candidate_release(unsupported)
     data_failure = freeze_candidate_release(missing_records)
+    window_failure = freeze_candidate_release(missing_window)
+    calendar_failure = freeze_candidate_release(missing_sessions)
 
     assert version_failure.disposition == "FAILED"
     assert version_failure.availability_failure == "VERSION"
@@ -480,6 +488,12 @@ def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
     assert data_failure.disposition == "FAILED"
     assert data_failure.availability_failure == "CALIBRATION"
     assert data_failure.calibration is None
+    assert window_failure.disposition == "FAILED"
+    assert window_failure.availability_failure == "CALIBRATION"
+    assert window_failure.calibration is None
+    assert calendar_failure.disposition == "FAILED"
+    assert calendar_failure.availability_failure == "DATA"
+    assert calendar_failure.reasons == ("CANDIDATE_WINDOW_CALENDAR_INCOMPLETE",)
 
 
 def test_host_availability_failure_preserves_calendar_failures() -> None:
@@ -645,7 +659,12 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             }
         )
     )
-    assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == (
+        outside_month,
+        *original.training_window_months[:-1],
+    )
 
     immature = original.training_records[0].model_copy(
         update={"label_available_at": datetime(2041, 1, 31, 23, 59, 59, tzinfo=UTC)}
@@ -1056,7 +1075,48 @@ def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> No
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
 
-def test_training_window_must_use_latest_mature_months() -> None:
+def test_declared_window_must_contain_only_mature_months() -> None:
+    original = command()
+    immature_month = original.training_window_months[-1]
+    immature_records = tuple(
+        record.model_copy(
+            update={
+                "unified_maturity_at": original.label_watermark_at + timedelta(seconds=1),
+                "label_available_at": original.label_watermark_at + timedelta(seconds=1),
+            }
+        )
+        if record.month == immature_month
+        else record
+        for record in original.training_records
+    )
+    extra_month_records = tuple(
+        original.training_records[index].model_copy(
+            update={
+                "record_id": f"synthetic-label-2045-12-{index:02d}",
+                "month": "2045-12",
+                "source_research_event_id": "synthetic-research-event-2045-12",
+                "raw_score_frozen_at": datetime(2045, 12, 31, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2045, 12, 30, 7, tzinfo=UTC),
+                "entry_window_ends_at": datetime(2046, 1, 1, 8, tzinfo=UTC),
+                "entry_at": datetime(2046, 1, 1, 7, tzinfo=UTC),
+                "unified_maturity_at": original.label_watermark_at,
+                "label_available_at": original.label_watermark_at,
+            }
+        )
+        for index in range(10)
+    )
+    candidate = original.model_copy(
+        update={"training_records": (*immature_records, *extra_month_records)}
+    )
+
+    release = freeze_candidate_release(candidate)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_MATURE",)
+
+
+def test_declared_consecutive_mature_window_can_omit_newer_mature_months() -> None:
     original = command()
     next_month_records = tuple(
         original.training_records[index].model_copy(
@@ -1096,12 +1156,13 @@ def test_training_window_must_use_latest_mature_months() -> None:
 
     release = freeze_candidate_release(candidate)
 
-    assert release.disposition == "FAILED"
-    assert release.availability_failure == "CALIBRATION"
-    assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons
+    assert release.disposition == "CANDIDATES"
+    assert release.availability_failure is None
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == original.training_window_months
 
 
-def test_latest_sixty_mature_months_reject_calendar_gaps() -> None:
+def test_declared_sixty_month_window_rejects_calendar_gaps() -> None:
     original = command()
     missing_month = "2042-01"
     earlier_month = "2040-11"
@@ -1131,4 +1192,4 @@ def test_latest_sixty_mature_months_reject_calendar_gaps() -> None:
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
-    assert "CALIBRATION_TRAINING_WINDOW_NOT_LATEST_MATURE_MONTHS" in release.reasons
+    assert "CALIBRATION_TRAINING_WINDOW_NOT_CONSECUTIVE" in release.reasons

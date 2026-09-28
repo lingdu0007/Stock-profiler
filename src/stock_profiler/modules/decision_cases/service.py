@@ -585,36 +585,14 @@ def _validate_candidate_calibration_sources(
                 or score.label_watermark_at >= frozen_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+        if not _calibration_month_mature_by(records, command.label_watermark_at):
+            raise CandidateCalibrationProvenanceInvalid()
 
     if any(
         record.raw_score_model_version != candidate_model_version
         for record in command.training_records
     ):
         raise CandidateCalibrationVersionMismatch()
-
-    source_months = {
-        fact.case.knowledge_cutoff[:7]
-        for fact in ledger.candidate_calibration_source_history(connection, access_scope)
-        if fact.validation_status == "PASSED"
-        and fact.corrects_event_id is None
-        and fact.result.research is not None
-        and fact.result.research.disposition in {"FROZEN", "REJECTED"}
-        and fact.result.research.raw_scores is not None
-        and len(fact.result.research.raw_scores) == 10
-        and len({score.security_id for score in fact.result.research.raw_scores}) == 10
-        and len({score.research_id for score in fact.result.research.raw_scores}) == 10
-        and datetime.fromisoformat(fact.committed_at) <= candidate_cutoff
-        and datetime.fromisoformat(fact.case.knowledge_cutoff) <= candidate_cutoff
-        and _calibration_month_mature_by(
-            records_by_event.get(fact.decision_event_id, []), command.label_watermark_at
-        )
-    }
-    expected_months = tuple(sorted(source_months)[-60:])
-    if len(command.training_window_months) == 60 and (
-        len(expected_months) != 60 or tuple(command.training_window_months) != expected_months
-    ):
-        raise CandidateCalibrationProvenanceInvalid()
-
 
 def _calibration_month_mature_by(records: list[CalibrationRecord], watermark: datetime) -> bool:
     """Require the complete source cohort's actual maturity and label-availability evidence."""
