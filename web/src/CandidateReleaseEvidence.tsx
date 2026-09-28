@@ -36,6 +36,18 @@ export function CandidateReleaseEvidence({
         )}
         <Record label="Capability version" value={release.capability_version} />
         <Record label="Qualification scope" value={release.qualification_scope} />
+        <Record
+          label="Qualification decision"
+          value={release.qualification?.qualification_id ?? "No matching qualification"}
+        />
+        <Record
+          label="Qualification status"
+          value={release.qualification?.status ?? "NOT_OBTAINED"}
+        />
+        <Record
+          label="Qualification valid through"
+          value={release.qualification?.valid_through ?? "Unavailable"}
+        />
         <Record label="Market state" value={release.market_state} />
         <Record label="Market calendar" value={release.market_calendar_version} />
         <Record

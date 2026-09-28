@@ -118,6 +118,20 @@ DECISION_NOTIFICATION_ATTEMPTS = Table(
     Column("reasons_payload", String, nullable=False),
     Column("recorded_at", String(40), nullable=False),
 )
+_CANDIDATE_PUBLICATION_CLOSURE_FAILURES = frozenset(
+    {
+        "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+        "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+    }
+)
+
+
+def _is_candidate_publication_closure_failure(stage: StageResult) -> bool:
+    return (
+        stage.phase == "PUBLICATION"
+        and stage.status == "FAILED"
+        and bool(set(stage.reasons).intersection(_CANDIDATE_PUBLICATION_CLOSURE_FAILURES))
+    )
 
 
 def _decode_research_event_payload(
@@ -1307,7 +1321,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1335,7 +1349,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1376,7 +1390,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1448,14 +1462,7 @@ class DecisionLedger:
         candidate_publication_failures = tuple(
             (stage, recorded_at)
             for stage, recorded_at in saved_stages
-            if stage.phase == "PUBLICATION"
-            and stage.status == "FAILED"
-            and set(stage.reasons).intersection(
-                {
-                    "PUBLICATION_AFTER_CANDIDATE_WINDOW",
-                    "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
-                }
-            )
+            if _is_candidate_publication_closure_failure(stage)
         )
         if report.result.candidate_release is not None and candidate_publication_failures:
             committed_at = next(
@@ -1518,8 +1525,10 @@ class DecisionLedger:
             }
         )
 
-    def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
-        """Expose a report only after an append-only publication success was saved."""
+    def _has_confirmed_report_visibility(
+        self, connection: Connection, decision_event_id: str
+    ) -> bool:
+        """Expose a report after publication or a recognized candidate closure failure."""
         stage_payloads = connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload).where(
                 DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id
@@ -1528,16 +1537,7 @@ class DecisionLedger:
         stages = tuple(StageResult.model_validate_json(payload) for payload in stage_payloads)
         if any(stage.phase == "PUBLICATION" and stage.status == "SUCCEEDED" for stage in stages):
             return True
-        candidate_closure_failures = {
-            "PUBLICATION_AFTER_CANDIDATE_WINDOW",
-            "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
-        }
-        return any(
-            stage.phase == "PUBLICATION"
-            and stage.status == "FAILED"
-            and bool(set(stage.reasons).intersection(candidate_closure_failures))
-            for stage in stages
-        )
+        return any(_is_candidate_publication_closure_failure(stage) for stage in stages)
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""

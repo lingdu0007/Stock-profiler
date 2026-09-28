@@ -21,7 +21,7 @@ _MINIMUM_RECORDS_PER_CLASS = 50
 CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
-CandidateAvailabilityFailure = Literal["DATA", "CALIBRATION", "VERSION"]
+CandidateAvailabilityFailure = Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"]
 CandidateQualificationExplanationStatus = Literal["VALID", "AT_RISK", "NOT_QUALIFIED"]
 
 
@@ -229,6 +229,7 @@ class CandidateReleaseOutcome(UniverseContract):
     research_event_id: str
     market_calendar_version: str
     market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
+    qualification: MarketStateQualification | None = None
     calibration: CalibrationSnapshot | None
     members: tuple[CalibratedMember, ...]
     population: CandidatePopulation
@@ -348,7 +349,7 @@ def freeze_candidate_release(
     )
     if publication_time > window[-1].closes_at:
         late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
-        historical_members = _exclude_candidates(tuple(members), (late_reason,))
+        historical_members = exclude_candidate_members(tuple(members), (late_reason,))
         return _release_outcome(
             command,
             window_dates,
@@ -414,16 +415,22 @@ def finalize_candidate_release_publication(
 ) -> CandidateReleaseOutcome:
     """Fail an otherwise valid batch if its durable publication time misses the window."""
     window, _ = _candidate_window(command)
+    qualification = (
+        outcome.qualification
+        if outcome.published_at == published_at
+        else _matching_qualification(command, published_at)
+    )
     if (
         outcome.disposition in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
         and len(window) == 5
         and published_at > window[-1].closes_at
     ):
         late_reason = "PUBLICATION_AFTER_CANDIDATE_WINDOW"
-        members = _exclude_candidates(outcome.members, (late_reason,))
+        members = exclude_candidate_members(outcome.members, (late_reason,))
         return outcome.model_copy(
             update={
                 "published_at": published_at,
+                "qualification": qualification,
                 "disposition": "FAILED",
                 "members": members,
                 "population": outcome.population.model_copy(
@@ -436,7 +443,9 @@ def finalize_candidate_release_publication(
                 "reasons": (late_reason,),
             }
         )
-    published = outcome.model_copy(update={"published_at": published_at})
+    published = outcome.model_copy(
+        update={"published_at": published_at, "qualification": qualification}
+    )
     if published.disposition not in {
         "CANDIDATES",
         "VALID_NO_CANDIDATES",
@@ -444,10 +453,6 @@ def finalize_candidate_release_publication(
     }:
         return published
 
-    qualification = _matching_qualification(
-        command,
-        published_at,
-    )
     qualification_current = (
         qualification is not None
         and qualification.status in {"VALID", "AT_RISK"}
@@ -607,7 +612,7 @@ def _candidate_window(
     return window, None
 
 
-def _exclude_candidates(
+def exclude_candidate_members(
     members: tuple[CalibratedMember, ...],
     reasons: tuple[str, ...],
 ) -> tuple[CalibratedMember, ...]:
@@ -651,13 +656,13 @@ def _release_outcome(
     members: tuple[CalibratedMember, ...] | None = None,
     availability_failure: CandidateAvailabilityFailure | None = None,
 ) -> CandidateReleaseOutcome:
+    qualification = _matching_qualification(command, command.published_at)
     valid_monthly = disposition in {
         "CANDIDATES",
         "VALID_NO_CANDIDATES",
         "RECOMMENDATION_ABSTAINED",
     }
     if members is None:
-        qualification = _matching_qualification(command, command.published_at)
         state_qualified = (
             qualification is not None
             and qualification.status in {"VALID", "AT_RISK"}
@@ -700,6 +705,7 @@ def _release_outcome(
         research_event_id=command.research_event_id,
         market_calendar_version=command.market_calendar_version,
         market_state=command.market_state,
+        qualification=qualification,
         calibration=calibration,
         members=members,
         population=CandidatePopulation(

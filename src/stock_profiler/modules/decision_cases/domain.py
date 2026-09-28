@@ -26,6 +26,7 @@ from stock_profiler.foundation.decision_versions import (
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CandidateReleaseCommand,
     CandidateReleaseOutcome,
+    exclude_candidate_members,
 )
 from stock_profiler.modules.candidate_selection.selection import SelectionCommand, SelectionOutcome
 from stock_profiler.modules.candidate_selection.universe import UniverseCommand, UniverseOutcome
@@ -691,15 +692,7 @@ class FormalReport(FrozenContract):
         if candidate_release is None or failure_stage.phase != "PUBLICATION":
             return self
         reason = failure_stage.reasons[0]
-        failed_members = tuple(
-            member.model_copy(
-                update={
-                    "candidate": False,
-                    "reasons": tuple(dict.fromkeys((*member.reasons, reason))),
-                }
-            )
-            for member in candidate_release.members
-        )
+        failed_members = exclude_candidate_members(candidate_release.members, (reason,))
         failed_release = candidate_release.model_copy(
             update={
                 "disposition": "FAILED",

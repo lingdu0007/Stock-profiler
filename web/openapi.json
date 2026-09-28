@@ -781,7 +781,7 @@
           "availability_failure": {
             "anyOf": [
               {
-                "enum": ["DATA", "CALIBRATION", "VERSION"],
+                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
                 "type": "string"
               },
               {
@@ -823,7 +823,7 @@
           "availability_failure": {
             "anyOf": [
               {
-                "enum": ["DATA", "CALIBRATION", "VERSION"],
+                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
                 "type": "string"
               },
               {
@@ -889,6 +889,16 @@
             "format": "date-time",
             "title": "Published At",
             "type": "string"
+          },
+          "qualification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketStateQualification"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "qualification_scope": {
             "const": "D0_SYNTHETIC_CONTRACT_ONLY",
@@ -3859,6 +3869,76 @@
         },
         "required": ["disposition", "reasons", "authorization_id", "position_snapshot"],
         "title": "LiquidityOutcome",
+        "type": "object"
+      },
+      "MarketStateQualification": {
+        "additionalProperties": false,
+        "description": "Snapshot of one persisted qualification decision for one market state.",
+        "properties": {
+          "capability_version": {
+            "minLength": 1,
+            "title": "Capability Version",
+            "type": "string"
+          },
+          "current_status_recorded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Status Recorded At"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "market_state": {
+            "enum": ["BULL", "BEAR", "SIDEWAYS"],
+            "title": "Market State",
+            "type": "string"
+          },
+          "qualification_id": {
+            "minLength": 1,
+            "title": "Qualification Id",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED", "EXPIRED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "valid_through": {
+            "format": "date-time",
+            "title": "Valid Through",
+            "type": "string"
+          }
+        },
+        "required": [
+          "market_state",
+          "status",
+          "qualification_id",
+          "capability_version",
+          "market_calendar_version",
+          "recorded_at",
+          "valid_through"
+        ],
+        "title": "MarketStateQualification",
         "type": "object"
       },
       "MaximumFundingLeg": {

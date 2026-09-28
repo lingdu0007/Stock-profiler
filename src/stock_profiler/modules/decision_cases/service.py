@@ -2338,7 +2338,11 @@ def _commit_framework_result(
                             publication_command,
                             published_at=publication_time,
                             reason=candidate_research_failure.reason,
-                            availability_failure="DATA",
+                            availability_failure=(
+                                "SYSTEM"
+                                if candidate_research_failure.disposition == "SYSTEM_FAILED"
+                                else "DATA"
+                            ),
                         )
                 elif candidate_calibration_failure is not None:
                     candidate_release = candidate_release_availability_failure(

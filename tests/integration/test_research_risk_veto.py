@@ -4297,7 +4297,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             command,
             published_at=publication_time,
             reason="CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE",
-            availability_failure="DATA",
+            availability_failure=(
+                "SYSTEM" if candidate_scenario == "UPSTREAM_RESEARCH_SYSTEM_FAILED" else "DATA"
+            ),
         )
     elif candidate_scenario == "UPSTREAM_RESEARCH_BLOCKED":
         direct = candidate_release_blocked_by_business_prerequisite(
@@ -4484,8 +4486,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
     }:
         assert direct.availability_failure == "CALIBRATION"
-    elif candidate_scenario in {"CALENDAR_WINDOW_MISSING", "UPSTREAM_RESEARCH_EVENT_MISSING"}:
+    elif candidate_scenario in {
+        "CALENDAR_WINDOW_MISSING",
+        "UPSTREAM_RESEARCH_EVENT_MISSING",
+        "UPSTREAM_RESEARCH_DATA_FAILED",
+    }:
         assert direct.availability_failure == "DATA"
+    elif candidate_scenario == "UPSTREAM_RESEARCH_SYSTEM_FAILED":
+        assert direct.availability_failure == "SYSTEM"
     elif candidate_scenario in {
         "VERSION_MISMATCH",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH",
@@ -4557,6 +4565,18 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         return
     assert execution.report is not None
+    if candidate_scenario == "AT_RISK_QUALIFICATION":
+        final_qualification = qualification_history[-1].qualification
+        assert final_qualification is not None
+        assert execution.report.result.candidate_release is not None
+        assert execution.report.result.candidate_release.qualification is not None
+        assert (
+            execution.report.result.candidate_release.qualification.qualification_id
+            == final_qualification.decision_id
+        )
+        direct = direct.model_copy(
+            update={"qualification": execution.report.result.candidate_release.qualification}
+        )
     assert execution.report.result.candidate_release == direct
     if candidate_scenario == "NORMAL":
         assert execution.report.report_publication is not None

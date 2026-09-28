@@ -526,7 +526,7 @@ export interface components {
         /** CandidatePopulation */
         CandidatePopulation: {
             /** Availability Failure */
-            availability_failure?: ("DATA" | "CALIBRATION" | "VERSION") | null;
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
             /** Recommendation Coverage Denominator */
             recommendation_coverage_denominator: boolean;
             /** Recommendation Coverage Pass */
@@ -543,7 +543,7 @@ export interface components {
              */
             actionable: false;
             /** Availability Failure */
-            availability_failure?: ("DATA" | "CALIBRATION" | "VERSION") | null;
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
             /** Batch Id */
             batch_id: string;
             calibration: components["schemas"]["CalibrationSnapshot"] | null;
@@ -574,6 +574,7 @@ export interface components {
              * Format: date-time
              */
             published_at: string;
+            qualification?: components["schemas"]["MarketStateQualification"] | null;
             /**
              * Qualification Scope
              * @constant
@@ -1675,6 +1676,46 @@ export interface components {
             six_month_obligations?: string | null;
             /** Uncovered Obligation Gap */
             uncovered_obligation_gap?: string | null;
+        };
+        /**
+         * MarketStateQualification
+         * @description Snapshot of one persisted qualification decision for one market state.
+         */
+        MarketStateQualification: {
+            /** Capability Version */
+            capability_version: string;
+            /** Current Status Recorded At */
+            current_status_recorded_at?: string | null;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /**
+             * Market State
+             * @enum {string}
+             */
+            market_state: "BULL" | "BEAR" | "SIDEWAYS";
+            /** Qualification Id */
+            qualification_id: string;
+            /**
+             * Qualification Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "NOT_OBTAINED" | "VALID" | "AT_RISK" | "SUSPENDED" | "REVOKED" | "EXPIRED";
+            /**
+             * Valid Through
+             * Format: date-time
+             */
+            valid_through: string;
         };
         /** MaximumFundingLeg */
         MaximumFundingLeg: {

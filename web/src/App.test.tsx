@@ -68,6 +68,17 @@ describe("App", () => {
           research_event_id: "synthetic-research-event-001",
           market_calendar_version: "synthetic-calendar-v1",
           market_state: "BULL",
+          qualification: {
+            market_state: "BULL",
+            status: "AT_RISK",
+            qualification_id: "synthetic-candidate-qualification-at-risk",
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY",
+            capability_version: "candidate-v1",
+            market_calendar_version: "synthetic-calendar-v1",
+            recorded_at: "2046-06-30T08:00:00Z",
+            current_status_recorded_at: "2046-07-01T08:30:00Z",
+            valid_through: "2046-12-31T08:00:00Z"
+          },
           calibration: {
             calibrator_version: "monotone-firth-logistic-v1",
             intercept: "-1.2",
@@ -151,6 +162,8 @@ describe("App", () => {
     expect(release).toHaveTextContent("Independent risk status");
     expect(release).toHaveTextContent("RISK_REVIEW: PASSED");
     expect(release).toHaveTextContent("INDEPENDENT_RISK_ACCEPTED");
+    expect(release).toHaveTextContent("synthetic-candidate-qualification-at-risk");
+    expect(release).toHaveTextContent("AT_RISK");
     expect(release).toHaveTextContent("financial-statements-evidence-00");
     expect(release).toHaveTextContent("2046-06-01T08:00:00Z");
     expect(release).toHaveTextContent("At risk");

@@ -375,6 +375,7 @@ def test_final_publication_freezes_a_new_at_risk_qualification_revision() -> Non
     assert published.members[0].market_state_qualification_status == "AT_RISK"
     assert "ALL_CANDIDATE_GATES_PASSED" not in published.members[0].reasons
     assert "MARKET_STATE_QUALIFICATION_AT_RISK" in published.members[0].reasons
+    assert published.qualification == at_risk
 
 
 def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
