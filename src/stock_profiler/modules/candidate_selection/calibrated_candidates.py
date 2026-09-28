@@ -128,10 +128,10 @@ class CandidateReleaseCommand(UniverseContract):
     market_state: Literal["BULL", "BEAR", "SIDEWAYS"]
     market_calendar_version: str = Field(min_length=1)
     qualifications: tuple[MarketStateQualification, ...] = ()
-    calibrator_version: Literal["monotone-firth-logistic-v1"] = CALIBRATOR_VERSION
+    calibrator_version: str = Field(default=CALIBRATOR_VERSION, min_length=1)
     label_watermark_at: AwareDatetime
     training_window_months: tuple[str, ...] = Field(min_length=1)
-    training_records: tuple[CalibrationRecord, ...] = Field(min_length=1)
+    training_records: tuple[CalibrationRecord, ...]
     candidates: tuple[CandidateInput, ...] = Field(min_length=1)
     market_sessions: tuple[MarketSession, ...] = Field(min_length=5)
 
@@ -223,6 +223,14 @@ def freeze_candidate_release(
     calendar_failure = _candidate_window_failure(command, window, window_failure)
     if calendar_failure is not None:
         return calendar_failure
+    if command.calibrator_version != CALIBRATOR_VERSION:
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            reasons=("CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",),
+            availability_failure="VERSION",
+        )
     if any(not candidate.data_complete for candidate in command.candidates):
         return _release_outcome(
             command,
@@ -465,12 +473,27 @@ def _candidate_window(
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     calendar = synthetic_market_calendar(command.market_calendar_version)
-    if calendar is None or any(
+    if calendar is None:
+        return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
+    saved_window = tuple(
+        session
+        for session in calendar.sessions
+        if session.closed_at - timedelta(hours=7) > command.knowledge_cutoff
+    )[:5]
+    if len(saved_window) != 5 or any(
         (saved := calendar.session_for(session.session_sequence)) is None
         or saved.closed_at.date() != session.market_date
         or saved.closed_at - timedelta(hours=7) != session.opens_at
         or saved.closed_at != session.closes_at
         for session in window
+    ):
+        return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
+    if any(
+        session.session_sequence != saved.ordinal
+        or session.market_date != saved.closed_at.date()
+        or session.opens_at != saved.closed_at - timedelta(hours=7)
+        or session.closes_at != saved.closed_at
+        for session, saved in zip(window, saved_window, strict=True)
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
     return window, None
@@ -558,6 +581,8 @@ def _release_outcome(
 
 
 def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
+    if command.calibrator_version != CALIBRATOR_VERSION:
+        raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
     months = command.training_window_months
     if len(months) != _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")

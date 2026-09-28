@@ -421,6 +421,67 @@ def test_shifted_sessions_do_not_match_the_saved_market_calendar() -> None:
     assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH",)
 
 
+def test_unknown_market_calendar_version_fails_closed() -> None:
+    original = command().model_copy(
+        update={"market_calendar_version": "unregistered-market-calendar-v1"}
+    )
+
+    release = freeze_candidate_release(original)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "DATA"
+    assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH",)
+
+
+def test_candidate_window_cannot_start_after_the_first_saved_post_cutoff_session() -> None:
+    original = command()
+    later_sessions = tuple(
+        session.model_copy(
+            update={
+                "market_date": session.market_date + timedelta(days=7),
+                "opens_at": session.opens_at + timedelta(days=7),
+                "closes_at": session.closes_at + timedelta(days=7),
+                "session_sequence": session.session_sequence + 5,
+            }
+        )
+        for session in original.market_sessions
+    )
+    later_command = original.model_copy(
+        update={
+            "market_sessions": later_sessions,
+            "last_completed_market_session_sequence": 105,
+        }
+    )
+
+    release = freeze_candidate_release(later_command)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "DATA"
+    assert release.reasons == ("CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH",)
+
+
+def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
+    original = command()
+    unsupported = CandidateReleaseCommand.model_validate(
+        original.model_dump(mode="python") | {"calibrator_version": "unknown-calibrator-v2"}
+    )
+    missing_records = CandidateReleaseCommand.model_validate(
+        original.model_dump(mode="python") | {"training_records": ()}
+    )
+
+    version_failure = freeze_candidate_release(unsupported)
+    data_failure = freeze_candidate_release(missing_records)
+
+    assert version_failure.disposition == "FAILED"
+    assert version_failure.availability_failure == "VERSION"
+    assert version_failure.reasons == ("CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",)
+    with pytest.raises(ValueError, match="CALIBRATOR_VERSION_UNSUPPORTED"):
+        candidate_module._fit_calibrator(unsupported)
+    assert data_failure.disposition == "FAILED"
+    assert data_failure.availability_failure == "CALIBRATION"
+    assert data_failure.calibration is None
+
+
 def test_host_availability_failure_preserves_calendar_failures() -> None:
     original = command()
     incomplete = candidate_release_availability_failure(

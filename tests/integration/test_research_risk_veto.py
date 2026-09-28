@@ -3390,6 +3390,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_SOURCE_MISSING"),
         ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_INFERENCE_MODEL_MISMATCH"),
+        ("ACCEPT", "CALIBRATION_RECORDS_MISSING"),
+        ("ACCEPT", "CALIBRATOR_VERSION_UNSUPPORTED"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
         ("ACCEPT", "CALIBRATION_NEWEST_MONTH_OMITTED"),
@@ -3428,6 +3430,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH",
+        "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATOR_VERSION_UNSUPPORTED",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_NEWEST_MONTH_OMITTED",
@@ -3535,6 +3539,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             for record in training_records
             if record.record_id != missing_member_record.record_id
         )
+    if candidate_scenario == "CALIBRATION_RECORDS_MISSING":
+        training_records = ()
     runtime = initialize_runtime_storage(migrated_settings)
     source_ledger = DecisionLedger(runtime.engine)
     with runtime.engine.connect() as connection:
@@ -3689,6 +3695,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         market_state="BULL",
         market_calendar_version="synthetic-market-calendar-v1",
         label_watermark_at=cutoff,
+        calibrator_version=(
+            "unknown-calibrator-v2"
+            if candidate_scenario == "CALIBRATOR_VERSION_UNSUPPORTED"
+            else "monotone-firth-logistic-v1"
+        ),
         training_window_months=(
             training_months[:-1]
             if candidate_scenario == "CALIBRATION_FAILURE"
@@ -4104,7 +4115,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             published_at=publication_time,
             reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
         )
-    elif candidate_scenario == "VERSION_MISMATCH":
+    elif candidate_scenario == "VERSION_MISMATCH" or candidate_scenario in {
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+    }:
         direct = candidate_release_availability_failure(
             command,
             published_at=publication_time,
@@ -4118,7 +4132,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH",
             availability_failure="VERSION",
         )
-    elif candidate_scenario in {
+    elif candidate_scenario == "CALIBRATOR_VERSION_UNSUPPORTED":
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",
+            availability_failure="VERSION",
+        )
+    elif candidate_scenario == "CALIBRATION_RECORDS_MISSING" or candidate_scenario in {
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
@@ -4260,6 +4281,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING": "FAILED",
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH": "FAILED",
+        "CALIBRATION_RECORDS_MISSING": "FAILED",
+        "CALIBRATOR_VERSION_UNSUPPORTED": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
         "CALIBRATION_NEWEST_MONTH_OMITTED": "FAILED",
@@ -4271,8 +4294,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
-        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "RECOMMENDATION_ABSTAINED",
-        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "FAILED",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF": "FAILED",
         "QUALIFICATION_FIRST_OBTAINED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "COMMIT_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "WINDOW_EXPIRED": "FAILED",
@@ -4293,13 +4316,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
+        "CALIBRATION_RECORDS_MISSING",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_NEWEST_MONTH_OMITTED",
     }:
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario == "WINDOW_EXPIRED":
         assert direct.availability_failure == "DATA"
-    elif candidate_scenario in {"VERSION_MISMATCH", "CALIBRATION_INFERENCE_MODEL_MISMATCH"}:
+    elif candidate_scenario in {
+        "VERSION_MISMATCH",
+        "CALIBRATION_INFERENCE_MODEL_MISMATCH",
+        "CALIBRATOR_VERSION_UNSUPPORTED",
+        "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
+        "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
+    }:
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         assert direct.members[0].market_state_qualified is False

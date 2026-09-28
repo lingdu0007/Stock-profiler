@@ -723,10 +723,16 @@ def _validate_candidate_qualification_snapshots(
         )
         latest_basis = latest.formal_passing_evidence or latest.authorization_evidence
         if (
+            cutoff_basis is not None
+            and cutoff_basis.market_calendar_version != command.market_calendar_version
+        ) or (
+            latest_basis is not None
+            and latest_basis.market_calendar_version != command.market_calendar_version
+        ):
+            raise CandidateQualificationVersionMismatch()
+        if (
             cutoff_basis is None
-            or cutoff_basis.market_calendar_version != command.market_calendar_version
             or latest_basis is None
-            or latest_basis.market_calendar_version != command.market_calendar_version
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
