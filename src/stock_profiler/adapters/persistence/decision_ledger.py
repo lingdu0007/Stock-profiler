@@ -25,6 +25,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ReportPublication,
     ResultAccessScope,
     StageResult,
     stored_decision_event_payload,
@@ -1435,23 +1436,69 @@ class DecisionLedger:
         report: FormalReport,
     ) -> FormalReport:
         """Acquire saved stage facts; the report contract owns their visible selection."""
-        event_stages = tuple(
-            stage_result
-            for stage_result in (
-                StageResult.model_validate_json(payload)
-                for payload in connection.execute(
-                    select(DECISION_STAGE_EVENTS.c.stage_payload)
-                    .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
-                    .order_by(DECISION_STAGE_EVENTS.c.sequence)
-                ).scalars()
+        saved_stages = tuple(
+            (StageResult.model_validate_json(payload), recorded_at)
+            for payload, recorded_at in connection.execute(
+                select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
+                .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
+                .order_by(DECISION_STAGE_EVENTS.c.sequence)
             )
         )
+        event_stages = tuple(stage for stage, _ in saved_stages)
+        candidate_publication_failures = tuple(
+            (stage, recorded_at)
+            for stage, recorded_at in saved_stages
+            if stage.phase == "PUBLICATION"
+            and stage.status == "FAILED"
+            and set(stage.reasons).intersection(
+                {
+                    "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+                    "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+                }
+            )
+        )
+        if report.result.candidate_release is not None and candidate_publication_failures:
+            committed_at = next(
+                (
+                    recorded_at
+                    for stage, recorded_at in saved_stages
+                    if stage.phase == "BUSINESS_COMMIT" and stage.status == "SUCCEEDED"
+                ),
+                None,
+            )
+            if committed_at is None:
+                raise DecisionEventCommitError("candidate report commit clock is unavailable")
+            failure_stage, failure_recorded_at = candidate_publication_failures[-1]
+            return report.with_candidate_publication_failure(
+                failure_stage,
+                committed_at=committed_at,
+                failure_recorded_at=failure_recorded_at,
+            )
         projected = report.with_publication_history(event_stages)
         if report.result.monitoring is None:
+            if report.result.candidate_release is not None:
+                clocks = {
+                    stage.phase: recorded_at
+                    for stage, recorded_at in saved_stages
+                    if stage.status == "SUCCEEDED"
+                }
+                if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+                    raise DecisionEventCommitError(
+                        "candidate report publication clocks are unavailable"
+                    )
+                return projected.model_copy(
+                    update={
+                        "report_publication": ReportPublication(
+                            status="PUBLISHED",
+                            committed_at=clocks["BUSINESS_COMMIT"],
+                            published_at=clocks["PUBLICATION"],
+                        )
+                    }
+                )
             return projected
         from stock_profiler.modules.delivery.monitoring_contracts import MonitoringPublication
 
-        clocks: dict[str, str] = {}
+        monitoring_clocks: dict[str, str] = {}
         for payload, recorded_at in connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
             .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
@@ -1459,13 +1506,14 @@ class DecisionLedger:
         ):
             stage = StageResult.model_validate_json(payload)
             if stage.status == "SUCCEEDED":
-                clocks.setdefault(stage.phase, recorded_at)
-        if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+                monitoring_clocks.setdefault(stage.phase, recorded_at)
+        if "BUSINESS_COMMIT" not in monitoring_clocks or "PUBLICATION" not in monitoring_clocks:
             raise DecisionEventCommitError("monitoring publication clocks are unavailable")
         return projected.model_copy(
             update={
                 "monitoring_publication": MonitoringPublication(
-                    committed_at=clocks["BUSINESS_COMMIT"], published_at=clocks["PUBLICATION"]
+                    committed_at=monitoring_clocks["BUSINESS_COMMIT"],
+                    published_at=monitoring_clocks["PUBLICATION"],
                 )
             }
         )
@@ -1477,11 +1525,18 @@ class DecisionLedger:
                 DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id
             )
         ).scalars()
+        stages = tuple(StageResult.model_validate_json(payload) for payload in stage_payloads)
+        if any(stage.phase == "PUBLICATION" and stage.status == "SUCCEEDED" for stage in stages):
+            return True
+        candidate_closure_failures = {
+            "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+            "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+        }
         return any(
-            stage_result.phase == "PUBLICATION" and stage_result.status == "SUCCEEDED"
-            for stage_result in (
-                StageResult.model_validate_json(payload) for payload in stage_payloads
-            )
+            stage.phase == "PUBLICATION"
+            and stage.status == "FAILED"
+            and bool(set(stage.reasons).intersection(candidate_closure_failures))
+            for stage in stages
         )
 
     def counts(self) -> dict[str, int]:

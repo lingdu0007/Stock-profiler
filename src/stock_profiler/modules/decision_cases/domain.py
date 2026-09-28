@@ -418,6 +418,25 @@ class StageResult(FrozenContract):
         return self
 
 
+class ReportPublication(FrozenContract):
+    """Persist the report commit clock and its final publication disposition."""
+
+    status: Literal["PUBLISHED", "FAILED"]
+    committed_at: str
+    published_at: str | None = None
+    failure_recorded_at: str | None = None
+    failure_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_publication_state(self) -> ReportPublication:
+        if self.status == "PUBLISHED":
+            if self.published_at is None or self.failure_recorded_at is not None:
+                raise ValueError("published reports require only a publication timestamp")
+        elif self.failure_recorded_at is None or self.failure_reason is None:
+            raise ValueError("failed report publication requires its recorded failure")
+        return self
+
+
 class BusinessLifecycle(FrozenContract):
     """Expose a lifecycle state only together with the phase that owns it."""
 
@@ -583,6 +602,9 @@ class FormalReport(FrozenContract):
     monitoring_publication: MonitoringPublication | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    report_publication: ReportPublication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     knowledge_cutoff: str
     evidence_clock: EvidenceClock
     version_bundle: DecisionCaseVersionBundle
@@ -657,6 +679,65 @@ class FormalReport(FrozenContract):
             }
         )
 
+    def with_candidate_publication_failure(
+        self,
+        failure_stage: StageResult,
+        *,
+        committed_at: str,
+        failure_recorded_at: str,
+    ) -> FormalReport:
+        """Expose a persisted candidate report as a closed publication failure."""
+        candidate_release = self.result.candidate_release
+        if candidate_release is None or failure_stage.phase != "PUBLICATION":
+            return self
+        reason = failure_stage.reasons[0]
+        failed_members = tuple(
+            member.model_copy(
+                update={
+                    "candidate": False,
+                    "reasons": tuple(dict.fromkeys((*member.reasons, reason))),
+                }
+            )
+            for member in candidate_release.members
+        )
+        failed_release = candidate_release.model_copy(
+            update={
+                "disposition": "FAILED",
+                "members": failed_members,
+                "population": candidate_release.population.model_copy(
+                    update={
+                        "valid_monthly": False,
+                        "recommendation_coverage_denominator": False,
+                        "recommendation_coverage_pass": False,
+                    }
+                ),
+                "reasons": tuple(dict.fromkeys((*candidate_release.reasons, reason))),
+            }
+        )
+        failed_result = self.result.model_copy(
+            update={
+                "candidate_release": failed_release,
+                "outcome_code": "CANDIDATE_RELEASE_FAILED",
+                "summary": "Synthetic calibrated candidate publication failed.",
+                "key_reasons": (reason,),
+            }
+        )
+        return self.model_copy(
+            update={
+                "result": failed_result,
+                "stage_results": (
+                    *(stage for stage in self.stage_results if stage.phase != "PUBLICATION"),
+                    failure_stage,
+                ),
+                "report_publication": ReportPublication(
+                    status="FAILED",
+                    committed_at=committed_at,
+                    failure_recorded_at=failure_recorded_at,
+                    failure_reason=reason,
+                ),
+            }
+        )
+
     @model_validator(mode="before")
     @classmethod
     def project_legacy_stage_results(cls, value: Any) -> Any:
@@ -697,7 +778,7 @@ class DecisionCaseExecution(FrozenContract):
     business_result_status: BusinessResultStatus | None
     business_lifecycle: BusinessLifecycle | None
     business_commit_status: BusinessCommitStatus
-    publication_status: Literal["PUBLISHED", "CLOSED"]
+    publication_status: Literal["PUBLISHED", "FAILED", "CLOSED"]
     report: FormalReport | None
     stage_results: tuple[StageResult, ...]
 

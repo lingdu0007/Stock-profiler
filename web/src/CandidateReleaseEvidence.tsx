@@ -2,8 +2,15 @@ import type { FormalReport } from "./api/client";
 import { ReportRecord as Record } from "./ReportRecord";
 
 type CandidateRelease = NonNullable<FormalReport["result"]["candidate_release"]>;
+type ReportPublication = FormalReport["report_publication"];
 
-export function CandidateReleaseEvidence({ release }: { release: CandidateRelease }) {
+export function CandidateReleaseEvidence({
+  release,
+  publication
+}: {
+  release: CandidateRelease;
+  publication: ReportPublication;
+}) {
   return (
     <section className="report-section" aria-label="Candidate batch release">
       <h2>Candidate batch</h2>
@@ -11,7 +18,22 @@ export function CandidateReleaseEvidence({ release }: { release: CandidateReleas
       <dl className="record-list">
         <Record label="Batch" value={release.batch_id} />
         <Record label="Knowledge cutoff" value={release.knowledge_cutoff} />
-        <Record label="Published" value={release.published_at} />
+        <Record
+          label="Published"
+          value={publication?.status === "FAILED" ? "Not published" : release.published_at}
+        />
+        {publication?.status === "FAILED" && (
+          <>
+            <Record
+              label="Publication failed"
+              value={publication.failure_recorded_at ?? "Unavailable"}
+            />
+            <Record
+              label="Publication failure reason"
+              value={publication.failure_reason ?? "Unavailable"}
+            />
+          </>
+        )}
         <Record label="Capability version" value={release.capability_version} />
         <Record label="Qualification scope" value={release.qualification_scope} />
         <Record label="Market state" value={release.market_state} />

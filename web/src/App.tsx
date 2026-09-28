@@ -180,7 +180,10 @@ function FormalReportView({ report }: { report: FormalReport }) {
       {report.result.universe && <UniverseEvidence universe={report.result.universe} />}
       {report.result.selection && <SelectionEvidence selection={report.result.selection} />}
       {report.result.candidate_release && (
-        <CandidateReleaseEvidence release={report.result.candidate_release} />
+        <CandidateReleaseEvidence
+          release={report.result.candidate_release}
+          publication={report.report_publication}
+        />
       )}
 
       <section className="report-section" aria-label="Decision stages">

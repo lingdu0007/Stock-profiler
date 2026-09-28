@@ -1461,6 +1461,7 @@ export interface components {
             monitoring_publication?: components["schemas"]["MonitoringPublication"] | null;
             /** Qualification Scope */
             qualification_scope: string;
+            report_publication?: components["schemas"]["ReportPublication"] | null;
             /** Report Version Id */
             report_version_id: string;
             result: components["schemas"]["ExternalResult"];
@@ -2708,6 +2709,25 @@ export interface components {
              */
             registered_at: string;
             scope: components["schemas"]["QualificationScope"];
+        };
+        /**
+         * ReportPublication
+         * @description Persist the report commit clock and its final publication disposition.
+         */
+        ReportPublication: {
+            /** Committed At */
+            committed_at: string;
+            /** Failure Reason */
+            failure_reason?: string | null;
+            /** Failure Recorded At */
+            failure_recorded_at?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PUBLISHED" | "FAILED";
         };
         /** RequalificationApplication */
         RequalificationApplication: {

@@ -46,9 +46,14 @@ describe("App", () => {
     );
   });
 
-  it("renders the frozen candidate batch and per-security evidence without personal allocation", async () => {
+  it("renders candidate evidence and records a failed publication without presenting it as published", async () => {
     const candidateReport: FormalReport = {
       ...report,
+      report_publication: {
+        status: "PUBLISHED",
+        committed_at: "2046-07-01T09:00:00Z",
+        published_at: "2046-07-01T09:01:00Z"
+      },
       result: {
         ...report.result,
         outcome_code: "CANDIDATE_RELEASE_CANDIDATES",
@@ -129,17 +134,15 @@ describe("App", () => {
       }
     };
     window.history.pushState({}, "", `/reports/${report.report_version_id}`);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify(candidateReport), {
-          status: 200,
-          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
-        })
-      )
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(candidateReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      })
     );
+    vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    const view = render(<App />);
 
     const release = await screen.findByRole("region", { name: "Candidate batch release" });
     expect(release).toHaveTextContent("CANDIDATES");
@@ -154,6 +157,50 @@ describe("App", () => {
     expect(release).toHaveTextContent("Original synthetic investment thesis.");
     expect(release).not.toHaveTextContent("account route");
     expect(release).not.toHaveTextContent("position quantity");
+
+    const failedReport: FormalReport = {
+      ...candidateReport,
+      report_publication: {
+        status: "FAILED",
+        committed_at: "2046-07-01T09:00:00Z",
+        failure_recorded_at: "2046-07-08T09:00:00Z",
+        failure_reason: "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+      },
+      result: {
+        ...candidateReport.result,
+        outcome_code: "CANDIDATE_RELEASE_FAILED",
+        candidate_release: {
+          ...candidateReport.result.candidate_release!,
+          disposition: "FAILED",
+          members: candidateReport.result.candidate_release!.members.map((member) => ({
+            ...member,
+            candidate: false
+          }))
+        }
+      },
+      stage_results: [
+        ...candidateReport.stage_results.filter((stage) => stage.phase !== "PUBLICATION"),
+        {
+          phase: "PUBLICATION",
+          status: "FAILED",
+          gate_results: [{ gate_id: "FORMAL_REPORT_SAVED", status: "FAILED" }],
+          reasons: ["PUBLICATION_AFTER_CANDIDATE_WINDOW"]
+        }
+      ]
+    };
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(failedReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      })
+    );
+    view.unmount();
+    render(<App />);
+
+    const failedRelease = await screen.findByRole("region", { name: "Candidate batch release" });
+    expect(failedRelease).toHaveTextContent("Not published");
+    expect(failedRelease).toHaveTextContent("2046-07-08T09:00:00Z");
+    expect(failedRelease).toHaveTextContent("PUBLICATION_AFTER_CANDIDATE_WINDOW");
   });
 
   it("renders the research rejection projection and its durable stages", async () => {

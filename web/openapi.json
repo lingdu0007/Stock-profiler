@@ -3153,6 +3153,16 @@
             "title": "Qualification Scope",
             "type": "string"
           },
+          "report_publication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportPublication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "report_version_id": {
             "title": "Report Version Id",
             "type": "string"
@@ -6659,6 +6669,57 @@
         },
         "required": ["decision_id", "scope", "node", "registered_at"],
         "title": "RegisteredTaskNode",
+        "type": "object"
+      },
+      "ReportPublication": {
+        "additionalProperties": false,
+        "description": "Persist the report commit clock and its final publication disposition.",
+        "properties": {
+          "committed_at": {
+            "title": "Committed At",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "failure_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Recorded At"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "status": {
+            "enum": ["PUBLISHED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["status", "committed_at"],
+        "title": "ReportPublication",
         "type": "object"
       },
       "RequalificationApplication": {

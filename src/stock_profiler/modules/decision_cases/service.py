@@ -3181,12 +3181,14 @@ def _publish_report_or_record_failure(
                 confirmed_at,
             )
         except (ValueError, CandidateQualificationHistoryAmbiguous):
-            _record_publication_failure(
+            failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
                 fact,
                 "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
             )
+            if failed_report is not None:
+                return failed_report, None
             return None, DecisionEventCommitError(
                 "candidate qualification changed before publication"
             )
@@ -3201,23 +3203,27 @@ def _publish_report_or_record_failure(
             and confirmed_outcome.disposition == "FAILED"
             and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
         ):
-            _record_publication_failure(
+            failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
                 fact,
                 "PUBLICATION_AFTER_CANDIDATE_WINDOW",
             )
+            if failed_report is not None:
+                return failed_report, None
             return None, DecisionEventCommitError("candidate publication window expired")
         if (
             confirmed_outcome.model_copy(update={"published_at": candidate_outcome.published_at})
             != candidate_outcome
         ):
-            _record_publication_failure(
+            failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
                 fact,
                 "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
             )
+            if failed_report is not None:
+                return failed_report, None
             return None, DecisionEventCommitError(
                 "candidate qualification changed before publication"
             )
@@ -3243,6 +3249,20 @@ def _record_publication_failure(
         _publication_failure_stage(reason),
         allow_repeated_occurrence=True,
     )
+
+
+def _record_candidate_publication_failure(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    fact: DecisionEventFact,
+    reason: str,
+) -> FormalReport | None:
+    """Expose the persisted candidate result only for recognized closed gate failures."""
+    _record_publication_failure(ledger, connection, fact, reason)
+    report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
+    if report is None or report.report_publication is None:
+        return None
+    return report if report.report_publication.status == "FAILED" else None
 
 
 _CANDIDATE_RELEASE_STAGE_STATUSES: dict[
@@ -3331,6 +3351,9 @@ def _record_fact_stage_result(
 
 
 def _published_execution(report: FormalReport) -> DecisionCaseExecution:
+    publication_status: Literal["PUBLISHED", "FAILED"] = (
+        report.report_publication.status if report.report_publication is not None else "PUBLISHED"
+    )
     return DecisionCaseExecution(
         business_object_id=report.business_object_id,
         framework_run_id=report.framework_run_id,
@@ -3340,7 +3363,7 @@ def _published_execution(report: FormalReport) -> DecisionCaseExecution:
         business_result_status=_business_result_status_from_stages(report.stage_results),
         business_lifecycle=_business_lifecycle_from_stages(report.stage_results),
         business_commit_status="COMMITTED",
-        publication_status="PUBLISHED",
+        publication_status=publication_status,
         report=report,
         stage_results=report.stage_results,
     )

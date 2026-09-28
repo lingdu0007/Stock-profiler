@@ -4516,7 +4516,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_REPORT_COMMIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
     }:
-        assert execution.report is None
+        assert execution.report is not None
+        assert execution.report.report_publication is not None
+        assert execution.report.report_publication.status == "FAILED"
+        assert execution.report.report_publication.failure_recorded_at is not None
+        assert execution.report.report_publication.failure_reason == (
+            "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+            if candidate_scenario == "LATE_REPORT_COMMIT"
+            else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+        )
+        assert execution.report.result.candidate_release is not None
+        assert execution.report.result.candidate_release.disposition == "FAILED"
+        assert execution.publication_status == "FAILED"
+        assert execution.report.stage_results[-1].phase == "PUBLICATION"
+        assert execution.report.stage_results[-1].status == "FAILED"
         assert any(
             stage.phase == "PUBLICATION"
             and stage.status == "FAILED"
@@ -4545,6 +4558,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         return
     assert execution.report is not None
     assert execution.report.result.candidate_release == direct
+    if candidate_scenario == "NORMAL":
+        assert execution.report.report_publication is not None
+        assert execution.report.report_publication.status == "PUBLISHED"
+        assert execution.report.report_publication.published_at is not None
+        assert execution.publication_status == "PUBLISHED"
     assert execution.report.result.candidate_release.published_at == (
         datetime.fromisoformat("2042-07-07T16:00:00+00:00")
         if candidate_scenario in {"LATE_COMMIT", "WINDOW_EXPIRED_AFTER_FREEZE"}
