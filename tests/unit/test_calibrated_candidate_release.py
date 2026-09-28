@@ -436,16 +436,18 @@ def test_final_abstention_keeps_its_frozen_unqualified_status_on_replay() -> Non
 
 
 def test_risk_veto_remains_independent_of_research_probability() -> None:
-    rejected = command().candidates[0].model_copy(
-        update={
-            "risk_status": "REJECTED",
-            "risk_gates": (CandidateRiskGate(gate_id="LIQUIDITY", status="FAILED"),),
-            "risk_reasons": ("LIQUIDITY_BELOW_MINIMUM",),
-        }
+    rejected = (
+        command()
+        .candidates[0]
+        .model_copy(
+            update={
+                "risk_status": "REJECTED",
+                "risk_gates": (CandidateRiskGate(gate_id="LIQUIDITY", status="FAILED"),),
+                "risk_reasons": ("LIQUIDITY_BELOW_MINIMUM",),
+            }
+        )
     )
-    candidate = command().model_copy(
-        update={"candidates": (rejected,)}
-    )
+    candidate = command().model_copy(update={"candidates": (rejected,)})
 
     release = freeze_candidate_release(candidate)
 
@@ -583,9 +585,7 @@ def test_candidate_window_cannot_start_after_the_first_saved_post_cutoff_session
 
 def test_candidate_window_rejects_mismatched_last_completed_session_anchor() -> None:
     original = command()
-    incorrect_anchor = original.model_copy(
-        update={"last_completed_market_session_sequence": 99}
-    )
+    incorrect_anchor = original.model_copy(update={"last_completed_market_session_sequence": 99})
 
     release = freeze_candidate_release(incorrect_anchor)
 
@@ -781,12 +781,8 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             "raw_score_training_watermark_at": datetime(2040, 12, 13, 7, tzinfo=UTC),
             "entry_window_ends_at": datetime(2040, 12, 21, 8, tzinfo=UTC),
             "entry_at": datetime(2040, 12, 17, 7, tzinfo=UTC),
-            "unified_maturity_at": _six_month_anniversary(
-                datetime(2040, 12, 21, 8, tzinfo=UTC)
-            ),
-            "label_available_at": _six_month_anniversary(
-                datetime(2040, 12, 21, 8, tzinfo=UTC)
-            ),
+            "unified_maturity_at": _six_month_anniversary(datetime(2040, 12, 21, 8, tzinfo=UTC)),
+            "label_available_at": _six_month_anniversary(datetime(2040, 12, 21, 8, tzinfo=UTC)),
         }
     )
     release = freeze_candidate_release(
@@ -827,12 +823,9 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             }
         )
     )
-    assert release.disposition == "CANDIDATES"
-    assert release.calibration is not None
-    assert release.calibration.training_window_months == (
-        outside_month,
-        *original.training_window_months[:-1],
-    )
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
     immature = original.training_records[0].model_copy(
         update={"label_available_at": datetime(2041, 1, 31, 23, 59, 59, tzinfo=UTC)}
@@ -910,8 +903,9 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
         record for record in original.training_records if int(record.record_id[-2:]) < 8
     )
     release = freeze_candidate_release(original.model_copy(update={"training_records": too_few}))
-    assert release.calibration is not None
-    assert release.calibration.training_record_count == 480
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_REQUIRES_500_MATURE_RECORDS",)
 
     single_class = tuple(
         record.model_copy(update={"terminal_success": False})
@@ -920,10 +914,12 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     release = freeze_candidate_release(
         original.model_copy(update={"training_records": single_class})
     )
-    assert release.calibration is not None
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_CLASS_FLOOR_NOT_MET",)
 
 
-def test_calibrator_uses_mature_month_window_without_extra_class_floor() -> None:
+def test_calibrator_requires_at_least_fifty_labels_per_class() -> None:
     original = command()
     records = tuple(
         record.model_copy(update={"terminal_success": index < 49})
@@ -932,11 +928,23 @@ def test_calibrator_uses_mature_month_window_without_extra_class_floor() -> None
 
     release = freeze_candidate_release(original.model_copy(update={"training_records": records}))
 
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_CLASS_FLOOR_NOT_MET",)
+
+
+def test_calibrator_accepts_exactly_fifty_labels_per_class() -> None:
+    original = command()
+    records = tuple(
+        record.model_copy(update={"terminal_success": index < 50})
+        for index, record in enumerate(original.training_records)
+    )
+
+    release = freeze_candidate_release(original.model_copy(update={"training_records": records}))
+
     assert release.calibration is not None
-    assert release.calibration.training_record_count == 600
-    assert release.calibration.positive_record_count == 49
-    assert release.calibration.negative_record_count == 551
-    assert release.disposition in {"CANDIDATES", "VALID_NO_CANDIDATES"}
+    assert release.calibration.positive_record_count == 50
+    assert release.calibration.negative_record_count == 550
 
 
 def test_calibrator_fails_closed_for_constant_or_singular_scores() -> None:
@@ -1301,7 +1309,7 @@ def test_declared_window_must_contain_only_mature_months() -> None:
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_MATURE",)
 
 
-def test_declared_consecutive_mature_window_can_omit_newer_mature_months() -> None:
+def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() -> None:
     original = command()
     next_month_records = tuple(
         original.training_records[index].model_copy(
@@ -1341,10 +1349,9 @@ def test_declared_consecutive_mature_window_can_omit_newer_mature_months() -> No
 
     release = freeze_candidate_release(candidate)
 
-    assert release.disposition == "CANDIDATES"
-    assert release.availability_failure is None
-    assert release.calibration is not None
-    assert release.calibration.training_window_months == original.training_window_months
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
 
 def test_declared_sixty_month_window_rejects_calendar_gaps() -> None:

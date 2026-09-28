@@ -16,6 +16,8 @@ from stock_profiler.modules.portfolio.market_calendar import synthetic_market_ca
 CALIBRATOR_VERSION: Literal["monotone-firth-logistic-v1"] = "monotone-firth-logistic-v1"
 PROBABILITY_THRESHOLD = Decimal("0.80")
 _MINIMUM_MATURE_MONTHS = 60
+_MINIMUM_MATURE_RECORDS = 500
+_MINIMUM_RECORDS_PER_CLASS = 50
 CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
@@ -760,9 +762,15 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_MATURE")
     if not _are_consecutive_months(months):
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_CONSECUTIVE")
+    if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST")
     records = tuple(record for month in months for record in by_month[month])
+    if len(records) < _MINIMUM_MATURE_RECORDS:
+        raise ValueError("CALIBRATION_REQUIRES_500_MATURE_RECORDS")
     positives = sum(record.terminal_success for record in records)
     negatives = len(records) - positives
+    if positives < _MINIMUM_RECORDS_PER_CLASS or negatives < _MINIMUM_RECORDS_PER_CLASS:
+        raise ValueError("CALIBRATION_CLASS_FLOOR_NOT_MET")
     try:
         intercept, slope = _firth_logistic(records)
     except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError) as error:
