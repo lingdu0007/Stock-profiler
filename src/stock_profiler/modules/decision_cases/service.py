@@ -690,9 +690,26 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.purpose != command.purpose
             or record.scope.target != "SIX_MONTH_TERMINAL_20_PERCENT"
             or record.scope.evidence_level != "D0"
-            or basis is None
-            or basis.expires_at != snapshot.valid_through
         ):
+            raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+        if basis is None:
+            if (
+                record.status != "NOT_OBTAINED"
+                or record.authorization_id is not None
+                or record.authorization_evidence is not None
+                or record.cause != "INSUFFICIENT_EVIDENCE"
+                or record.evidence.kind != "INSUFFICIENT_EVIDENCE"
+                or record.formal_evidence is not None
+                or record.formal_passing_evidence is not None
+                or qualification_at_cutoff.decision_id != record.decision_id
+                or qualification_at_cutoff.status != "NOT_OBTAINED"
+                or snapshot.status != "NOT_OBTAINED"
+                or snapshot.valid_through != record.recorded_at
+            ):
+                raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if basis.expires_at != snapshot.valid_through:
             raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
         if (
             record.scope.capability != "candidate-release"
@@ -703,7 +720,6 @@ def _validate_candidate_qualification_snapshots(
             or record.scope.renewal_ordinal is not None
             or record.scope.probability_grid is not None
             or record.scope.portfolio_scope is not None
-            or basis is None
         ):
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue

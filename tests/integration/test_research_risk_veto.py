@@ -3398,6 +3398,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
         ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
+        ("ACCEPT", "QUALIFICATION_NOT_OBTAINED_RECORDED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
@@ -3443,6 +3444,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_DECLARED_OLDER_WINDOW",
+        "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
@@ -3765,6 +3767,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     if candidate_scenario in {
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
+        "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
@@ -3837,7 +3840,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             seed=1717,
             version=capability_version,
             scope=qualification_scope,
-            kind="QUALIFICATION_PASS",
+            kind=(
+                "INSUFFICIENT_EVIDENCE"
+                if candidate_scenario == "QUALIFICATION_NOT_OBTAINED_RECORDED"
+                else "QUALIFICATION_PASS"
+            ),
             digest="a" * 64,
             evaluation_end=qualification_recorded_at,
             available_at=qualification_recorded_at,
@@ -3848,23 +3855,47 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 else command.market_calendar_version
             ),
         )
-        qualification_status: Literal["AT_RISK", "VALID"] = "VALID"
+        qualification_status: Literal["AT_RISK", "NOT_OBTAINED", "VALID"] = (
+            "NOT_OBTAINED"
+            if candidate_scenario == "QUALIFICATION_NOT_OBTAINED_RECORDED"
+            else "VALID"
+        )
         qualification_record = QualificationRecord(
             decision_id="synthetic-candidate-qualification",
-            authorization_id="synthetic-candidate-qualification",
+            authorization_id=(
+                None
+                if qualification_status == "NOT_OBTAINED"
+                else "synthetic-candidate-qualification"
+            ),
             scope=qualification_scope,
             version=capability_version,
             status=qualification_status,
-            cause="DIAGNOSTIC_ALERT" if qualification_status == "AT_RISK" else "QUALIFICATION_PASS",
-            authorization_evidence=qualification_evidence,
+            cause=(
+                "INSUFFICIENT_EVIDENCE"
+                if qualification_status == "NOT_OBTAINED"
+                else "DIAGNOSTIC_ALERT"
+                if qualification_status == "AT_RISK"
+                else "QUALIFICATION_PASS"
+            ),
+            authorization_evidence=(
+                None if qualification_status == "NOT_OBTAINED" else qualification_evidence
+            ),
             recorded_at=qualification_recorded_at,
             evidence=qualification_evidence,
-            formal_evidence=qualification_evidence,
-            formal_passing_evidence=qualification_evidence,
+            formal_evidence=(
+                None if qualification_status == "NOT_OBTAINED" else qualification_evidence
+            ),
+            formal_passing_evidence=(
+                None if qualification_status == "NOT_OBTAINED" else qualification_evidence
+            ),
         )
         qualification_outcome = GovernanceOutcome(
             disposition="APPROVED",
-            reasons=("QUALIFICATION_PASS",),
+            reasons=(
+                "INSUFFICIENT_EVIDENCE"
+                if qualification_status == "NOT_OBTAINED"
+                else "QUALIFICATION_PASS",
+            ),
             qualification=qualification_record,
         )
         qualification_history = (qualification_outcome,)
@@ -3935,7 +3966,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                         capability_version=capability_version.version_id,
                         market_calendar_version=command.market_calendar_version,
                         recorded_at=qualification_recorded_at,
-                        valid_through=qualification_expires_at,
+                        valid_through=(
+                            qualification_recorded_at
+                            if qualification_status == "NOT_OBTAINED"
+                            else qualification_expires_at
+                        ),
                     ),
                 )
             }
@@ -4401,6 +4436,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
+        "QUALIFICATION_NOT_OBTAINED_RECORDED": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_CALENDAR_QUALIFICATION": "FAILED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
@@ -4507,7 +4543,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "UNRELATED_CALENDAR_QUALIFICATION",
-    }:
+    } or candidate_scenario == "QUALIFICATION_NOT_OBTAINED_RECORDED":
         assert direct.members[0].market_state_qualified is False
         assert direct.members[0].market_state_qualification_status == "NOT_QUALIFIED"
     elif candidate_scenario == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION":
