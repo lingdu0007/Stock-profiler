@@ -415,10 +415,20 @@ def finalize_candidate_release_publication(
 ) -> CandidateReleaseOutcome:
     """Fail an otherwise valid batch if its durable publication time misses the window."""
     window, _ = _candidate_window(command)
+    matching_qualification = _matching_qualification(command, published_at)
+    preserve_frozen_qualification = (
+        outcome.published_at == published_at
+        and (
+            outcome.disposition == "RECOMMENDATION_ABSTAINED"
+            or matching_qualification is None
+            or (
+                outcome.qualification is not None
+                and matching_qualification == outcome.qualification
+            )
+        )
+    )
     qualification = (
-        outcome.qualification
-        if outcome.published_at == published_at
-        else _matching_qualification(command, published_at)
+        outcome.qualification if preserve_frozen_qualification else matching_qualification
     )
     if (
         outcome.disposition in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}

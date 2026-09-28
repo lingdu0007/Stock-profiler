@@ -4548,6 +4548,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             )
             for stage in execution.stage_results
         )
+        correction_time = datetime.fromisoformat("2042-07-08T09:00:00+00:00")
+        monkeypatch.setattr(UtcClock, "now", lambda self: correction_time)
+        correction = decision_case_service.correct_default_frozen_decision_case(
+            candidate_case,
+            DecisionLedger.from_settings(migrated_settings),
+            candidate_case.business_identity,
+        )
+        assert correction.report is not None
+        assert correction.report.result.candidate_release is not None
+        assert correction.report.result.candidate_release.disposition == "FAILED"
+        assert all(
+            member.candidate is False
+            for member in correction.report.result.candidate_release.members
+        )
         return
     if candidate_scenario == "CORRECTION_AFTER_CANDIDATE_WINDOW":
         assert execution.report is not None
@@ -4577,7 +4591,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         direct = direct.model_copy(
             update={"qualification": execution.report.result.candidate_release.qualification}
         )
-    assert execution.report.result.candidate_release == direct
+    assert direct is not None
+    assert execution.report.result.candidate_release is not None
+    saved_candidate_release = execution.report.result.candidate_release
+    direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
+    assert saved_candidate_release == direct
     if candidate_scenario == "NORMAL":
         assert execution.report.report_publication is not None
         assert execution.report.report_publication.status == "PUBLISHED"

@@ -378,6 +378,61 @@ def test_final_publication_freezes_a_new_at_risk_qualification_revision() -> Non
     assert published.qualification == at_risk
 
 
+def test_same_timestamp_revocation_supersedes_the_frozen_qualification_revision() -> None:
+    original = command()
+    first_snapshot = freeze_candidate_release(original)
+    final_time = original.published_at + timedelta(minutes=1)
+    at_risk = original.qualifications[0].model_copy(
+        update={
+            "qualification_id": "synthetic-qualification-at-risk",
+            "status": "AT_RISK",
+            "current_status_recorded_at": final_time,
+        }
+    )
+    published = finalize_candidate_release_publication(
+        original.model_copy(update={"qualifications": (at_risk,)}),
+        first_snapshot,
+        published_at=final_time,
+    )
+    revoked = at_risk.model_copy(
+        update={
+            "qualification_id": "synthetic-qualification-revoked",
+            "status": "REVOKED",
+            "current_status_recorded_at": final_time,
+        }
+    )
+
+    revalidated = finalize_candidate_release_publication(
+        original.model_copy(update={"qualifications": (revoked,)}),
+        published,
+        published_at=final_time,
+    )
+
+    assert revalidated.disposition == "RECOMMENDATION_ABSTAINED"
+    assert revalidated.qualification == revoked
+    assert revalidated.members[0].candidate is False
+
+
+def test_same_timestamp_qualification_expiry_supersedes_the_frozen_record() -> None:
+    original = command()
+    final_time = original.published_at + timedelta(minutes=1)
+    frozen_command = original.model_copy(update={"published_at": final_time})
+    first_snapshot = freeze_candidate_release(frozen_command)
+    expired = original.qualifications[0].model_copy(
+        update={"valid_through": final_time - timedelta(seconds=1)}
+    )
+
+    revalidated = finalize_candidate_release_publication(
+        frozen_command.model_copy(update={"qualifications": (expired,)}),
+        first_snapshot,
+        published_at=final_time,
+    )
+
+    assert revalidated.disposition == "RECOMMENDATION_ABSTAINED"
+    assert revalidated.qualification == expired
+    assert revalidated.members[0].candidate is False
+
+
 def test_post_cutoff_qualification_cannot_authorize_candidates() -> None:
     original = command(state_status="AT_RISK")
     qualification = original.qualifications[0].model_copy(

@@ -1234,7 +1234,7 @@ def correct_default_frozen_decision_case(
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
-            correction_result = original_event.result.model_copy(
+            correction_result = original_report.result.model_copy(
                 update={
                     "outcome_code": "SYNTHETIC_CORRECTION_RECORDED",
                     "summary": (
