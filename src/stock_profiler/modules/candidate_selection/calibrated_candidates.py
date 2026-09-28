@@ -87,6 +87,17 @@ class CandidateRiskGate(UniverseContract):
     status: Literal["PASSED", "FAILED"]
 
 
+class CandidateEvidenceClock(UniverseContract):
+    """Source and validation clocks for one persisted research evidence item."""
+
+    evidence_id: str = Field(min_length=1)
+    effective_at: AwareDatetime | None = None
+    source_published_at: AwareDatetime | None = None
+    acquired_at: AwareDatetime | None = None
+    validated_at: AwareDatetime | None = None
+    knowledge_cutoff: AwareDatetime
+
+
 class CandidateInput(UniverseContract):
     """Frozen member evidence handed from research and independent risk."""
 
@@ -100,6 +111,7 @@ class CandidateInput(UniverseContract):
     thesis: str = Field(min_length=1)
     principal_risks: tuple[str, ...] = Field(min_length=1)
     evidence_freshness: str = Field(min_length=1)
+    evidence_clocks: tuple[CandidateEvidenceClock, ...] = ()
 
 
 class MarketSession(UniverseContract):
@@ -181,6 +193,7 @@ class CalibratedMember(UniverseContract):
     thesis: str
     principal_risks: tuple[str, ...]
     evidence_freshness: str
+    evidence_clocks: tuple[CandidateEvidenceClock, ...] = ()
     valid_market_dates: tuple[date, ...]
     reasons: tuple[str, ...]
 
@@ -319,6 +332,7 @@ def freeze_candidate_release(
                 thesis=candidate.thesis,
                 principal_risks=candidate.principal_risks,
                 evidence_freshness=candidate.evidence_freshness,
+                evidence_clocks=candidate.evidence_clocks,
                 valid_market_dates=window_dates,
                 reasons=tuple(reasons) or ("ALL_CANDIDATE_GATES_PASSED",),
             )
@@ -665,6 +679,7 @@ def _release_outcome(
                 thesis=candidate.thesis,
                 principal_risks=candidate.principal_risks,
                 evidence_freshness=candidate.evidence_freshness,
+                evidence_clocks=candidate.evidence_clocks,
                 valid_market_dates=valid_market_dates,
                 reasons=unavailable_reasons,
                 risk_gates=candidate.risk_gates,

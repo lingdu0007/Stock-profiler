@@ -94,6 +94,19 @@ export function CandidateReleaseEvidence({ release }: { release: CandidateReleas
                 <Record label="Data" value={member.data_complete ? "Complete" : "Incomplete"} />
                 <Record label="Evidence freshness" value={member.evidence_freshness} />
                 <Record
+                  label="Evidence clocks"
+                  value={
+                    member.evidence_clocks.length === 0
+                      ? "Unavailable"
+                      : member.evidence_clocks
+                          .map(
+                            (clock) =>
+                              `${clock.evidence_id}: published ${clock.source_published_at ?? "unknown"}, acquired ${clock.acquired_at ?? "unknown"}, validated ${clock.validated_at ?? "unknown"}, cutoff ${clock.knowledge_cutoff}`
+                          )
+                          .join("; ")
+                  }
+                />
+                <Record
                   label="Validity window"
                   value={member.valid_market_dates.map(String).join(", ")}
                 />

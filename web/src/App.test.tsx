@@ -89,6 +89,16 @@ describe("App", () => {
               thesis: "Original synthetic investment thesis.",
               principal_risks: ["Original synthetic risk."],
               evidence_freshness: "FRESH_AT_CUTOFF",
+              evidence_clocks: [
+                {
+                  evidence_id: "financial-statements-evidence-00",
+                  effective_at: "2046-06-01T08:00:00Z",
+                  source_published_at: "2046-06-01T08:00:00Z",
+                  acquired_at: "2046-06-28T08:00:00Z",
+                  validated_at: "2046-06-29T08:00:00Z",
+                  knowledge_cutoff: "2046-07-01T08:00:00Z"
+                }
+              ],
               valid_market_dates: [
                 "2046-07-02",
                 "2046-07-03",
@@ -138,6 +148,8 @@ describe("App", () => {
     expect(release).toHaveTextContent("Independent risk status");
     expect(release).toHaveTextContent("RISK_REVIEW: PASSED");
     expect(release).toHaveTextContent("INDEPENDENT_RISK_ACCEPTED");
+    expect(release).toHaveTextContent("financial-statements-evidence-00");
+    expect(release).toHaveTextContent("2046-06-01T08:00:00Z");
     expect(release).toHaveTextContent("At risk");
     expect(release).toHaveTextContent("Original synthetic investment thesis.");
     expect(release).not.toHaveTextContent("account route");

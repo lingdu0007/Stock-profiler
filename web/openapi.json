@@ -551,6 +551,14 @@
             "title": "Data Complete",
             "type": "boolean"
           },
+          "evidence_clocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateEvidenceClock"
+            },
+            "title": "Evidence Clocks",
+            "type": "array"
+          },
           "evidence_freshness": {
             "title": "Evidence Freshness",
             "type": "string"
@@ -698,6 +706,73 @@
           "negative_record_count"
         ],
         "title": "CalibrationSnapshot",
+        "type": "object"
+      },
+      "CandidateEvidenceClock": {
+        "additionalProperties": false,
+        "description": "Source and validation clocks for one persisted research evidence item.",
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "source_published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": ["evidence_id", "knowledge_cutoff"],
+        "title": "CandidateEvidenceClock",
         "type": "object"
       },
       "CandidatePopulation": {

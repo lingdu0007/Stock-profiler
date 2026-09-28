@@ -439,6 +439,11 @@ export interface components {
             candidate: boolean;
             /** Data Complete */
             data_complete: boolean;
+            /**
+             * Evidence Clocks
+             * @default []
+             */
+            evidence_clocks: components["schemas"]["CandidateEvidenceClock"][];
             /** Evidence Freshness */
             evidence_freshness: string;
             /**
@@ -496,6 +501,27 @@ export interface components {
             training_record_count: number;
             /** Training Window Months */
             training_window_months: string[];
+        };
+        /**
+         * CandidateEvidenceClock
+         * @description Source and validation clocks for one persisted research evidence item.
+         */
+        CandidateEvidenceClock: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Source Published At */
+            source_published_at?: string | null;
+            /** Validated At */
+            validated_at?: string | null;
         };
         /** CandidatePopulation */
         CandidatePopulation: {

@@ -56,6 +56,7 @@ from stock_profiler.foundation.decision_versions import (
 )
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CalibrationRecord,
+    CandidateEvidenceClock,
     CandidateInput,
     CandidateReleaseCommand,
     CandidateRiskGate,
@@ -223,7 +224,11 @@ def research_command(
                         f"for {data_type.lower()}."
                     ),
                     effective_at=cutoff,
-                    source_published_at=cutoff,
+                    source_published_at=(
+                        cutoff - timedelta(days=30)
+                        if index == 0 and data_type == RESEARCH_REQUIRED_DATA_TYPES[0]
+                        else cutoff
+                    ),
                     acquired_at=cutoff,
                     validated_at=cutoff,
                     knowledge_cutoff=cutoff,
@@ -3399,6 +3404,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
         ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
         ("ACCEPT", "QUALIFICATION_NOT_OBTAINED_RECORDED"),
+        ("ACCEPT", "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK"),
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
@@ -3445,6 +3451,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_DECLARED_OLDER_WINDOW",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
@@ -3671,6 +3678,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 DecisionLedger, "get_original_decision_event", get_failed_research_source
             )
     risk_vetoes = {item.security_id: item for item in research.risk_veto.member_vetoes}
+    source_member_inputs = (
+        {member.security_id: member for member in source_fact.case.research.members}
+        if source_fact.case.research is not None
+        else {}
+    )
     candidates = tuple(
         CandidateInput(
             security_id=security_id,
@@ -3690,6 +3702,19 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 if member.knowledge_cutoff == cutoff
                 else "STALE_AT_KNOWLEDGE_CUTOFF"
             ),
+            evidence_clocks=tuple(
+                CandidateEvidenceClock(
+                    evidence_id=evidence.evidence_id,
+                    effective_at=evidence.effective_at,
+                    source_published_at=evidence.source_published_at,
+                    acquired_at=evidence.acquired_at,
+                    validated_at=evidence.validated_at,
+                    knowledge_cutoff=evidence.knowledge_cutoff,
+                )
+                for evidence in source_member_inputs[security_id].evidence
+            )
+            if security_id in source_member_inputs
+            else (),
         )
         for security_id, member in research_members.items()
     )
@@ -3711,9 +3736,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         for session in saved_window
     )
     last_completed_session = max(
-        session.ordinal
-        for session in market_calendar.sessions
-        if session.closed_at <= cutoff
+        session.ordinal for session in market_calendar.sessions if session.closed_at <= cutoff
     )
     command = CandidateReleaseCommand(
         contract_version="1.0.0",
@@ -3746,9 +3769,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         ),
         training_records=training_records,
         candidates=candidates,
-        market_sessions=(
-            () if candidate_scenario == "CALENDAR_WINDOW_MISSING" else sessions
-        ),
+        market_sessions=(() if candidate_scenario == "CALENDAR_WINDOW_MISSING" else sessions),
     )
     report_time = datetime.fromisoformat("2042-07-02T00:04:00+00:00")
     candidate_version = "candidate-release.1.0.0"
@@ -3768,6 +3789,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
@@ -4110,6 +4132,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
     }:
         validate_qualification_snapshots = (
             decision_case_service._validate_candidate_qualification_snapshots
@@ -4147,6 +4170,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     ),
                 )
                 args = (args[0], qualification_history_state["value"], *args[2:])
+            if (
+                validation_count == 2
+                and candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK"
+            ):
+                raise decision_case_service.CandidateQualificationVersionMismatch()
             snapshots = validate_qualification_snapshots(*args, **kwargs)
             if validation_count == 2 and candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
                 return tuple(
@@ -4212,6 +4240,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "UNRELATED_CALENDAR_QUALIFICATION",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
     }:
         qualification_failure_command = (
             command.model_copy(update={"qualifications": ()})
@@ -4221,6 +4250,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
                 "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
                 "UNRELATED_CALENDAR_QUALIFICATION",
+                "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
             }
             else command
         )
@@ -4437,6 +4467,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
         "QUALIFICATION_NOT_OBTAINED_RECORDED": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK": "FAILED",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_CALENDAR_QUALIFICATION": "FAILED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
@@ -4462,6 +4493,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "UNRELATED_CALENDAR_QUALIFICATION",
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
     }:
         assert direct.availability_failure == "VERSION"
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
@@ -4521,9 +4553,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         else publication_time
     )
     assert execution.report.result.candidate_release.members == direct.members
-    source_risk_vetoes = {
-        item.security_id: item for item in research.risk_veto.member_vetoes
-    }
+    source_risk_vetoes = {item.security_id: item for item in research.risk_veto.member_vetoes}
     for member in execution.report.result.candidate_release.members:
         source_veto = source_risk_vetoes[member.security_id]
         assert tuple((gate.gate_id, gate.status) for gate in member.risk_gates) == tuple(
@@ -4532,8 +4562,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert member.risk_reasons == source_veto.reasons
     if candidate_scenario == "NORMAL":
         assert all(
-            member.evidence_freshness == "FRESH_AT_KNOWLEDGE_CUTOFF"
-            for member in direct.members
+            member.evidence_freshness == "FRESH_AT_KNOWLEDGE_CUTOFF" for member in direct.members
+        )
+        assert direct.members[0].evidence_clocks == candidates[0].evidence_clocks
+        assert direct.members[0].evidence_freshness == "FRESH_AT_KNOWLEDGE_CUTOFF"
+        assert direct.members[0].evidence_clocks[0].source_published_at == (
+            cutoff - timedelta(days=30)
         )
     if candidate_scenario == "AT_RISK_QUALIFICATION":
         assert direct.members[0].market_state_qualified is True
@@ -4543,7 +4577,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
         "QUALIFICATION_CALENDAR_CHANGED_AFTER_CUTOFF",
         "UNRELATED_CALENDAR_QUALIFICATION",
-    } or candidate_scenario == "QUALIFICATION_NOT_OBTAINED_RECORDED":
+        "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
+    } or candidate_scenario in {
+        "QUALIFICATION_NOT_OBTAINED_RECORDED",
+    }:
         assert direct.members[0].market_state_qualified is False
         assert direct.members[0].market_state_qualification_status == "NOT_QUALIFIED"
     elif candidate_scenario == "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION":

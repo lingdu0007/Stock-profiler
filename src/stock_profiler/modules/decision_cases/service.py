@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
 from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CalibrationRecord,
+    CandidateEvidenceClock,
     CandidateReleaseCommand,
     MarketStateQualification,
     MarketStateQualificationStatus,
@@ -488,6 +489,11 @@ def _validate_candidate_release_source(
     if len(model_versions) != 1:
         raise CandidateCalibrationVersionMismatch()
     members = {member.security_id: member for member in research.members}
+    source_member_inputs = (
+        {member.security_id: member for member in source_event.case.research.members}
+        if source_event.case.research is not None
+        else {}
+    )
     scores = {score.security_id: score for score in raw_scores}
     vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
     source_knowledge_cutoff = datetime.fromisoformat(
@@ -526,6 +532,24 @@ def _validate_candidate_release_source(
         )
         if candidate.evidence_freshness != expected_freshness:
             raise ValueError("CANDIDATE_EVIDENCE_FRESHNESS_MISMATCH")
+        source_member_input = source_member_inputs.get(candidate.security_id)
+        expected_evidence_clocks = (
+            tuple(
+                CandidateEvidenceClock(
+                    evidence_id=evidence.evidence_id,
+                    effective_at=evidence.effective_at,
+                    source_published_at=evidence.source_published_at,
+                    acquired_at=evidence.acquired_at,
+                    validated_at=evidence.validated_at,
+                    knowledge_cutoff=evidence.knowledge_cutoff,
+                )
+                for evidence in source_member_input.evidence
+            )
+            if source_member_input is not None
+            else ()
+        )
+        if candidate.evidence_clocks != expected_evidence_clocks:
+            raise ValueError("CANDIDATE_EVIDENCE_CLOCKS_MISMATCH")
     return next(iter(model_versions))
 
 
@@ -603,6 +627,7 @@ def _validate_candidate_calibration_sources(
     ):
         raise CandidateCalibrationVersionMismatch()
 
+
 def _calibration_month_mature_by(records: list[CalibrationRecord], watermark: datetime) -> bool:
     """Require the complete source cohort's actual maturity and label-availability evidence."""
     return (
@@ -677,8 +702,7 @@ def _validate_candidate_qualification_snapshots(
         ):
             raise CandidateQualificationVersionMismatch()
         if snapshot.market_calendar_version != command.market_calendar_version or (
-            basis is not None
-            and basis.market_calendar_version != command.market_calendar_version
+            basis is not None and basis.market_calendar_version != command.market_calendar_version
         ):
             raise CandidateQualificationVersionMismatch()
         if (
@@ -736,10 +760,7 @@ def _validate_candidate_qualification_snapshots(
             and latest_basis.market_calendar_version != command.market_calendar_version
         ):
             raise CandidateQualificationVersionMismatch()
-        if (
-            cutoff_basis is None
-            or latest_basis is None
-        ):
+        if cutoff_basis is None or latest_basis is None:
             resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
             continue
         if qualification_at_cutoff.status not in {
@@ -2342,14 +2363,36 @@ def _commit_framework_result(
                     final_publication_time = datetime.fromisoformat(
                         committed_at.replace("Z", "+00:00")
                     )
-                    final_qualifications = _validate_candidate_qualification_snapshots(
-                        execution_case,
-                        ledger.governance_history(connection, execution_case.access_scope),
-                        final_publication_time,
-                    )
-                    publication_command = publication_command.model_copy(
-                        update={"qualifications": final_qualifications}
-                    )
+                    try:
+                        final_qualifications = _validate_candidate_qualification_snapshots(
+                            execution_case,
+                            ledger.governance_history(connection, execution_case.access_scope),
+                            final_publication_time,
+                        )
+                    except CandidateQualificationVersionMismatch as error:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": ()}
+                        )
+                        candidate_release = candidate_release_availability_failure(
+                            publication_command,
+                            published_at=final_publication_time,
+                            reason=str(error),
+                            availability_failure="VERSION",
+                        )
+                    except ValueError as error:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": ()}
+                        )
+                        candidate_release = candidate_release_availability_failure(
+                            publication_command,
+                            published_at=final_publication_time,
+                            reason=str(error),
+                            availability_failure="DATA",
+                        )
+                    else:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": final_qualifications}
+                        )
                 candidate_release = finalize_candidate_release_publication(
                     publication_command,
                     candidate_release,
