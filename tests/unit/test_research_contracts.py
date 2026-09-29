@@ -13,6 +13,7 @@ from stock_profiler.modules.decision_cases import service as decision_case_servi
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RAW_SCORE_MARKET_CALENDAR_VERSION,
+    RAW_SCORE_TRAINING_START_MONTH,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_DEFINITION_VERSION,
@@ -40,7 +41,10 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    _frozen_raw_score_training_records,
+    _raw_score_evaluation_entry_at,
     _raw_score_label_available_at,
+    _training_month_sequence,
     calculate_structured_signals,
     decode_historical_research_command,
     decode_historical_research_draft,
@@ -163,6 +167,108 @@ def test_historical_snapshot_replays_labels_at_the_original_intraday_maturity_ti
 
     assert snapshot.training_records[0].evaluation_entry_at == datetime(2043, 1, 1, 8, tzinfo=UTC)
     assert snapshot.training_records[0].label_available_at == datetime(2043, 7, 1, 8, tzinfo=UTC)
+
+
+def test_pre_calibration_snapshot_requires_entries_for_positive_labels() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+    successful_record = next(
+        record for record in payload["training_records"] if record["terminal_label"]
+    )
+    successful_record["evaluation_entry_at"] = None
+
+    with pytest.raises(ValueError, match="positive raw-score label requires an evaluation entry"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_historical_research_command_replays_its_pre_calendar_maturity_window() -> None:
+    command_payload = _command().model_dump(mode="json")
+    cutoff_at = datetime.fromisoformat("2042-10-31T15:30:00+00:00")
+    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    training_months = _training_month_sequence(start_year, start_month, 64)
+    cohorts, training_records = _frozen_raw_score_training_records(training_months)
+    records_payload: list[dict[str, object]] = []
+    for source_record in training_records:
+        record = source_record.model_dump(mode="json")
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+        maturity_anchor = source_record.evaluation_entry_at or (
+            _raw_score_evaluation_entry_at(source_record.selection_cutoff_at) + timedelta(days=1)
+        )
+        record["label_available_at"] = (
+            _raw_score_label_available_at(maturity_anchor, None).isoformat().replace("+00:00", "Z")
+        )
+        records_payload.append(record)
+    watermark_at = max(str(record["label_available_at"]) for record in records_payload)
+    raw_score_payload = command_payload["raw_score_model"]
+    assert isinstance(raw_score_payload, dict)
+    raw_score_payload.pop("calibration_evidence_version")
+    raw_score_payload.update(
+        {
+            "training_window_month_count": len(training_months),
+            "training_window_end_month": training_months[-1],
+            "training_months": list(training_months),
+            "label_watermark_month": watermark_at[:7],
+            "label_watermark_at": watermark_at,
+            "training_cohorts": [cohort.model_dump(mode="json") for cohort in cohorts],
+            "training_records": records_payload,
+            "mature_months": len(training_months),
+            "training_record_count": len(records_payload),
+            "positive_record_count": sum(
+                bool(record["terminal_label"]) for record in records_payload
+            ),
+            "negative_record_count": sum(
+                not bool(record["terminal_label"]) for record in records_payload
+            ),
+        }
+    )
+    command_payload["raw_score_model"] = RawScoreModelSnapshot.model_validate(
+        raw_score_payload
+    ).model_dump(mode="json")
+    command_payload["cutoff_at"] = cutoff_at.isoformat()
+    command_payload["knowledge_cutoff"] = cutoff_at.isoformat()
+    members = command_payload["members"]
+    assert isinstance(members, list)
+    for member in members:
+        assert isinstance(member, dict)
+        member["knowledge_cutoff"] = cutoff_at.isoformat()
+        for evidence in member["evidence"]:
+            assert isinstance(evidence, dict)
+            evidence["knowledge_cutoff"] = cutoff_at.isoformat()
+        manifest = member["data_manifest"]
+        assert isinstance(manifest, dict)
+        for entry in manifest["entries"]:
+            assert isinstance(entry, dict)
+            entry["knowledge_cutoff"] = cutoff_at.isoformat()
+    command_payload["selection_fingerprint"] = selection_binding_sha256(
+        str(command_payload["selection_object_id"]),
+        str(command_payload["selection_event_id"]),
+        cutoff_at,
+        FrozenDualTargetScreening.model_validate(command_payload["screening"]),
+    )
+
+    replayed = ResearchCommand.model_validate(command_payload)
+
+    assert replayed.raw_score_model.training_months[-1] == "2042-03"
 
 
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:

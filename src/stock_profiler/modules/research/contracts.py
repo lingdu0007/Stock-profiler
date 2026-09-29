@@ -713,6 +713,11 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score training record cutoff does not match its month")
             if any(
+                record.terminal_label and record.evaluation_entry_at is None
+                for record in self.training_records
+            ):
+                raise ValueError("positive raw-score label requires an evaluation entry")
+            if any(
                 record.evaluation_entry_at is not None
                 and record.evaluation_entry_at <= record.selection_cutoff_at
                 for record in self.training_records
@@ -772,7 +777,6 @@ class RawScoreModelSnapshot(ResearchContract):
                         )
                         or record.entry_window_ends_at <= record.raw_score_frozen_at
                         or record.market_calendar_version is None
-                        or (record.evaluation_entry_at is None and record.terminal_label)
                         or (
                             record.evaluation_entry_at is not None
                             and not (
@@ -951,17 +955,17 @@ def _raw_score_label_available_at(
     return raw_score_maturity_at(evaluation_entry_at, market_calendar_version)
 
 
-def _raw_score_mature_training_months(cutoff_at: datetime) -> tuple[str, ...]:
-    """Return every fixed-inception month whose terminal label is mature by the cutoff."""
+def _raw_score_mature_training_months(
+    cutoff_at: datetime,
+    market_calendar_version: str | None,
+) -> tuple[str, ...]:
+    """Return fixed-inception months mature under the frozen calendar or legacy clock."""
     start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
     mature_months: list[str] = []
     for month in _training_month_sequence(start_year, start_month, 1200):
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        if (
-            _raw_score_label_available_at(evaluation_entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION)
-            > cutoff_at
-        ):
+        if _raw_score_label_available_at(evaluation_entry_at, market_calendar_version) > cutoff_at:
             break
         mature_months.append(month)
     return tuple(mature_months)
@@ -1803,7 +1807,15 @@ class ResearchCommand(ResearchContract):
             or self.raw_score_model.label_watermark_at > self.cutoff_at
         ):
             raise ValueError("raw-score training window must not cross research cutoff")
-        mature_months = _raw_score_mature_training_months(self.cutoff_at)
+        market_calendar_version = (
+            RAW_SCORE_MARKET_CALENDAR_VERSION
+            if self.raw_score_model.calibration_evidence_version is not None
+            else None
+        )
+        mature_months = _raw_score_mature_training_months(
+            self.cutoff_at,
+            market_calendar_version,
+        )
         expected_training_months = (
             mature_months[-120:] if len(mature_months) >= 120 else mature_months
         )
