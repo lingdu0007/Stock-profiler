@@ -3759,7 +3759,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         for security_id, member in research_members.items()
     )
-    market_calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    market_calendar = synthetic_market_calendar("synthetic-market-calendar-v2")
     assert market_calendar is not None
     saved_sessions = tuple(
         session
@@ -3794,7 +3794,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         published_at=datetime.fromisoformat("2042-07-02T00:04:00+00:00"),
         last_completed_market_session_sequence=last_completed_session,
         market_state="BULL",
-        market_calendar_version="synthetic-market-calendar-v1",
+        market_calendar_version="synthetic-market-calendar-v2",
         label_watermark_at=cutoff,
         calibrator_version=(
             "unknown-calibrator-v2"

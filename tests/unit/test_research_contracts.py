@@ -907,6 +907,20 @@ def test_missing_candidate_calibration_fields_preserve_legacy_serialization() ->
     assert legacy_record.model_dump(mode="json") == legacy_payload
 
 
+def test_v2_calibration_snapshot_can_preserve_a_member_without_frozen_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["training_records"][0]["historical_calibrated_probability"] = None
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_evidence_version == "frozen-oos-calibration-v2"
+    assert snapshot.training_records[0].historical_calibrated_probability is None
+    assert all(
+        record.historical_calibrated_probability is not None
+        for record in snapshot.training_records[1:]
+    )
+
+
 def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() -> None:
     payload = _command().raw_score_model.model_dump(mode="json")
     payload["calibration_evidence_version"] = "frozen-oos-calibration-v1"

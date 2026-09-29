@@ -646,18 +646,19 @@ def _validate_candidate_calibration_sources(
                 source_record.label_available_at <= candidate_cutoff
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
-                identity = (
-                    source_record.month,
-                    source_record.security_id,
-                    source_record.research_id,
-                )
-                _retain_immutable_mature_source_row(
-                    cutoff_mature_source_rows, identity, source_record
-                )
+                if source_record.historical_calibrated_probability is not None:
+                    identity = (
+                        source_record.month,
+                        source_record.security_id,
+                        source_record.research_id,
+                    )
+                    _retain_immutable_mature_source_row(
+                        cutoff_mature_source_rows, identity, source_record
+                    )
             else:
                 cutoff_incomplete_source_months.add(source_record.month)
             if (
-                source_record.unified_maturity_at is not None
+                source_record.historical_calibrated_probability is not None
                 and source_record.label_available_at <= command.label_watermark_at
                 and source_record.unified_maturity_at <= command.label_watermark_at
             ):
@@ -716,26 +717,21 @@ def _validate_candidate_calibration_sources(
         ):
             raise CandidateCalibrationProvenanceInvalid()
         snapshot_records = source_event.case.research.raw_score_model.training_records
-        snapshot_by_identity = {
-            (record.month, record.security_id, record.research_id): record
-            for record in snapshot_records
-        }
-        frozen_by_identity = {
-            identity: record
-            for identity, record in frozen_training_rows.items()
-            if record.source_research_event_id == event_id
-        }
         records_by_identity = {
             (record.month, record.security_id, record.research_id): record for record in records
         }
         if len(records_by_identity) != len(records):
             raise CandidateCalibrationProvenanceInvalid()
         submitted_months = {record.month for record in records}
-        expected_source_rows = {
-            identity: source_record
-            for identity, source_record in snapshot_by_identity.items()
-            if identity[0] in submitted_months
+        snapshot_by_identity = _calibration_source_rows_by_identity(
+            snapshot_records, submitted_months
+        )
+        frozen_by_identity = {
+            identity: record
+            for identity, record in frozen_training_rows.items()
+            if record.source_research_event_id == event_id
         }
+        expected_source_rows = snapshot_by_identity
         expected_identities = set(expected_source_rows) | {
             identity for identity in frozen_by_identity if identity[0] in submitted_months
         }
@@ -862,6 +858,18 @@ def _fully_matured_calibration_months(
         identity[0] for identity in all_candidate_prediction_ids - mature_candidate_prediction_ids
     }
     return tuple(sorted(mature_months - incomplete_source_months - pending_prediction_months))
+
+
+def _calibration_source_rows_by_identity(
+    records: Iterable[RawScoreTrainingRecord],
+    months: set[str],
+) -> dict[tuple[str, str, str], RawScoreTrainingRecord]:
+    """Include only matured-probability evidence eligible for calibration."""
+    return {
+        (record.month, record.security_id, record.research_id): record
+        for record in records
+        if record.month in months and record.historical_calibrated_probability is not None
+    }
 
 
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:

@@ -26,7 +26,10 @@ from stock_profiler.modules.portfolio.market_calendar import (
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
 )
-from stock_profiler.modules.research.contracts import raw_score_maturity_at
+from stock_profiler.modules.research.contracts import (
+    frozen_raw_score_model_snapshot,
+    raw_score_maturity_at,
+)
 
 
 def _calibration_record(
@@ -1334,8 +1337,25 @@ def test_terminal_session_maturity_does_not_precede_the_label_watermark() -> Non
     assert mature.disposition == "CANDIDATES"
 
 
-def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
+def test_v1_market_calendar_keeps_its_frozen_session_map() -> None:
     calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    assert calendar is not None
+
+    assert tuple(session.ordinal for session in calendar.sessions) == tuple(range(6101, 6122))
+    assert calendar.sessions[3].closed_at == datetime(2042, 5, 25, 15, tzinfo=UTC)
+    assert calendar.sessions[-1].closed_at == datetime(2042, 6, 17, 15, tzinfo=UTC)
+
+
+def test_v2_market_calendar_extends_candidate_sessions_without_revising_v1() -> None:
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v2")
+    assert calendar is not None
+
+    assert calendar.sessions[-1].closed_at == datetime(2042, 8, 26, 15, tzinfo=UTC)
+    assert calendar.sessions[3].closed_at == datetime(2042, 5, 23, 15, tzinfo=UTC)
+
+
+def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v2")
     assert calendar is not None
     maturity = six_month_terminal_evaluation_at(
         datetime(2042, 1, 6, tzinfo=UTC), calendar.version_id
@@ -1348,7 +1368,7 @@ def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
 
 
 def test_terminal_maturity_does_not_invent_a_weekday_missing_from_candidate_calendar() -> None:
-    calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v2")
     assert calendar is not None
     maturity = six_month_terminal_evaluation_at(
         datetime(2041, 11, 25, tzinfo=UTC), calendar.version_id
@@ -1692,6 +1712,25 @@ def test_prior_candidate_predictions_use_the_referenced_research_event() -> None
     )
     assert predictions[identity].raw_score_frozen_at == original.knowledge_cutoff
     assert predictions[identity].raw_score_training_watermark_at == research_watermark
+
+
+def test_calibration_source_population_excludes_records_without_frozen_probability() -> None:
+    source_records = frozen_raw_score_model_snapshot().training_records
+    missing_probability = source_records[0].model_copy(
+        update={"historical_calibrated_probability": None}
+    )
+    source_records = (missing_probability, *source_records[1:3])
+
+    source_rows = decision_case_service._calibration_source_rows_by_identity(
+        source_records, {missing_probability.month}
+    )
+
+    assert (
+        missing_probability.month,
+        missing_probability.security_id,
+        missing_probability.research_id,
+    ) not in source_rows
+    assert len(source_rows) == 2
 
 
 def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None:

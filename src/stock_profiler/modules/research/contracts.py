@@ -746,10 +746,6 @@ class RawScoreModelSnapshot(ResearchContract):
                 value is None for values in record_evidence for value in values
             ):
                 raise ValueError("raw-score calibration evidence is incomplete")
-            if self.calibration_evidence_version == "frozen-oos-calibration-v2" and any(
-                record.historical_calibrated_probability is None for record in self.training_records
-            ):
-                raise ValueError("raw-score calibration probability evidence is incomplete")
             if self.calibration_evidence_version != "frozen-oos-calibration-v2" and any(
                 record.historical_calibrated_probability is not None
                 for record in self.training_records
