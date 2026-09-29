@@ -3453,6 +3453,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_EVENT_MISSING"),
+        ("ACCEPT", "RESEARCH_RISK_VERSION_MISMATCH"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
         ("ACCEPT", "WINDOW_EXPIRED_AFTER_FREEZE"),
@@ -3507,6 +3508,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
         "UPSTREAM_RESEARCH_EVENT_MISSING",
+        "RESEARCH_RISK_VERSION_MISMATCH",
         "LATE_PUBLICATION",
         "LATE_COMMIT",
         "WINDOW_EXPIRED_AFTER_FREEZE",
@@ -3677,7 +3679,33 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     if candidate_scenario == "CALIBRATION_RECORDS_MISSING":
         training_records = ()
-    if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
+    if candidate_scenario == "RESEARCH_RISK_VERSION_MISMATCH":
+        original_get_original_event = DecisionLedger.get_original_decision_event
+
+        def get_mismatched_research_source(
+            ledger: DecisionLedger, business_object_id: str, connection: Any
+        ) -> DecisionEventFact | None:
+            fact = original_get_original_event(ledger, business_object_id, connection)
+            if fact is None or business_object_id != research_execution.business_object_id:
+                return fact
+            research_outcome = fact.result.research
+            assert research_outcome is not None
+            mismatched_handoff = research_outcome.handoff.model_copy(
+                update={"risk_output_contract_version": "unrelated-risk-contract-version"}
+            )
+            mismatched_research = research_outcome.model_copy(
+                update={"handoff": mismatched_handoff}
+            )
+            return fact.model_copy(
+                update={"result": fact.result.model_copy(update={"research": mismatched_research})}
+            )
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "get_original_decision_event",
+            get_mismatched_research_source,
+        )
+    elif candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
         if candidate_scenario == "UPSTREAM_RESEARCH_EVENT_MISSING":
 
@@ -4401,6 +4429,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_CALIBRATION_LINEAGE_INVALID",
             availability_failure="CALIBRATION",
         )
+    elif candidate_scenario == "RESEARCH_RISK_VERSION_MISMATCH":
+        direct = candidate_release_availability_failure(
+            command,
+            published_at=publication_time,
+            reason="CANDIDATE_RESEARCH_VERSION_MISMATCH",
+            availability_failure="VERSION",
+        )
     elif candidate_scenario in {
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
@@ -4671,6 +4706,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
         "UPSTREAM_RESEARCH_EVENT_MISSING": "FAILED",
+        "RESEARCH_RISK_VERSION_MISMATCH": "FAILED",
         "LATE_PUBLICATION": "FAILED",
         "LATE_COMMIT": "FAILED",
         "WINDOW_EXPIRED_AFTER_FREEZE": "FAILED",
@@ -4840,6 +4876,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert saved_candidate_release.disposition == "FAILED"
         assert saved_candidate_release.availability_failure == "VERSION"
         assert "CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH" in saved_candidate_release.reasons
+        return
+    if candidate_scenario == "RESEARCH_RISK_VERSION_MISMATCH":
+        assert saved_candidate_release.disposition == "FAILED"
+        assert saved_candidate_release.availability_failure == "VERSION"
+        assert "CANDIDATE_RESEARCH_VERSION_MISMATCH" in saved_candidate_release.reasons
         return
     if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK":
         assert saved_candidate_release.disposition == "FAILED"

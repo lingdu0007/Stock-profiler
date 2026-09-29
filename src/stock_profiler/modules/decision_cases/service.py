@@ -91,6 +91,18 @@ from stock_profiler.modules.qualification.service import (
 )
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
+    RESEARCH_DEFINITION_ID,
+    RESEARCH_LEGACY_ROUTING_POLICY_VERSION,
+    RESEARCH_MODEL_ADAPTER_ID,
+    RESEARCH_OUTPUT_CONTRACT_ID,
+    RESEARCH_ROUTING_POLICY_VERSION,
+    RISK_DEFINITION_ID,
+    RISK_DEFINITION_VERSION,
+    RISK_LEGACY_DEFINITION_VERSION,
+    RISK_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RISK_MODEL_ADAPTER_ID,
+    RISK_OUTPUT_CONTRACT_ID,
+    RISK_OUTPUT_CONTRACT_VERSION,
     RawScore,
     RawScoreCalculationError,
     RawScoreTrainingRecord,
@@ -109,6 +121,7 @@ from stock_profiler.modules.research.contracts import (
     decode_legacy_research_draft,
     decode_legacy_research_framework_output,
     raw_score_maturity_at,
+    research_contract_mode_for_versions,
     research_draft_payload,
     research_evidence_payload,
     research_member_handoff_payload,
@@ -148,6 +161,13 @@ class CandidateCalibrationVersionMismatch(ValueError):
 
     def __init__(self) -> None:
         super().__init__("CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH")
+
+
+class CandidateResearchVersionMismatch(ValueError):
+    """Persist an availability failure when an upstream handoff version is incompatible."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_RESEARCH_VERSION_MISMATCH")
 
 
 @dataclass(frozen=True)
@@ -502,6 +522,8 @@ def _validate_candidate_release_source(
         raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
     if risk is None or raw_scores is None:
         raise CandidateResearchHandoffUnavailable("INCOMPLETE")
+    if not _candidate_research_versions_are_compatible(source_event.case, research):
+        raise CandidateResearchVersionMismatch()
     model_versions = {score.model_version for score in raw_scores}
     if len(model_versions) != 1:
         raise CandidateCalibrationVersionMismatch()
@@ -568,6 +590,54 @@ def _validate_candidate_release_source(
         if candidate.evidence_clocks != expected_evidence_clocks:
             raise ValueError("CANDIDATE_EVIDENCE_CLOCKS_MISMATCH")
     return next(iter(model_versions))
+
+
+def _candidate_research_versions_are_compatible(
+    source_case: FrozenDecisionCase,
+    research: ResearchOutcome,
+) -> bool:
+    """Accept only supported, internally consistent research and risk handoff versions."""
+    handoff = research.handoff
+    source_bundle = source_case.version_bundle
+    try:
+        mode = research_contract_mode_for_versions(
+            handoff.research_definition_version,
+            handoff.research_output_contract_version,
+        )
+    except ValueError:
+        return False
+    legacy = mode == "legacy"
+    historical = mode == "historical"
+    expected_risk_definition_version = (
+        RISK_LEGACY_DEFINITION_VERSION if legacy or historical else RISK_DEFINITION_VERSION
+    )
+    expected_risk_output_contract_version = (
+        RISK_LEGACY_OUTPUT_CONTRACT_VERSION
+        if legacy or historical
+        else RISK_OUTPUT_CONTRACT_VERSION
+    )
+    expected_routing_policy_version = (
+        RESEARCH_LEGACY_ROUTING_POLICY_VERSION if legacy else RESEARCH_ROUTING_POLICY_VERSION
+    )
+    return (
+        handoff.research_definition_id == RESEARCH_DEFINITION_ID
+        and source_bundle.agent_definition_id == handoff.research_definition_id
+        and source_bundle.agent_definition_version == handoff.research_definition_version
+        and handoff.research_model_adapter_id == RESEARCH_MODEL_ADAPTER_ID
+        and source_bundle.model_adapter_id == handoff.research_model_adapter_id
+        and handoff.research_routing_policy_version == expected_routing_policy_version
+        and source_bundle.routing_policy_version == handoff.research_routing_policy_version
+        and handoff.research_output_contract_id == RESEARCH_OUTPUT_CONTRACT_ID
+        and source_bundle.output_contract_version == handoff.research_output_contract_version
+        and handoff.risk_definition_id == RISK_DEFINITION_ID
+        and handoff.risk_definition_version == expected_risk_definition_version
+        and handoff.risk_model_adapter_id == RISK_MODEL_ADAPTER_ID
+        and handoff.risk_output_contract_id == RISK_OUTPUT_CONTRACT_ID
+        and handoff.risk_output_contract_version == expected_risk_output_contract_version
+        and research.risk_veto is not None
+        and research.risk_veto.definition_id == handoff.risk_definition_id
+        and research.risk_veto.definition_version == handoff.risk_definition_version
+    )
 
 
 def _validate_candidate_calibration_sources(
@@ -2267,7 +2337,7 @@ def _commit_framework_result(
                     connection,
                 ),
             )
-        except CandidateCalibrationVersionMismatch as error:
+        except (CandidateCalibrationVersionMismatch, CandidateResearchVersionMismatch) as error:
             candidate_version_failure = str(error)
         except CandidateResearchHandoffUnavailable as error:
             candidate_research_failure = error
