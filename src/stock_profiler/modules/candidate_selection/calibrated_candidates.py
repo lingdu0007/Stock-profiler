@@ -807,7 +807,7 @@ def _fit_calibrator(
                 raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
         elif (
             record.entry_at < record.raw_score_frozen_at
-            or record.entry_at >= record.entry_window_ends_at
+            or record.entry_at > record.entry_window_ends_at
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         maturity_anchor = record.entry_at or record.entry_window_ends_at

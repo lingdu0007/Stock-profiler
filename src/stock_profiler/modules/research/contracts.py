@@ -793,7 +793,7 @@ class RawScoreModelSnapshot(ResearchContract):
                                 not (
                                     record.raw_score_frozen_at
                                     <= record.evaluation_entry_at
-                                    < record.entry_window_ends_at
+                                    <= record.entry_window_ends_at
                                 )
                                 or not raw_score_entry_is_executable(
                                     record.evaluation_entry_at,

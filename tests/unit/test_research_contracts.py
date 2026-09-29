@@ -493,6 +493,37 @@ def test_delayed_valid_entry_keeps_the_original_candidate_window_end() -> None:
     assert delayed_record.evaluation_entry_at < delayed_record.entry_window_ends_at
 
 
+def test_fifth_session_close_is_a_valid_frozen_entry() -> None:
+    payload = _command().model_dump(mode="json")
+    raw_score = payload["raw_score_model"]
+    assert isinstance(raw_score, dict)
+    record = next(
+        item for item in raw_score["training_records"] if item["evaluation_entry_at"] is not None
+    )
+    fifth_close = datetime.fromisoformat(record["entry_window_ends_at"].replace("Z", "+00:00"))
+    maturity = raw_score_maturity_at(fifth_close, record["market_calendar_version"])
+    record["evaluation_entry_at"] = fifth_close.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+    watermark = max(
+        datetime.fromisoformat(item["label_available_at"].replace("Z", "+00:00"))
+        for item in raw_score["training_records"]
+    )
+    raw_score["label_watermark_at"] = watermark.isoformat()
+    raw_score["label_watermark_month"] = watermark.strftime("%Y-%m")
+
+    validated = ResearchCommand.model_validate(payload)
+
+    assert (
+        next(
+            item
+            for item in validated.raw_score_model.training_records
+            if item.security_id == record["security_id"]
+        ).evaluation_entry_at
+        == fifth_close
+    )
+
+
 def test_off_session_entry_cannot_create_a_positive_mature_label() -> None:
     payload = _command().model_dump(mode="json")
     record = next(

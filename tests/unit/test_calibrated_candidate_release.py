@@ -1000,14 +1000,24 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     assert "CALIBRATION_ENTRY_WINDOW_NOT_AFTER_PREDICTION" in release.reasons
 
     entry_outside_window = original.training_records[0].model_copy(
-        update={"entry_at": original.training_records[0].entry_window_ends_at}
+        update={
+            "entry_at": original.training_records[0].entry_window_ends_at,
+            "unified_maturity_at": six_month_terminal_evaluation_at(
+                original.training_records[0].entry_window_ends_at,
+                original.training_records[0].market_calendar_version,
+            ),
+            "label_available_at": six_month_terminal_evaluation_at(
+                original.training_records[0].entry_window_ends_at,
+                original.training_records[0].market_calendar_version,
+            ),
+        }
     )
     release = freeze_candidate_release(
         original.model_copy(
             update={"training_records": (entry_outside_window, *original.training_records[1:])}
         )
     )
-    assert "CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW" in release.reasons
+    assert release.disposition == "CANDIDATES"
 
     intramonth_mature_entry = original.training_records[0].model_copy(
         update={
@@ -1775,23 +1785,27 @@ def test_frozen_prediction_accepts_executable_entry_at_session_close() -> None:
         raw_score_frozen_at=original.knowledge_cutoff,
         raw_score_training_watermark_at=original.label_watermark_at,
     )[(month, member.security_id, member.research_id)]
-    closing_at = prediction.entry_sessions[0][1]
+    closing_at = prediction.entry_sessions[-1][1]
     maturity_at = raw_score_maturity_at(closing_at, prediction.market_calendar_version)
-    source = frozen_raw_score_model_snapshot().training_records[0].model_copy(
-        update={
-            "month": month,
-            "security_id": member.security_id,
-            "research_id": member.research_id,
-            "raw_score_frozen_at": prediction.raw_score_frozen_at,
-            "raw_score_training_watermark_at": prediction.raw_score_training_watermark_at,
-            "raw_success_score": prediction.raw_success_score,
-            "historical_calibrated_probability": prediction.calibrated_probability,
-            "entry_window_ends_at": prediction.entry_window_ends_at,
-            "evaluation_entry_at": closing_at,
-            "unified_maturity_at": maturity_at,
-            "market_calendar_version": prediction.market_calendar_version,
-            "label_available_at": maturity_at,
-        }
+    source = (
+        frozen_raw_score_model_snapshot()
+        .training_records[0]
+        .model_copy(
+            update={
+                "month": month,
+                "security_id": member.security_id,
+                "research_id": member.research_id,
+                "raw_score_frozen_at": prediction.raw_score_frozen_at,
+                "raw_score_training_watermark_at": prediction.raw_score_training_watermark_at,
+                "raw_success_score": prediction.raw_success_score,
+                "historical_calibrated_probability": prediction.calibrated_probability,
+                "entry_window_ends_at": prediction.entry_window_ends_at,
+                "evaluation_entry_at": closing_at,
+                "unified_maturity_at": maturity_at,
+                "market_calendar_version": prediction.market_calendar_version,
+                "label_available_at": maturity_at,
+            }
+        )
     )
 
     decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
