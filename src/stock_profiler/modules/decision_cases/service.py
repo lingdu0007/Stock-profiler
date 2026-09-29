@@ -91,6 +91,7 @@ from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
     RawScore,
     RawScoreCalculationError,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDraft,
     ResearchDraftMember,
@@ -568,6 +569,41 @@ def _validate_candidate_calibration_sources(
         raise CandidateCalibrationVersionMismatch()
 
     candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    historical_events = tuple(
+        event
+        for event in ledger.research_event_history(connection, access_scope)
+        if event.corrects_event_id is None
+        and event.validation_status == "PASSED"
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+        and event.case.research is not None
+        and event.result.research is not None
+    )
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    for event in historical_events:
+        source_case_research = event.case.research
+        if source_case_research is None:
+            continue
+        model = source_case_research.raw_score_model
+        if model.calibration_evidence_version != "frozen-oos-calibration-v1":
+            continue
+        for source_record in model.training_records:
+            if (
+                source_record.unified_maturity_at is not None
+                and source_record.label_available_at <= command.label_watermark_at
+                and source_record.unified_maturity_at <= command.label_watermark_at
+            ):
+                identity = (
+                    source_record.month,
+                    source_record.security_id,
+                    source_record.research_id,
+                )
+                mature_source_rows[identity] = source_record
+    globally_mature_months = tuple(sorted({identity[0] for identity in mature_source_rows}))
+    if len(command.training_window_months) == 60 and (
+        len(globally_mature_months) < 60
+        or command.training_window_months != globally_mature_months[-60:]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
     for record in command.training_records:
@@ -661,6 +697,18 @@ def _validate_candidate_calibration_sources(
         if len(command.training_window_months) == 60 and (
             len(mature_months) < 60 or command.training_window_months != mature_months[-60:]
         ):
+            raise CandidateCalibrationProvenanceInvalid()
+    if len(command.training_window_months) == 60:
+        expected_identities = {
+            identity
+            for identity in mature_source_rows
+            if identity[0] in command.training_window_months
+        }
+        submitted_identities = {
+            (record.month, record.security_id, record.research_id)
+            for record in command.training_records
+        }
+        if submitted_identities != expected_identities:
             raise CandidateCalibrationProvenanceInvalid()
 
 

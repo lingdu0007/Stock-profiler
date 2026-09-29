@@ -159,6 +159,12 @@ class DecisionLedger(Protocol[Transaction]):
 
     def observed_at(self) -> str: ...
 
+    def research_event_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def monitoring_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...

@@ -3154,7 +3154,7 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
     raw_score_stage = next(stage for stage in execution.stage_results if stage.phase == "RAW_SCORE")
     assert {gate.gate_id: gate.status for gate in raw_score_stage.gate_results} == {
         "RAW_SCORE_MATURE_MONTHS": "FAILED",
-        "RAW_SCORE_TRAINING_RECORD_COUNT": "FAILED",
+        "RAW_SCORE_TRAINING_RECORD_COUNT": "PASSED",
         "RAW_SCORE_POSITIVE_CLASS": "PASSED",
         "RAW_SCORE_NEGATIVE_CLASS": "PASSED",
         "STRUCTURED_Z20": "FAILED",
@@ -3438,6 +3438,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_INFERENCE_MODEL_MISMATCH"),
         ("ACCEPT", "CALIBRATION_RECORDS_MISSING"),
+        ("ACCEPT", "CALIBRATION_LATEST_MONTH_OMITTED"),
         ("ACCEPT", "CALIBRATION_WINDOW_MISSING"),
         ("ACCEPT", "CALIBRATION_EQUAL_TRAINING_WATERMARK"),
         ("ACCEPT", "CALIBRATOR_VERSION_UNSUPPORTED"),
@@ -3487,6 +3488,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH",
         "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATION_LATEST_MONTH_OMITTED",
         "CALIBRATION_WINDOW_MISSING",
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "CALIBRATOR_VERSION_UNSUPPORTED",
@@ -3558,7 +3560,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
     assert source_fact is not None and source_fact.case.research is not None
     source_records = source_fact.case.research.raw_score_model.training_records
-    assert len(source_records) == 500
+    assert len(source_records) == 524
     assert any(
         record.evaluation_entry_at is None and not record.terminal_label
         for record in source_records
@@ -3617,6 +3619,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             record
             for record in training_records
             if record.record_id != missing_member_record.record_id
+        )
+    elif candidate_scenario == "CALIBRATION_LATEST_MONTH_OMITTED":
+        latest_month = max(record.month for record in training_records)
+        training_records = tuple(
+            record for record in training_records if record.month != latest_month
         )
     elif candidate_scenario == "CALIBRATION_LABEL_TAMPERED":
         training_records = (
@@ -4298,9 +4305,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             reason="CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",
             availability_failure="VERSION",
         )
-    elif candidate_scenario == "CALIBRATION_RECORDS_MISSING":
-        direct = freeze_candidate_release(command, published_at=publication_time)
     elif candidate_scenario in {
+        "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATION_LATEST_MONTH_OMITTED",
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
@@ -4467,6 +4474,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_INFERENCE_MODEL_MISMATCH": "FAILED",
         "CALIBRATION_RECORDS_MISSING": "FAILED",
+        "CALIBRATION_LATEST_MONTH_OMITTED": "FAILED",
         "CALIBRATION_WINDOW_MISSING": "FAILED",
         "CALIBRATION_EQUAL_TRAINING_WATERMARK": "CANDIDATES",
         "CALIBRATOR_VERSION_UNSUPPORTED": "FAILED",
@@ -4511,6 +4519,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_RECORDS_MISSING",
+        "CALIBRATION_LATEST_MONTH_OMITTED",
         "CALIBRATION_WINDOW_MISSING",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_LABEL_TAMPERED",

@@ -204,6 +204,13 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
     assert release.calibration is not None
     assert release.calibration.label_watermark_at == datetime(2046, 7, 1, 8, tzinfo=UTC)
     assert release.calibration.training_record_count == 600
+    assert release.calibration.fit_diagnostics.log_loss.is_finite()
+    assert release.calibration.fit_diagnostics.brier_score.is_finite()
+    assert release.calibration.fit_diagnostics.reliability_curve
+    assert release.calibration.recent_diagnostic_months == command().training_window_months[-24:]
+    assert release.calibration.recent_diagnostic_sample_count >= 200
+    assert release.calibration.recent_diagnostics is not None
+    assert release.calibration.recent_diagnostics.log_loss.is_finite()
     assert release.members[0].calibrated_probability is not None
     assert release.members[0].valid_market_dates == (
         datetime(2046, 7, 2, 1, tzinfo=UTC).date(),

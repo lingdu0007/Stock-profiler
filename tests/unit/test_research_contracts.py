@@ -19,6 +19,7 @@ from stock_profiler.modules.research.contracts import (
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     RawScoreFeatureTransform,
+    RawScoreModelSnapshot,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -203,7 +204,7 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.training_window_start_month == "2036-12"
     assert raw_score.training_window_end_month == "2041-11"
     assert raw_score.label_watermark_month == "2042-06"
-    assert len(command.raw_score_model.training_records) == 500
+    assert len(command.raw_score_model.training_records) == 524
     assert all(
         record.evaluation_entry_at is None
         or record.selection_cutoff_at < record.evaluation_entry_at
@@ -614,11 +615,38 @@ def test_legacy_research_command_preserves_existing_training_provenance() -> Non
     decoded = decode_legacy_research_command(payload)
 
     assert len(decoded.raw_score_model.training_cohorts) == 60
-    assert len(decoded.raw_score_model.training_records) == 500
+    assert len(decoded.raw_score_model.training_records) == 524
     assert (
         decoded.raw_score_model.training_cohorts[0].research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
     )
+
+
+def test_pre_calibration_research_snapshot_remains_replayable() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+        ):
+            record.pop(field_name)
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert len(snapshot.training_records) == 524
+    assert snapshot.training_records[0].raw_success_score is None
+
+
+def test_current_raw_score_snapshot_rejects_partial_calibration_evidence() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["training_records"][0].pop("raw_success_score")
+
+    with pytest.raises(ValueError, match="raw-score calibration evidence is incomplete"):
+        RawScoreModelSnapshot.model_validate(payload)
 
 
 def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
@@ -631,7 +659,7 @@ def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
 
     decoded = decode_legacy_research_command(payload)
 
-    assert len(decoded.raw_score_model.training_records) == 500
+    assert len(decoded.raw_score_model.training_records) == 524
     assert decoded.raw_score_model.training_records[0].cohort_id.startswith(
         "legacy-training-cohort-"
     )

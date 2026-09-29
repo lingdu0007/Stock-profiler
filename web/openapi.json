@@ -652,6 +652,87 @@
         "title": "CalibratedMember",
         "type": "object"
       },
+      "CalibrationDiagnostics": {
+        "additionalProperties": false,
+        "description": "Frozen goodness-of-fit diagnostics over one explicitly named score cohort.",
+        "properties": {
+          "brier_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Brier Score",
+            "type": "string"
+          },
+          "calibration_intercept": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Calibration Intercept",
+            "type": "string"
+          },
+          "calibration_slope": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Calibration Slope",
+            "type": "string"
+          },
+          "log_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Log Loss",
+            "type": "string"
+          },
+          "reliability_curve": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationReliabilityBin"
+            },
+            "title": "Reliability Curve",
+            "type": "array"
+          }
+        },
+        "required": [
+          "log_loss",
+          "brier_score",
+          "reliability_curve",
+          "calibration_intercept",
+          "calibration_slope"
+        ],
+        "title": "CalibrationDiagnostics",
+        "type": "object"
+      },
+      "CalibrationReliabilityBin": {
+        "additionalProperties": false,
+        "properties": {
+          "lower_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Probability",
+            "type": "string"
+          },
+          "mean_predicted_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mean Predicted Probability",
+            "type": "string"
+          },
+          "observed_success_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Observed Success Rate",
+            "type": "string"
+          },
+          "sample_count": {
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "upper_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Probability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lower_probability",
+          "upper_probability",
+          "sample_count",
+          "mean_predicted_probability",
+          "observed_success_rate"
+        ],
+        "title": "CalibrationReliabilityBin",
+        "type": "object"
+      },
       "CalibrationSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -659,6 +740,9 @@
             "const": "monotone-firth-logistic-v1",
             "title": "Calibrator Version",
             "type": "string"
+          },
+          "fit_diagnostics": {
+            "$ref": "#/components/schemas/CalibrationDiagnostics"
           },
           "intercept": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -677,6 +761,30 @@
           "positive_record_count": {
             "title": "Positive Record Count",
             "type": "integer"
+          },
+          "recent_diagnostic_months": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 24,
+            "title": "Recent Diagnostic Months",
+            "type": "array"
+          },
+          "recent_diagnostic_sample_count": {
+            "minimum": 0.0,
+            "title": "Recent Diagnostic Sample Count",
+            "type": "integer"
+          },
+          "recent_diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slope": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -703,7 +811,11 @@
           "label_watermark_at",
           "training_record_count",
           "positive_record_count",
-          "negative_record_count"
+          "negative_record_count",
+          "fit_diagnostics",
+          "recent_diagnostic_months",
+          "recent_diagnostic_sample_count",
+          "recent_diagnostics"
         ],
         "title": "CalibrationSnapshot",
         "type": "object"

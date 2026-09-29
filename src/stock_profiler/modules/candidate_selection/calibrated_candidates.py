@@ -18,6 +18,8 @@ PROBABILITY_THRESHOLD = Decimal("0.80")
 _MINIMUM_MATURE_MONTHS = 60
 _MINIMUM_MATURE_RECORDS = 500
 _MINIMUM_RECORDS_PER_CLASS = 50
+_MINIMUM_RECENT_DIAGNOSTIC_RECORDS = 200
+_RELIABILITY_BIN_COUNT = 10
 CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
@@ -209,6 +211,28 @@ class CalibrationSnapshot(UniverseContract):
     training_record_count: int
     positive_record_count: int
     negative_record_count: int
+    fit_diagnostics: CalibrationDiagnostics
+    recent_diagnostic_months: tuple[str, ...] = Field(min_length=24, max_length=24)
+    recent_diagnostic_sample_count: int = Field(ge=0)
+    recent_diagnostics: CalibrationDiagnostics | None
+
+
+class CalibrationReliabilityBin(UniverseContract):
+    lower_probability: Decimal
+    upper_probability: Decimal
+    sample_count: int = Field(gt=0)
+    mean_predicted_probability: Decimal
+    observed_success_rate: Decimal
+
+
+class CalibrationDiagnostics(UniverseContract):
+    """Frozen goodness-of-fit diagnostics over one explicitly named score cohort."""
+
+    log_loss: Decimal
+    brier_score: Decimal
+    reliability_curve: tuple[CalibrationReliabilityBin, ...]
+    calibration_intercept: Decimal
+    calibration_slope: Decimal
 
 
 class CandidatePopulation(UniverseContract):
@@ -784,6 +808,23 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         intercept, slope = _firth_logistic(records)
     except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError) as error:
         raise ValueError("CALIBRATION_FIT_FAILED") from error
+    probabilities = tuple(
+        _sigmoid(intercept + slope * float(record.raw_success_score)) for record in records
+    )
+    fit_diagnostics = _calibration_diagnostics(records, probabilities)
+    recent_months = months[-24:]
+    recent_records = tuple(record for record in records if record.month in recent_months)
+    recent_diagnostics = (
+        _calibration_diagnostics(
+            recent_records,
+            tuple(
+                _sigmoid(intercept + slope * float(record.raw_success_score))
+                for record in recent_records
+            ),
+        )
+        if len(recent_records) >= _MINIMUM_RECENT_DIAGNOSTIC_RECORDS
+        else None
+    )
     return CalibrationSnapshot(
         calibrator_version=command.calibrator_version,
         intercept=Decimal(str(intercept)).quantize(Decimal("0.00000001")),
@@ -793,6 +834,73 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         training_record_count=len(records),
         positive_record_count=positives,
         negative_record_count=negatives,
+        fit_diagnostics=fit_diagnostics,
+        recent_diagnostic_months=recent_months,
+        recent_diagnostic_sample_count=len(recent_records),
+        recent_diagnostics=recent_diagnostics,
+    )
+
+
+def _calibration_diagnostics(
+    records: tuple[CalibrationRecord, ...],
+    probabilities: tuple[float, ...],
+) -> CalibrationDiagnostics:
+    if not records or len(records) != len(probabilities):
+        raise ValueError("CALIBRATION_DIAGNOSTICS_REQUIRE_MATCHED_RECORDS")
+    clipped = tuple(min(max(probability, 1e-15), 1.0 - 1e-15) for probability in probabilities)
+    labels = tuple(float(record.terminal_success) for record in records)
+    log_loss = -sum(
+        label * math.log(probability) + (1.0 - label) * math.log1p(-probability)
+        for label, probability in zip(labels, clipped, strict=True)
+    ) / len(records)
+    brier_score = sum(
+        (label - probability) ** 2 for label, probability in zip(labels, probabilities, strict=True)
+    ) / len(records)
+    bins: list[CalibrationReliabilityBin] = []
+    for bin_index in range(_RELIABILITY_BIN_COUNT):
+        lower = bin_index / _RELIABILITY_BIN_COUNT
+        upper = (bin_index + 1) / _RELIABILITY_BIN_COUNT
+        members = tuple(
+            (label, probability)
+            for label, probability in zip(labels, probabilities, strict=True)
+            if lower <= probability < upper
+            or (bin_index == _RELIABILITY_BIN_COUNT - 1 and probability == 1.0)
+        )
+        if not members:
+            continue
+        bins.append(
+            CalibrationReliabilityBin(
+                lower_probability=Decimal(str(lower)),
+                upper_probability=Decimal(str(upper)),
+                sample_count=len(members),
+                mean_predicted_probability=Decimal(
+                    str(sum(probability for _, probability in members) / len(members))
+                ),
+                observed_success_rate=Decimal(
+                    str(sum(label for label, _ in members) / len(members))
+                ),
+            )
+        )
+    logits = tuple(math.log(p / (1.0 - p)) for p in clipped)
+    if len(set(logits)) < 2:
+        diagnostic_intercept = math.log((sum(labels) + 0.5) / (len(labels) - sum(labels) + 0.5))
+        diagnostic_slope = 0.0
+    else:
+        recalibration_records = tuple(
+            record.model_copy(update={"raw_success_score": Decimal(str(logit))})
+            for record, logit in zip(records, logits, strict=True)
+        )
+        diagnostic_intercept, diagnostic_slope = _firth_logistic(recalibration_records)
+
+    def decimal(value: float) -> Decimal:
+        return Decimal(str(value)).quantize(Decimal("0.00000001"))
+
+    return CalibrationDiagnostics(
+        log_loss=decimal(log_loss),
+        brier_score=decimal(brier_score),
+        reliability_curve=tuple(bins),
+        calibration_intercept=decimal(diagnostic_intercept),
+        calibration_slope=decimal(diagnostic_slope),
     )
 
 

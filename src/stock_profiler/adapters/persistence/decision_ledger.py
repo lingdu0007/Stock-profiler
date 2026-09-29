@@ -186,6 +186,24 @@ class DecisionLedger:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
 
+    def research_event_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read same-owner, same-visibility original research facts in durable order."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection,
+                "research calibration history is unavailable",
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.research is not None
+            and fact.result.research is not None
+        )
+
     def execution_plan_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]:

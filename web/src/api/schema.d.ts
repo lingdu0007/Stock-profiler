@@ -477,6 +477,35 @@ export interface components {
             /** Valid Market Dates */
             valid_market_dates: string[];
         };
+        /**
+         * CalibrationDiagnostics
+         * @description Frozen goodness-of-fit diagnostics over one explicitly named score cohort.
+         */
+        CalibrationDiagnostics: {
+            /** Brier Score */
+            brier_score: string;
+            /** Calibration Intercept */
+            calibration_intercept: string;
+            /** Calibration Slope */
+            calibration_slope: string;
+            /** Log Loss */
+            log_loss: string;
+            /** Reliability Curve */
+            reliability_curve: components["schemas"]["CalibrationReliabilityBin"][];
+        };
+        /** CalibrationReliabilityBin */
+        CalibrationReliabilityBin: {
+            /** Lower Probability */
+            lower_probability: string;
+            /** Mean Predicted Probability */
+            mean_predicted_probability: string;
+            /** Observed Success Rate */
+            observed_success_rate: string;
+            /** Sample Count */
+            sample_count: number;
+            /** Upper Probability */
+            upper_probability: string;
+        };
         /** CalibrationSnapshot */
         CalibrationSnapshot: {
             /**
@@ -484,6 +513,7 @@ export interface components {
              * @constant
              */
             calibrator_version: "monotone-firth-logistic-v1";
+            fit_diagnostics: components["schemas"]["CalibrationDiagnostics"];
             /** Intercept */
             intercept: string;
             /**
@@ -495,6 +525,11 @@ export interface components {
             negative_record_count: number;
             /** Positive Record Count */
             positive_record_count: number;
+            /** Recent Diagnostic Months */
+            recent_diagnostic_months: string[];
+            /** Recent Diagnostic Sample Count */
+            recent_diagnostic_sample_count: number;
+            recent_diagnostics: components["schemas"]["CalibrationDiagnostics"] | null;
             /** Slope */
             slope: string;
             /** Training Record Count */

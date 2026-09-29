@@ -87,7 +87,43 @@ describe("App", () => {
             label_watermark_at: "2046-07-01T08:00:00Z",
             training_record_count: 600,
             positive_record_count: 300,
-            negative_record_count: 300
+            negative_record_count: 300,
+            fit_diagnostics: {
+              log_loss: "0.42",
+              brier_score: "0.13",
+              reliability_curve: [
+                {
+                  lower_probability: "0.8",
+                  upper_probability: "0.9",
+                  sample_count: 80,
+                  mean_predicted_probability: "0.85",
+                  observed_success_rate: "0.82"
+                }
+              ],
+              calibration_intercept: "-0.02",
+              calibration_slope: "0.97"
+            },
+            recent_diagnostic_months: Array.from({ length: 24 }, (_, index) => {
+              const year = 2044 + Math.floor(index / 12);
+              const month = (index % 12) + 1;
+              return `${year}-${String(month).padStart(2, "0")}`;
+            }),
+            recent_diagnostic_sample_count: 240,
+            recent_diagnostics: {
+              log_loss: "0.44",
+              brier_score: "0.14",
+              reliability_curve: [
+                {
+                  lower_probability: "0.8",
+                  upper_probability: "0.9",
+                  sample_count: 80,
+                  mean_predicted_probability: "0.85",
+                  observed_success_rate: "0.82"
+                }
+              ],
+              calibration_intercept: "0.01",
+              calibration_slope: "0.94"
+            }
           },
           members: [
             {

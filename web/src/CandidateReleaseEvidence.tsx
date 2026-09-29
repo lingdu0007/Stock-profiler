@@ -85,6 +85,54 @@ export function CandidateReleaseEvidence({
               label="Mature labels"
               value={String(release.calibration.training_record_count)}
             />
+            <Record
+              label="Primary fit-window log loss"
+              value={release.calibration.fit_diagnostics.log_loss}
+            />
+            <Record
+              label="Fit-window Brier score"
+              value={release.calibration.fit_diagnostics.brier_score}
+            />
+            <Record
+              label="Fit-window calibration intercept / slope"
+              value={`${release.calibration.fit_diagnostics.calibration_intercept} / ${release.calibration.fit_diagnostics.calibration_slope}`}
+            />
+            <Record
+              label="Fit-window reliability"
+              value={reliabilitySummary(release.calibration.fit_diagnostics.reliability_curve)}
+            />
+            <Record
+              label="Recent diagnostic window"
+              value={`${release.calibration.recent_diagnostic_months[0]} through ${release.calibration.recent_diagnostic_months.at(-1)} (${release.calibration.recent_diagnostic_sample_count} records)`}
+            />
+            <Record
+              label="Recent diagnostic log loss"
+              value={
+                release.calibration.recent_diagnostics?.log_loss ?? "Unavailable (<200 records)"
+              }
+            />
+            <Record
+              label="Recent diagnostic Brier score"
+              value={
+                release.calibration.recent_diagnostics?.brier_score ?? "Unavailable (<200 records)"
+              }
+            />
+            <Record
+              label="Recent calibration intercept / slope"
+              value={
+                release.calibration.recent_diagnostics
+                  ? `${release.calibration.recent_diagnostics.calibration_intercept} / ${release.calibration.recent_diagnostics.calibration_slope}`
+                  : "Unavailable (<200 records)"
+              }
+            />
+            <Record
+              label="Recent reliability"
+              value={
+                release.calibration.recent_diagnostics
+                  ? reliabilitySummary(release.calibration.recent_diagnostics.reliability_curve)
+                  : "Unavailable (<200 records)"
+              }
+            />
           </dl>
         </div>
       )}
@@ -159,4 +207,15 @@ export function CandidateReleaseEvidence({
       </div>
     </section>
   );
+}
+
+function reliabilitySummary(
+  bins: NonNullable<CandidateRelease["calibration"]>["fit_diagnostics"]["reliability_curve"]
+): string {
+  return bins
+    .map(
+      (bin) =>
+        `${bin.lower_probability}–${bin.upper_probability}: ${bin.mean_predicted_probability} → ${bin.observed_success_rate} (n=${bin.sample_count})`
+    )
+    .join("; ");
 }

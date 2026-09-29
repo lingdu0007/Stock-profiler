@@ -568,6 +568,7 @@ class RawScoreModelSnapshot(ResearchContract):
     label_watermark_at: AwareDatetime
     training_cohorts: tuple[RawScoreTrainingCohort, ...] = Field(min_length=1)
     training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
+    calibration_evidence_version: Literal["frozen-oos-calibration-v1"] | None = None
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)
@@ -703,38 +704,62 @@ class RawScoreModelSnapshot(ResearchContract):
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must be a synthetic trading day")
-            for record in self.training_records:
-                if (
-                    record.raw_score_frozen_at is None
-                    or record.raw_score_training_watermark_at is None
-                    or record.raw_success_score is None
-                    or record.entry_window_ends_at is None
-                    or record.unified_maturity_at is None
-                ):
-                    raise ValueError("raw-score calibration evidence is incomplete")
-                if (
-                    record.raw_score_frozen_at != record.selection_cutoff_at
-                    or record.raw_score_training_watermark_at > record.raw_score_frozen_at
-                    or not record.raw_success_score.is_finite()
-                    or record.entry_window_ends_at <= record.raw_score_frozen_at
-                    or (record.evaluation_entry_at is None and record.terminal_label)
-                    or (
-                        record.evaluation_entry_at is not None
-                        and not (
-                            record.raw_score_frozen_at
-                            <= record.evaluation_entry_at
-                            < record.entry_window_ends_at
+            evidence_fields = (
+                "raw_score_frozen_at",
+                "raw_score_training_watermark_at",
+                "raw_success_score",
+                "entry_window_ends_at",
+                "unified_maturity_at",
+            )
+            record_evidence = tuple(
+                tuple(getattr(record, field_name) for field_name in evidence_fields)
+                for record in self.training_records
+            )
+            has_calibration_evidence = any(
+                value is not None for values in record_evidence for value in values
+            )
+            if has_calibration_evidence != (
+                self.calibration_evidence_version == "frozen-oos-calibration-v1"
+            ):
+                raise ValueError("raw-score calibration evidence version is incomplete")
+            if has_calibration_evidence and any(
+                value is None for values in record_evidence for value in values
+            ):
+                raise ValueError("raw-score calibration evidence is incomplete")
+            if has_calibration_evidence:
+                for record in self.training_records:
+                    assert record.raw_score_frozen_at is not None
+                    assert record.raw_score_training_watermark_at is not None
+                    assert record.raw_success_score is not None
+                    assert record.entry_window_ends_at is not None
+                    assert record.unified_maturity_at is not None
+                    if (
+                        record.raw_score_frozen_at != record.selection_cutoff_at
+                        or record.raw_score_training_watermark_at > record.raw_score_frozen_at
+                        or not record.raw_success_score.is_finite()
+                        or record.entry_window_ends_at <= record.raw_score_frozen_at
+                        or (record.evaluation_entry_at is None and record.terminal_label)
+                        or (
+                            record.evaluation_entry_at is not None
+                            and not (
+                                record.raw_score_frozen_at
+                                <= record.evaluation_entry_at
+                                < record.entry_window_ends_at
+                            )
                         )
-                    )
-                ):
-                    raise ValueError("raw-score calibration evidence has invalid clocks or label")
-                maturity_anchor = record.evaluation_entry_at or record.entry_window_ends_at
-                if record.unified_maturity_at != _raw_score_add_months(
-                    maturity_anchor, RAW_SCORE_LABEL_HORIZON_MONTHS
-                ):
-                    raise ValueError("raw-score unified maturity does not match the entry horizon")
-                if record.label_available_at < record.unified_maturity_at:
-                    raise ValueError("raw-score label maturity is incomplete")
+                    ):
+                        raise ValueError(
+                            "raw-score calibration evidence has invalid clocks or label"
+                        )
+                    maturity_anchor = record.evaluation_entry_at or record.entry_window_ends_at
+                    if record.unified_maturity_at != _raw_score_add_months(
+                        maturity_anchor, RAW_SCORE_LABEL_HORIZON_MONTHS
+                    ):
+                        raise ValueError(
+                            "raw-score unified maturity does not match the entry horizon"
+                        )
+                    if record.label_available_at < record.unified_maturity_at:
+                        raise ValueError("raw-score label maturity is incomplete")
             if any(
                 record.label_available_at > self.label_watermark_at
                 for record in self.training_records
@@ -891,7 +916,7 @@ def _frozen_raw_score_training_records(
     records: list[RawScoreTrainingRecord] = []
     record_index = 0
     for month_index, month in enumerate(training_months):
-        record_count = 9 if month_index < 20 else 8
+        record_count = 9 if month_index < 20 or month_index >= 36 else 8
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
         entry_window_ends_at = evaluation_entry_at + timedelta(days=1)
@@ -964,9 +989,10 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         label_watermark_at=label_watermark_at,
         training_cohorts=training_cohorts,
         training_records=training_records,
+        calibration_evidence_version="frozen-oos-calibration-v1",
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
-        training_record_count=500,
+        training_record_count=len(training_records),
         positive_record_count=sum(record.terminal_label for record in training_records),
         negative_record_count=sum(not record.terminal_label for record in training_records),
         intercept=RAW_SCORE_INTERCEPT,
