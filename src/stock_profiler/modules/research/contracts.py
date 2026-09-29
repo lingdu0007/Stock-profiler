@@ -955,21 +955,39 @@ def _raw_score_market_sessions(
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    first_session_date = first_date.date()
+    saved_sessions = calendar.sessions
+    if saved_sessions and saved_sessions[0].closed_at.date() <= first_session_date <= (
+        saved_sessions[-1].closed_at.date()
+    ):
+        primary_sessions = tuple(
+            session.closed_at
+            for session in saved_sessions
+            if session.closed_at.date() >= first_session_date
+        )
+        if not primary_sessions or primary_sessions[0].date() != first_session_date:
+            raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+        if len(primary_sessions) >= 5:
+            return primary_sessions[:5]
+        terminal_following_sessions = tuple(
+            session.closed_at
+            for session in calendar.terminal_sessions or saved_sessions
+            if session.closed_at.date() > primary_sessions[-1].date()
+        )
+        window_sessions = (
+            primary_sessions + terminal_following_sessions[: 5 - len(primary_sessions)]
+        )
+        if len(window_sessions) == 5:
+            return window_sessions
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
     primary_sessions = tuple(
         session.closed_at
-        for session in calendar.sessions
-        if session.closed_at.date() >= first_date.date()
+        for session in calendar.terminal_sessions or saved_sessions
+        if session.closed_at.date() >= first_session_date
     )[:5]
-    if len(primary_sessions) == 5 and primary_sessions[0].date() == first_date.date():
-        return primary_sessions
-    terminal_sessions = tuple(
-        session.closed_at
-        for session in calendar.terminal_sessions or calendar.sessions
-        if session.closed_at.date() >= first_date.date()
-    )[:5]
-    if len(terminal_sessions) != 5:
+    if len(primary_sessions) != 5:
         raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
-    return terminal_sessions
+    return primary_sessions
 
 
 def _raw_score_evaluation_entry_at(

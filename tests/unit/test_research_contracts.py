@@ -453,6 +453,17 @@ def test_missing_session_inside_saved_calendar_coverage_is_not_executable() -> N
     )
 
 
+def test_entry_window_preserves_saved_sessions_at_calendar_coverage_edge() -> None:
+    cutoff = datetime(2042, 6, 12, 16, tzinfo=UTC)
+    market_calendar_version = "synthetic-market-calendar-v1"
+    first_session_open = _raw_score_evaluation_entry_at(cutoff, market_calendar_version)
+
+    assert first_session_open == datetime(2042, 6, 15, 8, tzinfo=UTC)
+    assert raw_score_entry_window_end(first_session_open, market_calendar_version) == datetime(
+        2042, 6, 19, 15, tzinfo=UTC
+    )
+
+
 def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_window() -> None:
     payload = _command().model_dump(mode="json")
     record = next(
