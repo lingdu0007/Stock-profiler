@@ -258,8 +258,36 @@ def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> Non
     assert release.availability_failure is None
     assert release.calibration is not None
     assert release.calibration.recent_diagnostic_sample_count >= 200
-    assert release.calibration.recent_diagnostic_status == "CALCULATION_FAILED"
-    assert release.calibration.recent_diagnostics is None
+    assert release.calibration.recent_diagnostic_status == "AVAILABLE"
+    assert release.calibration.recent_diagnostics is not None
+    assert release.calibration.recent_diagnostics.recalibration_fit_status == "CALCULATION_FAILED"
+    assert release.calibration.recent_diagnostics.log_loss.is_finite()
+
+
+def test_full_window_diagnostic_fit_failure_does_not_fail_production_calibration() -> None:
+    original = command()
+    records = tuple(
+        record.model_copy(
+            update={
+                "out_of_sample_probability": (
+                    Decimal("0.5") if index % 2 == 0 else Decimal("0.50000000000001")
+                )
+            }
+        )
+        for index, record in enumerate(original.training_records)
+    )
+
+    release = freeze_candidate_release(original.model_copy(update={"training_records": records}))
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.availability_failure is None
+    assert release.calibration is not None
+    diagnostics = release.calibration.out_of_sample_diagnostics
+    assert diagnostics.log_loss.is_finite()
+    assert diagnostics.brier_score.is_finite()
+    assert diagnostics.recalibration_fit_status == "CALCULATION_FAILED"
+    assert diagnostics.calibration_intercept is None
+    assert diagnostics.calibration_slope is None
 
 
 def test_log_loss_uses_frozen_out_of_sample_probabilities_not_the_current_fit() -> None:
@@ -1317,6 +1345,24 @@ def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
     assert maturity == expected_maturity
     assert any(session.closed_at == expected_maturity for session in calendar.sessions)
     assert any(session.closed_at == expected_maturity for session in calendar.terminal_sessions)
+
+
+def test_terminal_maturity_does_not_invent_a_weekday_missing_from_candidate_calendar() -> None:
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    assert calendar is not None
+    maturity = six_month_terminal_evaluation_at(
+        datetime(2041, 11, 25, tzinfo=UTC), calendar.version_id
+    )
+    final_saved_session = max(
+        (
+            session
+            for session in calendar.sessions
+            if session.closed_at.date() <= datetime(2042, 5, 25).date()
+        ),
+        key=lambda session: session.closed_at,
+    )
+
+    assert maturity == final_saved_session.closed_at
 
 
 @pytest.mark.parametrize(

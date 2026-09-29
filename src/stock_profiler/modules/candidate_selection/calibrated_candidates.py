@@ -239,8 +239,9 @@ class CalibrationDiagnostics(UniverseContract):
     log_loss: Decimal
     brier_score: Decimal
     reliability_curve: tuple[CalibrationReliabilityBin, ...]
-    calibration_intercept: Decimal
-    calibration_slope: Decimal
+    recalibration_fit_status: Literal["AVAILABLE", "CALCULATION_FAILED"]
+    calibration_intercept: Decimal | None
+    calibration_slope: Decimal | None
 
 
 class CandidatePopulation(UniverseContract):
@@ -907,15 +908,24 @@ def _calibration_diagnostics(
             )
         )
     logits = tuple(math.log(p / (1.0 - p)) for p in clipped)
+    recalibration_fit_status: Literal["AVAILABLE", "CALCULATION_FAILED"]
     if len(set(logits)) < 2:
         diagnostic_intercept = math.log((sum(labels) + 0.5) / (len(labels) - sum(labels) + 0.5))
         diagnostic_slope = 0.0
+        recalibration_fit_status = "AVAILABLE"
     else:
         recalibration_records = tuple(
             record.model_copy(update={"raw_success_score": Decimal(str(logit))})
             for record, logit in zip(records, logits, strict=True)
         )
-        diagnostic_intercept, diagnostic_slope = _firth_logistic(recalibration_records)
+        try:
+            diagnostic_intercept, diagnostic_slope = _firth_logistic(recalibration_records)
+        except (ArithmeticError, ValueError):
+            diagnostic_intercept = None
+            diagnostic_slope = None
+            recalibration_fit_status = "CALCULATION_FAILED"
+        else:
+            recalibration_fit_status = "AVAILABLE"
 
     def decimal(value: float) -> Decimal:
         return Decimal(str(value)).quantize(Decimal("0.00000001"))
@@ -924,8 +934,11 @@ def _calibration_diagnostics(
         log_loss=decimal(log_loss),
         brier_score=decimal(brier_score),
         reliability_curve=tuple(bins),
-        calibration_intercept=decimal(diagnostic_intercept),
-        calibration_slope=decimal(diagnostic_slope),
+        recalibration_fit_status=recalibration_fit_status,
+        calibration_intercept=(
+            decimal(diagnostic_intercept) if diagnostic_intercept is not None else None
+        ),
+        calibration_slope=decimal(diagnostic_slope) if diagnostic_slope is not None else None,
     )
 
 

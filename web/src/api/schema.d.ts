@@ -485,11 +485,16 @@ export interface components {
             /** Brier Score */
             brier_score: string;
             /** Calibration Intercept */
-            calibration_intercept: string;
+            calibration_intercept: string | null;
             /** Calibration Slope */
-            calibration_slope: string;
+            calibration_slope: string | null;
             /** Log Loss */
             log_loss: string;
+            /**
+             * Recalibration Fit Status
+             * @enum {string}
+             */
+            recalibration_fit_status: "AVAILABLE" | "CALCULATION_FAILED";
             /** Reliability Curve */
             reliability_curve: components["schemas"]["CalibrationReliabilityBin"][];
         };

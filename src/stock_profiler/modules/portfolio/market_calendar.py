@@ -76,20 +76,21 @@ class SyntheticMarketCalendar:
         )
 
 
-def _terminal_sessions(
+def _weekday_sessions(
     *,
     start: date,
     end: date,
     close_at: time,
+    first_ordinal: int,
     excluded_dates: frozenset[date] = frozenset(),
 ) -> tuple[MarketSession, ...]:
-    """Build immutable synthetic terminal sessions, including explicitly missing dates."""
+    """Build ordered synthetic sessions within the frozen calendar coverage."""
     sessions: list[MarketSession] = []
     current = start
     while current <= end:
         if current.weekday() < 5 and current not in excluded_dates:
             closed_at = datetime.combine(current, close_at, tzinfo=UTC)
-            ordinal = 1_000_000 + (current - start).days
+            ordinal = first_ordinal + len(sessions)
             sessions.append(MarketSession(ordinal, closed_at))
         current += timedelta(days=1)
     return tuple(sessions)
@@ -117,54 +118,29 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_terminal_sessions(
+        terminal_sessions=_weekday_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(15),
+            first_ordinal=1_000_000,
         ),
     ),
     SyntheticMarketCalendar(
         version_id="synthetic-market-calendar-v1",
-        sessions=(
-            MarketSession(6101, _utc("2042-05-20T15:00:00+00:00")),
-            MarketSession(6102, _utc("2042-05-21T15:00:00+00:00")),
-            MarketSession(6103, _utc("2042-05-22T15:00:00+00:00")),
-            MarketSession(6104, _utc("2042-05-25T15:00:00+00:00")),
-            MarketSession(6105, _utc("2042-05-26T15:00:00+00:00")),
-            MarketSession(6106, _utc("2042-05-27T15:00:00+00:00")),
-            MarketSession(6107, _utc("2042-05-28T15:00:00+00:00")),
-            MarketSession(6108, _utc("2042-05-29T15:00:00+00:00")),
-            MarketSession(6109, _utc("2042-06-01T15:00:00+00:00")),
-            MarketSession(6110, _utc("2042-06-02T15:00:00+00:00")),
-            MarketSession(6111, _utc("2042-06-03T15:00:00+00:00")),
-            MarketSession(6112, _utc("2042-06-04T15:00:00+00:00")),
-            MarketSession(6113, _utc("2042-06-05T15:00:00+00:00")),
-            MarketSession(6114, _utc("2042-06-08T15:00:00+00:00")),
-            MarketSession(6115, _utc("2042-06-09T15:00:00+00:00")),
-            MarketSession(6116, _utc("2042-06-10T15:00:00+00:00")),
-            MarketSession(6117, _utc("2042-06-11T15:00:00+00:00")),
-            MarketSession(6118, _utc("2042-06-12T15:00:00+00:00")),
-            MarketSession(6119, _utc("2042-06-15T15:00:00+00:00")),
-            MarketSession(6120, _utc("2042-06-16T15:00:00+00:00")),
-            MarketSession(6121, _utc("2042-06-17T15:00:00+00:00")),
-            *(
-                MarketSession(
-                    6122 + index,
-                    _utc("2042-06-18T15:00:00+00:00") + timedelta(days=offset),
-                )
-                for index, offset in enumerate(
-                    offset
-                    for offset in range(70)
-                    if (date(2042, 6, 18) + timedelta(days=offset)).weekday() < 5
-                )
-            ),
+        sessions=_weekday_sessions(
+            start=date(2042, 5, 20),
+            end=date(2042, 8, 26),
+            close_at=time(15),
+            first_ordinal=6101,
+            excluded_dates=frozenset({date(2042, 6, 6)}),
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_terminal_sessions(
+        terminal_sessions=_weekday_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(15),
+            first_ordinal=1_000_000,
             excluded_dates=frozenset({date(2042, 6, 6)}),
         ),
     ),
@@ -184,10 +160,11 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_terminal_sessions(
+        terminal_sessions=_weekday_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(8),
+            first_ordinal=1_000_000,
         ),
     ),
 )

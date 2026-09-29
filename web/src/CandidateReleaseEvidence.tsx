@@ -3,9 +3,23 @@ import { ReportRecord as Record } from "./ReportRecord";
 
 type CandidateRelease = NonNullable<FormalReport["result"]["candidate_release"]>;
 type ReportPublication = FormalReport["report_publication"];
+type CalibrationDiagnostics = NonNullable<
+  CandidateRelease["calibration"]
+>["out_of_sample_diagnostics"];
 type RecentDiagnosticStatus = NonNullable<
   CandidateRelease["calibration"]
 >["recent_diagnostic_status"];
+
+function recalibrationFitLabel(diagnostics: CalibrationDiagnostics): string {
+  if (
+    diagnostics.recalibration_fit_status === "CALCULATION_FAILED" ||
+    diagnostics.calibration_intercept === null ||
+    diagnostics.calibration_slope === null
+  ) {
+    return "Unavailable (diagnostic fit failed)";
+  }
+  return `${diagnostics.calibration_intercept} / ${diagnostics.calibration_slope}`;
+}
 
 function recentDiagnosticUnavailableLabel(status: RecentDiagnosticStatus): string {
   return status === "INSUFFICIENT_DATA"
@@ -108,7 +122,7 @@ export function CandidateReleaseEvidence({
             />
             <Record
               label="Out-of-sample calibration intercept / slope"
-              value={`${release.calibration.out_of_sample_diagnostics.calibration_intercept} / ${release.calibration.out_of_sample_diagnostics.calibration_slope}`}
+              value={recalibrationFitLabel(release.calibration.out_of_sample_diagnostics)}
             />
             <Record
               label="Out-of-sample reliability"
@@ -138,7 +152,7 @@ export function CandidateReleaseEvidence({
               label="Recent calibration intercept / slope"
               value={
                 release.calibration.recent_diagnostics
-                  ? `${release.calibration.recent_diagnostics.calibration_intercept} / ${release.calibration.recent_diagnostics.calibration_slope}`
+                  ? recalibrationFitLabel(release.calibration.recent_diagnostics)
                   : recentDiagnosticUnavailableLabel(release.calibration.recent_diagnostic_status)
               }
             />

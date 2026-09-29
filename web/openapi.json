@@ -662,18 +662,37 @@
             "type": "string"
           },
           "calibration_intercept": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Calibration Intercept",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Intercept"
           },
           "calibration_slope": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Calibration Slope",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Slope"
           },
           "log_loss": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Log Loss",
+            "type": "string"
+          },
+          "recalibration_fit_status": {
+            "enum": ["AVAILABLE", "CALCULATION_FAILED"],
+            "title": "Recalibration Fit Status",
             "type": "string"
           },
           "reliability_curve": {
@@ -688,6 +707,7 @@
           "log_loss",
           "brier_score",
           "reliability_curve",
+          "recalibration_fit_status",
           "calibration_intercept",
           "calibration_slope"
         ],

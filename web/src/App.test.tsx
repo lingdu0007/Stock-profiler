@@ -100,6 +100,7 @@ describe("App", () => {
                   observed_success_rate: "0.82"
                 }
               ],
+              recalibration_fit_status: "AVAILABLE",
               calibration_intercept: "-0.02",
               calibration_slope: "0.97"
             },
@@ -122,6 +123,7 @@ describe("App", () => {
                   observed_success_rate: "0.82"
                 }
               ],
+              recalibration_fit_status: "AVAILABLE",
               calibration_intercept: "0.01",
               calibration_slope: "0.94"
             }
