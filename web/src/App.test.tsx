@@ -200,6 +200,9 @@ describe("App", () => {
     expect(release).toHaveTextContent("2046-07-01T09:01:00Z");
     expect(release).not.toHaveTextContent("2046-07-01T09:00:00Z");
     expect(release).toHaveTextContent("0.87");
+    expect(release).toHaveTextContent(
+      "Probability of net total return ≥20% at the six-calendar-month endpoint"
+    );
     expect(release).toHaveTextContent("Independent risk status");
     expect(release).toHaveTextContent("RISK_REVIEW: PASSED");
     expect(release).toHaveTextContent("INDEPENDENT_RISK_ACCEPTED");

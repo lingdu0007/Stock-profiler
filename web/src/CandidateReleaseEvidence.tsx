@@ -183,7 +183,7 @@ export function CandidateReleaseEvidence({
                 />
                 <Record label="Raw success score" value={member.raw_success_score} />
                 <Record
-                  label="Calibrated six-month probability"
+                  label="Probability of net total return ≥20% at the six-calendar-month endpoint"
                   value={member.calibrated_probability ?? "Unavailable"}
                 />
                 <Record label="Independent risk status" value={member.risk_status} />
