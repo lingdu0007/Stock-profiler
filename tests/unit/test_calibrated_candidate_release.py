@@ -1273,18 +1273,20 @@ def test_firth_solver_rejects_raw_score_timestamp_from_a_different_month() -> No
 
 def test_firth_solver_rejects_nonfinite_final_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
     original_isfinite = math.isfinite
+    records = training_records()
+    record_count = len(records)
     calls = 0
 
     def finite_scores_only(value: float) -> bool:
         nonlocal calls
         calls += 1
-        if calls <= len(training_records()):
+        if calls <= record_count:
             return original_isfinite(value)
         return False
 
     monkeypatch.setattr(math, "isfinite", finite_scores_only)
     with pytest.raises(ValueError, match="CALIBRATION_FIT_FAILED"):
-        candidate_module._firth_logistic(training_records())
+        candidate_module._firth_logistic(records)
 
 
 def test_unmatured_training_label_is_calibration_availability_failure() -> None:
@@ -2011,3 +2013,52 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
     assert overexpanded.disposition == "FAILED"
     assert overexpanded.availability_failure == "CALIBRATION"
     assert overexpanded.reasons == ("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM",)
+
+
+def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> None:
+    original = command()
+    months = tuple(
+        f"{year:04d}-{month + 1:02d}"
+        for year, month in (divmod(2040 * 12 + index, 12) for index in range(61))
+    )
+    assert len(months) == 61
+    counts = (9, *([9] * 19), *([8] * 40), 8)
+    assert len(counts) == 61
+    assert sum(counts[:60]) == 500
+    assert sum(counts[1:]) == 499
+    assert sum(counts) == 508
+    records: list[CalibrationRecord] = []
+    for month, count in zip(months, counts, strict=True):
+        year, month_number = (int(part) for part in month.split("-"))
+        cutoff = datetime(year, month_number, monthrange(year, month_number)[1], 7, tzinfo=UTC)
+        entry = cutoff + timedelta(days=5)
+        maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
+        records.extend(
+            _calibration_record(
+                month,
+                index,
+                record_prefix="synthetic-initial-prefix",
+                research_prefix="synthetic-initial-prefix",
+                security_prefix="SYNTHETIC-INITIAL-PREFIX",
+                source_prefix="synthetic-initial-prefix",
+                raw_score_frozen_at=cutoff,
+                entry_window_ends_at=entry + timedelta(days=1),
+                terminal_success=index % 2 == 0,
+            ).model_copy(
+                update={
+                    "entry_at": entry,
+                    "unified_maturity_at": maturity,
+                    "label_available_at": maturity,
+                }
+            )
+            for index in range(count)
+        )
+    candidate = original.model_copy(
+        update={
+            "training_window_months": months,
+            "training_records": tuple(records),
+        }
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM"):
+        candidate_module._fit_calibrator(candidate)

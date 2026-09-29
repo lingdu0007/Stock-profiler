@@ -812,7 +812,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     if len(months) > _MINIMUM_MATURE_MONTHS:
         for window_length in range(_MINIMUM_MATURE_MONTHS, len(months)):
             qualifying_records = tuple(
-                record for month in months[-window_length:] for record in by_month[month]
+                record for month in months[:window_length] for record in by_month[month]
             )
             qualifying_positives = sum(record.terminal_success for record in qualifying_records)
             qualifying_negatives = len(qualifying_records) - qualifying_positives

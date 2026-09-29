@@ -742,6 +742,7 @@ def _validate_candidate_calibration_sources(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
         candidate_cutoff,
+        required_months=set(command.training_window_months),
     )
     globally_mature_months = _fully_matured_calibration_months(
         set(cutoff_mature_source_rows),
@@ -1093,13 +1094,14 @@ def _matured_candidate_prediction_ids(
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction],
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     label_watermark_at: datetime,
+    required_months: set[str],
 ) -> set[tuple[str, str, str]]:
-    """Require eventual mature labels and their probabilities for all frozen predictions."""
+    """Require mature source rows for selected months while retaining gaps in history."""
     matured: set[tuple[str, str, str]] = set()
     for identity, prediction in predictions.items():
         source_record = mature_source_rows.get(identity)
         if source_record is None:
-            if prediction.matures_by <= label_watermark_at:
+            if prediction.matures_by <= label_watermark_at and identity[0] in required_months:
                 raise CandidateCalibrationProvenanceInvalid()
             continue
         _validate_frozen_candidate_prediction_source(prediction, source_record)

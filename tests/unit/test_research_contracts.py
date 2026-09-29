@@ -372,7 +372,37 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
             {identity: prediction},
             {},
             source.label_available_at,
+            required_months={source.month},
         )
+
+
+def test_out_of_window_candidate_outcome_gap_does_not_block_current_cohort() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    identity = (source.month, source.security_id, source.research_id)
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+
+    matured = decision_case_service._matured_candidate_prediction_ids(
+        {identity: prediction},
+        {},
+        source.label_available_at,
+        required_months={"2045-01"},
+    )
+
+    assert matured == set()
 
 
 def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> None:
