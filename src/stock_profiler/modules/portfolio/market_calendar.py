@@ -54,7 +54,7 @@ def next_market_session_open_after(
     value: datetime,
     market_calendar_version: str,
 ) -> datetime:
-    """Return the first saved session open on a later date than the frozen cutoff."""
+    """Return the first saved session open strictly after the frozen cutoff."""
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
@@ -65,13 +65,14 @@ def next_market_session_open_after(
         sessions = calendar.sessions
     else:
         sessions = calendar.terminal_sessions or calendar.sessions
-    session = next(
-        (item for item in sessions if item.closed_at.date() > cutoff_date),
-        None,
-    )
+    session = next((item for item in sessions if item.closed_at - timedelta(hours=7) > value), None)
     if session is None and sessions is calendar.sessions and calendar.terminal_sessions:
         session = next(
-            (item for item in calendar.terminal_sessions if item.closed_at.date() > cutoff_date),
+            (
+                item
+                for item in calendar.terminal_sessions
+                if item.closed_at - timedelta(hours=7) > value
+            ),
             None,
         )
     if session is None:

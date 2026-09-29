@@ -1776,6 +1776,53 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     )
 
 
+def test_preopen_cutoff_window_replays_its_same_day_entry() -> None:
+    original = command()
+    cutoff = datetime(2046, 7, 2, 0, tzinfo=UTC)
+    preopen_command = original.model_copy(
+        update={
+            "knowledge_cutoff": cutoff,
+            "published_at": cutoff + timedelta(hours=1),
+            "label_watermark_at": cutoff,
+        }
+    )
+    outcome = freeze_candidate_release(preopen_command)
+    member = outcome.members[0]
+    prediction_month = cutoff.strftime("%Y-%m")
+    prediction = decision_case_service._frozen_candidate_prediction_rows(
+        preopen_command,
+        outcome,
+        raw_score_frozen_at=cutoff,
+        raw_score_training_watermark_at=cutoff,
+    )[(prediction_month, member.security_id, member.research_id)]
+    same_day_open = prediction.entry_sessions[0][0]
+    maturity = raw_score_maturity_at(same_day_open, prediction.market_calendar_version)
+    source = (
+        frozen_raw_score_model_snapshot()
+        .training_records[0]
+        .model_copy(
+            update={
+                "month": prediction_month,
+                "security_id": member.security_id,
+                "research_id": member.research_id,
+                "raw_score_frozen_at": prediction.raw_score_frozen_at,
+                "raw_score_training_watermark_at": prediction.raw_score_training_watermark_at,
+                "raw_success_score": prediction.raw_success_score,
+                "historical_calibrated_probability": prediction.calibrated_probability,
+                "entry_window_ends_at": prediction.entry_window_ends_at,
+                "evaluation_entry_at": same_day_open,
+                "unified_maturity_at": maturity,
+                "market_calendar_version": prediction.market_calendar_version,
+                "label_available_at": maturity,
+            }
+        )
+    )
+
+    assert outcome.disposition == "CANDIDATES"
+    assert outcome.valid_market_dates[0] == same_day_open.date()
+    decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
+
+
 def test_frozen_prediction_accepts_executable_entry_at_session_close() -> None:
     original = command()
     outcome = freeze_candidate_release(original)

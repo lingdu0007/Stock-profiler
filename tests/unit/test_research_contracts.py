@@ -464,6 +464,14 @@ def test_entry_window_preserves_saved_sessions_at_calendar_coverage_edge() -> No
     )
 
 
+def test_entry_window_can_begin_later_on_the_cutoff_date() -> None:
+    cutoff = datetime(2046, 7, 2, 0, tzinfo=UTC)
+
+    assert _raw_score_evaluation_entry_at(cutoff, "synthetic-calendar-v1") == datetime(
+        2046, 7, 2, 1, tzinfo=UTC
+    )
+
+
 def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_window() -> None:
     payload = _command().model_dump(mode="json")
     record = next(
