@@ -799,10 +799,21 @@ def _frozen_candidate_prediction_rows(
     """Retain every frozen member probability, regardless of later gate disposition."""
     if outcome.calibration is None:
         return {}
-    if not command.market_sessions:
+    if not outcome.valid_market_dates:
+        raise CandidateCalibrationProvenanceInvalid()
+    final_window_date = outcome.valid_market_dates[-1]
+    final_window_session = next(
+        (
+            session
+            for session in command.market_sessions
+            if session.market_date == final_window_date
+        ),
+        None,
+    )
+    if final_window_session is None:
         raise CandidateCalibrationProvenanceInvalid()
     prediction_month = command.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
-    matures_by = six_month_anniversary(command.market_sessions[-1].closes_at)
+    matures_by = six_month_anniversary(final_window_session.closes_at)
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
         if member.calibrated_probability is None:

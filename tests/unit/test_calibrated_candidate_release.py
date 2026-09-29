@@ -1490,6 +1490,37 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.matures_by == _six_month_anniversary(original.market_sessions[-1].closes_at)
 
 
+def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions() -> None:
+    original = command()
+    final_session = original.market_sessions[-1]
+    trailing_offset = timedelta(days=365)
+    trailing_session = final_session.model_copy(
+        update={
+            "market_date": final_session.market_date + trailing_offset,
+            "opens_at": final_session.opens_at + trailing_offset,
+            "closes_at": final_session.closes_at + trailing_offset,
+            "session_sequence": final_session.session_sequence + 1,
+        }
+    )
+    extended = original.model_copy(
+        update={"market_sessions": (*original.market_sessions, trailing_session)}
+    )
+    outcome = freeze_candidate_release(extended)
+    member = outcome.members[0]
+    identity = (
+        extended.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m"),
+        member.security_id,
+        member.research_id,
+    )
+
+    prediction = decision_case_service._frozen_candidate_prediction_rows(extended, outcome)[
+        identity
+    ]
+
+    assert outcome.valid_market_dates[-1] == final_session.market_date
+    assert prediction.matures_by == _six_month_anniversary(final_session.closes_at)
+
+
 def test_previous_frozen_calibration_record_cannot_be_rewritten() -> None:
     record = command().training_records[0]
     retained: dict[tuple[str, str, str], CalibrationRecord] = {}
