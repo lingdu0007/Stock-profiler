@@ -54,6 +54,7 @@ class CalibrationRecord(UniverseContract):
     raw_score_frozen_at: AwareDatetime
     raw_score_training_watermark_at: AwareDatetime
     raw_success_score: Decimal
+    out_of_sample_probability: Decimal = Field(gt=Decimal("0"), lt=Decimal("1"))
     terminal_success: bool
     entry_at: AwareDatetime | None = None
     entry_window_ends_at: AwareDatetime
@@ -211,7 +212,7 @@ class CalibrationSnapshot(UniverseContract):
     training_record_count: int
     positive_record_count: int
     negative_record_count: int
-    fit_diagnostics: CalibrationDiagnostics
+    out_of_sample_diagnostics: CalibrationDiagnostics
     recent_diagnostic_months: tuple[str, ...] = Field(min_length=24, max_length=24)
     recent_diagnostic_sample_count: int = Field(ge=0)
     recent_diagnostics: CalibrationDiagnostics | None
@@ -752,8 +753,16 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
     months = command.training_window_months
-    if len(months) != _MINIMUM_MATURE_MONTHS:
+    if len(months) < _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
+    if len(months) > 120:
+        raise ValueError("CALIBRATION_INITIAL_WINDOW_EXCEEDS_120_MONTHS")
+    month_indexes = tuple(_calibration_month_index(month) for month in months)
+    if any(
+        current != previous + 1
+        for previous, current in zip(month_indexes, month_indexes[1:], strict=False)
+    ):
+        raise ValueError("CALIBRATION_TRAINING_WINDOW_MONTHS_NOT_CONSECUTIVE")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
         if record.raw_score_frozen_at.strftime("%Y-%m") != record.month:
@@ -795,9 +804,20 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     if not set(months).issubset(mature_months):
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_MATURE")
-    if months != mature_months[-_MINIMUM_MATURE_MONTHS:]:
+    if months != mature_months[-len(months) :]:
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST")
     records = tuple(record for month in months for record in by_month[month])
+    if len(months) > _MINIMUM_MATURE_MONTHS:
+        rolling_months = months[-_MINIMUM_MATURE_MONTHS:]
+        rolling_records = tuple(record for month in rolling_months for record in by_month[month])
+        rolling_positives = sum(record.terminal_success for record in rolling_records)
+        rolling_negatives = len(rolling_records) - rolling_positives
+        if (
+            len(rolling_records) >= _MINIMUM_MATURE_RECORDS
+            and rolling_positives >= _MINIMUM_RECORDS_PER_CLASS
+            and rolling_negatives >= _MINIMUM_RECORDS_PER_CLASS
+        ):
+            raise ValueError("CALIBRATION_INITIAL_WINDOW_EXPANSION_NOT_REQUIRED")
     if len(records) < _MINIMUM_MATURE_RECORDS:
         raise ValueError("CALIBRATION_REQUIRES_500_MATURE_RECORDS")
     positives = sum(record.terminal_success for record in records)
@@ -808,19 +828,14 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         intercept, slope = _firth_logistic(records)
     except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError) as error:
         raise ValueError("CALIBRATION_FIT_FAILED") from error
-    probabilities = tuple(
-        _sigmoid(intercept + slope * float(record.raw_success_score)) for record in records
-    )
-    fit_diagnostics = _calibration_diagnostics(records, probabilities)
+    probabilities = tuple(float(record.out_of_sample_probability) for record in records)
+    out_of_sample_diagnostics = _calibration_diagnostics(records, probabilities)
     recent_months = months[-24:]
     recent_records = tuple(record for record in records if record.month in recent_months)
     recent_diagnostics = (
         _calibration_diagnostics(
             recent_records,
-            tuple(
-                _sigmoid(intercept + slope * float(record.raw_success_score))
-                for record in recent_records
-            ),
+            tuple(float(record.out_of_sample_probability) for record in recent_records),
         )
         if len(recent_records) >= _MINIMUM_RECENT_DIAGNOSTIC_RECORDS
         else None
@@ -834,11 +849,23 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         training_record_count=len(records),
         positive_record_count=positives,
         negative_record_count=negatives,
-        fit_diagnostics=fit_diagnostics,
+        out_of_sample_diagnostics=out_of_sample_diagnostics,
         recent_diagnostic_months=recent_months,
         recent_diagnostic_sample_count=len(recent_records),
         recent_diagnostics=recent_diagnostics,
     )
+
+
+def _calibration_month_index(month: str) -> int:
+    try:
+        year_text, month_text = month.split("-", maxsplit=1)
+        year = int(year_text)
+        month_number = int(month_text)
+    except (TypeError, ValueError) as error:
+        raise ValueError("CALIBRATION_MONTH_INVALID") from error
+    if len(year_text) != 4 or not 1 <= month_number <= 12:
+        raise ValueError("CALIBRATION_MONTH_INVALID")
+    return year * 12 + month_number - 1
 
 
 def _calibration_diagnostics(

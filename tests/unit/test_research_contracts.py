@@ -630,6 +630,7 @@ def test_pre_calibration_research_snapshot_remains_replayable() -> None:
             "raw_score_frozen_at",
             "raw_score_training_watermark_at",
             "raw_success_score",
+            "historical_calibrated_probability",
             "entry_window_ends_at",
             "unified_maturity_at",
         ):
@@ -639,6 +640,18 @@ def test_pre_calibration_research_snapshot_remains_replayable() -> None:
 
     assert len(snapshot.training_records) == 524
     assert snapshot.training_records[0].raw_success_score is None
+
+
+def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["calibration_evidence_version"] = "frozen-oos-calibration-v1"
+    for record in payload["training_records"]:
+        record.pop("historical_calibrated_probability")
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_evidence_version == "frozen-oos-calibration-v1"
+    assert snapshot.training_records[0].historical_calibrated_probability is None
 
 
 def test_current_raw_score_snapshot_rejects_partial_calibration_evidence() -> None:

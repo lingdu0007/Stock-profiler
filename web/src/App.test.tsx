@@ -88,7 +88,7 @@ describe("App", () => {
             training_record_count: 600,
             positive_record_count: 300,
             negative_record_count: 300,
-            fit_diagnostics: {
+            out_of_sample_diagnostics: {
               log_loss: "0.42",
               brier_score: "0.13",
               reliability_curve: [

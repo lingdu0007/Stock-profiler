@@ -543,6 +543,7 @@ class RawScoreTrainingRecord(ResearchContract):
     raw_score_frozen_at: AwareDatetime | None = None
     raw_score_training_watermark_at: AwareDatetime | None = None
     raw_success_score: Decimal | None = None
+    historical_calibrated_probability: Decimal | None = None
     entry_window_ends_at: AwareDatetime | None = None
     evaluation_entry_at: AwareDatetime | None = None
     unified_maturity_at: AwareDatetime | None = None
@@ -568,7 +569,9 @@ class RawScoreModelSnapshot(ResearchContract):
     label_watermark_at: AwareDatetime
     training_cohorts: tuple[RawScoreTrainingCohort, ...] = Field(min_length=1)
     training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
-    calibration_evidence_version: Literal["frozen-oos-calibration-v1"] | None = None
+    calibration_evidence_version: (
+        Literal["frozen-oos-calibration-v1", "frozen-oos-calibration-v2"] | None
+    ) = None
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)
@@ -704,7 +707,7 @@ class RawScoreModelSnapshot(ResearchContract):
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must be a synthetic trading day")
-            evidence_fields = (
+            required_evidence_fields = (
                 "raw_score_frozen_at",
                 "raw_score_training_watermark_at",
                 "raw_success_score",
@@ -712,20 +715,30 @@ class RawScoreModelSnapshot(ResearchContract):
                 "unified_maturity_at",
             )
             record_evidence = tuple(
-                tuple(getattr(record, field_name) for field_name in evidence_fields)
+                tuple(getattr(record, field_name) for field_name in required_evidence_fields)
                 for record in self.training_records
             )
             has_calibration_evidence = any(
                 value is not None for values in record_evidence for value in values
             )
             if has_calibration_evidence != (
-                self.calibration_evidence_version == "frozen-oos-calibration-v1"
+                self.calibration_evidence_version
+                in {"frozen-oos-calibration-v1", "frozen-oos-calibration-v2"}
             ):
                 raise ValueError("raw-score calibration evidence version is incomplete")
             if has_calibration_evidence and any(
                 value is None for values in record_evidence for value in values
             ):
                 raise ValueError("raw-score calibration evidence is incomplete")
+            if self.calibration_evidence_version == "frozen-oos-calibration-v2" and any(
+                record.historical_calibrated_probability is None for record in self.training_records
+            ):
+                raise ValueError("raw-score calibration probability evidence is incomplete")
+            if self.calibration_evidence_version != "frozen-oos-calibration-v2" and any(
+                record.historical_calibrated_probability is not None
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score calibration probability version is incomplete")
             if has_calibration_evidence:
                 for record in self.training_records:
                     assert record.raw_score_frozen_at is not None
@@ -737,6 +750,14 @@ class RawScoreModelSnapshot(ResearchContract):
                         record.raw_score_frozen_at != record.selection_cutoff_at
                         or record.raw_score_training_watermark_at > record.raw_score_frozen_at
                         or not record.raw_success_score.is_finite()
+                        or (
+                            record.historical_calibrated_probability is not None
+                            and not (
+                                Decimal("0")
+                                < record.historical_calibrated_probability
+                                < Decimal("1")
+                            )
+                        )
                         or record.entry_window_ends_at <= record.raw_score_frozen_at
                         or (record.evaluation_entry_at is None and record.terminal_label)
                         or (
@@ -943,6 +964,7 @@ def _frozen_raw_score_training_records(
             entry_is_valid = record_index % 25 != 0
             terminal_label = member_index >= record_count // 2 and entry_is_valid
             maturity_anchor = evaluation_entry_at if entry_is_valid else entry_window_ends_at
+            raw_success_score = Decimal(member_index) / Decimal("10")
             unified_maturity_at = _raw_score_add_months(
                 maturity_anchor, RAW_SCORE_LABEL_HORIZON_MONTHS
             )
@@ -955,7 +977,10 @@ def _frozen_raw_score_training_records(
                     selection_cutoff_at=selection_cutoff_at,
                     raw_score_frozen_at=selection_cutoff_at,
                     raw_score_training_watermark_at=selection_cutoff_at - timedelta(days=1),
-                    raw_success_score=Decimal(member_index) / Decimal("10"),
+                    raw_success_score=raw_success_score,
+                    historical_calibrated_probability=(
+                        Decimal("0.1") + raw_success_score * Decimal("0.8")
+                    ),
                     entry_window_ends_at=entry_window_ends_at,
                     evaluation_entry_at=evaluation_entry_at if entry_is_valid else None,
                     unified_maturity_at=unified_maturity_at,
@@ -989,7 +1014,7 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         label_watermark_at=label_watermark_at,
         training_cohorts=training_cohorts,
         training_records=training_records,
-        calibration_evidence_version="frozen-oos-calibration-v1",
+        calibration_evidence_version="frozen-oos-calibration-v2",
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
         training_record_count=len(training_records),

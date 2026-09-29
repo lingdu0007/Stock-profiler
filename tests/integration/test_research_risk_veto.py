@@ -3579,6 +3579,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert row.raw_score_frozen_at is not None
         assert row.raw_score_training_watermark_at is not None
         assert row.raw_success_score is not None
+        assert row.historical_calibrated_probability is not None
         assert row.entry_window_ends_at is not None
         assert row.unified_maturity_at is not None
         return CalibrationRecord(
@@ -3591,6 +3592,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             raw_score_frozen_at=row.raw_score_frozen_at,
             raw_score_training_watermark_at=row.raw_score_training_watermark_at,
             raw_success_score=row.raw_success_score,
+            out_of_sample_probability=row.historical_calibrated_probability,
             terminal_success=row.terminal_label,
             entry_at=row.evaluation_entry_at,
             entry_window_ends_at=row.entry_window_ends_at,

@@ -513,7 +513,6 @@ export interface components {
              * @constant
              */
             calibrator_version: "monotone-firth-logistic-v1";
-            fit_diagnostics: components["schemas"]["CalibrationDiagnostics"];
             /** Intercept */
             intercept: string;
             /**
@@ -523,6 +522,7 @@ export interface components {
             label_watermark_at: string;
             /** Negative Record Count */
             negative_record_count: number;
+            out_of_sample_diagnostics: components["schemas"]["CalibrationDiagnostics"];
             /** Positive Record Count */
             positive_record_count: number;
             /** Recent Diagnostic Months */

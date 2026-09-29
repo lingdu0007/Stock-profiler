@@ -86,20 +86,22 @@ export function CandidateReleaseEvidence({
               value={String(release.calibration.training_record_count)}
             />
             <Record
-              label="Primary fit-window log loss"
-              value={release.calibration.fit_diagnostics.log_loss}
+              label="Out-of-sample log loss"
+              value={release.calibration.out_of_sample_diagnostics.log_loss}
             />
             <Record
-              label="Fit-window Brier score"
-              value={release.calibration.fit_diagnostics.brier_score}
+              label="Out-of-sample Brier score"
+              value={release.calibration.out_of_sample_diagnostics.brier_score}
             />
             <Record
-              label="Fit-window calibration intercept / slope"
-              value={`${release.calibration.fit_diagnostics.calibration_intercept} / ${release.calibration.fit_diagnostics.calibration_slope}`}
+              label="Out-of-sample calibration intercept / slope"
+              value={`${release.calibration.out_of_sample_diagnostics.calibration_intercept} / ${release.calibration.out_of_sample_diagnostics.calibration_slope}`}
             />
             <Record
-              label="Fit-window reliability"
-              value={reliabilitySummary(release.calibration.fit_diagnostics.reliability_curve)}
+              label="Out-of-sample reliability"
+              value={reliabilitySummary(
+                release.calibration.out_of_sample_diagnostics.reliability_curve
+              )}
             />
             <Record
               label="Recent diagnostic window"
@@ -210,7 +212,9 @@ export function CandidateReleaseEvidence({
 }
 
 function reliabilitySummary(
-  bins: NonNullable<CandidateRelease["calibration"]>["fit_diagnostics"]["reliability_curve"]
+  bins: NonNullable<
+    CandidateRelease["calibration"]
+  >["out_of_sample_diagnostics"]["reliability_curve"]
 ): string {
   return bins
     .map(

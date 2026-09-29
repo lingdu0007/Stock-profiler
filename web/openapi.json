@@ -741,9 +741,6 @@
             "title": "Calibrator Version",
             "type": "string"
           },
-          "fit_diagnostics": {
-            "$ref": "#/components/schemas/CalibrationDiagnostics"
-          },
           "intercept": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Intercept",
@@ -757,6 +754,9 @@
           "negative_record_count": {
             "title": "Negative Record Count",
             "type": "integer"
+          },
+          "out_of_sample_diagnostics": {
+            "$ref": "#/components/schemas/CalibrationDiagnostics"
           },
           "positive_record_count": {
             "title": "Positive Record Count",
@@ -812,7 +812,7 @@
           "training_record_count",
           "positive_record_count",
           "negative_record_count",
-          "fit_diagnostics",
+          "out_of_sample_diagnostics",
           "recent_diagnostic_months",
           "recent_diagnostic_sample_count",
           "recent_diagnostics"

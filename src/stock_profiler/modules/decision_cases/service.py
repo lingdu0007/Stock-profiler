@@ -575,6 +575,7 @@ def _validate_candidate_calibration_sources(
         if event.corrects_event_id is None
         and event.validation_status == "PASSED"
         and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+        and datetime.fromisoformat(event.committed_at) <= command.published_at
         and event.case.research is not None
         and event.result.research is not None
     )
@@ -584,7 +585,7 @@ def _validate_candidate_calibration_sources(
         if source_case_research is None:
             continue
         model = source_case_research.raw_score_model
-        if model.calibration_evidence_version != "frozen-oos-calibration-v1":
+        if model.calibration_evidence_version != "frozen-oos-calibration-v2":
             continue
         for source_record in model.training_records:
             if (
@@ -599,9 +600,10 @@ def _validate_candidate_calibration_sources(
                 )
                 mature_source_rows[identity] = source_record
     globally_mature_months = tuple(sorted({identity[0] for identity in mature_source_rows}))
-    if len(command.training_window_months) == 60 and (
-        len(globally_mature_months) < 60
-        or command.training_window_months != globally_mature_months[-60:]
+    if len(command.training_window_months) >= 60 and (
+        len(globally_mature_months) < len(command.training_window_months)
+        or command.training_window_months
+        != globally_mature_months[-len(command.training_window_months) :]
     ):
         raise CandidateCalibrationProvenanceInvalid()
     records_by_event: dict[str, list[CalibrationRecord]] = {}
@@ -662,6 +664,8 @@ def _validate_candidate_calibration_sources(
                 or source_record.raw_score_training_watermark_at
                 != record.raw_score_training_watermark_at
                 or source_record.raw_success_score != record.raw_success_score
+                or source_record.historical_calibrated_probability
+                != record.out_of_sample_probability
                 or source_record.source_model_version != record.raw_score_model_version
                 or source_record.terminal_label != record.terminal_success
                 or source_record.evaluation_entry_at != record.entry_at
@@ -677,28 +681,15 @@ def _validate_candidate_calibration_sources(
                 or source_record.raw_score_training_watermark_at > source_record.raw_score_frozen_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+            if datetime.fromisoformat(source_event.committed_at) < record.label_available_at:
+                raise CandidateCalibrationProvenanceInvalid()
         if not all(
             record.unified_maturity_at <= command.label_watermark_at
             and record.label_available_at <= command.label_watermark_at
             for record in records
         ):
             raise CandidateCalibrationProvenanceInvalid()
-        mature_months = tuple(
-            sorted(
-                {
-                    record.month
-                    for record in snapshot_records
-                    if record.unified_maturity_at is not None
-                    and record.label_available_at <= command.label_watermark_at
-                    and record.unified_maturity_at <= command.label_watermark_at
-                }
-            )
-        )
-        if len(command.training_window_months) == 60 and (
-            len(mature_months) < 60 or command.training_window_months != mature_months[-60:]
-        ):
-            raise CandidateCalibrationProvenanceInvalid()
-    if len(command.training_window_months) == 60:
+    if len(command.training_window_months) >= 60:
         expected_identities = {
             identity
             for identity in mature_source_rows
@@ -710,6 +701,20 @@ def _validate_candidate_calibration_sources(
         }
         if submitted_identities != expected_identities:
             raise CandidateCalibrationProvenanceInvalid()
+        for record in command.training_records:
+            latest_source_record = mature_source_rows.get(
+                (record.month, record.security_id, record.research_id)
+            )
+            if latest_source_record is None or (
+                latest_source_record.raw_success_score != record.raw_success_score
+                or latest_source_record.historical_calibrated_probability
+                != record.out_of_sample_probability
+                or latest_source_record.terminal_label != record.terminal_success
+                or latest_source_record.raw_score_frozen_at != record.raw_score_frozen_at
+                or latest_source_record.unified_maturity_at != record.unified_maturity_at
+                or latest_source_record.label_available_at != record.label_available_at
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
 
 
 def _validate_candidate_qualification_snapshots(
