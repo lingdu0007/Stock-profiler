@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -600,6 +600,7 @@ def _validate_candidate_calibration_sources(
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
+    cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for event in prior_calibration_snapshots:
         prior_command = event.case.candidate_release
@@ -613,6 +614,11 @@ def _validate_candidate_calibration_sources(
             if previous_prediction != prediction:
                 raise CandidateCalibrationProvenanceInvalid()
         for record in prior_command.training_records:
+            if (
+                record.label_available_at <= candidate_cutoff
+                and record.unified_maturity_at <= candidate_cutoff
+            ):
+                _retain_frozen_calibration_record(cutoff_frozen_training_rows, record)
             if (
                 record.label_available_at > command.label_watermark_at
                 or record.unified_maturity_at > command.label_watermark_at
@@ -651,12 +657,23 @@ def _validate_candidate_calibration_sources(
                     source_record.research_id,
                 )
                 _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
-    matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
+    cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
         frozen_candidate_predictions,
-        mature_source_rows,
-        command.label_watermark_at,
+        cutoff_mature_source_rows,
+        candidate_cutoff,
     )
-    globally_mature_months = tuple(sorted({identity[0] for identity in cutoff_mature_source_rows}))
+    globally_mature_months = tuple(
+        sorted(
+            {
+                identity[0]
+                for identity in (
+                    *cutoff_mature_source_rows,
+                    *cutoff_frozen_training_rows,
+                    *cutoff_matured_candidate_prediction_ids,
+                )
+            }
+        )
+    )
     _validate_latest_mature_calibration_window(
         command.training_window_months, globally_mature_months
     )
@@ -757,18 +774,16 @@ def _validate_candidate_calibration_sources(
         ):
             raise CandidateCalibrationProvenanceInvalid()
     if len(command.training_window_months) >= 60:
-        expected_identities = _expected_calibration_identities(
+        _validate_cutoff_complete_calibration_population(
             command.training_window_months,
-            mature_source_rows,
-            frozen_training_rows,
-            matured_candidate_prediction_ids,
+            cutoff_mature_source_rows,
+            cutoff_frozen_training_rows,
+            cutoff_matured_candidate_prediction_ids,
+            {
+                (record.month, record.security_id, record.research_id)
+                for record in command.training_records
+            },
         )
-        submitted_identities = {
-            (record.month, record.security_id, record.research_id)
-            for record in command.training_records
-        }
-        if submitted_identities != expected_identities:
-            raise CandidateCalibrationProvenanceInvalid()
         for record in command.training_records:
             latest_source_record = mature_source_rows.get(
                 (record.month, record.security_id, record.research_id)
@@ -924,20 +939,38 @@ def _retain_frozen_calibration_record(
 
 def _expected_calibration_identities(
     months: tuple[str, ...],
-    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
-    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord],
+    mature_source_identities: Iterable[tuple[str, str, str]],
+    frozen_training_identities: Iterable[tuple[str, str, str]],
     frozen_candidate_prediction_ids: set[tuple[str, str, str]] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Union mature source labels with identities already frozen by prior calibration."""
     expected = {
         identity
-        for identity in (*mature_source_rows.keys(), *frozen_training_rows.keys())
+        for identity in (*mature_source_identities, *frozen_training_identities)
         if identity[0] in months
     }
     expected.update(
         identity for identity in frozen_candidate_prediction_ids or () if identity[0] in months
     )
     return expected
+
+
+def _validate_cutoff_complete_calibration_population(
+    months: tuple[str, ...],
+    cutoff_mature_source_identities: Iterable[tuple[str, str, str]],
+    cutoff_frozen_training_identities: Iterable[tuple[str, str, str]],
+    cutoff_matured_candidate_prediction_ids: set[tuple[str, str, str]],
+    submitted_identities: set[tuple[str, str, str]],
+) -> None:
+    """Reject a calibration cohort that omits any row mature at the knowledge cutoff."""
+    expected_identities = _expected_calibration_identities(
+        months,
+        cutoff_mature_source_identities,
+        cutoff_frozen_training_identities,
+        cutoff_matured_candidate_prediction_ids,
+    )
+    if submitted_identities != expected_identities:
+        raise CandidateCalibrationProvenanceInvalid()
 
 
 def _retain_immutable_mature_source_row(

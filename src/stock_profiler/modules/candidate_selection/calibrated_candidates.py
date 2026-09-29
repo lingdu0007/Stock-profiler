@@ -15,6 +15,8 @@ from stock_profiler.modules.portfolio.market_calendar import synthetic_market_ca
 
 CALIBRATOR_VERSION: Literal["monotone-firth-logistic-v1"] = "monotone-firth-logistic-v1"
 PROBABILITY_THRESHOLD = Decimal("0.80")
+_MINIMUM_REUSABLE_PROBABILITY = Decimal("1e-32")
+_MAXIMUM_REUSABLE_PROBABILITY = Decimal("0." + "9" * 32)
 _MINIMUM_MATURE_MONTHS = 60
 _MINIMUM_MATURE_RECORDS = 500
 _MINIMUM_RECORDS_PER_CLASS = 50
@@ -1008,14 +1010,20 @@ def _sigmoid(value: float) -> float:
 
 
 def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
+    """Return an open-interval probability that can be reused in future calibration."""
     with localcontext() as context:
         context.prec = 32
         value = calibration.intercept + calibration.slope * score
         if value >= 0:
             inverse_odds = (-value).exp()
-            return Decimal(1) / (Decimal(1) + inverse_odds)
-        odds = value.exp()
-        return odds / (Decimal(1) + odds)
+            probability = Decimal(1) / (Decimal(1) + inverse_odds)
+        else:
+            odds = value.exp()
+            probability = odds / (Decimal(1) + odds)
+        return min(
+            max(probability, _MINIMUM_REUSABLE_PROBABILITY),
+            _MAXIMUM_REUSABLE_PROBABILITY,
+        )
 
 
 def six_month_anniversary(value: datetime) -> datetime:

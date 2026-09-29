@@ -343,8 +343,19 @@ def test_extreme_negative_finite_score_yields_a_calibrated_non_candidate() -> No
     release = freeze_candidate_release(command(score="-100000"))
 
     assert release.disposition == "VALID_NO_CANDIDATES"
-    assert release.members[0].calibrated_probability == Decimal("0")
+    probability = release.members[0].calibrated_probability
+    assert probability is not None
+    assert Decimal("0") < probability < Decimal("1")
     assert release.members[0].candidate is False
+
+
+def test_extreme_positive_finite_score_yields_a_reusable_calibrated_probability() -> None:
+    release = freeze_candidate_release(command(score="100000"))
+
+    probability = release.members[0].calibrated_probability
+    assert release.disposition == "CANDIDATES"
+    assert probability is not None
+    assert Decimal("0") < probability < Decimal("1")
 
 
 def test_probability_arithmetic_overflow_is_a_visible_calibration_failure() -> None:
@@ -1537,6 +1548,27 @@ def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> N
     decision_case_service._validate_latest_mature_calibration_window(
         authoritative_months[-60:], authoritative_months
     )
+
+
+def test_backdated_label_watermark_cannot_hide_cutoff_mature_rows_in_selected_months() -> None:
+    months = tuple(f"2040-{month:02d}" for month in range(1, 13))[-2:]
+    cutoff_rows = {
+        (month, f"SEC-{member:03d}", f"research-{month}-{member:03d}"): object()
+        for month in months
+        for member in range(500)
+    }
+    watermark_rows = dict(cutoff_rows)
+    watermark_rows.pop((months[-1], "SEC-499", f"research-{months[-1]}-499"))
+    submitted = set(watermark_rows)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_cutoff_complete_calibration_population(
+            months,
+            cutoff_rows,
+            {},
+            set(),
+            submitted,
+        )
 
 
 def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions() -> None:
