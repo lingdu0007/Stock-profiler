@@ -26,7 +26,6 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     candidate_release_blocked_by_business_prerequisite,
     finalize_candidate_release_publication,
     freeze_candidate_release,
-    six_month_anniversary,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
@@ -108,6 +107,7 @@ from stock_profiler.modules.research.contracts import (
     decode_historical_research_framework_output,
     decode_legacy_research_draft,
     decode_legacy_research_framework_output,
+    raw_score_maturity_at,
     research_draft_payload,
     research_evidence_payload,
     research_member_handoff_payload,
@@ -602,6 +602,7 @@ def _validate_candidate_calibration_sources(
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
+    cutoff_incomplete_source_months: set[str] = set()
     for event in prior_calibration_snapshots:
         prior_command = event.case.candidate_release
         prior_outcome = event.result.candidate_release
@@ -633,9 +634,10 @@ def _validate_candidate_calibration_sources(
         if model.calibration_evidence_version != "frozen-oos-calibration-v2":
             continue
         for source_record in model.training_records:
+            if source_record.unified_maturity_at is None:
+                raise CandidateCalibrationProvenanceInvalid()
             if (
-                source_record.unified_maturity_at is not None
-                and source_record.label_available_at <= candidate_cutoff
+                source_record.label_available_at <= candidate_cutoff
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
                 identity = (
@@ -646,6 +648,8 @@ def _validate_candidate_calibration_sources(
                 _retain_immutable_mature_source_row(
                     cutoff_mature_source_rows, identity, source_record
                 )
+            else:
+                cutoff_incomplete_source_months.add(source_record.month)
             if (
                 source_record.unified_maturity_at is not None
                 and source_record.label_available_at <= command.label_watermark_at
@@ -662,17 +666,12 @@ def _validate_candidate_calibration_sources(
         cutoff_mature_source_rows,
         candidate_cutoff,
     )
-    globally_mature_months = tuple(
-        sorted(
-            {
-                identity[0]
-                for identity in (
-                    *cutoff_mature_source_rows,
-                    *cutoff_frozen_training_rows,
-                    *cutoff_matured_candidate_prediction_ids,
-                )
-            }
-        )
+    globally_mature_months = _fully_matured_calibration_months(
+        set(cutoff_mature_source_rows),
+        set(cutoff_frozen_training_rows),
+        cutoff_matured_candidate_prediction_ids,
+        set(frozen_candidate_predictions),
+        cutoff_incomplete_source_months,
     )
     _validate_latest_mature_calibration_window(
         command.training_window_months, globally_mature_months
@@ -836,6 +835,28 @@ def _validate_latest_mature_calibration_window(
         raise CandidateCalibrationProvenanceInvalid()
 
 
+def _fully_matured_calibration_months(
+    mature_source_identities: set[tuple[str, str, str]],
+    mature_frozen_calibration_identities: set[tuple[str, str, str]],
+    mature_candidate_prediction_ids: set[tuple[str, str, str]],
+    all_candidate_prediction_ids: set[tuple[str, str, str]],
+    incomplete_source_months: set[str],
+) -> tuple[str, ...]:
+    """Count a month only after every frozen prediction and source label has matured."""
+    mature_months = {
+        identity[0]
+        for identity in (
+            mature_source_identities
+            | mature_frozen_calibration_identities
+            | mature_candidate_prediction_ids
+        )
+    }
+    pending_prediction_months = {
+        identity[0] for identity in all_candidate_prediction_ids - mature_candidate_prediction_ids
+    }
+    return tuple(sorted(mature_months - incomplete_source_months - pending_prediction_months))
+
+
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
     """Compare immutable sample content while allowing record IDs to be regenerated."""
     return left.model_copy(update={"record_id": right.record_id}) == right
@@ -859,7 +880,7 @@ def _frozen_candidate_prediction_rows(
     final_window_session = window_sessions[-1]
     assert final_window_session is not None
     prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
-    matures_by = six_month_anniversary(final_window_session.closes_at)
+    matures_by = raw_score_maturity_at(final_window_session.closes_at)
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
         if member.calibrated_probability is None:
@@ -903,7 +924,7 @@ def _validate_frozen_candidate_prediction_source(
     ):
         raise CandidateCalibrationProvenanceInvalid()
     maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at
-    if source.unified_maturity_at is None or source.unified_maturity_at < six_month_anniversary(
+    if source.unified_maturity_at is None or source.unified_maturity_at < raw_score_maturity_at(
         maturity_anchor
     ):
         raise CandidateCalibrationProvenanceInvalid()

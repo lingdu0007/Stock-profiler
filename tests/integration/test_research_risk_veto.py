@@ -4664,7 +4664,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "VERSION_MISMATCH": "FAILED",
         "ORIGINAL_REJECTED": "BLOCKED",
     }[candidate_scenario]
-    assert direct.disposition == expected_disposition
+    assert direct.disposition == expected_disposition, (
+        direct.availability_failure,
+        direct.reasons,
+    )
     if candidate_scenario == "CALIBRATION_FAILURE" or candidate_scenario in {
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",

@@ -23,6 +23,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import DecisionEventFact
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+from stock_profiler.modules.research.contracts import raw_score_maturity_at
 
 
 def _calibration_record(
@@ -1500,7 +1501,7 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     prediction = predictions[(month, member.security_id, member.research_id)]
     assert prediction.raw_success_score == member.raw_success_score
     assert prediction.calibrated_probability == member.calibrated_probability
-    assert prediction.matures_by == _six_month_anniversary(original.market_sessions[-1].closes_at)
+    assert prediction.matures_by == raw_score_maturity_at(original.market_sessions[-1].closes_at)
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
     )
@@ -1571,6 +1572,27 @@ def test_backdated_label_watermark_cannot_hide_cutoff_mature_rows_in_selected_mo
         )
 
 
+def test_partially_matured_candidate_month_does_not_advance_rolling_window() -> None:
+    months = tuple(f"2040-{month:02d}" for month in range(1, 13))
+    source_identities = {(month, "SOURCE", f"research-{month}") for month in months}
+    predictions = {
+        (months[-1], "PREDICTED-A", "candidate-a"),
+        (months[-1], "PREDICTED-B", "candidate-b"),
+    }
+    mature_predictions = {(months[-1], "PREDICTED-A", "candidate-a")}
+
+    mature_months = decision_case_service._fully_matured_calibration_months(
+        source_identities,
+        set(),
+        mature_predictions,
+        predictions,
+        set(),
+    )
+
+    assert months[-1] not in mature_months
+    assert mature_months == months[:-1]
+
+
 def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions() -> None:
     original = command()
     final_session = original.market_sessions[-1]
@@ -1599,7 +1621,7 @@ def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions()
     ]
 
     assert outcome.valid_market_dates[-1] == final_session.market_date
-    assert prediction.matures_by == _six_month_anniversary(final_session.closes_at)
+    assert prediction.matures_by == raw_score_maturity_at(final_session.closes_at)
 
 
 def test_candidate_member_without_frozen_probability_is_not_added_to_history() -> None:

@@ -48,6 +48,7 @@ from stock_profiler.modules.research.contracts import (
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
+    raw_score_maturity_at,
     research_draft_payload,
     research_member_handoff_payload,
     research_outcome_payload,
@@ -82,6 +83,12 @@ def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScore
         label_available_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
         source_model_version="synthetic-model-v1",
     )
+
+
+def test_weekend_six_month_horizon_matures_at_the_preceding_session_close() -> None:
+    entry_at = datetime(2037, 2, 2, 16, tzinfo=UTC)
+
+    assert raw_score_maturity_at(entry_at) == datetime(2037, 7, 31, 16, tzinfo=UTC)
 
 
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:

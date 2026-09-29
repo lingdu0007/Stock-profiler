@@ -11,7 +11,10 @@ from typing import Literal, NamedTuple
 from pydantic import AwareDatetime, Field, model_validator
 
 from stock_profiler.modules.candidate_selection.universe import UniverseContract
-from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+from stock_profiler.modules.portfolio.market_calendar import (
+    six_month_terminal_evaluation_at,
+    synthetic_market_calendar,
+)
 
 CALIBRATOR_VERSION: Literal["monotone-firth-logistic-v1"] = "monotone-firth-logistic-v1"
 PROBABILITY_THRESHOLD = Decimal("0.80")
@@ -780,7 +783,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         maturity_anchor = record.entry_at or record.entry_window_ends_at
-        if record.unified_maturity_at < six_month_anniversary(maturity_anchor):
+        if record.unified_maturity_at < six_month_terminal_evaluation_at(maturity_anchor):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
         if record.label_available_at < record.unified_maturity_at:
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")

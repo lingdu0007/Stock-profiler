@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 
 def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def six_month_terminal_evaluation_at(value: datetime) -> datetime:
+    """Resolve the six-calendar-month synthetic target to its preceding weekday session."""
+    month_index = value.year * 12 + value.month - 1 + 6
+    year, month_zero = divmod(month_index, 12)
+    candidate = value.replace(
+        year=year,
+        month=month_zero + 1,
+        day=min(value.day, monthrange(year, month_zero + 1)[1]),
+    )
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
 
 
 @dataclass(frozen=True)
