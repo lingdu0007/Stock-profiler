@@ -112,6 +112,8 @@ candidate score, probability and five-session entry window; omitted or rewritten
 outcomes fail closed, and an executable entry must fall within an actual saved
 market session in that window. Members with no frozen probability remain visible
 as availability failures and do not enter later calibration cohorts.
+Rolling-window completeness uses all source labels mature and available by the
+frozen knowledge cutoff, regardless of caller-supplied label or publication clocks.
 After the first valid
 calibration, every refit uses the fixed rolling latest 60 consecutive mature
 months; a missed sample floor then produces a visible calibration failure.

@@ -20,7 +20,11 @@ export function CandidateReleaseEvidence({
         <Record label="Knowledge cutoff" value={release.knowledge_cutoff} />
         <Record
           label="Published"
-          value={publication?.status === "FAILED" ? "Not published" : release.published_at}
+          value={
+            publication?.status === "FAILED"
+              ? "Not published"
+              : publication?.published_at ?? "Unavailable"
+          }
         />
         {publication?.status === "FAILED" && (
           <>

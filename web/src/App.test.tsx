@@ -194,6 +194,8 @@ describe("App", () => {
     const release = await screen.findByRole("region", { name: "Candidate batch release" });
     expect(release).toHaveTextContent("CANDIDATES");
     expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
+    expect(release).toHaveTextContent("2046-07-01T09:01:00Z");
+    expect(release).not.toHaveTextContent("2046-07-01T09:00:00Z");
     expect(release).toHaveTextContent("0.87");
     expect(release).toHaveTextContent("Independent risk status");
     expect(release).toHaveTextContent("RISK_REVIEW: PASSED");

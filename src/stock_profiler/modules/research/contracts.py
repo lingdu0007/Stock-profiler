@@ -540,13 +540,23 @@ class RawScoreTrainingRecord(ResearchContract):
     security_id: str = Field(min_length=1)
     research_id: str = Field(min_length=1)
     selection_cutoff_at: AwareDatetime
-    raw_score_frozen_at: AwareDatetime | None = None
-    raw_score_training_watermark_at: AwareDatetime | None = None
-    raw_success_score: Decimal | None = None
-    historical_calibrated_probability: Decimal | None = None
-    entry_window_ends_at: AwareDatetime | None = None
+    raw_score_frozen_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    raw_score_training_watermark_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    raw_success_score: Decimal | None = Field(default=None, exclude_if=lambda value: value is None)
+    historical_calibrated_probability: Decimal | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    entry_window_ends_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     evaluation_entry_at: AwareDatetime | None = None
-    unified_maturity_at: AwareDatetime | None = None
+    unified_maturity_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
@@ -571,7 +581,7 @@ class RawScoreModelSnapshot(ResearchContract):
     training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
     calibration_evidence_version: (
         Literal["frozen-oos-calibration-v1", "frozen-oos-calibration-v2"] | None
-    ) = None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)

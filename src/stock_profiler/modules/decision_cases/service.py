@@ -584,12 +584,7 @@ def _validate_candidate_calibration_sources(
     prior_calibration_snapshots = tuple(
         event
         for event in ledger.candidate_calibration_history(connection, access_scope)
-        if event.result.candidate_release is not None
-        and event.result.candidate_release.calibration is not None
-        and event.result.candidate_release.calibration.calibrator_version
-        == command.calibrator_version
-        if datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
-        and datetime.fromisoformat(event.committed_at) <= command.published_at
+        if _prior_calibration_snapshot_matches(event, command)
     )
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
@@ -599,11 +594,11 @@ def _validate_candidate_calibration_sources(
         if event.corrects_event_id is None
         and event.validation_status == "PASSED"
         and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
-        and datetime.fromisoformat(event.committed_at) <= command.published_at
         and event.case.research is not None
         and event.result.research is not None
     )
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for event in prior_calibration_snapshots:
@@ -634,6 +629,19 @@ def _validate_candidate_calibration_sources(
         for source_record in model.training_records:
             if (
                 source_record.unified_maturity_at is not None
+                and source_record.label_available_at <= candidate_cutoff
+                and source_record.unified_maturity_at <= candidate_cutoff
+            ):
+                identity = (
+                    source_record.month,
+                    source_record.security_id,
+                    source_record.research_id,
+                )
+                _retain_immutable_mature_source_row(
+                    cutoff_mature_source_rows, identity, source_record
+                )
+            if (
+                source_record.unified_maturity_at is not None
                 and source_record.label_available_at <= command.label_watermark_at
                 and source_record.unified_maturity_at <= command.label_watermark_at
             ):
@@ -648,13 +656,10 @@ def _validate_candidate_calibration_sources(
         mature_source_rows,
         command.label_watermark_at,
     )
-    globally_mature_months = tuple(sorted({identity[0] for identity in mature_source_rows}))
-    if len(command.training_window_months) >= 60 and (
-        len(globally_mature_months) < len(command.training_window_months)
-        or command.training_window_months
-        != globally_mature_months[-len(command.training_window_months) :]
-    ):
-        raise CandidateCalibrationProvenanceInvalid()
+    globally_mature_months = tuple(sorted({identity[0] for identity in cutoff_mature_source_rows}))
+    _validate_latest_mature_calibration_window(
+        command.training_window_months, globally_mature_months
+    )
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
     for record in command.training_records:
@@ -787,6 +792,33 @@ def _validate_candidate_calibration_sources(
                 or latest_source_record.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+
+
+def _prior_calibration_snapshot_matches(
+    event: DecisionEventFact,
+    command: CandidateReleaseCommand,
+) -> bool:
+    """Include prior frozen fits based on their domain cutoff, not caller clocks."""
+    release = event.result.candidate_release
+    return bool(
+        release is not None
+        and release.calibration is not None
+        and release.calibration.calibrator_version == command.calibrator_version
+        and datetime.fromisoformat(event.case.knowledge_cutoff)
+        <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    )
+
+
+def _validate_latest_mature_calibration_window(
+    training_window_months: tuple[str, ...],
+    authoritative_mature_months: tuple[str, ...],
+) -> None:
+    """Reject a caller window that omits labels mature by the frozen knowledge cutoff."""
+    if len(training_window_months) >= 60 and (
+        len(authoritative_mature_months) < len(training_window_months)
+        or training_window_months != authoritative_mature_months[-len(training_window_months) :]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
 
 
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:

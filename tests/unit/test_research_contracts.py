@@ -204,6 +204,7 @@ def test_candidate_outcome_entry_cannot_fall_between_frozen_market_sessions() ->
     assert source.raw_success_score is not None
     assert source.historical_calibrated_probability is not None
     assert source.entry_window_ends_at is not None
+    assert source.unified_maturity_at is not None
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
@@ -798,6 +799,24 @@ def test_pre_calibration_research_snapshot_remains_replayable() -> None:
 
     assert len(snapshot.training_records) == 524
     assert snapshot.training_records[0].raw_success_score is None
+    assert snapshot.model_dump(mode="json") == payload
+
+
+def test_missing_candidate_calibration_fields_preserve_legacy_serialization() -> None:
+    source = _mature_source_record()
+    legacy_payload = source.model_dump(mode="json")
+    for field_name in (
+        "raw_score_frozen_at",
+        "raw_score_training_watermark_at",
+        "raw_success_score",
+        "historical_calibrated_probability",
+        "entry_window_ends_at",
+        "unified_maturity_at",
+    ):
+        legacy_payload.pop(field_name)
+    legacy_record = RawScoreTrainingRecord.model_validate(legacy_payload)
+
+    assert legacy_record.model_dump(mode="json") == legacy_payload
 
 
 def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() -> None:

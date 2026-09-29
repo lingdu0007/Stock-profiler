@@ -3,7 +3,8 @@ import random
 from calendar import monthrange
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from types import SimpleNamespace
+from typing import Literal, cast
 
 import pytest
 
@@ -20,6 +21,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     freeze_candidate_release,
 )
 from stock_profiler.modules.decision_cases import service as decision_case_service
+from stock_profiler.modules.decision_cases.domain import DecisionEventFact
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 
@@ -1497,6 +1499,44 @@ def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None
     cutoff = datetime.fromisoformat("2040-01-31T23:00:00-08:00")
 
     assert decision_case_service._candidate_prediction_month(cutoff) == "2040-01"
+
+
+def test_backdated_publication_request_does_not_hide_committed_calibration_history() -> None:
+    frozen_command = command()
+    prior_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                knowledge_cutoff=(frozen_command.knowledge_cutoff - timedelta(days=60)).isoformat()
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    calibration=SimpleNamespace(
+                        calibrator_version=frozen_command.calibrator_version
+                    )
+                )
+            ),
+            committed_at=(frozen_command.published_at + timedelta(days=1)).isoformat(),
+        ),
+    )
+
+    assert decision_case_service._prior_calibration_snapshot_matches(prior_event, frozen_command)
+
+
+def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> None:
+    authoritative_months = tuple(
+        f"{2040 + index // 12:04}-{index % 12 + 1:02}" for index in range(63)
+    )
+    older_window = authoritative_months[:60]
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_latest_mature_calibration_window(
+            older_window, authoritative_months
+        )
+
+    decision_case_service._validate_latest_mature_calibration_window(
+        authoritative_months[-60:], authoritative_months
+    )
 
 
 def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions() -> None:
