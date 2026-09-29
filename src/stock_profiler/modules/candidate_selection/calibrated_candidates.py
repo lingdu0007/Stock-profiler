@@ -746,7 +746,8 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
             or record.entry_at >= record.entry_window_ends_at
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
-        if record.unified_maturity_at < _six_month_anniversary(record.entry_window_ends_at):
+        maturity_anchor = record.entry_at or record.entry_window_ends_at
+        if record.unified_maturity_at < _six_month_anniversary(maturity_anchor):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
         if record.label_available_at < record.unified_maturity_at:
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")

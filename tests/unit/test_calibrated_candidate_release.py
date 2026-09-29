@@ -898,8 +898,8 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
         update={
             "entry_at": datetime.fromisoformat("2045-09-01T06:00:00+00:00"),
             "entry_window_ends_at": datetime.fromisoformat("2045-08-31T23:00:00-08:00"),
-            "unified_maturity_at": datetime.fromisoformat("2046-02-28T07:00:00+00:00"),
-            "label_available_at": datetime.fromisoformat("2046-02-28T07:00:00+00:00"),
+            "unified_maturity_at": datetime.fromisoformat("2046-02-28T05:59:59+00:00"),
+            "label_available_at": datetime.fromisoformat("2046-02-28T05:59:59+00:00"),
         }
     )
     records_with_timezone_maturity = (
@@ -926,12 +926,13 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     )
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
-    bad_entry_maturity = original.training_records[-1].model_copy(
+    bad_entry_record = original.training_records[-1]
+    assert bad_entry_record.entry_at is not None
+    bad_entry_maturity_at = _six_month_anniversary(bad_entry_record.entry_at) - timedelta(days=1)
+    bad_entry_maturity = bad_entry_record.model_copy(
         update={
-            "unified_maturity_at": original.training_records[-1].unified_maturity_at
-            - timedelta(days=1),
-            "label_available_at": original.training_records[-1].label_available_at
-            - timedelta(days=1),
+            "unified_maturity_at": bad_entry_maturity_at,
+            "label_available_at": bad_entry_maturity_at,
         }
     )
     release = freeze_candidate_release(
@@ -1183,6 +1184,8 @@ def test_fractional_six_month_maturity_does_not_round_down_before_watermark() ->
         record.model_copy(
             update={
                 "entry_window_ends_at": entry_window_ends_at,
+                "entry_at": None,
+                "terminal_success": False,
                 "unified_maturity_at": maturity,
                 "label_available_at": maturity,
             }

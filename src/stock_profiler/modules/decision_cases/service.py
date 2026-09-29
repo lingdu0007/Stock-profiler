@@ -20,6 +20,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CandidateReleaseCommand,
     MarketStateQualification,
     MarketStateQualificationStatus,
+    _six_month_anniversary,
     candidate_release_availability_failure,
     candidate_release_blocked_by_business_prerequisite,
     finalize_candidate_release_publication,
@@ -91,6 +92,7 @@ from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
     RawScore,
     RawScoreCalculationError,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDraft,
     ResearchDraftMember,
@@ -560,8 +562,54 @@ def _validate_candidate_calibration_sources(
     access_scope: ResultAccessScope,
     candidate_model_version: str,
 ) -> None:
-    """Bind all calibration labels to complete, persisted raw-score research cohorts."""
+    """Bind calibration rows and the latest mature window to persisted research history."""
     candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    history = ledger.calibration_history(connection, access_scope, candidate_cutoff)
+    facts_by_id = {fact.decision_event_id: fact for fact in history}
+    labels_by_identity: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    for fact in history:
+        research_command = fact.case.research
+        if research_command is None:
+            continue
+        for training_label in research_command.raw_score_model.training_records:
+            if (
+                training_label.label_available_at > command.label_watermark_at
+                or datetime.fromisoformat(fact.committed_at) < training_label.label_available_at
+            ):
+                continue
+            identity = (
+                training_label.month,
+                training_label.security_id,
+                training_label.research_id,
+            )
+            prior = labels_by_identity.get(identity)
+            if prior is not None and prior != training_label:
+                raise CandidateCalibrationProvenanceInvalid()
+            labels_by_identity[identity] = training_label
+
+    mature_months: set[str] = set()
+    for fact in history:
+        research = fact.result.research
+        if research is None or research.raw_scores is None:
+            continue
+        month = fact.case.knowledge_cutoff[:7]
+        if not research.raw_scores:
+            continue
+        score_labels = tuple(
+            labels_by_identity.get((month, score.security_id, score.research_id))
+            for score in research.raw_scores
+        )
+        if all(
+            label is not None
+            and label.source_model_version == score.model_version
+            and label.selection_cutoff_at == datetime.fromisoformat(fact.case.knowledge_cutoff)
+            and label.evaluation_entry_at > datetime.fromisoformat(fact.case.knowledge_cutoff)
+            and _six_month_anniversary(label.evaluation_entry_at) <= command.label_watermark_at
+            and label.label_available_at <= command.label_watermark_at
+            for score, label in zip(research.raw_scores, score_labels, strict=True)
+        ):
+            mature_months.add(month)
+
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
     for record in command.training_records:
@@ -574,7 +622,7 @@ def _validate_candidate_calibration_sources(
         records_by_event.setdefault(record.source_research_event_id, []).append(record)
 
     for event_id, records in records_by_event.items():
-        source_event = ledger.get_decision_event(event_id, connection)
+        source_event = facts_by_id.get(event_id)
         if (
             source_event is None
             or source_event.decision_event_id != event_id
@@ -593,7 +641,7 @@ def _validate_candidate_calibration_sources(
         if (
             research.disposition not in {"FROZEN", "REJECTED"}
             or raw_scores is None
-            or len(raw_scores) != 10
+            or not raw_scores
         ):
             raise CandidateCalibrationProvenanceInvalid()
         scores_by_security = {score.security_id: score for score in raw_scores}
@@ -609,6 +657,10 @@ def _validate_candidate_calibration_sources(
         frozen_at = datetime.fromisoformat(source_event.case.knowledge_cutoff)
         for score in raw_scores:
             record = records_by_identity[(score.security_id, score.research_id)]
+            label = labels_by_identity.get((record.month, record.security_id, record.research_id))
+            label_maturity = (
+                _six_month_anniversary(label.evaluation_entry_at) if label is not None else None
+            )
             if (
                 score.model_version != record.raw_score_model_version
                 or score.z20 != record.raw_success_score
@@ -616,6 +668,13 @@ def _validate_candidate_calibration_sources(
                 or score.label_watermark_at is None
                 or record.raw_score_training_watermark_at != score.label_watermark_at
                 or score.label_watermark_at > frozen_at
+                or label is None
+                or label.source_model_version != score.model_version
+                or label.selection_cutoff_at != frozen_at
+                or label.terminal_label != record.terminal_success
+                or label.evaluation_entry_at != record.entry_at
+                or record.unified_maturity_at != label_maturity
+                or label.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
         if not _calibration_month_mature_by(records, command.label_watermark_at):
@@ -626,6 +685,11 @@ def _validate_candidate_calibration_sources(
         for record in command.training_records
     ):
         raise CandidateCalibrationVersionMismatch()
+    training_months = command.training_window_months
+    if len(training_months) == 60 and (
+        len(mature_months) < 60 or training_months != tuple(sorted(mature_months))[-60:]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
 
 
 def _calibration_month_mature_by(records: list[CalibrationRecord], watermark: datetime) -> bool:

@@ -729,6 +729,27 @@ class DecisionLedger:
         ).one_or_none()
         return self._stored_decision_event(connection, row) if row is not None else None
 
+    def calibration_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        knowledge_cutoff: datetime,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read cutoff-visible original research facts within one owner visibility scope."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "calibration history is unavailable")
+            if fact.validation_status == "PASSED"
+            and fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and datetime.fromisoformat(fact.committed_at) <= knowledge_cutoff
+            and datetime.fromisoformat(fact.case.knowledge_cutoff) <= knowledge_cutoff
+            and fact.result.research is not None
+            and fact.result.research.raw_scores is not None
+            and fact.case.research is not None
+            and fact.case.research.raw_score_model.training_records
+        )
+
     def get_original_decision_event(
         self, business_object_id: str, connection: Connection
     ) -> DecisionEventFact | None:

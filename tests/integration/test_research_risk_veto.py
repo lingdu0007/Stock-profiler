@@ -126,6 +126,7 @@ from stock_profiler.modules.research.contracts import (
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     RawScoreModelSnapshot,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -162,6 +163,17 @@ def _synthetic_entry_window_end(month: str) -> datetime:
     next_month = month_number % 12 + 1
     next_year = year + int(month_number == 12)
     return datetime(next_year, next_month, 5, 8, tzinfo=UTC)
+
+
+def _synthetic_label_maturity(month: str) -> datetime:
+    entry_at = _synthetic_entry_window_end(month) - timedelta(days=1)
+    target_index = entry_at.year * 12 + entry_at.month - 1 + 6
+    target_year, target_month_index = divmod(target_index, 12)
+    return entry_at.replace(
+        year=target_year,
+        month=target_month_index + 1,
+        day=min(entry_at.day, monthrange(target_year, target_month_index + 1)[1]),
+    )
 
 
 def _synthetic_raw_score_frozen_at(month: str) -> datetime:
@@ -3402,6 +3414,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATOR_VERSION_UNSUPPORTED"),
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
+        ("ACCEPT", "CALIBRATION_LABEL_TAMPERED"),
+        ("ACCEPT", "CALIBRATION_LABEL_CLOCKS_TAMPERED"),
         ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
         ("ACCEPT", "QUALIFICATION_NOT_OBTAINED_RECORDED"),
         ("ACCEPT", "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK"),
@@ -3449,6 +3463,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATOR_VERSION_UNSUPPORTED",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_LABEL_TAMPERED",
+        "CALIBRATION_LABEL_CLOCKS_TAMPERED",
         "CALIBRATION_DECLARED_OLDER_WINDOW",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
@@ -3513,11 +3529,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             f"{prior_year}-{prior_month_zero_based + 1:02d}",
             *training_months[:-1],
         )
-        last_year, last_month = (int(part) for part in training_months[-1].split("-"))
-        following_year, following_month = divmod(last_year * 12 + last_month, 12)
         source_months = (
             *omitted_training_months,
-            f"{following_year}-{following_month + 1:02d}",
+            training_months[-1],
         )
     else:
         omitted_training_months = training_months
@@ -3539,8 +3553,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             terminal_success=(member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5),
             entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
             entry_window_ends_at=_synthetic_entry_window_end(month),
-            unified_maturity_at=cutoff,
-            label_available_at=cutoff,
+            unified_maturity_at=_synthetic_label_maturity(month),
+            label_available_at=_synthetic_label_maturity(month),
         )
         for month in omitted_training_months
         for member in range(10)
@@ -3564,6 +3578,27 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             for record in training_records
             if record.record_id != missing_member_record.record_id
         )
+    elif candidate_scenario == "CALIBRATION_LABEL_TAMPERED":
+        training_records = (
+            training_records[0].model_copy(
+                update={"terminal_success": not training_records[0].terminal_success}
+            ),
+            *training_records[1:],
+        )
+    elif candidate_scenario == "CALIBRATION_LABEL_CLOCKS_TAMPERED":
+        first_training_record = training_records[0]
+        assert first_training_record.entry_at is not None
+        training_records = (
+            first_training_record.model_copy(
+                update={
+                    "entry_at": first_training_record.entry_at + timedelta(days=1),
+                    "label_available_at": (
+                        first_training_record.label_available_at + timedelta(days=1)
+                    ),
+                }
+            ),
+            *training_records[1:],
+        )
     if candidate_scenario == "CALIBRATION_RECORDS_MISSING":
         training_records = ()
     runtime = initialize_runtime_storage(migrated_settings)
@@ -3574,6 +3609,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             connection,
         )
     assert source_fact is not None
+    if candidate_scenario == "NORMAL":
+        assert source_fact.case.access_scope is not None
+        with runtime.engine.connect() as connection:
+            persisted_history = source_ledger.calibration_history(
+                connection,
+                source_fact.case.access_scope,
+                publication_time,
+            )
+        assert source_fact.decision_event_id in {
+            fact.decision_event_id for fact in persisted_history
+        }
     calibration_source_facts: dict[str, DecisionEventFact] = {}
     for month in source_months:
         source_event_id = f"synthetic-calibration-event-{month}"
@@ -3585,6 +3631,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
         source_research = source_fact.result.research
         assert source_research is not None and source_research.raw_scores is not None
+        source_research_command = source_fact.case.research
+        assert source_research_command is not None
         monthly_scores = tuple(
             score.model_copy(
                 update={
@@ -3600,13 +3648,40 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             )
             for member, score in enumerate(source_research.raw_scores)
         )
+        monthly_labels = tuple(
+            RawScoreTrainingRecord(
+                month=month,
+                cohort_id=f"synthetic-calibration-cohort-{month}",
+                security_id=score.security_id,
+                research_id=score.research_id,
+                selection_cutoff_at=frozen_at,
+                evaluation_entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
+                terminal_label=(
+                    member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5
+                ),
+                label_available_at=_synthetic_label_maturity(month),
+                source_model_version=score.model_version,
+            )
+            for member, score in enumerate(monthly_scores)
+        )
         calibration_source_facts[source_event_id] = source_fact.model_copy(
             update={
                 "decision_event_id": source_event_id,
                 "business_object_id": f"synthetic-calibration-object-{month}",
                 "framework_run_id": f"synthetic-calibration-run-{month}",
                 "case": source_fact.case.model_copy(
-                    update={"knowledge_cutoff": frozen_at.isoformat()}
+                    update={
+                        "knowledge_cutoff": frozen_at.isoformat(),
+                        "research": source_research_command.model_copy(
+                            update={
+                                "raw_score_model": (
+                                    source_research_command.raw_score_model.model_copy(
+                                        update={"training_records": monthly_labels}
+                                    )
+                                )
+                            }
+                        ),
+                    }
                 ),
                 "result": source_fact.result.model_copy(
                     update={
@@ -3615,7 +3690,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                         )
                     }
                 ),
-                "committed_at": frozen_at.isoformat(),
+                "committed_at": _synthetic_label_maturity(month).isoformat(),
             }
         )
     if candidate_scenario == "CALIBRATION_SOURCE_AFTER_CUTOFF":
@@ -3628,6 +3703,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         calibration_source_facts.pop(f"synthetic-calibration-event-{training_months[0]}")
     get_decision_event = DecisionLedger.get_decision_event
 
+    def calibration_history(
+        ledger: DecisionLedger,
+        connection: Any,
+        access_scope: Any,
+        knowledge_cutoff: datetime,
+    ) -> tuple[DecisionEventFact, ...]:
+        return (*calibration_source_facts.values(), source_fact)
+
     def get_calibration_source_event(
         ledger: DecisionLedger, event_id: str, connection: Any
     ) -> DecisionEventFact | None:
@@ -3636,6 +3719,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         )
 
     monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
+    monkeypatch.setattr(DecisionLedger, "calibration_history", calibration_history)
     if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
         if candidate_scenario == "UPSTREAM_RESEARCH_EVENT_MISSING":
@@ -4281,6 +4365,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_MODEL_MISMATCH",
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_LABEL_TAMPERED",
+        "CALIBRATION_LABEL_CLOCKS_TAMPERED",
+        "CALIBRATION_DECLARED_OLDER_WINDOW",
     }:
         direct = candidate_release_availability_failure(
             command,
@@ -4445,7 +4532,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATOR_VERSION_UNSUPPORTED": "FAILED",
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
-        "CALIBRATION_DECLARED_OLDER_WINDOW": "RECOMMENDATION_ABSTAINED",
+        "CALIBRATION_LABEL_TAMPERED": "FAILED",
+        "CALIBRATION_LABEL_CLOCKS_TAMPERED": "FAILED",
+        "CALIBRATION_DECLARED_OLDER_WINDOW": "FAILED",
         "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED": "FAILED",
         "UPSTREAM_RESEARCH_BLOCKED": "BLOCKED",
@@ -4484,6 +4573,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_RECORDS_MISSING",
         "CALIBRATION_WINDOW_MISSING",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
+        "CALIBRATION_LABEL_TAMPERED",
+        "CALIBRATION_LABEL_CLOCKS_TAMPERED",
+        "CALIBRATION_DECLARED_OLDER_WINDOW",
     }:
         assert direct.availability_failure == "CALIBRATION"
     elif candidate_scenario in {
@@ -4517,9 +4609,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if direct.calibration is not None:
         assert direct.calibration.slope >= 0
     if candidate_scenario == "CALIBRATION_DECLARED_OLDER_WINDOW":
-        assert direct.availability_failure is None
-        assert direct.calibration is not None
-        assert direct.calibration.training_window_months == command.training_window_months
+        assert direct.availability_failure == "CALIBRATION"
+    if candidate_scenario == "CALIBRATION_LABEL_TAMPERED":
+        assert direct.availability_failure == "CALIBRATION"
+    if candidate_scenario == "CALIBRATION_LABEL_CLOCKS_TAMPERED":
+        assert direct.availability_failure == "CALIBRATION"
     if candidate_scenario in {
         "LATE_REPORT_COMMIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
