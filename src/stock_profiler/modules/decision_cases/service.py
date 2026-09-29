@@ -3341,17 +3341,25 @@ def _publish_report_or_record_failure(
         confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
         assert fact.case.access_scope is not None
         governance_history = ledger.governance_history(connection, fact.case.access_scope)
+        diagnostic_alert_id = _post_commit_diagnostic_alert_id(
+            fact, candidate_command, governance_history
+        )
+        qualification_history_for_validation = (
+            tuple(
+                outcome
+                for outcome in governance_history
+                if outcome.qualification is None
+                or outcome.qualification.decision_id != diagnostic_alert_id
+            )
+            if diagnostic_alert_id is not None
+            else governance_history
+        )
         try:
-            if _has_post_commit_diagnostic_alert(
-                fact, candidate_command.qualifications, governance_history
-            ):
-                current_qualifications = candidate_command.qualifications
-            else:
-                current_qualifications = _validate_candidate_qualification_snapshots(
-                    fact.case,
-                    governance_history,
-                    confirmed_at,
-                )
+            current_qualifications = _validate_candidate_qualification_snapshots(
+                fact.case,
+                qualification_history_for_validation,
+                confirmed_at,
+            )
         except (ValueError, CandidateQualificationHistoryAmbiguous):
             failed_report = _record_candidate_publication_failure(
                 ledger,
@@ -3440,50 +3448,57 @@ def _record_candidate_publication_failure(
     return report if report.report_publication.status == "FAILED" else None
 
 
-def _has_post_commit_diagnostic_alert(
+def _post_commit_diagnostic_alert_id(
     fact: DecisionEventFact,
-    qualifications: tuple[MarketStateQualification, ...],
+    command: CandidateReleaseCommand,
     history: tuple[GovernanceOutcome, ...],
-) -> bool:
-    """Allow only a post-commit diagnostic alert that preserves qualification authority."""
-    if not qualifications or fact.case.access_scope is None:
-        return False
+) -> str | None:
+    """Find a post-commit diagnostic alert for only the batch's active market state."""
+    if not command.qualifications or fact.case.access_scope is None:
+        return None
     records = tuple(
         outcome.qualification for outcome in history if outcome.qualification is not None
     )
     committed_at = datetime.fromisoformat(fact.committed_at)
-    for frozen in qualifications:
-        if frozen.status != "VALID":
-            continue
-        frozen_record = next(
-            (record for record in records if record.decision_id == frozen.qualification_id), None
-        )
-        if frozen_record is None:
-            continue
-        successors = tuple(
-            record for record in records if record.previous_decision_id == frozen_record.decision_id
-        )
-        if len(successors) != 1:
-            continue
-        alert = successors[0]
-        if (
-            alert.status != "AT_RISK"
-            or alert.cause != "DIAGNOSTIC_ALERT"
-            or alert.recorded_at <= committed_at
-            or alert.scope != frozen_record.scope
-            or alert.version != frozen_record.version
-            or alert.authorization_id != frozen_record.authorization_id
-            or alert.formal_passing_evidence != frozen_record.formal_passing_evidence
-            or alert.authorization_evidence != frozen_record.authorization_evidence
-        ):
-            continue
-        try:
-            current = current_qualification(history, alert.scope, alert.version)
-        except ValueError:
-            continue
-        if current is not None and current.decision_id == alert.decision_id:
-            return True
-    return False
+    frozen = next(
+        (
+            qualification
+            for qualification in command.qualifications
+            if qualification.market_state == command.market_state
+        ),
+        None,
+    )
+    if frozen is None or frozen.status != "VALID":
+        return None
+    frozen_record = next(
+        (record for record in records if record.decision_id == frozen.qualification_id), None
+    )
+    if frozen_record is None:
+        return None
+    successors = tuple(
+        record for record in records if record.previous_decision_id == frozen_record.decision_id
+    )
+    if len(successors) != 1:
+        return None
+    alert = successors[0]
+    if (
+        alert.status != "AT_RISK"
+        or alert.cause != "DIAGNOSTIC_ALERT"
+        or alert.recorded_at <= committed_at
+        or alert.scope != frozen_record.scope
+        or alert.version != frozen_record.version
+        or alert.authorization_id != frozen_record.authorization_id
+        or alert.formal_passing_evidence != frozen_record.formal_passing_evidence
+        or alert.authorization_evidence != frozen_record.authorization_evidence
+    ):
+        return None
+    try:
+        current = current_qualification(history, alert.scope, alert.version)
+    except ValueError:
+        return None
+    if current is not None and current.decision_id == alert.decision_id:
+        return alert.decision_id
+    return None
 
 
 _CANDIDATE_RELEASE_STAGE_STATUSES: dict[

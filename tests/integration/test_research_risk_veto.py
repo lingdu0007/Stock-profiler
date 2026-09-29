@@ -3467,6 +3467,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"),
         ("ACCEPT", "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE"),
+        ("ACCEPT", "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
@@ -3513,6 +3514,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
+        "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -3821,6 +3823,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         }
     )
     qualification_history: tuple[GovernanceOutcome, ...] = ()
+    bear_qualification_record: QualificationRecord | None = None
     if candidate_scenario in {
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
@@ -3828,6 +3831,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
+        "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -4033,6 +4037,48 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 )
             }
         )
+        if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
+            bear_scope = qualification_scope.model_copy(update={"market_state": "BEAR"})
+            bear_evidence = qualification_evidence.model_copy(
+                update={
+                    "evidence_id": "synthetic-candidate-bear-qualification-evidence",
+                    "scope": bear_scope,
+                }
+            )
+            bear_qualification_record = qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-bear-qualification",
+                    "scope": bear_scope,
+                    "evidence": bear_evidence,
+                    "authorization_evidence": bear_evidence,
+                    "formal_evidence": bear_evidence,
+                    "formal_passing_evidence": bear_evidence,
+                }
+            )
+            qualification_history = (
+                *qualification_history,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("QUALIFICATION_PASS",),
+                    qualification=bear_qualification_record,
+                ),
+            )
+            command = command.model_copy(
+                update={
+                    "qualifications": (
+                        *command.qualifications,
+                        MarketStateQualification(
+                            market_state="BEAR",
+                            status="VALID",
+                            qualification_id=bear_qualification_record.decision_id,
+                            capability_version=command.capability_version,
+                            market_calendar_version=command.market_calendar_version,
+                            recorded_at=bear_qualification_record.recorded_at,
+                            valid_through=qualification_expires_at,
+                        ),
+                    )
+                }
+            )
         if candidate_scenario in {"REVOKED_SAME_TIMESTAMP", "REVOKED_AFTER_CUTOFF"}:
             revoked_at = (
                 cutoff + timedelta(minutes=3)
@@ -4504,6 +4550,56 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "publish_report",
             record_diagnostic_alert_after_report_save,
         )
+    if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
+        publish_report = DecisionLedger.publish_report
+        clock_state = {"now": publication_time}
+        monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
+
+        def revoke_active_and_alert_unrelated_after_report_save(
+            ledger: DecisionLedger, connection: Any, fact: DecisionEventFact, *args: Any
+        ) -> Any:
+            report = publish_report(ledger, connection, fact, *args)
+            clock_state["now"] = publication_time + timedelta(seconds=2)
+            original_bull = qualification_history[0].qualification
+            assert original_bull is not None and bear_qualification_record is not None
+            revoked_bull = original_bull.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-bull-revoked-after-save",
+                    "status": "REVOKED",
+                    "cause": "AUTHORIZATION_REVOKED",
+                    "previous_decision_id": original_bull.decision_id,
+                    "recorded_at": publication_time + timedelta(seconds=1),
+                }
+            )
+            alerted_bear = bear_qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-bear-alert-after-save",
+                    "status": "AT_RISK",
+                    "cause": "DIAGNOSTIC_ALERT",
+                    "previous_decision_id": bear_qualification_record.decision_id,
+                    "recorded_at": publication_time + timedelta(seconds=1),
+                }
+            )
+            qualification_history_state["value"] = (
+                *qualification_history,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("AUTHORIZATION_REVOKED",),
+                    qualification=revoked_bull,
+                ),
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("DIAGNOSTIC_ALERT",),
+                    qualification=alerted_bear,
+                ),
+            )
+            return report
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "publish_report",
+            revoke_active_and_alert_unrelated_after_report_save,
+        )
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -4540,6 +4636,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION": "CANDIDATES",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE": "CANDIDATES",
+        "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION": "CANDIDATES",
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
@@ -4677,6 +4774,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert direct is not None
     assert execution.report.result.candidate_release is not None
     saved_candidate_release = execution.report.result.candidate_release
+    if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
+        assert saved_candidate_release.disposition == "FAILED"
+        assert execution.report.report_publication is not None
+        assert execution.report.report_publication.status == "FAILED"
+        assert execution.report.report_publication.failure_reason == (
+            "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+        )
+        return
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
         assert saved_candidate_release.disposition == "FAILED"
         assert saved_candidate_release.availability_failure == "VERSION"
