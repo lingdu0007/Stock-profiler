@@ -1488,6 +1488,15 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.raw_success_score == member.raw_success_score
     assert prediction.calibrated_probability == member.calibrated_probability
     assert prediction.matures_by == _six_month_anniversary(original.market_sessions[-1].closes_at)
+    assert prediction.entry_sessions == tuple(
+        (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
+    )
+
+
+def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None:
+    cutoff = datetime.fromisoformat("2040-01-31T23:00:00-08:00")
+
+    assert decision_case_service._candidate_prediction_month(cutoff) == "2040-01"
 
 
 def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions() -> None:

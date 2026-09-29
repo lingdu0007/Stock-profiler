@@ -7,7 +7,7 @@ import json
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from threading import Lock
 from typing import Literal
@@ -153,8 +153,8 @@ class CandidateCalibrationVersionMismatch(ValueError):
 class _FrozenCandidatePrediction:
     raw_success_score: Decimal
     calibrated_probability: Decimal
-    entry_window_starts_at: datetime
     entry_window_ends_at: datetime
+    entry_sessions: tuple[tuple[datetime, datetime], ...]
     matures_by: datetime
 
 
@@ -803,28 +803,15 @@ def _frozen_candidate_prediction_rows(
         return {}
     if not outcome.valid_market_dates:
         raise CandidateCalibrationProvenanceInvalid()
-    final_window_date = outcome.valid_market_dates[-1]
-    final_window_session = next(
-        (
-            session
-            for session in command.market_sessions
-            if session.market_date == final_window_date
-        ),
-        None,
+    sessions_by_date = {session.market_date: session for session in command.market_sessions}
+    window_sessions = tuple(
+        sessions_by_date.get(market_date) for market_date in outcome.valid_market_dates
     )
-    if final_window_session is None:
+    if any(session is None for session in window_sessions):
         raise CandidateCalibrationProvenanceInvalid()
-    first_window_session = next(
-        (
-            session
-            for session in command.market_sessions
-            if session.market_date == outcome.valid_market_dates[0]
-        ),
-        None,
-    )
-    if first_window_session is None:
-        raise CandidateCalibrationProvenanceInvalid()
-    prediction_month = command.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
+    final_window_session = window_sessions[-1]
+    assert final_window_session is not None
+    prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
     matures_by = six_month_anniversary(final_window_session.closes_at)
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
@@ -836,11 +823,20 @@ def _frozen_candidate_prediction_rows(
         predictions[identity] = _FrozenCandidatePrediction(
             raw_success_score=member.raw_success_score,
             calibrated_probability=member.calibrated_probability,
-            entry_window_starts_at=first_window_session.opens_at,
             entry_window_ends_at=final_window_session.closes_at,
+            entry_sessions=tuple(
+                (session.opens_at, session.closes_at)
+                for session in window_sessions
+                if session is not None
+            ),
             matures_by=matures_by,
         )
     return predictions
+
+
+def _candidate_prediction_month(knowledge_cutoff: datetime) -> str:
+    """Keep the cohort month attached to the frozen cutoff's own timezone."""
+    return knowledge_cutoff.strftime("%Y-%m")
 
 
 def _validate_frozen_candidate_prediction_source(
@@ -854,10 +850,9 @@ def _validate_frozen_candidate_prediction_source(
         or source.entry_window_ends_at != prediction.entry_window_ends_at
     ):
         raise CandidateCalibrationProvenanceInvalid()
-    if source.evaluation_entry_at is not None and not (
-        prediction.entry_window_starts_at
-        <= source.evaluation_entry_at
-        < prediction.entry_window_ends_at
+    if source.evaluation_entry_at is not None and not any(
+        opens_at <= source.evaluation_entry_at < closes_at
+        for opens_at, closes_at in prediction.entry_sessions
     ):
         raise CandidateCalibrationProvenanceInvalid()
     maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at

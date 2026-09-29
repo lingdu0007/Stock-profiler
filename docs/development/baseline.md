@@ -109,8 +109,9 @@ is the complete union of mature raw-score source rows, previously committed
 calibration rows, and previously frozen candidate predictions whose six-month
 outcomes have matured. Each eventual label row must retain its original frozen
 candidate score, probability and five-session entry window; omitted or rewritten
-outcomes fail closed. Members with no frozen probability remain visible as
-availability failures and do not enter later calibration cohorts.
+outcomes fail closed, and an executable entry must fall within an actual saved
+market session in that window. Members with no frozen probability remain visible
+as availability failures and do not enter later calibration cohorts.
 After the first valid
 calibration, every refit uses the fixed rolling latest 60 consecutive mature
 months; a missed sample floor then produces a visible calibration failure.
