@@ -13,12 +13,13 @@ def _utc(value: str) -> datetime:
 
 def six_month_terminal_evaluation_at(value: datetime, market_calendar_version: str) -> datetime:
     """Resolve the six-month target to the last saved session close on or before its date."""
-    month_index = value.year * 12 + value.month - 1 + 6
+    anchor = value.astimezone(UTC)
+    month_index = anchor.year * 12 + anchor.month - 1 + 6
     year, month_zero = divmod(month_index, 12)
-    target = value.astimezone(UTC).replace(
+    target = anchor.replace(
         year=year,
         month=month_zero + 1,
-        day=min(value.day, monthrange(year, month_zero + 1)[1]),
+        day=min(anchor.day, monthrange(year, month_zero + 1)[1]),
     )
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:

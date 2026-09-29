@@ -761,12 +761,6 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     months = command.training_window_months
     if len(months) < _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
-    month_indexes = tuple(_calibration_month_index(month) for month in months)
-    if any(
-        current != previous + 1
-        for previous, current in zip(month_indexes, month_indexes[1:], strict=False)
-    ):
-        raise ValueError("CALIBRATION_TRAINING_WINDOW_MONTHS_NOT_CONSECUTIVE")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
         if record.raw_score_frozen_at.strftime("%Y-%m") != record.month:
@@ -862,18 +856,6 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         recent_diagnostic_sample_count=len(recent_records),
         recent_diagnostics=recent_diagnostics,
     )
-
-
-def _calibration_month_index(month: str) -> int:
-    try:
-        year_text, month_text = month.split("-", maxsplit=1)
-        year = int(year_text)
-        month_number = int(month_text)
-    except (TypeError, ValueError) as error:
-        raise ValueError("CALIBRATION_MONTH_INVALID") from error
-    if len(year_text) != 4 or not 1 <= month_number <= 12:
-        raise ValueError("CALIBRATION_MONTH_INVALID")
-    return year * 12 + month_number - 1
 
 
 def _calibration_diagnostics(

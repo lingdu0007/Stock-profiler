@@ -99,6 +99,16 @@ def test_weekend_six_month_horizon_matures_at_the_preceding_session_close() -> N
     )
 
 
+def test_maturity_uses_calendar_date_from_normalized_instant() -> None:
+    utc_value = datetime.fromisoformat("2042-06-04T08:30:00+00:00")
+    same_instant_other_offset = datetime.fromisoformat("2042-06-03T22:30:00-10:00")
+
+    assert utc_value == same_instant_other_offset
+    assert raw_score_maturity_at(
+        utc_value, RAW_SCORE_MARKET_CALENDAR_VERSION
+    ) == raw_score_maturity_at(same_instant_other_offset, RAW_SCORE_MARKET_CALENDAR_VERSION)
+
+
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
     original = _mature_source_record()
     identity = (original.month, original.security_id, original.research_id)

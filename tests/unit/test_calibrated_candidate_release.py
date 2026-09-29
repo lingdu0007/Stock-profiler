@@ -1358,7 +1358,7 @@ def test_initial_publication_after_qualification_expiry_abstains() -> None:
     assert "MARKET_STATE_NOT_QUALIFIED" in release.members[0].reasons
 
 
-def test_training_window_must_be_exactly_sixty_consecutive_mature_months() -> None:
+def test_training_window_requires_at_least_sixty_mature_months() -> None:
     candidate = command().model_copy(update={"training_window_months": ("2045-01",)})
 
     release = freeze_candidate_release(candidate)
@@ -1418,7 +1418,7 @@ def test_declared_window_must_contain_only_mature_months() -> None:
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
 
-def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() -> None:
+def test_declared_mature_window_cannot_omit_newer_mature_months() -> None:
     original = command()
     next_month_records = tuple(
         original.training_records[index].model_copy(
@@ -1467,22 +1467,26 @@ def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() ->
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
 
-def test_declared_mature_month_window_rejects_calendar_gaps() -> None:
+def test_declared_latest_mature_months_can_span_calendar_gaps() -> None:
     original = command()
     missing_month = "2042-01"
-    earlier_month = "2040-11"
+    earlier_month = "2040-10"
     earlier_records = tuple(
         record.model_copy(
             update={
                 "record_id": f"synthetic-label-{earlier_month}-{index:02d}",
                 "month": earlier_month,
                 "source_research_event_id": f"synthetic-research-event-{earlier_month}",
-                "raw_score_frozen_at": datetime(2040, 11, 30, 7, tzinfo=UTC),
-                "raw_score_training_watermark_at": datetime(2040, 11, 29, 7, tzinfo=UTC),
-                "entry_window_ends_at": datetime(2040, 12, 6, 8, tzinfo=UTC),
-                "entry_at": datetime(2040, 12, 5, 8, tzinfo=UTC),
-                "unified_maturity_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
-                "label_available_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
+                "raw_score_frozen_at": datetime(2040, 10, 31, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2040, 10, 30, 7, tzinfo=UTC),
+                "entry_window_ends_at": datetime(2040, 11, 6, 8, tzinfo=UTC),
+                "entry_at": datetime(2040, 11, 5, 8, tzinfo=UTC),
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    datetime(2040, 11, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    datetime(2040, 11, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
             }
         )
         for index, record in enumerate(original.training_records[:10])
@@ -1495,9 +1499,9 @@ def test_declared_mature_month_window_rejects_calendar_gaps() -> None:
         original.model_copy(update={"training_window_months": months, "training_records": records})
     )
 
-    assert release.disposition == "FAILED"
-    assert release.availability_failure == "CALIBRATION"
-    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_MONTHS_NOT_CONSECUTIVE",)
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == months
 
 
 def test_previous_frozen_calibration_identities_remain_in_expected_cohort() -> None:
