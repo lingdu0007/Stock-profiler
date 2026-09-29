@@ -3,6 +3,15 @@ import { ReportRecord as Record } from "./ReportRecord";
 
 type CandidateRelease = NonNullable<FormalReport["result"]["candidate_release"]>;
 type ReportPublication = FormalReport["report_publication"];
+type RecentDiagnosticStatus = NonNullable<
+  CandidateRelease["calibration"]
+>["recent_diagnostic_status"];
+
+function recentDiagnosticUnavailableLabel(status: RecentDiagnosticStatus): string {
+  return status === "INSUFFICIENT_DATA"
+    ? "Unavailable (<200 records)"
+    : "Unavailable (calculation failed)";
+}
 
 export function CandidateReleaseEvidence({
   release,
@@ -23,7 +32,7 @@ export function CandidateReleaseEvidence({
           value={
             publication?.status === "FAILED"
               ? "Not published"
-              : publication?.published_at ?? "Unavailable"
+              : (publication?.published_at ?? "Unavailable")
           }
         />
         {publication?.status === "FAILED" && (
@@ -114,13 +123,15 @@ export function CandidateReleaseEvidence({
             <Record
               label="Recent diagnostic log loss"
               value={
-                release.calibration.recent_diagnostics?.log_loss ?? "Unavailable (<200 records)"
+                release.calibration.recent_diagnostics?.log_loss ??
+                recentDiagnosticUnavailableLabel(release.calibration.recent_diagnostic_status)
               }
             />
             <Record
               label="Recent diagnostic Brier score"
               value={
-                release.calibration.recent_diagnostics?.brier_score ?? "Unavailable (<200 records)"
+                release.calibration.recent_diagnostics?.brier_score ??
+                recentDiagnosticUnavailableLabel(release.calibration.recent_diagnostic_status)
               }
             />
             <Record
@@ -128,7 +139,7 @@ export function CandidateReleaseEvidence({
               value={
                 release.calibration.recent_diagnostics
                   ? `${release.calibration.recent_diagnostics.calibration_intercept} / ${release.calibration.recent_diagnostics.calibration_slope}`
-                  : "Unavailable (<200 records)"
+                  : recentDiagnosticUnavailableLabel(release.calibration.recent_diagnostic_status)
               }
             />
             <Record
@@ -136,7 +147,7 @@ export function CandidateReleaseEvidence({
               value={
                 release.calibration.recent_diagnostics
                   ? reliabilitySummary(release.calibration.recent_diagnostics.reliability_curve)
-                  : "Unavailable (<200 records)"
+                  : recentDiagnosticUnavailableLabel(release.calibration.recent_diagnostic_status)
               }
             />
           </dl>

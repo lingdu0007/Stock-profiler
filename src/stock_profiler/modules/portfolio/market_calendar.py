@@ -149,7 +149,9 @@ _SYNTHETIC_MARKET_CALENDARS = (
                     _utc("2042-06-18T15:00:00+00:00") + timedelta(days=offset),
                 )
                 for index, offset in enumerate(
-                    (0, 1, *(4 + week * 7 + day for week in range(10) for day in range(5)))
+                    offset
+                    for offset in range(70)
+                    if (date(2042, 6, 18) + timedelta(days=offset)).weekday() < 5
                 )
             ),
         ),

@@ -529,6 +529,11 @@ export interface components {
             recent_diagnostic_months: string[];
             /** Recent Diagnostic Sample Count */
             recent_diagnostic_sample_count: number;
+            /**
+             * Recent Diagnostic Status
+             * @enum {string}
+             */
+            recent_diagnostic_status: "AVAILABLE" | "INSUFFICIENT_DATA" | "CALCULATION_FAILED";
             recent_diagnostics: components["schemas"]["CalibrationDiagnostics"] | null;
             /** Slope */
             slope: string;

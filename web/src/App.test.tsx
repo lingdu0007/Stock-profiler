@@ -109,6 +109,7 @@ describe("App", () => {
               return `${year}-${String(month).padStart(2, "0")}`;
             }),
             recent_diagnostic_sample_count: 240,
+            recent_diagnostic_status: "AVAILABLE",
             recent_diagnostics: {
               log_loss: "0.44",
               brier_score: "0.14",

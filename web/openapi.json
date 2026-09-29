@@ -776,6 +776,11 @@
             "title": "Recent Diagnostic Sample Count",
             "type": "integer"
           },
+          "recent_diagnostic_status": {
+            "enum": ["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"],
+            "title": "Recent Diagnostic Status",
+            "type": "string"
+          },
           "recent_diagnostics": {
             "anyOf": [
               {
@@ -815,6 +820,7 @@
           "out_of_sample_diagnostics",
           "recent_diagnostic_months",
           "recent_diagnostic_sample_count",
+          "recent_diagnostic_status",
           "recent_diagnostics"
         ],
         "title": "CalibrationSnapshot",

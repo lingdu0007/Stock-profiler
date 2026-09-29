@@ -221,6 +221,7 @@ class CalibrationSnapshot(UniverseContract):
     out_of_sample_diagnostics: CalibrationDiagnostics
     recent_diagnostic_months: tuple[str, ...] = Field(min_length=24, max_length=24)
     recent_diagnostic_sample_count: int = Field(ge=0)
+    recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
     recent_diagnostics: CalibrationDiagnostics | None
 
 
@@ -834,14 +835,20 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     out_of_sample_diagnostics = _calibration_diagnostics(records, probabilities)
     recent_months = months[-24:]
     recent_records = tuple(record for record in records if record.month in recent_months)
-    recent_diagnostics = (
-        _calibration_diagnostics(
-            recent_records,
-            tuple(float(record.out_of_sample_probability) for record in recent_records),
-        )
-        if len(recent_records) >= _MINIMUM_RECENT_DIAGNOSTIC_RECORDS
-        else None
-    )
+    recent_diagnostics = None
+    recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
+    if len(recent_records) < _MINIMUM_RECENT_DIAGNOSTIC_RECORDS:
+        recent_diagnostic_status = "INSUFFICIENT_DATA"
+    else:
+        try:
+            recent_diagnostics = _calibration_diagnostics(
+                recent_records,
+                tuple(float(record.out_of_sample_probability) for record in recent_records),
+            )
+        except (ArithmeticError, ValueError):
+            recent_diagnostic_status = "CALCULATION_FAILED"
+        else:
+            recent_diagnostic_status = "AVAILABLE"
     return CalibrationSnapshot(
         calibrator_version=command.calibrator_version,
         intercept=Decimal(str(intercept)).quantize(Decimal("0.00000001")),
@@ -854,6 +861,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         out_of_sample_diagnostics=out_of_sample_diagnostics,
         recent_diagnostic_months=recent_months,
         recent_diagnostic_sample_count=len(recent_records),
+        recent_diagnostic_status=recent_diagnostic_status,
         recent_diagnostics=recent_diagnostics,
     )
 

@@ -224,6 +224,7 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
     assert release.calibration.out_of_sample_diagnostics.reliability_curve
     assert release.calibration.recent_diagnostic_months == command().training_window_months[-24:]
     assert release.calibration.recent_diagnostic_sample_count >= 200
+    assert release.calibration.recent_diagnostic_status == "AVAILABLE"
     assert release.calibration.recent_diagnostics is not None
     assert release.calibration.recent_diagnostics.log_loss.is_finite()
     assert release.members[0].calibrated_probability is not None
@@ -234,6 +235,31 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
         datetime(2046, 7, 5, 1, tzinfo=UTC).date(),
         datetime(2046, 7, 6, 1, tzinfo=UTC).date(),
     )
+
+
+def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> None:
+    original = command()
+    recent_months = set(original.training_window_months[-24:])
+    recent_index = 0
+    records: list[CalibrationRecord] = []
+    for record in original.training_records:
+        if record.month in recent_months:
+            probability = Decimal("0.5") if recent_index % 2 == 0 else Decimal("0.50000000000001")
+            records.append(record.model_copy(update={"out_of_sample_probability": probability}))
+            recent_index += 1
+        else:
+            records.append(record)
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"training_records": tuple(records)})
+    )
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.availability_failure is None
+    assert release.calibration is not None
+    assert release.calibration.recent_diagnostic_sample_count >= 200
+    assert release.calibration.recent_diagnostic_status == "CALCULATION_FAILED"
+    assert release.calibration.recent_diagnostics is None
 
 
 def test_log_loss_uses_frozen_out_of_sample_probabilities_not_the_current_fit() -> None:
@@ -1278,6 +1304,19 @@ def test_terminal_session_maturity_does_not_precede_the_label_watermark() -> Non
     assert early.disposition == "FAILED"
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in early.reasons
     assert mature.disposition == "CANDIDATES"
+
+
+def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    assert calendar is not None
+    maturity = six_month_terminal_evaluation_at(
+        datetime(2042, 1, 6, tzinfo=UTC), calendar.version_id
+    )
+    expected_maturity = datetime(2042, 7, 4, 15, tzinfo=UTC)
+
+    assert maturity == expected_maturity
+    assert any(session.closed_at == expected_maturity for session in calendar.sessions)
+    assert any(session.closed_at == expected_maturity for session in calendar.terminal_sessions)
 
 
 def test_expired_late_publication_keeps_original_window_and_records_failure() -> None:
