@@ -3658,15 +3658,15 @@ def _post_commit_diagnostic_alert_ids(
         outcome.qualification for outcome in history if outcome.qualification is not None
     )
     committed_at = datetime.fromisoformat(fact.committed_at)
-    frozen = next(
-        (
-            qualification
-            for qualification in command.qualifications
-            if qualification.market_state == command.market_state
-        ),
-        None,
-    )
-    if frozen is None or frozen.status != "VALID":
+    candidate_outcome = fact.result.candidate_release
+    if candidate_outcome is None or candidate_outcome.qualification is None:
+        return ()
+    frozen = candidate_outcome.qualification
+    if (
+        frozen.market_state != candidate_outcome.market_state
+        or frozen.market_state != command.market_state
+        or frozen.status != "VALID"
+    ):
         return ()
     frozen_record = next(
         (record for record in records if record.decision_id == frozen.qualification_id), None

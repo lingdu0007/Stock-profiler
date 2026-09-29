@@ -3467,6 +3467,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"),
         ("ACCEPT", "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE"),
+        ("ACCEPT", "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT"),
         ("ACCEPT", "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
@@ -3515,6 +3516,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
+        "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT",
         "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
@@ -3835,6 +3837,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
+        "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT",
         "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
@@ -3966,6 +3969,22 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             qualification=qualification_record,
         )
         qualification_history = (qualification_outcome,)
+        if candidate_scenario == "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT":
+            revised_qualification = qualification_record.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-qualification-revised-before-commit",
+                    "previous_decision_id": qualification_record.decision_id,
+                    "recorded_at": cutoff - timedelta(microseconds=500),
+                }
+            )
+            qualification_history = (
+                qualification_outcome,
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("QUALIFICATION_PASS",),
+                    qualification=revised_qualification,
+                ),
+            )
         if candidate_scenario == "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER":
             suspended_record = qualification_record.model_copy(
                 update={
@@ -4525,7 +4544,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "publish_report",
             revoke_qualification_after_report_save,
         )
-    if candidate_scenario == "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE":
+    if candidate_scenario in {
+        "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
+        "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT",
+    }:
         publish_report = DecisionLedger.publish_report
         clock_state = {"now": publication_time}
         monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
@@ -4535,7 +4557,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         ) -> Any:
             report = publish_report(ledger, connection, fact, *args)
             clock_state["now"] = publication_time + timedelta(seconds=3)
-            original_qualification = qualification_history[0].qualification
+            original_qualification = (
+                qualification_history[-1].qualification
+                if candidate_scenario == "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT"
+                else qualification_history[0].qualification
+            )
             assert original_qualification is not None
             first_alert = original_qualification.model_copy(
                 update={
@@ -4659,6 +4685,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION": "CANDIDATES",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE": "CANDIDATES",
+        "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT": "CANDIDATES",
         "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION": "CANDIDATES",
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
