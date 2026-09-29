@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from calendar import monthrange
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
@@ -92,6 +93,22 @@ def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScore
     )
 
 
+def _legacy_entry_and_maturity_at(cutoff_at: datetime) -> tuple[datetime, datetime]:
+    entry_at = cutoff_at.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    while entry_at.weekday() >= 5:
+        entry_at += timedelta(days=1)
+    month_index = entry_at.year * 12 + entry_at.month - 1 + 6
+    maturity_year, maturity_month_zero = divmod(month_index, 12)
+    maturity_at = entry_at.replace(
+        year=maturity_year,
+        month=maturity_month_zero + 1,
+        day=min(entry_at.day, monthrange(maturity_year, maturity_month_zero + 1)[1]),
+    )
+    while maturity_at.weekday() >= 5:
+        maturity_at -= timedelta(days=1)
+    return entry_at, maturity_at
+
+
 def test_weekend_six_month_horizon_matures_at_the_preceding_session_close() -> None:
     entry_at = datetime(2041, 12, 6, 1, tzinfo=UTC)
 
@@ -110,10 +127,42 @@ def test_maturity_uses_calendar_date_from_normalized_instant() -> None:
     ) == raw_score_maturity_at(same_instant_other_offset, RAW_SCORE_MARKET_CALENDAR_VERSION)
 
 
-def test_legacy_maturity_fallback_uses_session_close_not_midnight() -> None:
+def test_legacy_maturity_fallback_preserves_the_entry_clock() -> None:
     entry_at = datetime(2042, 1, 1, 8, tzinfo=UTC)
 
-    assert _raw_score_label_available_at(entry_at, None) == datetime(2042, 7, 1, 15, tzinfo=UTC)
+    assert _raw_score_label_available_at(entry_at, None) == datetime(2042, 7, 1, 8, tzinfo=UTC)
+
+
+def test_historical_snapshot_replays_labels_at_the_original_intraday_maturity_time() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+        cutoff = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+        entry_at, maturity_at = _legacy_entry_and_maturity_at(cutoff)
+        record["evaluation_entry_at"] = entry_at.isoformat().replace("+00:00", "Z")
+        record["label_available_at"] = maturity_at.isoformat().replace("+00:00", "Z")
+    record = payload["training_records"][0]
+    record["evaluation_entry_at"] = "2043-01-01T08:00:00Z"
+    record["label_available_at"] = "2043-07-01T08:00:00Z"
+    payload["label_watermark_at"] = max(
+        row["label_available_at"] for row in payload["training_records"]
+    )
+    payload["label_watermark_month"] = payload["label_watermark_at"][:7]
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.training_records[0].evaluation_entry_at == datetime(2043, 1, 1, 8, tzinfo=UTC)
+    assert snapshot.training_records[0].label_available_at == datetime(2043, 7, 1, 8, tzinfo=UTC)
 
 
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
@@ -881,6 +930,14 @@ def test_pre_calibration_research_snapshot_remains_replayable() -> None:
             "market_calendar_version",
         ):
             record.pop(field_name)
+        cutoff = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+        entry_at, maturity_at = _legacy_entry_and_maturity_at(cutoff)
+        record["evaluation_entry_at"] = entry_at.isoformat().replace("+00:00", "Z")
+        record["label_available_at"] = maturity_at.isoformat().replace("+00:00", "Z")
+    payload["label_watermark_at"] = max(
+        record["label_available_at"] for record in payload["training_records"]
+    )
+    payload["label_watermark_month"] = payload["label_watermark_at"][:7]
 
     snapshot = RawScoreModelSnapshot.model_validate(payload)
 
