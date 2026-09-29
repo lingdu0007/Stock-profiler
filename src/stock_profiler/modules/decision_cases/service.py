@@ -153,6 +153,8 @@ class CandidateCalibrationVersionMismatch(ValueError):
 class _FrozenCandidatePrediction:
     raw_success_score: Decimal
     calibrated_probability: Decimal
+    raw_score_frozen_at: datetime
+    raw_score_training_watermark_at: datetime
     market_calendar_version: str
     entry_window_ends_at: datetime
     entry_sessions: tuple[tuple[datetime, datetime], ...]
@@ -609,12 +611,35 @@ def _validate_candidate_calibration_sources(
         prior_outcome = event.result.candidate_release
         if prior_command is None or prior_outcome is None:
             continue
-        for identity, prediction in _frozen_candidate_prediction_rows(
-            prior_command, prior_outcome
-        ).items():
-            previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
-            if previous_prediction != prediction:
+        if prior_outcome.calibration is not None:
+            prior_research = event.result.research
+            research_command = event.case.research
+            if (
+                prior_research is None
+                or prior_research.raw_scores is None
+                or not prior_research.raw_scores
+                or research_command is None
+                or research_command.raw_score_model.label_watermark_at is None
+            ):
                 raise CandidateCalibrationProvenanceInvalid()
+            raw_score_training_watermark_at = research_command.raw_score_model.label_watermark_at
+            if any(
+                raw_score.label_watermark_at != raw_score_training_watermark_at
+                for raw_score in prior_research.raw_scores
+            ) or raw_score_training_watermark_at > datetime.fromisoformat(
+                event.case.knowledge_cutoff
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
+            predictions = _frozen_candidate_prediction_rows(
+                prior_command,
+                prior_outcome,
+                raw_score_frozen_at=datetime.fromisoformat(event.case.knowledge_cutoff),
+                raw_score_training_watermark_at=raw_score_training_watermark_at,
+            )
+            for identity, prediction in predictions.items():
+                previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
+                if previous_prediction != prediction:
+                    raise CandidateCalibrationProvenanceInvalid()
         for record in prior_command.training_records:
             if (
                 record.label_available_at <= candidate_cutoff
@@ -867,10 +892,18 @@ def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationR
 def _frozen_candidate_prediction_rows(
     command: CandidateReleaseCommand,
     outcome: CandidateReleaseOutcome,
+    *,
+    raw_score_frozen_at: datetime,
+    raw_score_training_watermark_at: datetime,
 ) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
     """Retain every frozen member probability, regardless of later gate disposition."""
     if outcome.calibration is None:
         return {}
+    if (
+        raw_score_frozen_at != command.knowledge_cutoff
+        or raw_score_training_watermark_at > raw_score_frozen_at
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
     if not outcome.valid_market_dates:
         raise CandidateCalibrationProvenanceInvalid()
     sessions_by_date = {session.market_date: session for session in command.market_sessions}
@@ -895,6 +928,8 @@ def _frozen_candidate_prediction_rows(
         predictions[identity] = _FrozenCandidatePrediction(
             raw_success_score=member.raw_success_score,
             calibrated_probability=member.calibrated_probability,
+            raw_score_frozen_at=raw_score_frozen_at,
+            raw_score_training_watermark_at=raw_score_training_watermark_at,
             market_calendar_version=command.market_calendar_version,
             entry_window_ends_at=final_window_session.closes_at,
             entry_sessions=tuple(
@@ -920,6 +955,8 @@ def _validate_frozen_candidate_prediction_source(
     if (
         source.raw_success_score != prediction.raw_success_score
         or source.historical_calibrated_probability != prediction.calibrated_probability
+        or source.raw_score_frozen_at != prediction.raw_score_frozen_at
+        or source.raw_score_training_watermark_at != prediction.raw_score_training_watermark_at
         or source.entry_window_ends_at != prediction.entry_window_ends_at
     ):
         raise CandidateCalibrationProvenanceInvalid()

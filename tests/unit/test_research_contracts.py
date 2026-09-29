@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal, cast
@@ -39,6 +39,7 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    _raw_score_label_available_at,
     calculate_structured_signals,
     decode_historical_research_command,
     decode_historical_research_draft,
@@ -109,6 +110,12 @@ def test_maturity_uses_calendar_date_from_normalized_instant() -> None:
     ) == raw_score_maturity_at(same_instant_other_offset, RAW_SCORE_MARKET_CALENDAR_VERSION)
 
 
+def test_legacy_maturity_fallback_uses_session_close_not_midnight() -> None:
+    entry_at = datetime(2042, 1, 1, 8, tzinfo=UTC)
+
+    assert _raw_score_label_available_at(entry_at, None) == datetime(2042, 7, 1, 15, tzinfo=UTC)
+
+
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
     original = _mature_source_record()
     identity = (original.month, original.security_id, original.research_id)
@@ -133,6 +140,8 @@ def test_candidate_prediction_requires_its_original_probability_in_the_mature_la
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=Decimal("0.50"),
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         entry_sessions=(
@@ -145,6 +154,45 @@ def test_candidate_prediction_requires_its_original_probability_in_the_mature_la
         decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
 
 
+def test_candidate_prediction_source_cannot_rewrite_its_score_freeze_clock() -> None:
+    source = _mature_source_record()
+    assert source.raw_score_frozen_at is not None
+    assert source.raw_score_training_watermark_at is not None
+    assert source.entry_window_ends_at is not None
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=source.raw_score_frozen_at,
+        raw_score_training_watermark_at=source.raw_score_training_watermark_at,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=source.entry_window_ends_at,
+        entry_sessions=(
+            (datetime(2040, 2, 4, 7, tzinfo=UTC), datetime(2040, 2, 4, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+    late_score_clock = source.model_copy(
+        update={"raw_score_frozen_at": source.raw_score_frozen_at + timedelta(hours=12)}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, late_score_clock
+        )
+    late_training_watermark = source.model_copy(
+        update={
+            "raw_score_training_watermark_at": (source.raw_score_frozen_at + timedelta(hours=12))
+        }
+    )
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, late_training_watermark
+        )
+
+
 def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> None:
     source = _mature_source_record()
     assert source.raw_success_score is not None
@@ -154,6 +202,8 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         entry_sessions=(
@@ -179,6 +229,8 @@ def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> N
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=frozen_window_end,
         entry_sessions=(
@@ -209,6 +261,8 @@ def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=source.entry_window_ends_at,
         entry_sessions=(
@@ -237,6 +291,8 @@ def test_candidate_outcome_entry_cannot_fall_between_frozen_market_sessions() ->
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=source.entry_window_ends_at,
         entry_sessions=(

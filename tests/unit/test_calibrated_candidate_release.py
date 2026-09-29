@@ -1627,7 +1627,12 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     member = outcome.members[0]
     month = original.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
 
-    predictions = decision_case_service._frozen_candidate_prediction_rows(original, outcome)
+    predictions = decision_case_service._frozen_candidate_prediction_rows(
+        original,
+        outcome,
+        raw_score_frozen_at=original.knowledge_cutoff,
+        raw_score_training_watermark_at=original.label_watermark_at,
+    )
 
     prediction = predictions[(month, member.security_id, member.research_id)]
     assert prediction.raw_success_score == member.raw_success_score
@@ -1750,9 +1755,12 @@ def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions()
         member.research_id,
     )
 
-    prediction = decision_case_service._frozen_candidate_prediction_rows(extended, outcome)[
-        identity
-    ]
+    prediction = decision_case_service._frozen_candidate_prediction_rows(
+        extended,
+        outcome,
+        raw_score_frozen_at=extended.knowledge_cutoff,
+        raw_score_training_watermark_at=extended.label_watermark_at,
+    )[identity]
 
     assert outcome.valid_market_dates[-1] == final_session.market_date
     assert prediction.matures_by == raw_score_maturity_at(
@@ -1767,7 +1775,12 @@ def test_candidate_member_without_frozen_probability_is_not_added_to_history() -
     failed_member = outcome.members[0].model_copy(update={"calibrated_probability": None})
     failed_outcome = outcome.model_copy(update={"members": (failed_member, *outcome.members[1:])})
 
-    predictions = decision_case_service._frozen_candidate_prediction_rows(original, failed_outcome)
+    predictions = decision_case_service._frozen_candidate_prediction_rows(
+        original,
+        failed_outcome,
+        raw_score_frozen_at=original.knowledge_cutoff,
+        raw_score_training_watermark_at=original.label_watermark_at,
+    )
 
     assert (
         original.knowledge_cutoff.strftime("%Y-%m"),
@@ -1785,7 +1798,12 @@ def test_probability_bearing_abstained_or_vetoed_member_remains_in_history() -> 
     )
     month = original.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
 
-    predictions = decision_case_service._frozen_candidate_prediction_rows(original, gated_outcome)
+    predictions = decision_case_service._frozen_candidate_prediction_rows(
+        original,
+        gated_outcome,
+        raw_score_frozen_at=original.knowledge_cutoff,
+        raw_score_training_watermark_at=original.label_watermark_at,
+    )
 
     assert (month, member.security_id, member.research_id) in predictions
 

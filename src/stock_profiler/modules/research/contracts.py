@@ -946,12 +946,12 @@ def _raw_score_label_available_at(
     evaluation_entry_at: datetime,
     market_calendar_version: str | None,
 ) -> datetime:
-    """Use the terminal evaluation session as the earliest label-availability clock."""
+    """Use the terminal evaluation session close as label availability."""
     if market_calendar_version is None:
         candidate = _raw_score_add_months(evaluation_entry_at, RAW_SCORE_LABEL_HORIZON_MONTHS)
         while candidate.weekday() >= 5:
             candidate -= timedelta(days=1)
-        return candidate.replace(hour=0, minute=0, second=0, microsecond=0)
+        return candidate.replace(hour=15, minute=0, second=0, microsecond=0)
     return raw_score_maturity_at(evaluation_entry_at, market_calendar_version)
 
 
