@@ -4525,22 +4525,36 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             ledger: DecisionLedger, connection: Any, fact: DecisionEventFact, *args: Any
         ) -> Any:
             report = publish_report(ledger, connection, fact, *args)
-            clock_state["now"] = publication_time + timedelta(seconds=2)
+            clock_state["now"] = publication_time + timedelta(seconds=3)
             original_qualification = qualification_history[0].qualification
             assert original_qualification is not None
-            at_risk = original_qualification.model_copy(
+            first_alert = original_qualification.model_copy(
                 update={
-                    "decision_id": "synthetic-candidate-diagnostic-alert-after-publication",
+                    "decision_id": "synthetic-candidate-diagnostic-alert-after-publication-1",
                     "status": "AT_RISK",
                     "cause": "DIAGNOSTIC_ALERT",
                     "previous_decision_id": original_qualification.decision_id,
                     "recorded_at": publication_time + timedelta(seconds=1),
                 }
             )
+            second_alert = first_alert.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-diagnostic-alert-after-publication-2",
+                    "previous_decision_id": first_alert.decision_id,
+                    "recorded_at": publication_time + timedelta(seconds=2),
+                }
+            )
             qualification_history_state["value"] = (
                 *qualification_history,
                 GovernanceOutcome(
-                    disposition="APPROVED", reasons=("DIAGNOSTIC_ALERT",), qualification=at_risk
+                    disposition="APPROVED",
+                    reasons=("DIAGNOSTIC_ALERT",),
+                    qualification=first_alert,
+                ),
+                GovernanceOutcome(
+                    disposition="APPROVED",
+                    reasons=("DIAGNOSTIC_ALERT",),
+                    qualification=second_alert,
                 ),
             )
             return report
