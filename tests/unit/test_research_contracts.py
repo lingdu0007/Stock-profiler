@@ -452,6 +452,36 @@ def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_wind
         ResearchCommand.model_validate(payload)
 
 
+def test_delayed_valid_entry_keeps_the_original_candidate_window_end() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    original_entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+    delayed_entry = original_entry + timedelta(days=1)
+    while delayed_entry.weekday() >= 5:
+        delayed_entry += timedelta(days=1)
+    delayed_maturity = raw_score_maturity_at(delayed_entry, record["market_calendar_version"])
+    record["evaluation_entry_at"] = delayed_entry.isoformat()
+    record["unified_maturity_at"] = delayed_maturity.isoformat()
+    record["label_available_at"] = delayed_maturity.isoformat()
+
+    validated = ResearchCommand.model_validate(payload)
+    delayed_record = next(
+        item
+        for item in validated.raw_score_model.training_records
+        if item.research_id == record["research_id"]
+    )
+
+    assert delayed_record.evaluation_entry_at == delayed_entry
+    assert delayed_record.entry_window_ends_at == datetime.fromisoformat(
+        record["entry_window_ends_at"].replace("Z", "+00:00")
+    )
+    assert delayed_record.evaluation_entry_at < delayed_record.entry_window_ends_at
+
+
 def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:
     source = _mature_source_record()
     assert source.raw_success_score is not None

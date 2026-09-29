@@ -1221,7 +1221,12 @@ def test_failed_independent_risk_result_is_not_a_veto_pass() -> None:
     unavailable = original.candidates[0].model_copy(update={"risk_status": "FAILED"})
     release = freeze_candidate_release(original.model_copy(update={"candidates": (unavailable,)}))
 
-    assert release.disposition == "VALID_NO_CANDIDATES"
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "SYSTEM"
+    assert release.population is not None
+    assert release.population.availability_failure == "SYSTEM"
+    assert release.population.valid_monthly is False
+    assert all(member.candidate is False for member in release.members)
     assert "INDEPENDENT_RISK_UNAVAILABLE" in release.members[0].reasons
 
 

@@ -378,6 +378,27 @@ def freeze_candidate_release(
                 reasons=tuple(reasons) or ("ALL_CANDIDATE_GATES_PASSED",),
             )
         )
+    if any(candidate.risk_status == "FAILED" for candidate in command.candidates):
+        unavailable_members = tuple(
+            member.model_copy(
+                update={
+                    "candidate": False,
+                    "reasons": tuple(
+                        dict.fromkeys((*member.reasons, "CANDIDATE_BATCH_AVAILABILITY_FAILED"))
+                    ),
+                }
+            )
+            for member in members
+        )
+        return _release_outcome(
+            command,
+            window_dates,
+            disposition="FAILED",
+            calibration=calibration,
+            members=unavailable_members,
+            reasons=("INDEPENDENT_RISK_UNAVAILABLE",),
+            availability_failure="SYSTEM",
+        )
     disposition: CandidateReleaseDisposition = (
         "CANDIDATES"
         if any(member.candidate for member in members)

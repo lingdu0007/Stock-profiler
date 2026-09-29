@@ -782,8 +782,7 @@ class RawScoreModelSnapshot(ResearchContract):
                         or record.market_calendar_version is None
                         or record.entry_window_ends_at
                         != raw_score_entry_window_end(
-                            record.evaluation_entry_at
-                            or _raw_score_evaluation_entry_at(record.selection_cutoff_at),
+                            _raw_score_evaluation_entry_at(record.selection_cutoff_at),
                             record.market_calendar_version,
                         )
                         or (
