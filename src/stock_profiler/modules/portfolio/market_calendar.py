@@ -24,6 +24,8 @@ def six_month_terminal_evaluation_at(value: datetime, market_calendar_version: s
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    if target.date() > calendar.terminal_session_coverage_through:
+        raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
     session = calendar.last_terminal_session_on_or_before(target.date())
     if session is None:
         raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
@@ -45,6 +47,7 @@ class SyntheticMarketCalendar:
     version_id: str
     sessions: tuple[MarketSession, ...]
     monthly_selection_cutoffs: tuple[datetime, ...]
+    terminal_session_coverage_through: date
     terminal_sessions: tuple[MarketSession, ...] = ()
 
     def session_for(self, ordinal: int) -> MarketSession | None:
@@ -113,6 +116,7 @@ _SYNTHETIC_MARKET_CALENDARS = (
             )
         ),
         monthly_selection_cutoffs=(),
+        terminal_session_coverage_through=date(2050, 12, 31),
         terminal_sessions=_terminal_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),
@@ -156,6 +160,7 @@ _SYNTHETIC_MARKET_CALENDARS = (
             ),
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
+        terminal_session_coverage_through=date(2050, 12, 31),
         terminal_sessions=_terminal_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),
@@ -178,6 +183,7 @@ _SYNTHETIC_MARKET_CALENDARS = (
             )
         ),
         monthly_selection_cutoffs=(),
+        terminal_session_coverage_through=date(2050, 12, 31),
         terminal_sessions=_terminal_sessions(
             start=date(2037, 1, 1),
             end=date(2050, 12, 31),

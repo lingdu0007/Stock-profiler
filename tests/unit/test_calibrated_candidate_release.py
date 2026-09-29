@@ -1319,6 +1319,20 @@ def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
     assert any(session.closed_at == expected_maturity for session in calendar.terminal_sessions)
 
 
+@pytest.mark.parametrize(
+    "entry_at",
+    (
+        datetime(2050, 10, 1, 12, tzinfo=UTC),
+        datetime(2051, 1, 2, 12, tzinfo=UTC),
+    ),
+)
+def test_terminal_maturity_rejects_targets_beyond_calendar_coverage(
+    entry_at: datetime,
+) -> None:
+    with pytest.raises(ValueError, match="MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE"):
+        raw_score_maturity_at(entry_at, "synthetic-calendar-v1")
+
+
 def test_expired_late_publication_keeps_original_window_and_records_failure() -> None:
     release = freeze_candidate_release(command(published=datetime(2046, 7, 7, 9, tzinfo=UTC)))
 
