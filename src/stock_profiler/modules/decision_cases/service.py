@@ -99,6 +99,7 @@ from stock_profiler.modules.research.contracts import (
     ResearchDraftMember,
     ResearchFrameworkOutput,
     ResearchMemberInput,
+    ResearchOutcome,
     ResearchRiskPlan,
     ResearchToolEvidence,
     RiskVetoDraft,
@@ -600,6 +601,7 @@ def _validate_candidate_calibration_sources(
         and event.case.research is not None
         and event.result.research is not None
     )
+    historical_events_by_id = {event.decision_event_id: event for event in historical_events}
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
@@ -612,30 +614,8 @@ def _validate_candidate_calibration_sources(
         if prior_command is None or prior_outcome is None:
             continue
         if prior_outcome.calibration is not None:
-            prior_research = event.result.research
-            research_command = event.case.research
-            if (
-                prior_research is None
-                or prior_research.raw_scores is None
-                or not prior_research.raw_scores
-                or research_command is None
-                or research_command.raw_score_model.label_watermark_at is None
-            ):
-                raise CandidateCalibrationProvenanceInvalid()
-            raw_score_training_watermark_at = research_command.raw_score_model.label_watermark_at
-            if any(
-                raw_score.label_watermark_at != raw_score_training_watermark_at
-                for raw_score in prior_research.raw_scores
-            ) or raw_score_training_watermark_at > datetime.fromisoformat(
-                event.case.knowledge_cutoff
-            ):
-                raise CandidateCalibrationProvenanceInvalid()
-            predictions = _frozen_candidate_prediction_rows(
-                prior_command,
-                prior_outcome,
-                raw_score_frozen_at=datetime.fromisoformat(event.case.knowledge_cutoff),
-                raw_score_training_watermark_at=raw_score_training_watermark_at,
-            )
+            research_event = historical_events_by_id.get(prior_command.research_event_id)
+            predictions = _frozen_candidate_prediction_rows_from_events(event, research_event)
             for identity, prediction in predictions.items():
                 previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
                 if previous_prediction != prediction:
@@ -887,6 +867,61 @@ def _fully_matured_calibration_months(
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
     """Compare immutable sample content while allowing record IDs to be regenerated."""
     return left.model_copy(update={"record_id": right.record_id}) == right
+
+
+def _frozen_candidate_prediction_rows_from_events(
+    candidate_event: DecisionEventFact,
+    research_event: DecisionEventFact | None,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Resolve a prior release's separate source event before replaying its predictions."""
+    command = candidate_event.case.candidate_release
+    outcome = candidate_event.result.candidate_release
+    if command is None or outcome is None or research_event is None:
+        raise CandidateCalibrationProvenanceInvalid()
+    if (
+        research_event.decision_event_id != command.research_event_id
+        or research_event.business_object_id != command.research_object_id
+        or research_event.case.knowledge_cutoff != candidate_event.case.knowledge_cutoff
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return _frozen_candidate_prediction_rows_from_source(
+        command,
+        outcome,
+        research_event.case.research,
+        research_event.result.research,
+    )
+
+
+def _frozen_candidate_prediction_rows_from_source(
+    command: CandidateReleaseCommand,
+    outcome: CandidateReleaseOutcome,
+    research_command: ResearchCommand | None,
+    research_outcome: ResearchOutcome | None,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Freeze probabilities against the separate research event's score clocks."""
+    if (
+        research_command is None
+        or research_outcome is None
+        or research_outcome.raw_scores is None
+        or not research_outcome.raw_scores
+        or research_command.raw_score_model.label_watermark_at is None
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    raw_score_training_watermark_at = research_command.raw_score_model.label_watermark_at
+    if (
+        any(
+            raw_score.label_watermark_at != raw_score_training_watermark_at
+            for raw_score in research_outcome.raw_scores
+        )
+        or raw_score_training_watermark_at > command.knowledge_cutoff
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return _frozen_candidate_prediction_rows(
+        command,
+        outcome,
+        raw_score_frozen_at=command.knowledge_cutoff,
+        raw_score_training_watermark_at=raw_score_training_watermark_at,
+    )
 
 
 def _frozen_candidate_prediction_rows(

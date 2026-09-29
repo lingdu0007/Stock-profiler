@@ -1646,6 +1646,54 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     )
 
 
+def test_prior_candidate_predictions_use_the_referenced_research_event() -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+    research_watermark = original.knowledge_cutoff - timedelta(days=1)
+    candidate_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+                research=None,
+            ),
+            result=SimpleNamespace(candidate_release=outcome, research=None),
+        ),
+    )
+    research_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            decision_event_id=original.research_event_id,
+            business_object_id=original.research_object_id,
+            case=SimpleNamespace(
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+                research=SimpleNamespace(
+                    raw_score_model=SimpleNamespace(label_watermark_at=research_watermark)
+                ),
+            ),
+            result=SimpleNamespace(
+                research=SimpleNamespace(
+                    raw_scores=(SimpleNamespace(label_watermark_at=research_watermark),)
+                )
+            ),
+        ),
+    )
+
+    predictions = decision_case_service._frozen_candidate_prediction_rows_from_events(
+        candidate_event, research_event
+    )
+
+    member = outcome.members[0]
+    identity = (
+        original.knowledge_cutoff.strftime("%Y-%m"),
+        member.security_id,
+        member.research_id,
+    )
+    assert predictions[identity].raw_score_frozen_at == original.knowledge_cutoff
+    assert predictions[identity].raw_score_training_watermark_at == research_watermark
+
+
 def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None:
     cutoff = datetime.fromisoformat("2040-01-31T23:00:00-08:00")
 
