@@ -295,7 +295,7 @@ def test_recent_diagnostic_calculation_failure_is_visible_but_does_not_fail_fit(
 
     def fail_recent_diagnostics(
         records: tuple[CalibrationRecord, ...], probabilities: tuple[float, ...]
-    ):
+    ) -> candidate_module.CalibrationDiagnostics:
         nonlocal calls
         calls += 1
         if calls == 2:
@@ -1762,6 +1762,39 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
     )
+
+
+def test_frozen_prediction_accepts_executable_entry_at_session_close() -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+    member = outcome.members[0]
+    month = original.knowledge_cutoff.strftime("%Y-%m")
+    prediction = decision_case_service._frozen_candidate_prediction_rows(
+        original,
+        outcome,
+        raw_score_frozen_at=original.knowledge_cutoff,
+        raw_score_training_watermark_at=original.label_watermark_at,
+    )[(month, member.security_id, member.research_id)]
+    closing_at = prediction.entry_sessions[0][1]
+    maturity_at = raw_score_maturity_at(closing_at, prediction.market_calendar_version)
+    source = frozen_raw_score_model_snapshot().training_records[0].model_copy(
+        update={
+            "month": month,
+            "security_id": member.security_id,
+            "research_id": member.research_id,
+            "raw_score_frozen_at": prediction.raw_score_frozen_at,
+            "raw_score_training_watermark_at": prediction.raw_score_training_watermark_at,
+            "raw_success_score": prediction.raw_success_score,
+            "historical_calibrated_probability": prediction.calibrated_probability,
+            "entry_window_ends_at": prediction.entry_window_ends_at,
+            "evaluation_entry_at": closing_at,
+            "unified_maturity_at": maturity_at,
+            "market_calendar_version": prediction.market_calendar_version,
+            "label_available_at": maturity_at,
+        }
+    )
+
+    decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
 
 
 def test_calibrator_rejects_a_declared_training_month_with_immature_labels() -> None:

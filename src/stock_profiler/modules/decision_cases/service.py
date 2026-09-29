@@ -1197,7 +1197,7 @@ def _validate_frozen_candidate_prediction_source(
     ):
         raise CandidateCalibrationProvenanceInvalid()
     if source.evaluation_entry_at is not None and not any(
-        opens_at <= source.evaluation_entry_at < closes_at
+        opens_at <= source.evaluation_entry_at <= closes_at
         for opens_at, closes_at in prediction.entry_sessions
     ):
         raise CandidateCalibrationProvenanceInvalid()
