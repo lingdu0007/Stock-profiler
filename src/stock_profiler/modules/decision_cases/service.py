@@ -569,6 +569,18 @@ def _validate_candidate_calibration_sources(
         raise CandidateCalibrationVersionMismatch()
 
     candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    prior_calibration_snapshots = tuple(
+        event
+        for event in ledger.candidate_calibration_history(connection, access_scope)
+        if event.result.candidate_release is not None
+        and event.result.candidate_release.calibration is not None
+        and event.result.candidate_release.calibration.calibrator_version
+        == command.calibrator_version
+        if datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+        and datetime.fromisoformat(event.committed_at) <= command.published_at
+    )
+    if prior_calibration_snapshots and len(command.training_window_months) != 60:
+        raise CandidateCalibrationProvenanceInvalid()
     historical_events = tuple(
         event
         for event in ledger.research_event_history(connection, access_scope)

@@ -755,8 +755,6 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
     months = command.training_window_months
     if len(months) < _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
-    if len(months) > 120:
-        raise ValueError("CALIBRATION_INITIAL_WINDOW_EXCEEDS_120_MONTHS")
     month_indexes = tuple(_calibration_month_index(month) for month in months)
     if any(
         current != previous + 1

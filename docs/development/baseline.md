@@ -102,13 +102,17 @@ changed retry identities or later evidence do not replace it.
 
 The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
 research event with ten independently risk-vetted members. The host fits the
-versioned monotone Firth logistic calibrator only from the declared 60
-consecutive mature months, with its label watermark no later than the research
-knowledge cutoff. It freezes fitted parameters, per-security probabilities and
-the five-session window selected from the saved market calendar. A candidate
-requires probability at least 0.80, complete data, an accepted independent
-risk result and a scope-, version-, state- and calendar-matched persisted
-qualification valid at the cutoff. Missing qualification yields
+versioned monotone Firth logistic calibrator from an initial window of at least
+60 consecutive mature months, expanding that window only until it contains at
+least 500 records and 50 examples from each class. After the first valid
+calibration, every refit uses the fixed rolling latest 60 consecutive mature
+months; a missed sample floor then produces a visible calibration failure.
+The label watermark cannot exceed the research knowledge cutoff. It freezes
+fitted parameters, historically frozen out-of-sample diagnostics,
+per-security probabilities and the five-session window selected from the saved
+market calendar. A candidate requires probability at least 0.80, complete
+data, an accepted independent risk result and a scope-, version-, state- and
+calendar-matched persisted qualification valid at the cutoff. Missing qualification yields
 `RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains
 `VALID_NO_CANDIDATES`. Calibration or data failures remain visible and do not
 reuse older probabilities. A report published after the frozen window fails

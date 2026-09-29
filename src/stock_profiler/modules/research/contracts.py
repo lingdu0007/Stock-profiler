@@ -781,6 +781,15 @@ class RawScoreModelSnapshot(ResearchContract):
                         )
                     if record.label_available_at < record.unified_maturity_at:
                         raise ValueError("raw-score label maturity is incomplete")
+            for record in self.training_records:
+                maturity_anchor = (
+                    record.evaluation_entry_at
+                    or record.entry_window_ends_at
+                    or _raw_score_evaluation_entry_at(record.selection_cutoff_at)
+                    + timedelta(days=1)
+                )
+                if record.label_available_at < _raw_score_label_available_at(maturity_anchor):
+                    raise ValueError("raw-score label maturity is incomplete")
             if any(
                 record.label_available_at > self.label_watermark_at
                 for record in self.training_records

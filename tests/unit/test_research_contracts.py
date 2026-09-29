@@ -654,6 +654,26 @@ def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() ->
     assert snapshot.training_records[0].historical_calibrated_probability is None
 
 
+def test_snapshot_without_calibration_metadata_still_enforces_mature_label_clock() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+        ):
+            record.pop(field_name)
+    record = payload["training_records"][0]
+    record["evaluation_entry_at"] = "2043-01-01T08:00:00Z"
+
+    with pytest.raises(ValueError, match="label maturity is incomplete"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
 def test_current_raw_score_snapshot_rejects_partial_calibration_evidence() -> None:
     payload = _command().raw_score_model.model_dump(mode="json")
     payload["training_records"][0].pop("raw_success_score")
