@@ -102,9 +102,12 @@ changed retry identities or later evidence do not replace it.
 
 The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
 research event with ten independently risk-vetted members. The host fits the
-versioned monotone Firth logistic calibrator from an initial window of at least
-60 mature months, using the shortest mature-month suffix that contains at least
-500 records and 50 examples from each class. Its population
+versioned monotone Firth logistic calibrator by expanding from the earliest
+eligible out-of-sample month through the first prefix of at least 60 mature
+months, 500 records, and 50 examples from each class that meets every floor.
+After the first valid calibration, every refit uses the fixed rolling latest 60
+mature months; a missed sample floor then produces a visible calibration failure.
+Its population
 is the complete union of mature raw-score source rows, previously committed
 calibration rows, and previously frozen candidate predictions whose six-month
 outcomes have matured. Each eventual label row must retain its original frozen
@@ -114,9 +117,6 @@ market session in that window. Members with no frozen probability remain visible
 as availability failures and do not enter later calibration cohorts.
 Rolling-window completeness uses all source labels mature and available by the
 frozen knowledge cutoff, regardless of caller-supplied label or publication clocks.
-After the first valid
-calibration, every refit uses the fixed rolling latest 60 mature months; a
-missed sample floor then produces a visible calibration failure.
 The label watermark cannot exceed the research knowledge cutoff. It freezes
 fitted parameters, historically frozen out-of-sample diagnostics,
 per-security probabilities and the five-session window selected from the saved

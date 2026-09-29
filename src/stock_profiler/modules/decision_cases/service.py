@@ -742,7 +742,6 @@ def _validate_candidate_calibration_sources(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
         candidate_cutoff,
-        required_months=set(command.training_window_months),
     )
     globally_mature_months = _fully_matured_calibration_months(
         set(cutoff_mature_source_rows),
@@ -1094,14 +1093,13 @@ def _matured_candidate_prediction_ids(
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction],
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     label_watermark_at: datetime,
-    required_months: set[str],
 ) -> set[tuple[str, str, str]]:
-    """Require mature source rows for selected months while retaining gaps in history."""
+    """Require source outcome evidence for every prediction mature by this watermark."""
     matured: set[tuple[str, str, str]] = set()
     for identity, prediction in predictions.items():
         source_record = mature_source_rows.get(identity)
         if source_record is None:
-            if prediction.matures_by <= label_watermark_at and identity[0] in required_months:
+            if prediction.matures_by <= label_watermark_at:
                 raise CandidateCalibrationProvenanceInvalid()
             continue
         _validate_frozen_candidate_prediction_source(prediction, source_record)
@@ -3681,6 +3679,7 @@ def _publish_report_or_record_failure(
     assert report is not None
     candidate_command = fact.case.candidate_release
     candidate_outcome = fact.result.candidate_release
+    candidate_publication_confirmed_at: str | None = None
     if (
         candidate_command is not None
         and candidate_outcome is not None
@@ -3689,6 +3688,7 @@ def _publish_report_or_record_failure(
         in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
     ):
         confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+        candidate_publication_confirmed_at = confirmed_at.isoformat()
         assert fact.case.access_scope is not None
         governance_history = ledger.governance_history(connection, fact.case.access_scope)
         diagnostic_alert_ids = _post_commit_diagnostic_alert_ids(
@@ -3760,7 +3760,13 @@ def _publish_report_or_record_failure(
             return None, DecisionEventCommitError(
                 "candidate qualification changed before publication"
             )
-    _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
+    _record_fact_stage_result(
+        ledger,
+        connection,
+        fact,
+        report.stage_results[-1],
+        recorded_at=candidate_publication_confirmed_at,
+    )
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None
     return confirmed_report, None
@@ -3933,8 +3939,9 @@ def _record_fact_stage_result(
     stage_result: StageResult,
     *,
     allow_repeated_occurrence: bool = False,
+    recorded_at: str | None = None,
 ) -> None:
-    """Append event-owned evidence with the current controlled observation time."""
+    """Append event evidence with its selected controlled observation timestamp."""
     ledger.record_stage_result(
         connection,
         case=fact.case,
@@ -3942,6 +3949,7 @@ def _record_fact_stage_result(
         decision_event_id=fact.decision_event_id,
         framework_run_id=fact.framework_run_id,
         allow_repeated_occurrence=allow_repeated_occurrence,
+        recorded_at=recorded_at,
     )
 
 

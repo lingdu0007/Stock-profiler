@@ -3458,6 +3458,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "LATE_COMMIT"),
         ("ACCEPT", "WINDOW_EXPIRED_AFTER_FREEZE"),
         ("ACCEPT", "LATE_REPORT_COMMIT"),
+        ("ACCEPT", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"),
         ("ACCEPT", "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE"),
         ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
         ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF"),
@@ -3513,6 +3514,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_COMMIT",
         "WINDOW_EXPIRED_AFTER_FREEZE",
         "LATE_REPORT_COMMIT",
+        "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
         "COMMIT_CLOCK_ADVANCE",
         "CALENDAR_WINDOW_MISSING",
         "AT_RISK_QUALIFICATION",
@@ -3542,6 +3544,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     publication_time = datetime.fromisoformat(
         "2042-07-07T16:00:00+00:00"
         if candidate_scenario == "LATE_PUBLICATION"
+        else "2042-07-07T14:59:59+00:00"
+        if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"
         else "2042-07-01T00:04:00+00:00"
     )
     monkeypatch.setattr(UtcClock, "now", lambda self: publication_time)
@@ -4684,6 +4688,24 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "publish_report",
             revoke_active_and_alert_unrelated_after_report_save,
         )
+    if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
+        clock_state = {"now": publication_time}
+        monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
+        record_stage_result = DecisionLedger.record_stage_result
+
+        def advance_clock_before_publication_confirmation(
+            ledger: DecisionLedger, connection: Any, **kwargs: Any
+        ) -> Any:
+            stage_result = kwargs.get("stage_result")
+            if stage_result is not None and stage_result.phase == "PUBLICATION":
+                clock_state["now"] = publication_time + timedelta(seconds=2)
+            return record_stage_result(ledger, connection, **kwargs)
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "record_stage_result",
+            advance_clock_before_publication_confirmation,
+        )
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -4711,6 +4733,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "LATE_COMMIT": "FAILED",
         "WINDOW_EXPIRED_AFTER_FREEZE": "FAILED",
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
+        "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "FAILED",
@@ -4897,11 +4920,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         return
     direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
     assert saved_candidate_release == direct
-    if candidate_scenario == "NORMAL":
+    if candidate_scenario in {"NORMAL", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"}:
         assert execution.report.report_publication is not None
         assert execution.report.report_publication.status == "PUBLISHED"
         assert execution.report.report_publication.published_at is not None
         assert execution.publication_status == "PUBLISHED"
+    if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
+        assert execution.report.report_publication is not None
+        assert execution.report.report_publication.published_at == publication_time.isoformat()
     assert execution.report.result.candidate_release.published_at == (
         datetime.fromisoformat("2042-07-07T16:00:00+00:00")
         if candidate_scenario in {"LATE_COMMIT", "WINDOW_EXPIRED_AFTER_FREEZE"}

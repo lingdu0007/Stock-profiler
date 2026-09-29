@@ -372,11 +372,10 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
             {identity: prediction},
             {},
             source.label_available_at,
-            required_months={source.month},
         )
 
 
-def test_out_of_window_candidate_outcome_gap_does_not_block_current_cohort() -> None:
+def test_overdue_out_of_window_candidate_outcome_gap_fails_calibration() -> None:
     source = _mature_source_record()
     assert source.raw_success_score is not None
     assert source.historical_calibrated_probability is not None
@@ -395,14 +394,12 @@ def test_out_of_window_candidate_outcome_gap_does_not_block_current_cohort() -> 
         matures_by=source.unified_maturity_at,
     )
 
-    matured = decision_case_service._matured_candidate_prediction_ids(
-        {identity: prediction},
-        {},
-        source.label_available_at,
-        required_months={"2045-01"},
-    )
-
-    assert matured == set()
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._matured_candidate_prediction_ids(
+            {identity: prediction},
+            {},
+            source.label_available_at,
+        )
 
 
 def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> None:
