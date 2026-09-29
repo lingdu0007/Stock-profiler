@@ -4,37 +4,29 @@ from __future__ import annotations
 
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 
 def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def six_month_terminal_evaluation_at(
-    value: datetime,
-    terminal_session_close_at: datetime | None,
-) -> datetime:
-    """Resolve the six-month target to the preceding weekday's terminal session close."""
+def six_month_terminal_evaluation_at(value: datetime, market_calendar_version: str) -> datetime:
+    """Resolve the six-month target to the last saved session close on or before its date."""
     month_index = value.year * 12 + value.month - 1 + 6
     year, month_zero = divmod(month_index, 12)
-    candidate = value.replace(
+    target = value.astimezone(UTC).replace(
         year=year,
         month=month_zero + 1,
         day=min(value.day, monthrange(year, month_zero + 1)[1]),
     )
-    while candidate.weekday() >= 5:
-        candidate -= timedelta(days=1)
-    if terminal_session_close_at is None:
-        return candidate.replace(hour=23, minute=59, second=59, microsecond=999999)
-    close_clock = terminal_session_close_at.astimezone(value.tzinfo)
-    return candidate.replace(
-        hour=close_clock.hour,
-        minute=close_clock.minute,
-        second=close_clock.second,
-        microsecond=close_clock.microsecond,
-        tzinfo=value.tzinfo,
-    )
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    session = calendar.last_terminal_session_on_or_before(target.date())
+    if session is None:
+        raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
+    return session.closed_at
 
 
 @dataclass(frozen=True)
@@ -52,6 +44,7 @@ class SyntheticMarketCalendar:
     version_id: str
     sessions: tuple[MarketSession, ...]
     monthly_selection_cutoffs: tuple[datetime, ...]
+    terminal_sessions: tuple[MarketSession, ...] = ()
 
     def session_for(self, ordinal: int) -> MarketSession | None:
         return next((session for session in self.sessions if session.ordinal == ordinal), None)
@@ -67,6 +60,35 @@ class SyntheticMarketCalendar:
             (cutoff for cutoff in self.monthly_selection_cutoffs if cutoff > closed_at),
             None,
         )
+
+    def last_terminal_session_on_or_before(self, target_date: date) -> MarketSession | None:
+        return next(
+            (
+                session
+                for session in reversed(self.terminal_sessions or self.sessions)
+                if session.closed_at.date() <= target_date
+            ),
+            None,
+        )
+
+
+def _terminal_sessions(
+    *,
+    start: date,
+    end: date,
+    close_at: time,
+    excluded_dates: frozenset[date] = frozenset(),
+) -> tuple[MarketSession, ...]:
+    """Build immutable synthetic terminal sessions, including explicitly missing dates."""
+    sessions: list[MarketSession] = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5 and current not in excluded_dates:
+            closed_at = datetime.combine(current, close_at, tzinfo=UTC)
+            ordinal = 1_000_000 + (current - start).days
+            sessions.append(MarketSession(ordinal, closed_at))
+        current += timedelta(days=1)
+    return tuple(sessions)
 
 
 def synthetic_market_calendar(version_id: str) -> SyntheticMarketCalendar | None:
@@ -90,6 +112,11 @@ _SYNTHETIC_MARKET_CALENDARS = (
             )
         ),
         monthly_selection_cutoffs=(),
+        terminal_sessions=_terminal_sessions(
+            start=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(15),
+        ),
     ),
     SyntheticMarketCalendar(
         version_id="synthetic-market-calendar-v1",
@@ -126,6 +153,12 @@ _SYNTHETIC_MARKET_CALENDARS = (
             ),
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
+        terminal_sessions=_terminal_sessions(
+            start=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(15),
+            excluded_dates=frozenset({date(2042, 6, 6)}),
+        ),
     ),
     SyntheticMarketCalendar(
         version_id="synthetic-calendar-v1",
@@ -142,5 +175,10 @@ _SYNTHETIC_MARKET_CALENDARS = (
             )
         ),
         monthly_selection_cutoffs=(),
+        terminal_sessions=_terminal_sessions(
+            start=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(8),
+        ),
     ),
 )

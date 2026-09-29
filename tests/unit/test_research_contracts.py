@@ -11,6 +11,7 @@ import pytest
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
+    RAW_SCORE_MARKET_CALENDAR_VERSION,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_DEFINITION_VERSION,
@@ -78,18 +79,24 @@ def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScore
         historical_calibrated_probability=probability,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         evaluation_entry_at=datetime(2040, 2, 4, 7, tzinfo=UTC),
-        unified_maturity_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
+        unified_maturity_at=raw_score_maturity_at(
+            datetime(2040, 2, 4, 7, tzinfo=UTC), RAW_SCORE_MARKET_CALENDAR_VERSION
+        ),
         terminal_label=True,
-        label_available_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
+        label_available_at=raw_score_maturity_at(
+            datetime(2040, 2, 4, 7, tzinfo=UTC), RAW_SCORE_MARKET_CALENDAR_VERSION
+        ),
         source_model_version="synthetic-model-v1",
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
     )
 
 
 def test_weekend_six_month_horizon_matures_at_the_preceding_session_close() -> None:
-    entry_at = datetime(2037, 2, 2, 1, tzinfo=UTC)
-    close_at = datetime(2037, 2, 3, 16, tzinfo=UTC)
+    entry_at = datetime(2041, 12, 6, 1, tzinfo=UTC)
 
-    assert raw_score_maturity_at(entry_at, close_at) == datetime(2037, 7, 31, 16, tzinfo=UTC)
+    assert raw_score_maturity_at(entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION) == datetime(
+        2042, 6, 5, 15, tzinfo=UTC
+    )
 
 
 def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
@@ -116,6 +123,7 @@ def test_candidate_prediction_requires_its_original_probability_in_the_mature_la
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=Decimal("0.50"),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         entry_sessions=(
             (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
@@ -136,6 +144,7 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         entry_sessions=(
             (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
@@ -160,11 +169,12 @@ def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> N
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=frozen_window_end,
         entry_sessions=(
             (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
         ),
-        matures_by=datetime(2040, 8, 6, 8, tzinfo=UTC),
+        matures_by=raw_score_maturity_at(frozen_window_end, RAW_SCORE_MARKET_CALENDAR_VERSION),
     )
     early_invalid_label = source.model_copy(
         update={
@@ -189,6 +199,7 @@ def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=source.entry_window_ends_at,
         entry_sessions=(
             (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
@@ -216,6 +227,7 @@ def test_candidate_outcome_entry_cannot_fall_between_frozen_market_sessions() ->
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
         entry_window_ends_at=source.entry_window_ends_at,
         entry_sessions=(
             (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
@@ -800,6 +812,7 @@ def test_pre_calibration_research_snapshot_remains_replayable() -> None:
             "historical_calibrated_probability",
             "entry_window_ends_at",
             "unified_maturity_at",
+            "market_calendar_version",
         ):
             record.pop(field_name)
 
@@ -820,6 +833,7 @@ def test_missing_candidate_calibration_fields_preserve_legacy_serialization() ->
         "historical_calibrated_probability",
         "entry_window_ends_at",
         "unified_maturity_at",
+        "market_calendar_version",
     ):
         legacy_payload.pop(field_name)
     legacy_record = RawScoreTrainingRecord.model_validate(legacy_payload)
@@ -850,6 +864,7 @@ def test_snapshot_without_calibration_metadata_still_enforces_mature_label_clock
             "historical_calibrated_probability",
             "entry_window_ends_at",
             "unified_maturity_at",
+            "market_calendar_version",
         ):
             record.pop(field_name)
     record = payload["training_records"][0]

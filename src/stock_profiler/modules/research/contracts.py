@@ -87,6 +87,7 @@ RAW_SCORE_TRAINING_WINDOW_POLICY: Literal["EXPANDING_60_TO_119_ROLLING_120"] = (
     "EXPANDING_60_TO_119_ROLLING_120"
 )
 RAW_SCORE_LABEL_HORIZON_MONTHS = 6
+RAW_SCORE_MARKET_CALENDAR_VERSION = "synthetic-market-calendar-v1"
 RAW_SCORE_TRAINING_START_MONTH = "2036-12"
 RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
@@ -559,6 +560,9 @@ class RawScoreTrainingRecord(ResearchContract):
     unified_maturity_at: AwareDatetime | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    market_calendar_version: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
@@ -771,6 +775,7 @@ class RawScoreModelSnapshot(ResearchContract):
                             )
                         )
                         or record.entry_window_ends_at <= record.raw_score_frozen_at
+                        or record.market_calendar_version is None
                         or (record.evaluation_entry_at is None and record.terminal_label)
                         or (
                             record.evaluation_entry_at is not None
@@ -786,7 +791,7 @@ class RawScoreModelSnapshot(ResearchContract):
                         )
                     maturity_anchor = record.evaluation_entry_at or record.entry_window_ends_at
                     if record.unified_maturity_at != raw_score_maturity_at(
-                        maturity_anchor, record.entry_window_ends_at
+                        maturity_anchor, record.market_calendar_version
                     ):
                         raise ValueError(
                             "raw-score unified maturity does not match the entry horizon"
@@ -801,7 +806,7 @@ class RawScoreModelSnapshot(ResearchContract):
                     + timedelta(days=1)
                 )
                 if record.label_available_at < _raw_score_label_available_at(
-                    maturity_anchor, record.entry_window_ends_at
+                    maturity_anchor, record.market_calendar_version
                 ):
                     raise ValueError("raw-score label maturity is incomplete")
             if any(
@@ -932,25 +937,22 @@ def _raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
     return candidate
 
 
-def raw_score_maturity_at(
-    evaluation_entry_at: datetime,
-    entry_window_ends_at: datetime | None,
-) -> datetime:
+def raw_score_maturity_at(evaluation_entry_at: datetime, market_calendar_version: str) -> datetime:
     """Return the synthetic terminal session close on or before the calendar horizon."""
-    return six_month_terminal_evaluation_at(evaluation_entry_at, entry_window_ends_at)
+    return six_month_terminal_evaluation_at(evaluation_entry_at, market_calendar_version)
 
 
 def _raw_score_label_available_at(
     evaluation_entry_at: datetime,
-    entry_window_ends_at: datetime | None,
+    market_calendar_version: str | None,
 ) -> datetime:
     """Use the terminal evaluation session as the earliest label-availability clock."""
-    if entry_window_ends_at is None:
+    if market_calendar_version is None:
         candidate = _raw_score_add_months(evaluation_entry_at, RAW_SCORE_LABEL_HORIZON_MONTHS)
         while candidate.weekday() >= 5:
             candidate -= timedelta(days=1)
-        return candidate
-    return raw_score_maturity_at(evaluation_entry_at, entry_window_ends_at)
+        return candidate.replace(hour=0, minute=0, second=0, microsecond=0)
+    return raw_score_maturity_at(evaluation_entry_at, market_calendar_version)
 
 
 def _raw_score_mature_training_months(cutoff_at: datetime) -> tuple[str, ...]:
@@ -961,9 +963,7 @@ def _raw_score_mature_training_months(cutoff_at: datetime) -> tuple[str, ...]:
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
         if (
-            _raw_score_label_available_at(
-                evaluation_entry_at, evaluation_entry_at + timedelta(days=1)
-            )
+            _raw_score_label_available_at(evaluation_entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION)
             > cutoff_at
         ):
             break
@@ -1006,7 +1006,9 @@ def _frozen_raw_score_training_records(
             terminal_label = member_index >= record_count // 2 and entry_is_valid
             maturity_anchor = evaluation_entry_at if entry_is_valid else entry_window_ends_at
             raw_success_score = Decimal(member_index) / Decimal("10")
-            unified_maturity_at = raw_score_maturity_at(maturity_anchor, entry_window_ends_at)
+            unified_maturity_at = raw_score_maturity_at(
+                maturity_anchor, RAW_SCORE_MARKET_CALENDAR_VERSION
+            )
             records.append(
                 RawScoreTrainingRecord(
                     month=month,
@@ -1023,6 +1025,7 @@ def _frozen_raw_score_training_records(
                     entry_window_ends_at=entry_window_ends_at,
                     evaluation_entry_at=evaluation_entry_at if entry_is_valid else None,
                     unified_maturity_at=unified_maturity_at,
+                    market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
                     terminal_label=terminal_label,
                     label_available_at=unified_maturity_at,
                     source_model_version=RAW_SCORE_MODEL_VERSION,

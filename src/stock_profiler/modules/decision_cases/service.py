@@ -153,6 +153,7 @@ class CandidateCalibrationVersionMismatch(ValueError):
 class _FrozenCandidatePrediction:
     raw_success_score: Decimal
     calibrated_probability: Decimal
+    market_calendar_version: str
     entry_window_ends_at: datetime
     entry_sessions: tuple[tuple[datetime, datetime], ...]
     matures_by: datetime
@@ -750,6 +751,7 @@ def _validate_candidate_calibration_sources(
                 or source_record.historical_calibrated_probability
                 != record.out_of_sample_probability
                 or source_record.source_model_version != record.raw_score_model_version
+                or source_record.market_calendar_version != record.market_calendar_version
                 or source_record.terminal_label != record.terminal_success
                 or source_record.evaluation_entry_at != record.entry_at
                 or source_record.entry_window_ends_at != record.entry_window_ends_at
@@ -881,7 +883,7 @@ def _frozen_candidate_prediction_rows(
     assert final_window_session is not None
     prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
     matures_by = raw_score_maturity_at(
-        final_window_session.closes_at, final_window_session.closes_at
+        final_window_session.closes_at, command.market_calendar_version
     )
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
@@ -893,6 +895,7 @@ def _frozen_candidate_prediction_rows(
         predictions[identity] = _FrozenCandidatePrediction(
             raw_success_score=member.raw_success_score,
             calibrated_probability=member.calibrated_probability,
+            market_calendar_version=command.market_calendar_version,
             entry_window_ends_at=final_window_session.closes_at,
             entry_sessions=tuple(
                 (session.opens_at, session.closes_at)
@@ -926,8 +929,12 @@ def _validate_frozen_candidate_prediction_source(
     ):
         raise CandidateCalibrationProvenanceInvalid()
     maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at
-    if source.unified_maturity_at is None or source.unified_maturity_at < raw_score_maturity_at(
-        maturity_anchor, source.entry_window_ends_at
+    if (
+        source.market_calendar_version is None
+        or source.unified_maturity_at is None
+        or source.market_calendar_version != prediction.market_calendar_version
+        or source.unified_maturity_at
+        != raw_score_maturity_at(maturity_anchor, source.market_calendar_version)
     ):
         raise CandidateCalibrationProvenanceInvalid()
 

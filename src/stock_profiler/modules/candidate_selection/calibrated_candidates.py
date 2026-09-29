@@ -65,6 +65,7 @@ class CalibrationRecord(UniverseContract):
     entry_window_ends_at: AwareDatetime
     unified_maturity_at: AwareDatetime
     label_available_at: AwareDatetime
+    market_calendar_version: str = Field(min_length=1)
 
 
 class MarketStateQualification(UniverseContract):
@@ -783,8 +784,8 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         maturity_anchor = record.entry_at or record.entry_window_ends_at
-        if record.unified_maturity_at < six_month_terminal_evaluation_at(
-            maturity_anchor, record.entry_window_ends_at
+        if record.unified_maturity_at != six_month_terminal_evaluation_at(
+            maturity_anchor, record.market_calendar_version
         ):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
         if record.label_available_at < record.unified_maturity_at:

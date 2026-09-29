@@ -3588,6 +3588,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert row.historical_calibrated_probability is not None
         assert row.entry_window_ends_at is not None
         assert row.unified_maturity_at is not None
+        assert row.market_calendar_version is not None
         return CalibrationRecord(
             record_id=f"synthetic-calibration-label-{row.month}-{index:04d}",
             month=row.month,
@@ -3604,6 +3605,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             entry_window_ends_at=row.entry_window_ends_at,
             unified_maturity_at=row.unified_maturity_at,
             label_available_at=row.label_available_at,
+            market_calendar_version=row.market_calendar_version,
         )
 
     training_records = tuple(

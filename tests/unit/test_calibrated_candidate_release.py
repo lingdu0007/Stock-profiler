@@ -22,7 +22,10 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 )
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import DecisionEventFact
-from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+from stock_profiler.modules.portfolio.market_calendar import (
+    six_month_terminal_evaluation_at,
+    synthetic_market_calendar,
+)
 from stock_profiler.modules.research.contracts import raw_score_maturity_at
 
 
@@ -54,8 +57,13 @@ def _calibration_record(
         terminal_success=terminal_success,
         entry_window_ends_at=entry_window_ends_at,
         entry_at=entry_window_ends_at - timedelta(days=1),
-        unified_maturity_at=_six_month_anniversary(entry_window_ends_at),
-        label_available_at=_six_month_anniversary(entry_window_ends_at),
+        label_available_at=six_month_terminal_evaluation_at(
+            entry_window_ends_at - timedelta(days=1), "synthetic-calendar-v1"
+        ),
+        unified_maturity_at=six_month_terminal_evaluation_at(
+            entry_window_ends_at - timedelta(days=1), "synthetic-calendar-v1"
+        ),
+        market_calendar_version="synthetic-calendar-v1",
     )
 
 
@@ -766,7 +774,18 @@ def test_host_availability_failure_preserves_calendar_failures() -> None:
 def test_entry_invalid_record_is_a_mature_negative_calibration_label() -> None:
     original = command()
     records = tuple(
-        record.model_copy(update={"entry_at": None, "terminal_success": False})
+        record.model_copy(
+            update={
+                "entry_at": None,
+                "terminal_success": False,
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    record.entry_window_ends_at, record.market_calendar_version
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    record.entry_window_ends_at, record.market_calendar_version
+                ),
+            }
+        )
         if record.record_id.endswith("-00")
         else record
         for record in original.training_records
@@ -881,8 +900,12 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             "raw_score_training_watermark_at": datetime(2040, 12, 13, 7, tzinfo=UTC),
             "entry_window_ends_at": datetime(2040, 12, 21, 8, tzinfo=UTC),
             "entry_at": datetime(2040, 12, 17, 7, tzinfo=UTC),
-            "unified_maturity_at": _six_month_anniversary(datetime(2040, 12, 21, 8, tzinfo=UTC)),
-            "label_available_at": _six_month_anniversary(datetime(2040, 12, 21, 8, tzinfo=UTC)),
+            "unified_maturity_at": six_month_terminal_evaluation_at(
+                datetime(2040, 12, 17, 7, tzinfo=UTC), "synthetic-calendar-v1"
+            ),
+            "label_available_at": six_month_terminal_evaluation_at(
+                datetime(2040, 12, 17, 7, tzinfo=UTC), "synthetic-calendar-v1"
+            ),
         }
     )
     release = freeze_candidate_release(
@@ -909,8 +932,12 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
                 "raw_score_training_watermark_at": datetime(2040, 11, 29, 7, tzinfo=UTC),
                 "entry_window_ends_at": datetime(2040, 12, 6, 8, tzinfo=UTC),
                 "entry_at": datetime(2040, 12, 5, 8, tzinfo=UTC),
-                "unified_maturity_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
-                "label_available_at": datetime(2041, 6, 6, 8, tzinfo=UTC),
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    datetime(2040, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    datetime(2040, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
             }
         )
         for index, record in enumerate(original.training_records[:10])
@@ -968,7 +995,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
             update={"training_records": (beyond_watermark, *original.training_records[1:])}
         )
     )
-    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
+    assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
 
     bad_entry_record = original.training_records[-1]
     assert bad_entry_record.entry_at is not None
@@ -1219,11 +1246,11 @@ def test_unmatured_training_label_is_calibration_availability_failure() -> None:
     assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in release.reasons
 
 
-def test_fractional_six_month_maturity_does_not_round_down_before_watermark() -> None:
+def test_terminal_session_maturity_does_not_precede_the_label_watermark() -> None:
     original = command()
     target_month = original.training_window_months[-1]
     entry_window_ends_at = datetime(2045, 12, 5, 8, 0, 0, 500_000, tzinfo=UTC)
-    maturity = _six_month_anniversary(entry_window_ends_at)
+    maturity = six_month_terminal_evaluation_at(entry_window_ends_at, "synthetic-calendar-v1")
     records = tuple(
         record.model_copy(
             update={
@@ -1239,22 +1266,9 @@ def test_fractional_six_month_maturity_does_not_round_down_before_watermark() ->
         for record in original.training_records
     )
     early_watermark = maturity - timedelta(milliseconds=250)
-    claimed_early_maturity = maturity.replace(microsecond=0)
-    early_records = tuple(
-        record.model_copy(
-            update={
-                "unified_maturity_at": claimed_early_maturity,
-                "label_available_at": claimed_early_maturity,
-            }
-        )
-        if record.month == target_month
-        else record
-        for record in records
-    )
-
     early = freeze_candidate_release(
         original.model_copy(
-            update={"training_records": early_records, "label_watermark_at": early_watermark}
+            update={"training_records": records, "label_watermark_at": early_watermark}
         )
     )
     mature = freeze_candidate_release(
@@ -1262,7 +1276,7 @@ def test_fractional_six_month_maturity_does_not_round_down_before_watermark() ->
     )
 
     assert early.disposition == "FAILED"
-    assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in early.reasons
+    assert "CALIBRATION_REQUIRES_60_MATURE_MONTHS" in early.reasons
     assert mature.disposition == "CANDIDATES"
 
 
@@ -1359,8 +1373,14 @@ def test_declared_window_must_contain_only_mature_months() -> None:
     immature_records = tuple(
         record.model_copy(
             update={
-                "unified_maturity_at": original.label_watermark_at + timedelta(seconds=1),
-                "label_available_at": original.label_watermark_at + timedelta(seconds=1),
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    record.entry_at or record.entry_window_ends_at,
+                    record.market_calendar_version,
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    record.entry_at or record.entry_window_ends_at,
+                    record.market_calendar_version,
+                ),
             }
         )
         if record.month == immature_month
@@ -1377,8 +1397,12 @@ def test_declared_window_must_contain_only_mature_months() -> None:
                 "raw_score_training_watermark_at": datetime(2045, 12, 30, 7, tzinfo=UTC),
                 "entry_window_ends_at": datetime(2046, 1, 1, 8, tzinfo=UTC),
                 "entry_at": datetime(2046, 1, 1, 7, tzinfo=UTC),
-                "unified_maturity_at": original.label_watermark_at,
-                "label_available_at": original.label_watermark_at,
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    datetime(2046, 1, 1, 7, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    datetime(2046, 1, 1, 7, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
             }
         )
         for index in range(10)
@@ -1391,7 +1415,7 @@ def test_declared_window_must_contain_only_mature_months() -> None:
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
-    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_MATURE",)
+    assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
 
 def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() -> None:
@@ -1406,8 +1430,12 @@ def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() ->
                 "raw_score_training_watermark_at": datetime(2045, 12, 30, 7, tzinfo=UTC),
                 "entry_window_ends_at": datetime(2046, 1, 5, 8, tzinfo=UTC),
                 "entry_at": datetime(2046, 1, 4, 8, tzinfo=UTC),
-                "unified_maturity_at": datetime(2046, 7, 5, 8, tzinfo=UTC),
-                "label_available_at": datetime(2046, 7, 5, 8, tzinfo=UTC),
+                "unified_maturity_at": six_month_terminal_evaluation_at(
+                    datetime(2046, 1, 4, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
+                "label_available_at": six_month_terminal_evaluation_at(
+                    datetime(2046, 1, 4, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                ),
             }
         )
         for index in range(10)
@@ -1503,7 +1531,7 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.calibrated_probability == member.calibrated_probability
     assert prediction.matures_by == raw_score_maturity_at(
         original.market_sessions[-1].closes_at,
-        original.market_sessions[-1].closes_at,
+        original.market_calendar_version,
     )
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
@@ -1626,7 +1654,7 @@ def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions()
     assert outcome.valid_market_dates[-1] == final_session.market_date
     assert prediction.matures_by == raw_score_maturity_at(
         final_session.closes_at,
-        final_session.closes_at,
+        extended.market_calendar_version,
     )
 
 
@@ -1687,7 +1715,7 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
         year, month_number = (int(part) for part in month.split("-"))
         cutoff = datetime(year, month_number, monthrange(year, month_number)[1], 7, tzinfo=UTC)
         entry = cutoff + timedelta(days=5)
-        maturity = _six_month_anniversary(entry)
+        maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
         month_records.extend(
             original.training_records[index].model_copy(
                 update={
@@ -1735,7 +1763,7 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
         tzinfo=UTC,
     )
     extra_entry = extra_cutoff + timedelta(days=5)
-    extra_maturity = _six_month_anniversary(extra_entry)
+    extra_maturity = six_month_terminal_evaluation_at(extra_entry, "synthetic-calendar-v1")
     extra_records = tuple(
         original.training_records[index].model_copy(
             update={
