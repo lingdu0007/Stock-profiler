@@ -1020,20 +1020,15 @@ def raw_score_entry_is_executable(
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         return False
-    sessions = calendar.sessions or calendar.terminal_sessions
-    session = next(
-        (item for item in sessions if item.closed_at.date() == evaluation_entry_at.date()),
-        None,
-    )
-    if session is None:
-        session = next(
-            (
-                item
-                for item in calendar.terminal_sessions or calendar.sessions
-                if item.closed_at.date() == evaluation_entry_at.date()
-            ),
-            None,
-        )
+    entry_date = evaluation_entry_at.date()
+    saved_sessions = calendar.sessions
+    if saved_sessions and saved_sessions[0].closed_at.date() <= entry_date <= (
+        saved_sessions[-1].closed_at.date()
+    ):
+        sessions = saved_sessions
+    else:
+        sessions = calendar.terminal_sessions or saved_sessions
+    session = next((item for item in sessions if item.closed_at.date() == entry_date), None)
     if session is None:
         return False
     opens_at = session.closed_at - timedelta(hours=7)

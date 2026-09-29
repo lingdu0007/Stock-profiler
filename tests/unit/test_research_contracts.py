@@ -55,6 +55,7 @@ from stock_profiler.modules.research.contracts import (
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
+    raw_score_entry_is_executable,
     raw_score_entry_window_end,
     raw_score_maturity_at,
     research_draft_payload,
@@ -440,6 +441,15 @@ def test_prediction_window_uses_the_active_calendar_sessions_when_available() ->
     assert first_session_open == datetime(2042, 6, 4, 8, tzinfo=UTC)
     assert raw_score_entry_window_end(first_session_open, market_calendar_version) == datetime(
         2042, 6, 10, 15, tzinfo=UTC
+    )
+
+
+def test_missing_session_inside_saved_calendar_coverage_is_not_executable() -> None:
+    missing_session_entry = datetime(2042, 5, 23, 10, tzinfo=UTC)
+
+    assert not raw_score_entry_is_executable(
+        missing_session_entry,
+        "synthetic-market-calendar-v1",
     )
 
 
