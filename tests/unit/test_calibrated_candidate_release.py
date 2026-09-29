@@ -268,6 +268,63 @@ def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> Non
     assert release.calibration.recent_diagnostics.log_loss.is_finite()
 
 
+def test_recent_diagnostic_cohort_drops_labels_after_the_frozen_watermark() -> None:
+    original = command()
+    after_watermark = original.training_records[0].model_copy(
+        update={
+            "record_id": "synthetic-after-watermark-diagnostic",
+            "label_available_at": original.label_watermark_at + timedelta(seconds=1),
+        }
+    )
+
+    calibration = candidate_module._fit_calibrator(
+        original,
+        recent_diagnostic_records=(*original.training_records, after_watermark),
+    )
+
+    assert calibration.recent_diagnostic_status == "AVAILABLE"
+    assert calibration.recent_diagnostic_sample_count == 240
+
+
+def test_recent_diagnostic_calculation_failure_is_visible_but_does_not_fail_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = command()
+    diagnostics = candidate_module._calibration_diagnostics
+    calls = 0
+
+    def fail_recent_diagnostics(
+        records: tuple[CalibrationRecord, ...], probabilities: tuple[float, ...]
+    ):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("synthetic recent diagnostic calculation failure")
+        return diagnostics(records, probabilities)
+
+    monkeypatch.setattr(candidate_module, "_calibration_diagnostics", fail_recent_diagnostics)
+
+    calibration = candidate_module._fit_calibrator(original)
+
+    assert calibration.recent_diagnostic_status == "CALCULATION_FAILED"
+    assert calibration.recent_diagnostics is None
+
+
+def test_calibration_diagnostics_reject_mismatched_records_and_probabilities() -> None:
+    with pytest.raises(ValueError, match="CALIBRATION_DIAGNOSTICS_REQUIRE_MATCHED_RECORDS"):
+        candidate_module._calibration_diagnostics((), (0.5,))
+
+
+def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
+    records = command().training_records[:10]
+
+    diagnostics = candidate_module._calibration_diagnostics(records, (0.5,) * len(records))
+
+    assert diagnostics.recalibration_fit_status == "AVAILABLE"
+    assert diagnostics.calibration_slope == Decimal("0.00000000")
+    assert diagnostics.calibration_intercept is not None
+
+
 def test_full_window_diagnostic_fit_failure_does_not_fail_production_calibration() -> None:
     original = command()
     records = tuple(
@@ -1700,6 +1757,74 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
     )
+
+
+def test_calibrator_rejects_a_declared_training_month_with_immature_labels() -> None:
+    original = command()
+    immature_month = "2045-12"
+    cutoff = datetime(2045, 12, 31, 7, tzinfo=UTC)
+    entry = datetime(2046, 1, 2, 8, tzinfo=UTC)
+    entry_window_end = datetime(2046, 1, 9, 8, tzinfo=UTC)
+    maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
+    immature_records = tuple(
+        record.model_copy(
+            update={
+                "record_id": f"synthetic-immature-{index}",
+                "month": immature_month,
+                "source_research_event_id": "synthetic-immature-source",
+                "raw_score_frozen_at": cutoff,
+                "raw_score_training_watermark_at": cutoff - timedelta(days=1),
+                "entry_at": entry,
+                "entry_window_ends_at": entry_window_end,
+                "unified_maturity_at": maturity,
+                "label_available_at": maturity,
+            }
+        )
+        for index, record in enumerate(original.training_records[:10])
+    )
+    candidate = original.model_copy(
+        update={
+            "training_window_months": (*original.training_window_months, immature_month),
+            "training_records": (*original.training_records, *immature_records),
+        }
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_TRAINING_WINDOW_NOT_MATURE"):
+        candidate_module._fit_calibrator(candidate)
+
+
+def test_rolling_calibration_rejects_a_window_that_is_not_exactly_sixty_months() -> None:
+    original = command()
+    older_month = "2040-11"
+    cutoff = datetime(2040, 11, 30, 7, tzinfo=UTC)
+    entry = datetime(2040, 12, 2, 8, tzinfo=UTC)
+    entry_window_end = datetime(2040, 12, 9, 8, tzinfo=UTC)
+    maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
+    older_records = tuple(
+        record.model_copy(
+            update={
+                "record_id": f"synthetic-older-rolling-{index}",
+                "month": older_month,
+                "source_research_event_id": "synthetic-older-rolling-source",
+                "raw_score_frozen_at": cutoff,
+                "raw_score_training_watermark_at": cutoff - timedelta(days=1),
+                "entry_at": entry,
+                "entry_window_ends_at": entry_window_end,
+                "unified_maturity_at": maturity,
+                "label_available_at": maturity,
+            }
+        )
+        for index, record in enumerate(original.training_records[:10])
+    )
+    candidate = original.model_copy(
+        update={
+            "training_window_months": (older_month, *original.training_window_months),
+            "training_records": (*older_records, *original.training_records),
+        }
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_ROLLING_WINDOW_MUST_BE_60_MONTHS"):
+        candidate_module._fit_calibrator(candidate, initial_calibration=False)
 
 
 def test_prior_candidate_predictions_use_the_referenced_research_event() -> None:
