@@ -534,6 +534,34 @@ def test_fifth_session_close_is_a_valid_frozen_entry() -> None:
     )
 
 
+def test_entry_inside_cutoff_session_precedes_the_frozen_five_session_window() -> None:
+    payload = _command().model_dump(mode="json")
+    raw_score = payload["raw_score_model"]
+    assert isinstance(raw_score, dict)
+    record = next(
+        item
+        for item in raw_score["training_records"]
+        if item["month"] == "2037-01" and item["evaluation_entry_at"] is not None
+    )
+    cutoff = datetime(2037, 1, 30, 9, tzinfo=UTC)
+    market_calendar_version = record["market_calendar_version"]
+    first_window_open = _raw_score_evaluation_entry_at(cutoff, market_calendar_version)
+    assert first_window_open == datetime(2037, 2, 2, 8, tzinfo=UTC)
+    early_entry = datetime(2037, 1, 30, 10, tzinfo=UTC)
+    window_end = raw_score_entry_window_end(first_window_open, market_calendar_version)
+    maturity = raw_score_maturity_at(early_entry, market_calendar_version)
+    record["selection_cutoff_at"] = cutoff.isoformat()
+    record["raw_score_frozen_at"] = cutoff.isoformat()
+    record["raw_score_training_watermark_at"] = (cutoff - timedelta(days=1)).isoformat()
+    record["evaluation_entry_at"] = early_entry.isoformat()
+    record["entry_window_ends_at"] = window_end.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
+
+
 def test_off_session_entry_cannot_create_a_positive_mature_label() -> None:
     payload = _command().model_dump(mode="json")
     record = next(

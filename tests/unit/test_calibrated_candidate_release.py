@@ -28,7 +28,9 @@ from stock_profiler.modules.portfolio.market_calendar import (
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
+    _raw_score_evaluation_entry_at,
     frozen_raw_score_model_snapshot,
+    raw_score_entry_window_end,
     raw_score_maturity_at,
 )
 
@@ -1811,6 +1813,39 @@ def test_frozen_prediction_accepts_executable_entry_at_session_close() -> None:
     decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
 
 
+def test_calibrator_rejects_entry_before_next_session_window_open() -> None:
+    original = command()
+    source = original.training_records[0]
+    year, month = (int(part) for part in source.month.split("-"))
+    cutoff_day = next(day for day in range(10, 21) if datetime(year, month, day).weekday() < 5)
+    cutoff = datetime(year, month, cutoff_day, 2, tzinfo=UTC)
+    first_window_open = _raw_score_evaluation_entry_at(
+        cutoff,
+        source.market_calendar_version,
+    )
+    early_entry = cutoff + timedelta(hours=1)
+    window_end = raw_score_entry_window_end(first_window_open, source.market_calendar_version)
+    maturity = six_month_terminal_evaluation_at(early_entry, source.market_calendar_version)
+    invalid_record = source.model_copy(
+        update={
+            "raw_score_frozen_at": cutoff,
+            "raw_score_training_watermark_at": cutoff - timedelta(days=1),
+            "entry_at": early_entry,
+            "entry_window_ends_at": window_end,
+            "unified_maturity_at": maturity,
+            "label_available_at": maturity,
+        }
+    )
+    invalid_command = original.model_copy(
+        update={
+            "training_records": (invalid_record, *original.training_records[1:]),
+        }
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_ENTRY_BEFORE_WINDOW_OPEN"):
+        candidate_module._fit_calibrator(invalid_command)
+
+
 def test_calibrator_rejects_a_declared_training_month_with_immature_labels() -> None:
     original = command()
     immature_month = "2045-12"
@@ -1849,8 +1884,8 @@ def test_rolling_calibration_rejects_a_window_that_is_not_exactly_sixty_months()
     original = command()
     older_month = "2040-11"
     cutoff = datetime(2040, 11, 30, 7, tzinfo=UTC)
-    entry = datetime(2040, 12, 2, 8, tzinfo=UTC)
-    entry_window_end = datetime(2040, 12, 9, 8, tzinfo=UTC)
+    entry = datetime(2040, 12, 3, 1, tzinfo=UTC)
+    entry_window_end = datetime(2040, 12, 7, 8, tzinfo=UTC)
     maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
     older_records = tuple(
         record.model_copy(

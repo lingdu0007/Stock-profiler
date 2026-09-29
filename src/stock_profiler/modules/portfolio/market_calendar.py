@@ -32,6 +32,53 @@ def six_month_terminal_evaluation_at(value: datetime, market_calendar_version: s
     return session.closed_at
 
 
+def market_session_close_on(
+    market_date: date,
+    market_calendar_version: str,
+) -> datetime | None:
+    """Return the saved session close, preserving gaps inside active-calendar coverage."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        return None
+    if calendar.sessions and calendar.sessions[0].closed_at.date() <= market_date <= (
+        calendar.sessions[-1].closed_at.date()
+    ):
+        sessions = calendar.sessions
+    else:
+        sessions = calendar.terminal_sessions or calendar.sessions
+    session = next((item for item in sessions if item.closed_at.date() == market_date), None)
+    return session.closed_at if session is not None else None
+
+
+def next_market_session_open_after(
+    value: datetime,
+    market_calendar_version: str,
+) -> datetime:
+    """Return the first saved session open on a later date than the frozen cutoff."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    cutoff_date = value.date()
+    if calendar.sessions and calendar.sessions[0].closed_at.date() <= cutoff_date <= (
+        calendar.sessions[-1].closed_at.date()
+    ):
+        sessions = calendar.sessions
+    else:
+        sessions = calendar.terminal_sessions or calendar.sessions
+    session = next(
+        (item for item in sessions if item.closed_at.date() > cutoff_date),
+        None,
+    )
+    if session is None and sessions is calendar.sessions and calendar.terminal_sessions:
+        session = next(
+            (item for item in calendar.terminal_sessions if item.closed_at.date() > cutoff_date),
+            None,
+        )
+    if session is None:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return session.closed_at - timedelta(hours=7)
+
+
 @dataclass(frozen=True)
 class MarketSession:
     """One known normal session in a versioned synthetic market calendar."""

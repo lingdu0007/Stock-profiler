@@ -11,6 +11,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from stock_profiler.modules.candidate_selection.universe import UniverseContract
 from stock_profiler.modules.portfolio.market_calendar import (
+    next_market_session_open_after,
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
 )
@@ -805,10 +806,14 @@ def _fit_calibrator(
         if record.entry_at is None:
             if record.terminal_success:
                 raise ValueError("CALIBRATION_ENTRY_INVALID_CANNOT_SUCCEED")
-        elif (
-            record.entry_at < record.raw_score_frozen_at
-            or record.entry_at > record.entry_window_ends_at
+        elif record.entry_at < record.raw_score_frozen_at:
+            raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
+        elif record.entry_at < next_market_session_open_after(
+            record.raw_score_frozen_at,
+            record.market_calendar_version,
         ):
+            raise ValueError("CALIBRATION_ENTRY_BEFORE_WINDOW_OPEN")
+        elif record.entry_at > record.entry_window_ends_at:
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         maturity_anchor = record.entry_at or record.entry_window_ends_at
         if record.unified_maturity_at != six_month_terminal_evaluation_at(

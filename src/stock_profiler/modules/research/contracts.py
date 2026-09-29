@@ -25,6 +25,8 @@ from pydantic import (
 )
 
 from stock_profiler.modules.portfolio.market_calendar import (
+    market_session_close_on,
+    next_market_session_open_after,
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
 )
@@ -795,6 +797,11 @@ class RawScoreModelSnapshot(ResearchContract):
                                     <= record.evaluation_entry_at
                                     <= record.entry_window_ends_at
                                 )
+                                or record.evaluation_entry_at
+                                < _raw_score_evaluation_entry_at(
+                                    record.selection_cutoff_at,
+                                    record.market_calendar_version,
+                                )
                                 or not raw_score_entry_is_executable(
                                     record.evaluation_entry_at,
                                     record.market_calendar_version,
@@ -970,35 +977,7 @@ def _raw_score_evaluation_entry_at(
     market_calendar_version: str = RAW_SCORE_MARKET_CALENDAR_VERSION,
 ) -> datetime:
     """Return the first executable open after the frozen cutoff from its calendar."""
-    calendar = synthetic_market_calendar(market_calendar_version)
-    if calendar is None:
-        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
-    primary_session = next(
-        (
-            session.closed_at
-            for session in calendar.sessions
-            if session.closed_at.date() > selection_cutoff_at.date()
-        ),
-        None,
-    )
-    next_session = (
-        primary_session
-        if primary_session is not None
-        and primary_session.date() <= selection_cutoff_at.date() + timedelta(days=14)
-        else None
-    )
-    if next_session is None:
-        next_session = next(
-            (
-                session.closed_at
-                for session in calendar.terminal_sessions or calendar.sessions
-                if session.closed_at.date() > selection_cutoff_at.date()
-            ),
-            None,
-        )
-    if next_session is None:
-        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
-    return next_session - timedelta(hours=7)
+    return next_market_session_open_after(selection_cutoff_at, market_calendar_version)
 
 
 def raw_score_maturity_at(evaluation_entry_at: datetime, market_calendar_version: str) -> datetime:
@@ -1020,19 +999,14 @@ def raw_score_entry_is_executable(
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         return False
-    entry_date = evaluation_entry_at.date()
-    saved_sessions = calendar.sessions
-    if saved_sessions and saved_sessions[0].closed_at.date() <= entry_date <= (
-        saved_sessions[-1].closed_at.date()
-    ):
-        sessions = saved_sessions
-    else:
-        sessions = calendar.terminal_sessions or saved_sessions
-    session = next((item for item in sessions if item.closed_at.date() == entry_date), None)
-    if session is None:
+    session_close = market_session_close_on(
+        evaluation_entry_at.date(),
+        market_calendar_version,
+    )
+    if session_close is None:
         return False
-    opens_at = session.closed_at - timedelta(hours=7)
-    return opens_at <= evaluation_entry_at <= session.closed_at
+    opens_at = session_close - timedelta(hours=7)
+    return opens_at <= evaluation_entry_at <= session_close
 
 
 def _raw_score_label_available_at(
