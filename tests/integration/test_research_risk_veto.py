@@ -3459,6 +3459,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "WINDOW_EXPIRED_AFTER_FREEZE"),
         ("ACCEPT", "LATE_REPORT_COMMIT"),
         ("ACCEPT", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"),
+        ("ACCEPT", "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION"),
         ("ACCEPT", "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE"),
         ("ACCEPT", "CORRECTION_AFTER_CANDIDATE_WINDOW"),
         ("ACCEPT", "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF"),
@@ -3515,6 +3516,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "WINDOW_EXPIRED_AFTER_FREEZE",
         "LATE_REPORT_COMMIT",
         "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
         "COMMIT_CLOCK_ADVANCE",
         "CALENDAR_WINDOW_MISSING",
         "AT_RISK_QUALIFICATION",
@@ -3523,6 +3525,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT",
         "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
@@ -3546,6 +3549,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if candidate_scenario == "LATE_PUBLICATION"
         else "2042-07-07T14:59:59+00:00"
         if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"
+        else "2042-07-02T00:04:00+00:00"
+        if candidate_scenario == "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION"
         else "2042-07-01T00:04:00+00:00"
     )
     monkeypatch.setattr(UtcClock, "now", lambda self: publication_time)
@@ -3872,6 +3877,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_REVISION_THEN_DIAGNOSTIC_ALERT_AFTER_COMMIT",
         "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION",
         "QUALIFICATION_EXPIRES_DURING_FIT",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF",
@@ -3931,7 +3937,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             else cutoff - timedelta(seconds=1)
         )
         qualification_expires_at = datetime.fromisoformat(
-            "2042-07-01T00:05:00+00:00"
+            "2042-07-02T00:34:00+00:00"
+            if candidate_scenario == "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION"
+            else "2042-07-01T00:05:00+00:00"
             if candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT"
             else "2042-12-31T23:59:59+00:00"
         )
@@ -4688,7 +4696,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "publish_report",
             revoke_active_and_alert_unrelated_after_report_save,
         )
-    if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
+    if candidate_scenario in {
+        "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
+    }:
         clock_state = {"now": publication_time}
         monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
         record_stage_result = DecisionLedger.record_stage_result
@@ -4698,7 +4709,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         ) -> Any:
             stage_result = kwargs.get("stage_result")
             if stage_result is not None and stage_result.phase == "PUBLICATION":
-                clock_state["now"] = publication_time + timedelta(seconds=2)
+                clock_state["now"] = publication_time + (
+                    timedelta(hours=1)
+                    if candidate_scenario == "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION"
+                    else timedelta(seconds=2)
+                )
             return record_stage_result(ledger, connection, **kwargs)
 
         monkeypatch.setattr(
@@ -4734,6 +4749,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "WINDOW_EXPIRED_AFTER_FREEZE": "FAILED",
         "LATE_REPORT_COMMIT": "RECOMMENDATION_ABSTAINED",
         "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE": "RECOMMENDATION_ABSTAINED",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION": "CANDIDATES",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE": "CANDIDATES",
         "CORRECTION_AFTER_CANDIDATE_WINDOW": "CANDIDATES",
         "QUALIFICATION_CALENDAR_CHANGED_AT_CUTOFF": "FAILED",
@@ -4816,11 +4832,15 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "LATE_REPORT_COMMIT",
         "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
+        "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
     }:
         assert execution.report is not None
         assert execution.report.report_publication is not None
-        assert execution.report.report_publication.status == "FAILED"
+        assert execution.report.report_publication.status == "FAILED", (
+            execution.report.result.candidate_release,
+            execution.report.stage_results[-1],
+        )
         assert execution.report.report_publication.failure_recorded_at is not None
         assert execution.report.report_publication.failure_reason == (
             "PUBLICATION_AFTER_CANDIDATE_WINDOW"
@@ -4828,9 +4848,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             in {"LATE_REPORT_COMMIT", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"}
             else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
         )
-        if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
+        if candidate_scenario in {
+            "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
+            "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION",
+        }:
             assert execution.report.report_publication.failure_recorded_at == (
-                publication_time + timedelta(seconds=2)
+                publication_time
+                + (
+                    timedelta(hours=1)
+                    if candidate_scenario == "QUALIFICATION_EXPIRES_AT_PUBLICATION_CONFIRMATION"
+                    else timedelta(seconds=2)
+                )
             ).isoformat().replace("+00:00", "Z")
         assert execution.report.result.candidate_release is not None
         assert execution.report.result.candidate_release.disposition == "FAILED"
@@ -4897,7 +4925,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
         assert saved_candidate_release.disposition == "FAILED"
         assert execution.report.report_publication is not None
-        assert execution.report.report_publication.status == "FAILED"
+        assert execution.report.report_publication.status == "FAILED", (
+            execution.report.result.candidate_release,
+            execution.report.stage_results[-1],
+        )
         assert execution.report.report_publication.failure_reason == (
             "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
         )

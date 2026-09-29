@@ -3859,28 +3859,68 @@ def _publish_report_or_record_failure(
         publication_recorded_at is not None
         and candidate_command is not None
         and candidate_outcome is not None
+        and fact.corrects_event_id is None
         and candidate_outcome.disposition
         in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
     ):
         recorded_time = datetime.fromisoformat(publication_recorded_at.replace("Z", "+00:00"))
-        confirmed_outcome = finalize_candidate_release_publication(
-            candidate_command,
-            candidate_outcome,
-            published_at=recorded_time,
+        assert fact.case.access_scope is not None
+        current_governance_history = ledger.governance_history(
+            connection,
+            fact.case.access_scope,
         )
-        if (
-            confirmed_outcome.disposition == "FAILED"
-            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
-        ):
+        diagnostic_alert_ids = _post_commit_diagnostic_alert_ids(
+            fact,
+            candidate_command,
+            current_governance_history,
+        )
+        qualification_history_for_validation = (
+            tuple(
+                outcome
+                for outcome in current_governance_history
+                if outcome.qualification is None
+                or outcome.qualification.decision_id not in diagnostic_alert_ids
+            )
+            if diagnostic_alert_ids
+            else current_governance_history
+        )
+        publication_failure_reason: str | None = None
+        try:
+            current_qualifications = _validate_candidate_qualification_snapshots(
+                fact.case,
+                qualification_history_for_validation,
+                recorded_time,
+            )
+        except (ValueError, CandidateQualificationHistoryAmbiguous):
+            publication_failure_reason = "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+        if publication_failure_reason is None:
+            confirmed_outcome = finalize_candidate_release_publication(
+                candidate_command.model_copy(update={"qualifications": current_qualifications}),
+                candidate_outcome,
+                published_at=recorded_time,
+            )
+            outcome_without_publication_clock = confirmed_outcome.model_copy(
+                update={
+                    "published_at": candidate_outcome.published_at,
+                    "qualification": candidate_outcome.qualification,
+                }
+            )
+            if outcome_without_publication_clock != candidate_outcome:
+                publication_failure_reason = (
+                    "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+                    if "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
+                    else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+                )
+        if publication_failure_reason is not None:
             failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
                 fact,
-                "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+                publication_failure_reason,
             )
             if failed_report is not None:
                 return failed_report, None
-            return None, DecisionEventCommitError("candidate publication window expired")
+            return None, DecisionEventCommitError("candidate publication eligibility changed")
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None
     return confirmed_report, None
