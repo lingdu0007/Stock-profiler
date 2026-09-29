@@ -314,7 +314,7 @@ class DecisionLedger(Protocol[Transaction]):
         framework_run_id: str | None = None,
         allow_repeated_occurrence: bool = False,
         recorded_at: str | None = None,
-    ) -> None: ...
+    ) -> str | None: ...
 
     def record_notification_attempt(
         self,

@@ -646,7 +646,7 @@ def _validate_candidate_calibration_sources(
     connection: Transaction,
     access_scope: ResultAccessScope,
     candidate_model_version: str,
-) -> bool:
+) -> tuple[bool, tuple[CalibrationRecord, ...]]:
     """Bind calibration rows to the complete frozen out-of-sample research snapshot."""
     if any(
         record.raw_score_model_version != candidate_model_version
@@ -673,11 +673,13 @@ def _validate_candidate_calibration_sources(
     )
     historical_events_by_id = {event.decision_event_id: event for event in historical_events}
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    mature_source_event_ids: dict[tuple[str, str, str], str] = {}
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     cutoff_incomplete_source_months: set[str] = set()
+    watermark_incomplete_source_months: set[str] = set()
     for event in prior_calibration_snapshots:
         prior_command = event.case.candidate_release
         prior_outcome = event.result.candidate_release
@@ -713,6 +715,11 @@ def _validate_candidate_calibration_sources(
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
             if (
+                source_record.label_available_at > command.label_watermark_at
+                or source_record.unified_maturity_at > command.label_watermark_at
+            ):
+                watermark_incomplete_source_months.add(source_record.month)
+            if (
                 source_record.label_available_at <= candidate_cutoff
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
@@ -738,6 +745,7 @@ def _validate_candidate_calibration_sources(
                     source_record.research_id,
                 )
                 _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
+                mature_source_event_ids.setdefault(identity, event.decision_event_id)
     cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
@@ -755,6 +763,30 @@ def _validate_candidate_calibration_sources(
         globally_mature_months,
         initial_calibration=not prior_calibration_snapshots,
     )
+    watermark_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
+        frozen_candidate_predictions,
+        mature_source_rows,
+        command.label_watermark_at,
+    )
+    watermark_mature_months = _fully_matured_calibration_months(
+        set(mature_source_rows),
+        set(frozen_training_rows),
+        watermark_matured_candidate_prediction_ids,
+        set(frozen_candidate_predictions),
+        watermark_incomplete_source_months,
+    )
+    recent_diagnostic_months = set(watermark_mature_months[-24:])
+    recent_diagnostic_records_by_identity = {
+        identity: _calibration_record_from_raw_score(
+            record,
+            mature_source_event_ids[identity],
+        )
+        for identity, record in mature_source_rows.items()
+        if identity[0] in recent_diagnostic_months
+    }
+    for identity, record in frozen_training_rows.items():
+        if identity[0] in recent_diagnostic_months:
+            _retain_frozen_calibration_record(recent_diagnostic_records_by_identity, record)
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
     for record in command.training_records:
@@ -881,7 +913,13 @@ def _validate_candidate_calibration_sources(
                 or latest_source_record.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
-    return not prior_calibration_snapshots
+    return (
+        not prior_calibration_snapshots,
+        tuple(
+            recent_diagnostic_records_by_identity[identity]
+            for identity in sorted(recent_diagnostic_records_by_identity)
+        ),
+    )
 
 
 def _prior_calibration_snapshot_matches(
@@ -951,6 +989,41 @@ def _calibration_source_rows_by_identity(
         for record in records
         if record.month in months and record.historical_calibrated_probability is not None
     }
+
+
+def _calibration_record_from_raw_score(
+    source: RawScoreTrainingRecord,
+    source_research_event_id: str,
+) -> CalibrationRecord:
+    """Project one immutable raw-score outcome into the calibration evidence shape."""
+    if (
+        source.raw_score_frozen_at is None
+        or source.raw_score_training_watermark_at is None
+        or source.raw_success_score is None
+        or source.historical_calibrated_probability is None
+        or source.entry_window_ends_at is None
+        or source.unified_maturity_at is None
+        or source.market_calendar_version is None
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return CalibrationRecord(
+        record_id=(f"recent-diagnostic-{source.month}-{source.security_id}-{source.research_id}"),
+        month=source.month,
+        source_research_event_id=source_research_event_id,
+        security_id=source.security_id,
+        research_id=source.research_id,
+        raw_score_model_version=source.source_model_version,
+        raw_score_frozen_at=source.raw_score_frozen_at,
+        raw_score_training_watermark_at=source.raw_score_training_watermark_at,
+        raw_success_score=source.raw_success_score,
+        out_of_sample_probability=source.historical_calibrated_probability,
+        terminal_success=source.terminal_label,
+        entry_at=source.evaluation_entry_at,
+        entry_window_ends_at=source.entry_window_ends_at,
+        unified_maturity_at=source.unified_maturity_at,
+        label_available_at=source.label_available_at,
+        market_calendar_version=source.market_calendar_version,
+    )
 
 
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
@@ -2304,6 +2377,7 @@ def _commit_framework_result(
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
     candidate_model_version: str | None = None
     candidate_initial_calibration = True
+    candidate_recent_diagnostic_records: tuple[CalibrationRecord, ...] = ()
 
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
@@ -2362,7 +2436,10 @@ def _commit_framework_result(
         ):
             try:
                 assert execution_case.access_scope is not None
-                candidate_initial_calibration = _validate_candidate_calibration_sources(
+                (
+                    candidate_initial_calibration,
+                    candidate_recent_diagnostic_records,
+                ) = _validate_candidate_calibration_sources(
                     execution_case.candidate_release,
                     ledger,
                     connection,
@@ -2877,6 +2954,7 @@ def _commit_framework_result(
                         publication_command,
                         published_at=publication_time,
                         initial_calibration=candidate_initial_calibration,
+                        recent_diagnostic_records=candidate_recent_diagnostic_records,
                     )
                 committed_at = ledger.observed_at()
                 if (
@@ -3692,7 +3770,6 @@ def _publish_report_or_record_failure(
     assert report is not None
     candidate_command = fact.case.candidate_release
     candidate_outcome = fact.result.candidate_release
-    candidate_publication_confirmed_at: str | None = None
     if (
         candidate_command is not None
         and candidate_outcome is not None
@@ -3701,7 +3778,6 @@ def _publish_report_or_record_failure(
         in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
     ):
         confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
-        candidate_publication_confirmed_at = confirmed_at.isoformat()
         assert fact.case.access_scope is not None
         governance_history = ledger.governance_history(connection, fact.case.access_scope)
         diagnostic_alert_ids = _post_commit_diagnostic_alert_ids(
@@ -3773,13 +3849,38 @@ def _publish_report_or_record_failure(
             return None, DecisionEventCommitError(
                 "candidate qualification changed before publication"
             )
-    _record_fact_stage_result(
+    publication_recorded_at = _record_fact_stage_result(
         ledger,
         connection,
         fact,
         report.stage_results[-1],
-        recorded_at=candidate_publication_confirmed_at,
     )
+    if (
+        publication_recorded_at is not None
+        and candidate_command is not None
+        and candidate_outcome is not None
+        and candidate_outcome.disposition
+        in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+    ):
+        recorded_time = datetime.fromisoformat(publication_recorded_at.replace("Z", "+00:00"))
+        confirmed_outcome = finalize_candidate_release_publication(
+            candidate_command,
+            candidate_outcome,
+            published_at=recorded_time,
+        )
+        if (
+            confirmed_outcome.disposition == "FAILED"
+            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
+        ):
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError("candidate publication window expired")
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None
     return confirmed_report, None
@@ -3836,7 +3937,7 @@ def _post_commit_diagnostic_alert_ids(
     if (
         frozen.market_state != candidate_outcome.market_state
         or frozen.market_state != command.market_state
-        or frozen.status != "VALID"
+        or frozen.status not in {"VALID", "AT_RISK"}
     ):
         return ()
     frozen_record = next(
@@ -3854,20 +3955,56 @@ def _post_commit_diagnostic_alert_ids(
             break
         if len(successors) != 1:
             return ()
-        alert = successors[0]
+        successor = successors[0]
         if (
-            alert.status != "AT_RISK"
-            or alert.cause != "DIAGNOSTIC_ALERT"
-            or alert.recorded_at <= committed_at
-            or alert.scope != frozen_record.scope
-            or alert.version != frozen_record.version
-            or alert.authorization_id != frozen_record.authorization_id
-            or alert.formal_passing_evidence != frozen_record.formal_passing_evidence
-            or alert.authorization_evidence != frozen_record.authorization_evidence
+            successor.recorded_at <= committed_at
+            or successor.scope != frozen_record.scope
+            or successor.version != frozen_record.version
+            or successor.authorization_id != frozen_record.authorization_id
+            or successor.authorization_terminated_at != frozen_record.authorization_terminated_at
+            or successor.formal_evidence != frozen_record.formal_evidence
+            or successor.formal_passing_evidence != frozen_record.formal_passing_evidence
+            or successor.authorization_evidence != frozen_record.authorization_evidence
+            or successor.restrictions != frozen_record.restrictions
+            or successor.restoration_evidence != frozen_record.restoration_evidence
+            or successor.state_activity_evidence != frozen_record.state_activity_evidence
         ):
             return ()
-        chain.append(alert)
-        predecessor = alert
+        added_alerts = successor.alerts[len(predecessor.alerts) :]
+        added_closures = successor.alert_closures[len(predecessor.alert_closures) :]
+        if (
+            successor.alerts[: len(predecessor.alerts)] != predecessor.alerts
+            or successor.alert_closures[: len(predecessor.alert_closures)]
+            != predecessor.alert_closures
+            or any(
+                alert.kind != "DIAGNOSTIC_ALERT" or alert.available_at <= committed_at
+                for alert in added_alerts
+            )
+            or any(closure.evidence.available_at <= committed_at for closure in added_closures)
+        ):
+            return ()
+        if successor.status == "AT_RISK" and successor.cause == "DIAGNOSTIC_ALERT":
+            if not (added_alerts or added_closures) or not successor.outstanding_alerts:
+                return ()
+        elif successor.status == "VALID" and successor.cause == "ALERT_CLOSED":
+            resolved_alert_ids = {
+                closure.alert_evidence_id
+                for closure in successor.alert_closures
+                if closure.terminates_alert
+            }
+            if (
+                not added_closures
+                or not predecessor.outstanding_alerts
+                or not {alert.evidence_id for alert in predecessor.outstanding_alerts}.issubset(
+                    resolved_alert_ids
+                )
+                or successor.outstanding_alerts
+            ):
+                return ()
+        else:
+            return ()
+        chain.append(successor)
+        predecessor = successor
     if not chain:
         return ()
     try:
@@ -3875,7 +4012,7 @@ def _post_commit_diagnostic_alert_ids(
     except ValueError:
         return ()
     if current is not None and current.decision_id == predecessor.decision_id:
-        return tuple(alert.decision_id for alert in chain)
+        return tuple(record.decision_id for record in chain)
     return ()
 
 
@@ -3953,9 +4090,9 @@ def _record_fact_stage_result(
     *,
     allow_repeated_occurrence: bool = False,
     recorded_at: str | None = None,
-) -> None:
+) -> str | None:
     """Append event evidence with its selected controlled observation timestamp."""
-    ledger.record_stage_result(
+    return ledger.record_stage_result(
         connection,
         case=fact.case,
         stage_result=stage_result,

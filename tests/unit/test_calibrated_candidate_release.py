@@ -26,6 +26,7 @@ from stock_profiler.modules.portfolio.market_calendar import (
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
 )
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
     frozen_raw_score_model_snapshot,
     raw_score_maturity_at,
@@ -1810,6 +1811,107 @@ def test_initial_calibration_can_use_the_earliest_qualifying_mature_prefix() -> 
         )
 
 
+def test_closed_post_commit_diagnostic_alert_preserves_original_qualification() -> None:
+    committed_at = datetime(2046, 7, 1, 8, tzinfo=UTC)
+
+    class Scope:
+        def same_scope_as(self, other: object) -> bool:
+            return self is other
+
+    scope = Scope()
+    version = object()
+    authorization = object()
+    alert = SimpleNamespace(
+        evidence_id="synthetic-diagnostic-alert",
+        kind="DIAGNOSTIC_ALERT",
+        available_at=committed_at + timedelta(seconds=1),
+    )
+    closure = SimpleNamespace(
+        alert_evidence_id=alert.evidence_id,
+        resolution="DISAPPEARED",
+        terminates_alert=True,
+        evidence=SimpleNamespace(available_at=committed_at + timedelta(seconds=2)),
+    )
+    frozen_record = SimpleNamespace(
+        decision_id="qualification-base",
+        previous_decision_id=None,
+        recorded_at=committed_at - timedelta(days=1),
+        scope=scope,
+        version=version,
+        authorization_id="authorization-1",
+        authorization_evidence=authorization,
+        authorization_terminated_at=None,
+        formal_evidence=authorization,
+        formal_passing_evidence=authorization,
+        restrictions=(),
+        restoration_evidence=(),
+        state_activity_evidence=None,
+        status="VALID",
+        cause="QUALIFICATION_PASS",
+        alerts=(),
+        alert_closures=(),
+        outstanding_alerts=(),
+        market_state="BULL",
+    )
+    at_risk_record = SimpleNamespace(
+        **{
+            **vars(frozen_record),
+            "decision_id": "qualification-at-risk",
+            "previous_decision_id": frozen_record.decision_id,
+            "recorded_at": committed_at + timedelta(seconds=1),
+            "status": "AT_RISK",
+            "cause": "DIAGNOSTIC_ALERT",
+            "alerts": (alert,),
+            "outstanding_alerts": (alert,),
+        }
+    )
+    resolved_record = SimpleNamespace(
+        **{
+            **vars(at_risk_record),
+            "decision_id": "qualification-alert-closed",
+            "previous_decision_id": at_risk_record.decision_id,
+            "recorded_at": committed_at + timedelta(seconds=2),
+            "status": "VALID",
+            "cause": "ALERT_CLOSED",
+            "alert_closures": (closure,),
+            "outstanding_alerts": (),
+        }
+    )
+    qualification = SimpleNamespace(
+        market_state="BULL",
+        status="VALID",
+        qualification_id=frozen_record.decision_id,
+    )
+    command = cast(
+        CandidateReleaseCommand,
+        SimpleNamespace(qualifications=(qualification,), market_state="BULL"),
+    )
+    outcome = SimpleNamespace(qualification=qualification, market_state="BULL")
+    fact = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            committed_at=committed_at.isoformat(),
+            case=SimpleNamespace(access_scope=object()),
+            result=SimpleNamespace(candidate_release=outcome),
+        ),
+    )
+    history = cast(
+        tuple[GovernanceOutcome, ...],
+        tuple(
+            SimpleNamespace(qualification=record)
+            for record in (frozen_record, at_risk_record, resolved_record)
+        ),
+    )
+
+    ignored_diagnostic_ids = decision_case_service._post_commit_diagnostic_alert_ids(
+        fact,
+        command,
+        history,
+    )
+
+    assert ignored_diagnostic_ids == (at_risk_record.decision_id, resolved_record.decision_id)
+
+
 def test_backdated_label_watermark_cannot_hide_cutoff_mature_rows_in_selected_months() -> None:
     months = tuple(f"2040-{month:02d}" for month in range(1, 13))[-2:]
     cutoff_rows = {
@@ -2042,7 +2144,7 @@ def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> N
         for year, month in (divmod(2040 * 12 + index, 12) for index in range(61))
     )
     assert len(months) == 61
-    counts = (9, *([9] * 19), *([8] * 40), 8)
+    counts = (9, *([8] * 32), *([7] * 4), *([9] * 23), 8)
     assert len(counts) == 61
     assert sum(counts[:60]) == 500
     assert sum(counts[1:]) == 499
@@ -2063,7 +2165,7 @@ def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> N
                 source_prefix="synthetic-initial-prefix",
                 raw_score_frozen_at=cutoff,
                 entry_window_ends_at=entry + timedelta(days=1),
-                terminal_success=index % 2 == 0,
+                terminal_success=month == months[-1] or index % 2 == 0,
             ).model_copy(
                 update={
                     "entry_at": entry,
@@ -2079,13 +2181,54 @@ def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> N
             "training_records": tuple(records),
         }
     )
-    initial_prefix = candidate.model_copy(update={"training_window_months": months[:60]})
+    initial_prefix_records = tuple(record for record in records if record.month in months[:60])
+    initial_prefix = candidate.model_copy(
+        update={
+            "training_window_months": months[:60],
+            "training_records": initial_prefix_records,
+        }
+    )
 
-    calibration = candidate_module._fit_calibrator(initial_prefix)
+    fit_window_release = freeze_candidate_release(initial_prefix)
 
+    assert fit_window_release.disposition == "VALID_NO_CANDIDATES"
+    assert fit_window_release.calibration is not None
+    calibration = fit_window_release.calibration
     assert calibration.training_window_months == months[:60]
-    with pytest.raises(ValueError, match="CALIBRATION_TRAINING_WINDOW_NOT_LATEST"):
-        candidate_module._fit_calibrator(initial_prefix, initial_calibration=False)
+    fit_window_recent_records = tuple(
+        record for record in initial_prefix_records if record.month in months[-25:-1]
+    )
+    assert calibration.recent_diagnostic_months == months[-25:-1]
+    assert calibration.recent_diagnostic_sample_count == len(fit_window_recent_records)
 
-    with pytest.raises(ValueError, match="CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM"):
-        candidate_module._fit_calibrator(candidate)
+    expected_recent_records = tuple(record for record in records if record.month in months[-24:])
+    latest_diagnostic_release = freeze_candidate_release(
+        initial_prefix,
+        published_at=initial_prefix.published_at,
+        initial_calibration=True,
+        recent_diagnostic_records=tuple(records),
+    )
+    assert latest_diagnostic_release.disposition == "VALID_NO_CANDIDATES"
+    assert latest_diagnostic_release.calibration is not None
+    with_latest_diagnostics = latest_diagnostic_release.calibration
+    assert with_latest_diagnostics.recent_diagnostic_months == months[-24:]
+    assert with_latest_diagnostics.recent_diagnostic_sample_count == len(expected_recent_records)
+    assert with_latest_diagnostics.recent_diagnostics == candidate_module._calibration_diagnostics(
+        expected_recent_records,
+        tuple(float(record.out_of_sample_probability) for record in expected_recent_records),
+    )
+    omitted_latest_mature_month = candidate.model_copy(
+        update={"training_window_months": months[:60]}
+    )
+    rolling_release = freeze_candidate_release(
+        omitted_latest_mature_month,
+        initial_calibration=False,
+    )
+    assert rolling_release.disposition == "FAILED"
+    assert rolling_release.availability_failure == "CALIBRATION"
+    assert rolling_release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
+
+    expanded_initial_release = freeze_candidate_release(candidate)
+    assert expanded_initial_release.disposition == "FAILED"
+    assert expanded_initial_release.availability_failure == "CALIBRATION"
+    assert expanded_initial_release.reasons == ("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM",)

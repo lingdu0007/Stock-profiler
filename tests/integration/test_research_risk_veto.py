@@ -4815,6 +4815,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert direct.availability_failure == "CALIBRATION"
     if candidate_scenario in {
         "LATE_REPORT_COMMIT",
+        "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
     }:
         assert execution.report is not None
@@ -4823,9 +4824,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert execution.report.report_publication.failure_recorded_at is not None
         assert execution.report.report_publication.failure_reason == (
             "PUBLICATION_AFTER_CANDIDATE_WINDOW"
-            if candidate_scenario == "LATE_REPORT_COMMIT"
+            if candidate_scenario
+            in {"LATE_REPORT_COMMIT", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"}
             else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
         )
+        if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
+            assert execution.report.report_publication.failure_recorded_at == (
+                publication_time + timedelta(seconds=2)
+            ).isoformat().replace("+00:00", "Z")
         assert execution.report.result.candidate_release is not None
         assert execution.report.result.candidate_release.disposition == "FAILED"
         assert execution.publication_status == "FAILED"
@@ -4836,7 +4842,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             and stage.status == "FAILED"
             and (
                 "PUBLICATION_AFTER_CANDIDATE_WINDOW" in stage.reasons
-                if candidate_scenario == "LATE_REPORT_COMMIT"
+                if candidate_scenario
+                in {"LATE_REPORT_COMMIT", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"}
                 else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION" in stage.reasons
             )
             for stage in execution.stage_results
@@ -4920,14 +4927,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         return
     direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
     assert saved_candidate_release == direct
-    if candidate_scenario in {"NORMAL", "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE"}:
+    if candidate_scenario == "NORMAL":
         assert execution.report.report_publication is not None
         assert execution.report.report_publication.status == "PUBLISHED"
         assert execution.report.report_publication.published_at is not None
         assert execution.publication_status == "PUBLISHED"
-    if candidate_scenario == "PUBLICATION_CONFIRMATION_CLOCK_ADVANCE":
-        assert execution.report.report_publication is not None
-        assert execution.report.report_publication.published_at == publication_time.isoformat()
     assert execution.report.result.candidate_release.published_at == (
         datetime.fromisoformat("2042-07-07T16:00:00+00:00")
         if candidate_scenario in {"LATE_COMMIT", "WINDOW_EXPIRED_AFTER_FREEZE"}

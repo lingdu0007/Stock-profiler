@@ -276,6 +276,7 @@ def freeze_candidate_release(
     *,
     published_at: datetime | None = None,
     initial_calibration: bool = True,
+    recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
 ) -> CandidateReleaseOutcome:
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
     publication_time = published_at or command.published_at
@@ -315,7 +316,11 @@ def freeze_candidate_release(
     qualification_status = _qualification_explanation_status(qualification, publication_time)
     state_qualified = qualification_status != "NOT_QUALIFIED"
     try:
-        calibration = _fit_calibrator(command, initial_calibration=initial_calibration)
+        calibration = _fit_calibrator(
+            command,
+            initial_calibration=initial_calibration,
+            recent_diagnostic_records=recent_diagnostic_records,
+        )
     except ValueError as error:
         return _release_outcome(
             command,
@@ -761,6 +766,7 @@ def _fit_calibrator(
     command: CandidateReleaseCommand,
     *,
     initial_calibration: bool = True,
+    recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
 ) -> CalibrationSnapshot:
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
@@ -848,8 +854,21 @@ def _fit_calibrator(
         raise ValueError("CALIBRATION_FIT_FAILED") from error
     probabilities = tuple(float(record.out_of_sample_probability) for record in records)
     out_of_sample_diagnostics = _calibration_diagnostics(records, probabilities)
-    recent_months = months[-24:]
-    recent_records = tuple(record for record in records if record.month in recent_months)
+    diagnostic_population = (
+        command.training_records if recent_diagnostic_records is None else recent_diagnostic_records
+    )
+    diagnostic_records_by_month: dict[str, list[CalibrationRecord]] = {}
+    for record in diagnostic_population:
+        if (
+            record.unified_maturity_at <= command.label_watermark_at
+            and record.label_available_at <= command.label_watermark_at
+        ):
+            diagnostic_records_by_month.setdefault(record.month, []).append(record)
+    mature_diagnostic_months = tuple(sorted(diagnostic_records_by_month))
+    recent_months = mature_diagnostic_months[-24:]
+    recent_records = tuple(
+        record for month in recent_months for record in diagnostic_records_by_month[month]
+    )
     recent_diagnostics = None
     recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
     if len(recent_records) < _MINIMUM_RECENT_DIAGNOSTIC_RECORDS:

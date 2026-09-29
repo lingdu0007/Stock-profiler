@@ -907,10 +907,11 @@ class DecisionLedger:
         framework_run_id: str | None = None,
         allow_repeated_occurrence: bool = False,
         recorded_at: str | None = None,
-    ) -> None:
-        """Append a phase outcome without replacing an earlier result family."""
+    ) -> str | None:
+        """Append a phase outcome and return its write timestamp when inserted."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
         stage_payload = _canonical_json(stage_result.model_dump(mode="json", exclude_none=True))
+        write_timestamp = recorded_at or self.observed_at()
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,
@@ -920,9 +921,9 @@ class DecisionLedger:
                 decision_event_id=decision_event_id,
                 stage_payload=stage_payload,
                 stage_result=stage_result,
-                recorded_at=recorded_at or self.observed_at(),
+                recorded_at=write_timestamp,
             )
-            return
+            return write_timestamp
         occurrence_count = int(
             connection.execute(
                 select(func.count())
@@ -936,7 +937,7 @@ class DecisionLedger:
             ).scalar_one()
         )
         if occurrence_count and not allow_repeated_occurrence:
-            return
+            return None
         occurrence = occurrence_count + 1 if allow_repeated_occurrence else 1
         self._insert_or_validate_stage_result(
             connection,
@@ -952,8 +953,9 @@ class DecisionLedger:
             decision_event_id=decision_event_id,
             stage_payload=stage_payload,
             stage_result=stage_result,
-            recorded_at=recorded_at or self.observed_at(),
+            recorded_at=write_timestamp,
         )
+        return write_timestamp
 
     def _insert_or_validate_stage_result(
         self,
