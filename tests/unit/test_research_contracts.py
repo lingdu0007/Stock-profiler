@@ -432,6 +432,17 @@ def test_historical_invalid_entry_uses_fifth_frozen_weekday_session() -> None:
     )
 
 
+def test_prediction_window_uses_the_active_calendar_sessions_when_available() -> None:
+    selection_cutoff = datetime(2042, 6, 3, 16, tzinfo=UTC)
+    market_calendar_version = "synthetic-market-calendar-v1"
+    first_session_open = _raw_score_evaluation_entry_at(selection_cutoff, market_calendar_version)
+
+    assert first_session_open == datetime(2042, 6, 4, 8, tzinfo=UTC)
+    assert raw_score_entry_window_end(first_session_open, market_calendar_version) == datetime(
+        2042, 6, 10, 15, tzinfo=UTC
+    )
+
+
 def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_window() -> None:
     payload = _command().model_dump(mode="json")
     record = next(
@@ -480,6 +491,24 @@ def test_delayed_valid_entry_keeps_the_original_candidate_window_end() -> None:
         record["entry_window_ends_at"].replace("Z", "+00:00")
     )
     assert delayed_record.evaluation_entry_at < delayed_record.entry_window_ends_at
+
+
+def test_off_session_entry_cannot_create_a_positive_mature_label() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    original_entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+    off_session_entry = original_entry.replace(hour=0)
+    maturity = raw_score_maturity_at(off_session_entry, record["market_calendar_version"])
+    record["evaluation_entry_at"] = off_session_entry.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:

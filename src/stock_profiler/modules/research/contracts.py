@@ -782,15 +782,23 @@ class RawScoreModelSnapshot(ResearchContract):
                         or record.market_calendar_version is None
                         or record.entry_window_ends_at
                         != raw_score_entry_window_end(
-                            _raw_score_evaluation_entry_at(record.selection_cutoff_at),
+                            _raw_score_evaluation_entry_at(
+                                record.selection_cutoff_at, record.market_calendar_version
+                            ),
                             record.market_calendar_version,
                         )
                         or (
                             record.evaluation_entry_at is not None
-                            and not (
-                                record.raw_score_frozen_at
-                                <= record.evaluation_entry_at
-                                < record.entry_window_ends_at
+                            and (
+                                not (
+                                    record.raw_score_frozen_at
+                                    <= record.evaluation_entry_at
+                                    < record.entry_window_ends_at
+                                )
+                                or not raw_score_entry_is_executable(
+                                    record.evaluation_entry_at,
+                                    record.market_calendar_version,
+                                )
                             )
                         )
                     ):
@@ -932,17 +940,65 @@ def _raw_score_month_end(month: str) -> datetime:
     )
 
 
-def _raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
-    """Return the first synthetic weekday session after the frozen cutoff."""
-    candidate = selection_cutoff_at.replace(
-        hour=16,
-        minute=0,
-        second=0,
-        microsecond=0,
-    ) + timedelta(days=1)
-    while candidate.weekday() >= 5:
-        candidate += timedelta(days=1)
-    return candidate
+def _raw_score_market_sessions(
+    market_calendar_version: str,
+    first_date: datetime,
+) -> tuple[datetime, ...]:
+    """Resolve the five entry-window closes from the active calendar or extended history."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    primary_sessions = tuple(
+        session.closed_at
+        for session in calendar.sessions
+        if session.closed_at.date() >= first_date.date()
+    )[:5]
+    if len(primary_sessions) == 5 and primary_sessions[0].date() == first_date.date():
+        return primary_sessions
+    terminal_sessions = tuple(
+        session.closed_at
+        for session in calendar.terminal_sessions or calendar.sessions
+        if session.closed_at.date() >= first_date.date()
+    )[:5]
+    if len(terminal_sessions) != 5:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return terminal_sessions
+
+
+def _raw_score_evaluation_entry_at(
+    selection_cutoff_at: datetime,
+    market_calendar_version: str = RAW_SCORE_MARKET_CALENDAR_VERSION,
+) -> datetime:
+    """Return the first executable open after the frozen cutoff from its calendar."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    primary_session = next(
+        (
+            session.closed_at
+            for session in calendar.sessions
+            if session.closed_at.date() > selection_cutoff_at.date()
+        ),
+        None,
+    )
+    next_session = (
+        primary_session
+        if primary_session is not None
+        and primary_session.date() <= selection_cutoff_at.date() + timedelta(days=14)
+        else None
+    )
+    if next_session is None:
+        next_session = next(
+            (
+                session.closed_at
+                for session in calendar.terminal_sessions or calendar.sessions
+                if session.closed_at.date() > selection_cutoff_at.date()
+            ),
+            None,
+        )
+    if next_session is None:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return next_session - timedelta(hours=7)
 
 
 def raw_score_maturity_at(evaluation_entry_at: datetime, market_calendar_version: str) -> datetime:
@@ -954,18 +1010,34 @@ def raw_score_entry_window_end(
     evaluation_entry_at: datetime, market_calendar_version: str
 ) -> datetime:
     """Return the fifth frozen weekday session close in the versioned synthetic calendar."""
+    return _raw_score_market_sessions(market_calendar_version, evaluation_entry_at)[-1]
+
+
+def raw_score_entry_is_executable(
+    evaluation_entry_at: datetime, market_calendar_version: str
+) -> bool:
+    """Return whether a frozen entry clock falls inside its versioned market session."""
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
-        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
-    sessions = calendar.terminal_sessions or calendar.sessions
-    window_sessions = tuple(
-        session.closed_at
-        for session in sessions
-        if session.closed_at.date() >= evaluation_entry_at.date()
-    )[:5]
-    if len(window_sessions) != 5:
-        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
-    return window_sessions[-1]
+        return False
+    sessions = calendar.sessions or calendar.terminal_sessions
+    session = next(
+        (item for item in sessions if item.closed_at.date() == evaluation_entry_at.date()),
+        None,
+    )
+    if session is None:
+        session = next(
+            (
+                item
+                for item in calendar.terminal_sessions or calendar.sessions
+                if item.closed_at.date() == evaluation_entry_at.date()
+            ),
+            None,
+        )
+    if session is None:
+        return False
+    opens_at = session.closed_at - timedelta(hours=7)
+    return opens_at <= evaluation_entry_at <= session.closed_at
 
 
 def _raw_score_label_available_at(
@@ -990,11 +1062,38 @@ def _raw_score_mature_training_months(
     mature_months: list[str] = []
     for month in _training_month_sequence(start_year, start_month, 1200):
         selection_cutoff_at = _raw_score_month_end(month)
-        evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        if _raw_score_label_available_at(evaluation_entry_at, market_calendar_version) > cutoff_at:
+        if market_calendar_version is None:
+            evaluation_entry_at = _legacy_raw_score_evaluation_entry_at(selection_cutoff_at)
+            label_available_at = _raw_score_label_available_at(
+                evaluation_entry_at, market_calendar_version
+            )
+        else:
+            evaluation_entry_at = _raw_score_evaluation_entry_at(
+                selection_cutoff_at, market_calendar_version
+            )
+            entry_window_ends_at = raw_score_entry_window_end(
+                evaluation_entry_at, market_calendar_version
+            )
+            label_available_at = _raw_score_label_available_at(
+                entry_window_ends_at, market_calendar_version
+            )
+        if label_available_at > cutoff_at:
             break
         mature_months.append(month)
     return tuple(mature_months)
+
+
+def _legacy_raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
+    """Preserve the pre-calendar weekday entry convention for legacy records."""
+    candidate = selection_cutoff_at.replace(
+        hour=16,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ) + timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
 
 
 def _frozen_raw_score_training_records(
