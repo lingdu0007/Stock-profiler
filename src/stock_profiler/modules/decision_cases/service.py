@@ -6,8 +6,9 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from decimal import Decimal
 from threading import Lock
 from typing import Literal
 
@@ -18,12 +19,14 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     CalibrationRecord,
     CandidateEvidenceClock,
     CandidateReleaseCommand,
+    CandidateReleaseOutcome,
     MarketStateQualification,
     MarketStateQualificationStatus,
     candidate_release_availability_failure,
     candidate_release_blocked_by_business_prerequisite,
     finalize_candidate_release_publication,
     freeze_candidate_release,
+    six_month_anniversary,
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
@@ -144,6 +147,13 @@ class CandidateCalibrationVersionMismatch(ValueError):
 
     def __init__(self) -> None:
         super().__init__("CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH")
+
+
+@dataclass(frozen=True)
+class _FrozenCandidatePrediction:
+    raw_success_score: Decimal
+    calibrated_probability: Decimal
+    matures_by: datetime
 
 
 class CandidateResearchHandoffUnavailable(ValueError):
@@ -593,10 +603,18 @@ def _validate_candidate_calibration_sources(
     )
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
+    frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for event in prior_calibration_snapshots:
         prior_command = event.case.candidate_release
-        if prior_command is None:
+        prior_outcome = event.result.candidate_release
+        if prior_command is None or prior_outcome is None:
             continue
+        for identity, prediction in _frozen_candidate_prediction_rows(
+            prior_command, prior_outcome
+        ).items():
+            previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
+            if previous_prediction != prediction:
+                raise CandidateCalibrationProvenanceInvalid()
         for record in prior_command.training_records:
             if (
                 record.label_available_at > command.label_watermark_at
@@ -623,6 +641,11 @@ def _validate_candidate_calibration_sources(
                     source_record.research_id,
                 )
                 _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
+    matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
+        frozen_candidate_predictions,
+        mature_source_rows,
+        command.label_watermark_at,
+    )
     globally_mature_months = tuple(sorted({identity[0] for identity in mature_source_rows}))
     if len(command.training_window_months) >= 60 and (
         len(globally_mature_months) < len(command.training_window_months)
@@ -731,6 +754,7 @@ def _validate_candidate_calibration_sources(
             command.training_window_months,
             mature_source_rows,
             frozen_training_rows,
+            matured_candidate_prediction_ids,
         )
         submitted_identities = {
             (record.month, record.security_id, record.research_id)
@@ -768,6 +792,62 @@ def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationR
     return left.model_copy(update={"record_id": right.record_id}) == right
 
 
+def _frozen_candidate_prediction_rows(
+    command: CandidateReleaseCommand,
+    outcome: CandidateReleaseOutcome,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Retain every frozen member probability, regardless of later gate disposition."""
+    if outcome.calibration is None:
+        return {}
+    if not command.market_sessions:
+        raise CandidateCalibrationProvenanceInvalid()
+    prediction_month = command.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
+    matures_by = six_month_anniversary(command.market_sessions[-1].closes_at)
+    predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
+    for member in outcome.members:
+        if member.calibrated_probability is None:
+            raise CandidateCalibrationProvenanceInvalid()
+        identity = (prediction_month, member.security_id, member.research_id)
+        if identity in predictions:
+            raise CandidateCalibrationProvenanceInvalid()
+        predictions[identity] = _FrozenCandidatePrediction(
+            raw_success_score=member.raw_success_score,
+            calibrated_probability=member.calibrated_probability,
+            matures_by=matures_by,
+        )
+    return predictions
+
+
+def _validate_frozen_candidate_prediction_source(
+    prediction: _FrozenCandidatePrediction,
+    source: RawScoreTrainingRecord,
+) -> None:
+    """Bind eventual outcome evidence to the previously frozen score and probability."""
+    if (
+        source.raw_success_score != prediction.raw_success_score
+        or source.historical_calibrated_probability != prediction.calibrated_probability
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _matured_candidate_prediction_ids(
+    predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction],
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    label_watermark_at: datetime,
+) -> set[tuple[str, str, str]]:
+    """Require eventual mature labels and their probabilities for all frozen predictions."""
+    matured: set[tuple[str, str, str]] = set()
+    for identity, prediction in predictions.items():
+        source_record = mature_source_rows.get(identity)
+        if source_record is None:
+            if prediction.matures_by <= label_watermark_at:
+                raise CandidateCalibrationProvenanceInvalid()
+            continue
+        _validate_frozen_candidate_prediction_source(prediction, source_record)
+        matured.add(identity)
+    return matured
+
+
 def _retain_frozen_calibration_record(
     rows: dict[tuple[str, str, str], CalibrationRecord], record: CalibrationRecord
 ) -> None:
@@ -782,13 +862,18 @@ def _expected_calibration_identities(
     months: tuple[str, ...],
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord],
+    frozen_candidate_prediction_ids: set[tuple[str, str, str]] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Union mature source labels with identities already frozen by prior calibration."""
-    return {
+    expected = {
         identity
         for identity in (*mature_source_rows.keys(), *frozen_training_rows.keys())
         if identity[0] in months
     }
+    expected.update(
+        identity for identity in frozen_candidate_prediction_ids or () if identity[0] in months
+    )
+    return expected
 
 
 def _retain_immutable_mature_source_row(

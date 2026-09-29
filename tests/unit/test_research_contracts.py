@@ -63,9 +63,9 @@ from stock_profiler.modules.research.service import (
 )
 
 
-def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
+def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScoreTrainingRecord:
     frozen_at = datetime(2040, 1, 31, 7, tzinfo=UTC)
-    original = RawScoreTrainingRecord(
+    return RawScoreTrainingRecord(
         month="2040-01",
         cohort_id="synthetic-cohort",
         security_id="SYNTH-ALPHA",
@@ -74,7 +74,7 @@ def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> Non
         raw_score_frozen_at=frozen_at,
         raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
         raw_success_score=Decimal("0.4"),
-        historical_calibrated_probability=Decimal("0.42"),
+        historical_calibrated_probability=probability,
         entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         evaluation_entry_at=datetime(2040, 2, 4, 7, tzinfo=UTC),
         unified_maturity_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
@@ -82,6 +82,10 @@ def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> Non
         label_available_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
         source_model_version="synthetic-model-v1",
     )
+
+
+def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
+    original = _mature_source_record()
     identity = (original.month, original.security_id, original.research_id)
     retained: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
 
@@ -95,6 +99,40 @@ def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> Non
         )
 
     assert retained[identity] is original
+
+
+def test_candidate_prediction_requires_its_original_probability_in_the_mature_label() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=Decimal("0.50"),
+        matures_by=source.unified_maturity_at,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
+
+
+def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    identity = (source.month, source.security_id, source.research_id)
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        matures_by=source.unified_maturity_at,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._matured_candidate_prediction_ids(
+            {identity: prediction},
+            {},
+            source.label_available_at,
+        )
 
 
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:

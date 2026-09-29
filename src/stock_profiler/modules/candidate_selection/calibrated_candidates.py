@@ -778,7 +778,7 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         ):
             raise ValueError("CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW")
         maturity_anchor = record.entry_at or record.entry_window_ends_at
-        if record.unified_maturity_at < _six_month_anniversary(maturity_anchor):
+        if record.unified_maturity_at < six_month_anniversary(maturity_anchor):
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
         if record.label_available_at < record.unified_maturity_at:
             raise ValueError("LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY")
@@ -1018,7 +1018,7 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
         return odds / (Decimal(1) + odds)
 
 
-def _six_month_anniversary(value: datetime) -> datetime:
+def six_month_anniversary(value: datetime) -> datetime:
     utc_value = value.astimezone(UTC)
     month_index = utc_value.year * 12 + utc_value.month - 1 + 6
     year, zero_based_month = divmod(month_index, 12)

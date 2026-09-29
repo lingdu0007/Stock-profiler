@@ -105,9 +105,11 @@ research event with ten independently risk-vetted members. The host fits the
 versioned monotone Firth logistic calibrator from an initial window of at least
 60 consecutive mature months, using the shortest consecutive suffix that
 contains at least 500 records and 50 examples from each class. Its population
-is the complete union of mature raw-score source rows and previously committed
-calibration rows; a repeated identity whose frozen score, probability or label
-changes fails closed. After the first valid
+is the complete union of mature raw-score source rows, previously committed
+calibration rows, and previously frozen candidate predictions whose six-month
+outcomes have matured. Each eventual label row must retain its original frozen
+candidate score and probability; omitted or rewritten outcomes fail closed.
+After the first valid
 calibration, every refit uses the fixed rolling latest 60 consecutive mature
 months; a missed sample floor then produces a visible calibration failure.
 The label watermark cannot exceed the research knowledge cutoff. It freezes

@@ -1476,6 +1476,20 @@ def test_previous_frozen_calibration_identities_remain_in_expected_cohort() -> N
     assert expected == {frozen_only_identity}
 
 
+def test_candidate_release_freezes_member_probability_into_prediction_cohort() -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+    member = outcome.members[0]
+    month = original.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
+
+    predictions = decision_case_service._frozen_candidate_prediction_rows(original, outcome)
+
+    prediction = predictions[(month, member.security_id, member.research_id)]
+    assert prediction.raw_success_score == member.raw_success_score
+    assert prediction.calibrated_probability == member.calibrated_probability
+    assert prediction.matures_by == _six_month_anniversary(original.market_sessions[-1].closes_at)
+
+
 def test_previous_frozen_calibration_record_cannot_be_rewritten() -> None:
     record = command().training_records[0]
     retained: dict[tuple[str, str, str], CalibrationRecord] = {}
