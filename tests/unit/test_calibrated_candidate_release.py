@@ -19,7 +19,6 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     finalize_candidate_release_publication,
     freeze_candidate_release,
 )
-from stock_profiler.modules.decision_cases.service import _calibration_month_mature_by
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 
@@ -1222,24 +1221,6 @@ def test_fractional_six_month_maturity_does_not_round_down_before_watermark() ->
     assert mature.disposition == "CANDIDATES"
 
 
-def test_source_month_maturity_uses_actual_entry_and_label_dates() -> None:
-    entry_window_ends_at = datetime(2045, 12, 8, 8, tzinfo=UTC)
-    actual_maturity = _six_month_anniversary(entry_window_ends_at)
-    records = [
-        record.model_copy(
-            update={
-                "entry_window_ends_at": entry_window_ends_at,
-                "unified_maturity_at": actual_maturity,
-                "label_available_at": actual_maturity,
-            }
-        )
-        for record in training_records()[-10:]
-    ]
-
-    assert not _calibration_month_mature_by(records, datetime(2046, 6, 5, 8, tzinfo=UTC))
-    assert _calibration_month_mature_by(records, actual_maturity)
-
-
 def test_expired_late_publication_keeps_original_window_and_records_failure() -> None:
     release = freeze_candidate_release(command(published=datetime(2046, 7, 7, 9, tzinfo=UTC)))
 
@@ -1413,7 +1394,7 @@ def test_declared_consecutive_mature_window_cannot_omit_newer_mature_months() ->
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
 
-def test_declared_sixty_month_window_rejects_calendar_gaps() -> None:
+def test_declared_sixty_mature_month_window_allows_calendar_gaps() -> None:
     original = command()
     missing_month = "2042-01"
     earlier_month = "2040-11"
@@ -1441,6 +1422,5 @@ def test_declared_sixty_month_window_rejects_calendar_gaps() -> None:
         original.model_copy(update={"training_window_months": months, "training_records": records})
     )
 
-    assert release.disposition == "FAILED"
-    assert release.availability_failure == "CALIBRATION"
-    assert "CALIBRATION_TRAINING_WINDOW_NOT_CONSECUTIVE" in release.reasons
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == months

@@ -279,13 +279,6 @@ class DecisionLedger(Protocol[Transaction]):
         self, decision_event_id: str, connection: Transaction
     ) -> DecisionEventFact | None: ...
 
-    def calibration_history(
-        self,
-        connection: Transaction,
-        access_scope: ResultAccessScope,
-        knowledge_cutoff: datetime,
-    ) -> tuple[DecisionEventFact, ...]: ...
-
     def get_correction_event(
         self, original_event_id: str, connection: Transaction
     ) -> DecisionEventFact | None: ...

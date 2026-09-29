@@ -533,14 +533,19 @@ class RawScoreTrainingCohort(ResearchContract):
 
 
 class RawScoreTrainingRecord(ResearchContract):
-    """Frozen evidence that one historical raw-score label is eligible."""
+    """Frozen out-of-sample score, executable entry, and terminal label evidence."""
 
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     cohort_id: str = Field(min_length=1)
     security_id: str = Field(min_length=1)
     research_id: str = Field(min_length=1)
     selection_cutoff_at: AwareDatetime
-    evaluation_entry_at: AwareDatetime
+    raw_score_frozen_at: AwareDatetime | None = None
+    raw_score_training_watermark_at: AwareDatetime | None = None
+    raw_success_score: Decimal | None = None
+    entry_window_ends_at: AwareDatetime | None = None
+    evaluation_entry_at: AwareDatetime | None = None
+    unified_maturity_at: AwareDatetime | None = None
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
@@ -688,21 +693,50 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score training record cutoff does not match its month")
             if any(
-                record.evaluation_entry_at <= record.selection_cutoff_at
+                record.evaluation_entry_at is not None
+                and record.evaluation_entry_at <= record.selection_cutoff_at
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must follow the selection cutoff")
-            if any(record.evaluation_entry_at.weekday() >= 5 for record in self.training_records):
-                raise ValueError("raw-score evaluation entry must be a synthetic trading day")
             if any(
-                _raw_score_label_available_at(record.evaluation_entry_at)
-                > record.label_available_at
+                record.evaluation_entry_at is not None and record.evaluation_entry_at.weekday() >= 5
                 for record in self.training_records
             ):
-                raise ValueError("raw-score training record label maturity is incomplete")
+                raise ValueError("raw-score evaluation entry must be a synthetic trading day")
+            for record in self.training_records:
+                if (
+                    record.raw_score_frozen_at is None
+                    or record.raw_score_training_watermark_at is None
+                    or record.raw_success_score is None
+                    or record.entry_window_ends_at is None
+                    or record.unified_maturity_at is None
+                ):
+                    raise ValueError("raw-score calibration evidence is incomplete")
+                if (
+                    record.raw_score_frozen_at != record.selection_cutoff_at
+                    or record.raw_score_training_watermark_at > record.raw_score_frozen_at
+                    or not record.raw_success_score.is_finite()
+                    or record.entry_window_ends_at <= record.raw_score_frozen_at
+                    or (record.evaluation_entry_at is None and record.terminal_label)
+                    or (
+                        record.evaluation_entry_at is not None
+                        and not (
+                            record.raw_score_frozen_at
+                            <= record.evaluation_entry_at
+                            < record.entry_window_ends_at
+                        )
+                    )
+                ):
+                    raise ValueError("raw-score calibration evidence has invalid clocks or label")
+                maturity_anchor = record.evaluation_entry_at or record.entry_window_ends_at
+                if record.unified_maturity_at != _raw_score_add_months(
+                    maturity_anchor, RAW_SCORE_LABEL_HORIZON_MONTHS
+                ):
+                    raise ValueError("raw-score unified maturity does not match the entry horizon")
+                if record.label_available_at < record.unified_maturity_at:
+                    raise ValueError("raw-score label maturity is incomplete")
             if any(
-                self.label_watermark_at is None
-                or record.label_available_at > self.label_watermark_at
+                record.label_available_at > self.label_watermark_at
                 for record in self.training_records
             ):
                 raise ValueError(
@@ -860,7 +894,7 @@ def _frozen_raw_score_training_records(
         record_count = 9 if month_index < 20 else 8
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        label_available_at = _raw_score_label_available_at(evaluation_entry_at)
+        entry_window_ends_at = evaluation_entry_at + timedelta(days=1)
         cohort_id = f"synthetic-training-cohort-{month}"
         member_security_ids = tuple(
             f"synthetic-training-security-{month_index * 10 + member_index:04}"
@@ -880,7 +914,13 @@ def _frozen_raw_score_training_records(
                 research_definition_version=RESEARCH_DEFINITION_VERSION,
             )
         )
-        for security_id, research_id in completed_research_ids.items():
+        for member_index, (security_id, research_id) in enumerate(completed_research_ids.items()):
+            entry_is_valid = record_index % 25 != 0
+            terminal_label = member_index >= record_count // 2 and entry_is_valid
+            maturity_anchor = evaluation_entry_at if entry_is_valid else entry_window_ends_at
+            unified_maturity_at = _raw_score_add_months(
+                maturity_anchor, RAW_SCORE_LABEL_HORIZON_MONTHS
+            )
             records.append(
                 RawScoreTrainingRecord(
                     month=month,
@@ -888,9 +928,14 @@ def _frozen_raw_score_training_records(
                     security_id=security_id,
                     research_id=research_id,
                     selection_cutoff_at=selection_cutoff_at,
-                    evaluation_entry_at=evaluation_entry_at,
-                    terminal_label=record_index % 2 == 0,
-                    label_available_at=label_available_at,
+                    raw_score_frozen_at=selection_cutoff_at,
+                    raw_score_training_watermark_at=selection_cutoff_at - timedelta(days=1),
+                    raw_success_score=Decimal(member_index) / Decimal("10"),
+                    entry_window_ends_at=entry_window_ends_at,
+                    evaluation_entry_at=evaluation_entry_at if entry_is_valid else None,
+                    unified_maturity_at=unified_maturity_at,
+                    terminal_label=terminal_label,
+                    label_available_at=unified_maturity_at,
                     source_model_version=RAW_SCORE_MODEL_VERSION,
                 )
             )
@@ -922,8 +967,8 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
         training_record_count=500,
-        positive_record_count=250,
-        negative_record_count=250,
+        positive_record_count=sum(record.terminal_label for record in training_records),
+        negative_record_count=sum(not record.terminal_label for record in training_records),
         intercept=RAW_SCORE_INTERCEPT,
         coefficients=dict(RAW_SCORE_COEFFICIENTS),
         transformations={

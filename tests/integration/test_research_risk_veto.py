@@ -219,6 +219,7 @@ def research_command(
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
     risk_rejected_member_ids: tuple[str, ...] = (),
+    raw_score_model: RawScoreModelSnapshot | None = None,
 ) -> ResearchCommand:
     cutoff = datetime(2042, 6, 30, 23, 59, 59, tzinfo=UTC)
     members = tuple(
@@ -309,7 +310,7 @@ def research_command(
         purpose="SYNTHETIC",
         screening=screening,
         members=members,
-        raw_score_model=frozen_raw_score_model_snapshot(),
+        raw_score_model=raw_score_model or frozen_raw_score_model_snapshot(),
         risk_scenario=risk_scenario,
         risk_rejected_member_ids=risk_rejected_member_ids,
         failure_mode=failure_mode,
@@ -498,8 +499,36 @@ def _case(
     risk_scenario: Literal["ACCEPT", "REJECT"] = "REJECT",
     failure_mode: Literal["NONE", "DATA", "RESEARCH", "RAW_SCORE", "RISK", "SYSTEM"] = "NONE",
     user_id: str = "synthetic-user-1616",
+    no_candidate_calibration: bool = False,
 ) -> FrozenDecisionCase:
-    command = research_command(risk_scenario=risk_scenario, failure_mode=failure_mode)
+    raw_score_model = frozen_raw_score_model_snapshot()
+    if no_candidate_calibration:
+        records = tuple(
+            record.model_copy(
+                update={
+                    "terminal_label": (
+                        record.raw_success_score is not None
+                        and record.raw_success_score <= Decimal("0.5")
+                        and record.evaluation_entry_at is not None
+                    )
+                }
+            )
+            for record in raw_score_model.training_records
+        )
+        positives = sum(record.terminal_label for record in records)
+        raw_score_model = RawScoreModelSnapshot.model_validate(
+            {
+                **raw_score_model.model_dump(mode="python"),
+                "training_records": records,
+                "positive_record_count": positives,
+                "negative_record_count": len(records) - positives,
+            }
+        )
+    command = research_command(
+        risk_scenario=risk_scenario,
+        failure_mode=failure_mode,
+        raw_score_model=raw_score_model,
+    )
     scope = ResultAccessScope(
         contract_version="1.0.0",
         user_id=user_id,
@@ -3504,7 +3533,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         else "2042-07-01T00:04:00+00:00"
     )
     monkeypatch.setattr(UtcClock, "now", lambda self: publication_time)
-    research_case = _case(migrated_settings, risk_scenario=risk_scenario)
+    research_case = _case(
+        migrated_settings,
+        risk_scenario=risk_scenario,
+        no_candidate_calibration=candidate_scenario == "NO_CANDIDATES",
+    )
     research_execution = run_frozen_decision_case(
         migrated_settings, research_case.model_dump(mode="json")
     )
@@ -3516,48 +3549,55 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     cutoff = datetime.fromisoformat(research_case.knowledge_cutoff)
     raw_scores = {score.security_id: score for score in research.raw_scores}
     research_members = {member.security_id: member for member in research.members}
-    security_ids = tuple(research_members)
-    training_months = tuple(
-        f"{year}-{month:02d}" for year in range(2035, 2042) for month in range(1, 13)
-    )[:-1][-60:]
-    source_months = training_months
-    if candidate_scenario == "CALIBRATION_DECLARED_OLDER_WINDOW":
-        first_year, first_month = (int(part) for part in training_months[0].split("-"))
-        prior_index = first_year * 12 + first_month - 2
-        prior_year, prior_month_zero_based = divmod(prior_index, 12)
-        omitted_training_months = (
-            f"{prior_year}-{prior_month_zero_based + 1:02d}",
-            *training_months[:-1],
+    runtime = initialize_runtime_storage(migrated_settings)
+    source_ledger = DecisionLedger(runtime.engine)
+    with runtime.engine.connect() as connection:
+        source_fact = source_ledger.get_decision_event(
+            research_execution.decision_event_id,
+            connection,
         )
-        source_months = (
-            *omitted_training_months,
-            training_months[-1],
+    assert source_fact is not None and source_fact.case.research is not None
+    source_records = source_fact.case.research.raw_score_model.training_records
+    assert len(source_records) == 500
+    assert any(
+        record.evaluation_entry_at is None and not record.terminal_label
+        for record in source_records
+    )
+    assert all(
+        record.raw_score_frozen_at < record.unified_maturity_at
+        for record in source_records
+        if record.raw_score_frozen_at is not None and record.unified_maturity_at is not None
+    )
+    training_months = source_fact.case.research.raw_score_model.training_months
+    older_training_months = tuple(
+        f"{int(month[:4]) - 1:04}{month[4:]}" for month in training_months
+    )
+
+    def calibration_record(index: int, row: RawScoreTrainingRecord) -> CalibrationRecord:
+        assert row.raw_score_frozen_at is not None
+        assert row.raw_score_training_watermark_at is not None
+        assert row.raw_success_score is not None
+        assert row.entry_window_ends_at is not None
+        assert row.unified_maturity_at is not None
+        return CalibrationRecord(
+            record_id=f"synthetic-calibration-label-{row.month}-{index:04d}",
+            month=row.month,
+            source_research_event_id=research_execution.decision_event_id,
+            security_id=row.security_id,
+            research_id=row.research_id,
+            raw_score_model_version=row.source_model_version,
+            raw_score_frozen_at=row.raw_score_frozen_at,
+            raw_score_training_watermark_at=row.raw_score_training_watermark_at,
+            raw_success_score=row.raw_success_score,
+            terminal_success=row.terminal_label,
+            entry_at=row.evaluation_entry_at,
+            entry_window_ends_at=row.entry_window_ends_at,
+            unified_maturity_at=row.unified_maturity_at,
+            label_available_at=row.label_available_at,
         )
-    else:
-        omitted_training_months = training_months
+
     training_records = tuple(
-        CalibrationRecord(
-            record_id=f"synthetic-calibration-label-{month}-{member:02d}",
-            month=month,
-            source_research_event_id=f"synthetic-calibration-event-{month}",
-            security_id=security_ids[member],
-            research_id=research_members[security_ids[member]].research_id,
-            raw_score_model_version=raw_scores[security_ids[member]].model_version,
-            raw_score_frozen_at=_synthetic_raw_score_frozen_at(month),
-            raw_score_training_watermark_at=(
-                _synthetic_raw_score_frozen_at(month)
-                if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK"
-                else _synthetic_raw_score_frozen_at(month) - timedelta(days=1)
-            ),
-            raw_success_score=Decimal(member) / Decimal("10"),
-            terminal_success=(member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5),
-            entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
-            entry_window_ends_at=_synthetic_entry_window_end(month),
-            unified_maturity_at=_synthetic_label_maturity(month),
-            label_available_at=_synthetic_label_maturity(month),
-        )
-        for month in omitted_training_months
-        for member in range(10)
+        calibration_record(index, row) for index, row in enumerate(source_records)
     )
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
         training_records = (
@@ -3586,140 +3626,38 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             *training_records[1:],
         )
     elif candidate_scenario == "CALIBRATION_LABEL_CLOCKS_TAMPERED":
-        first_training_record = training_records[0]
+        index = next(index for index, record in enumerate(training_records) if record.entry_at)
+        first_training_record = training_records[index]
         assert first_training_record.entry_at is not None
+        records = list(training_records)
+        records[index] = first_training_record.model_copy(
+            update={
+                "entry_at": first_training_record.entry_at + timedelta(days=1),
+                "label_available_at": first_training_record.label_available_at + timedelta(days=1),
+            }
+        )
+        training_records = tuple(records)
+    elif candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK":
         training_records = (
-            first_training_record.model_copy(
-                update={
-                    "entry_at": first_training_record.entry_at + timedelta(days=1),
-                    "label_available_at": (
-                        first_training_record.label_available_at + timedelta(days=1)
-                    ),
-                }
+            training_records[0].model_copy(
+                update={"raw_score_training_watermark_at": training_records[0].raw_score_frozen_at}
             ),
+            *training_records[1:],
+        )
+    elif candidate_scenario == "CALIBRATION_SOURCE_AFTER_CUTOFF":
+        training_records = (
+            training_records[0].model_copy(
+                update={"raw_score_frozen_at": cutoff + timedelta(seconds=1)}
+            ),
+            *training_records[1:],
+        )
+    elif candidate_scenario == "CALIBRATION_SOURCE_MISSING":
+        training_records = (
+            training_records[0].model_copy(update={"source_research_event_id": "missing-event"}),
             *training_records[1:],
         )
     if candidate_scenario == "CALIBRATION_RECORDS_MISSING":
         training_records = ()
-    runtime = initialize_runtime_storage(migrated_settings)
-    source_ledger = DecisionLedger(runtime.engine)
-    with runtime.engine.connect() as connection:
-        source_fact = source_ledger.get_decision_event(
-            research_execution.decision_event_id,
-            connection,
-        )
-    assert source_fact is not None
-    if candidate_scenario == "NORMAL":
-        assert source_fact.case.access_scope is not None
-        with runtime.engine.connect() as connection:
-            persisted_history = source_ledger.calibration_history(
-                connection,
-                source_fact.case.access_scope,
-                publication_time,
-            )
-        assert source_fact.decision_event_id in {
-            fact.decision_event_id for fact in persisted_history
-        }
-    calibration_source_facts: dict[str, DecisionEventFact] = {}
-    for month in source_months:
-        source_event_id = f"synthetic-calibration-event-{month}"
-        frozen_at = _synthetic_raw_score_frozen_at(month)
-        training_watermark = (
-            frozen_at
-            if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK"
-            else frozen_at - timedelta(days=1)
-        )
-        source_research = source_fact.result.research
-        assert source_research is not None and source_research.raw_scores is not None
-        source_research_command = source_fact.case.research
-        assert source_research_command is not None
-        monthly_scores = tuple(
-            score.model_copy(
-                update={
-                    "label_watermark_at": training_watermark,
-                    "label_watermark_month": training_watermark.strftime("%Y-%m"),
-                    "z20": Decimal(member) / Decimal("10"),
-                    **(
-                        {"model_version": "historical-model-v0"}
-                        if candidate_scenario == "CALIBRATION_INFERENCE_MODEL_MISMATCH"
-                        else {}
-                    ),
-                }
-            )
-            for member, score in enumerate(source_research.raw_scores)
-        )
-        monthly_labels = tuple(
-            RawScoreTrainingRecord(
-                month=month,
-                cohort_id=f"synthetic-calibration-cohort-{month}",
-                security_id=score.security_id,
-                research_id=score.research_id,
-                selection_cutoff_at=frozen_at,
-                evaluation_entry_at=_synthetic_entry_window_end(month) - timedelta(days=1),
-                terminal_label=(
-                    member < 8 if candidate_scenario == "NO_CANDIDATES" else member >= 5
-                ),
-                label_available_at=_synthetic_label_maturity(month),
-                source_model_version=score.model_version,
-            )
-            for member, score in enumerate(monthly_scores)
-        )
-        calibration_source_facts[source_event_id] = source_fact.model_copy(
-            update={
-                "decision_event_id": source_event_id,
-                "business_object_id": f"synthetic-calibration-object-{month}",
-                "framework_run_id": f"synthetic-calibration-run-{month}",
-                "case": source_fact.case.model_copy(
-                    update={
-                        "knowledge_cutoff": frozen_at.isoformat(),
-                        "research": source_research_command.model_copy(
-                            update={
-                                "raw_score_model": (
-                                    source_research_command.raw_score_model.model_copy(
-                                        update={"training_records": monthly_labels}
-                                    )
-                                )
-                            }
-                        ),
-                    }
-                ),
-                "result": source_fact.result.model_copy(
-                    update={
-                        "research": source_research.model_copy(
-                            update={"raw_scores": monthly_scores}
-                        )
-                    }
-                ),
-                "committed_at": _synthetic_label_maturity(month).isoformat(),
-            }
-        )
-    if candidate_scenario == "CALIBRATION_SOURCE_AFTER_CUTOFF":
-        newest = training_months[-1]
-        source_id = f"synthetic-calibration-event-{newest}"
-        calibration_source_facts[source_id] = calibration_source_facts[source_id].model_copy(
-            update={"committed_at": (cutoff + timedelta(seconds=1)).isoformat()}
-        )
-    if candidate_scenario == "CALIBRATION_SOURCE_MISSING":
-        calibration_source_facts.pop(f"synthetic-calibration-event-{training_months[0]}")
-    get_decision_event = DecisionLedger.get_decision_event
-
-    def calibration_history(
-        ledger: DecisionLedger,
-        connection: Any,
-        access_scope: Any,
-        knowledge_cutoff: datetime,
-    ) -> tuple[DecisionEventFact, ...]:
-        return (*calibration_source_facts.values(), source_fact)
-
-    def get_calibration_source_event(
-        ledger: DecisionLedger, event_id: str, connection: Any
-    ) -> DecisionEventFact | None:
-        return calibration_source_facts.get(event_id) or get_decision_event(
-            ledger, event_id, connection
-        )
-
-    monkeypatch.setattr(DecisionLedger, "get_decision_event", get_calibration_source_event)
-    monkeypatch.setattr(DecisionLedger, "calibration_history", calibration_history)
     if candidate_scenario.startswith("UPSTREAM_RESEARCH_"):
         original_get_original_event = DecisionLedger.get_original_decision_event
         if candidate_scenario == "UPSTREAM_RESEARCH_EVENT_MISSING":
@@ -3849,7 +3787,9 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             if candidate_scenario == "CALIBRATION_WINDOW_MISSING"
             else training_months[:-1]
             if candidate_scenario == "CALIBRATION_FAILURE"
-            else omitted_training_months
+            else older_training_months
+            if candidate_scenario == "CALIBRATION_DECLARED_OLDER_WINDOW"
+            else training_months
         ),
         training_records=training_records,
         candidates=candidates,
@@ -4688,6 +4628,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert direct is not None
     assert execution.report.result.candidate_release is not None
     saved_candidate_release = execution.report.result.candidate_release
+    if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
+        assert saved_candidate_release.disposition == "FAILED"
+        assert saved_candidate_release.availability_failure == "VERSION"
+        assert "CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH" in saved_candidate_release.reasons
+        return
+    if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK":
+        assert saved_candidate_release.disposition == "FAILED"
+        assert saved_candidate_release.availability_failure == "CALIBRATION"
+        assert "CANDIDATE_CALIBRATION_LINEAGE_INVALID" in saved_candidate_release.reasons
+        return
     direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
     assert saved_candidate_release == direct
     if candidate_scenario == "NORMAL":

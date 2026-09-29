@@ -205,8 +205,12 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.label_watermark_month == "2042-06"
     assert len(command.raw_score_model.training_records) == 500
     assert all(
-        record.selection_cutoff_at < record.evaluation_entry_at
+        record.evaluation_entry_at is None
+        or record.selection_cutoff_at < record.evaluation_entry_at
         for record in command.raw_score_model.training_records
+    )
+    assert any(
+        record.evaluation_entry_at is None for record in command.raw_score_model.training_records
     )
     assert (
         max(record.label_available_at for record in command.raw_score_model.training_records)
@@ -631,10 +635,9 @@ def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
     assert decoded.raw_score_model.training_records[0].cohort_id.startswith(
         "legacy-training-cohort-"
     )
-    assert (
-        decoded.raw_score_model.training_records[0].evaluation_entry_at
-        > decoded.raw_score_model.training_records[0].selection_cutoff_at
-    )
+    evaluation_entry_at = decoded.raw_score_model.training_records[0].evaluation_entry_at
+    assert evaluation_entry_at is not None
+    assert evaluation_entry_at > decoded.raw_score_model.training_records[0].selection_cutoff_at
 
 
 def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
