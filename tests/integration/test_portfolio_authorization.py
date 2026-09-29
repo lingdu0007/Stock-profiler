@@ -832,7 +832,7 @@ def test_risk_budget_relaxation_requires_a_known_market_calendar_version(
     )
     evidence = relaxation_evidence("synthetic-predecessor-authorization")
     for session in evidence["normal_market_sessions"]:
-        session["market_calendar_version_id"] = "synthetic-market-calendar-v2"
+        session["market_calendar_version_id"] = "synthetic-unknown-market-calendar-v1"
     command["confirmation"]["relaxation_evidence"] = evidence
 
     with pytest.raises(ValueError, match="known immutable market calendar"):

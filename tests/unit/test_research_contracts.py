@@ -55,6 +55,7 @@ from stock_profiler.modules.research.contracts import (
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
+    raw_score_entry_window_end,
     raw_score_maturity_at,
     research_draft_payload,
     research_member_handoff_payload,
@@ -405,6 +406,50 @@ def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> N
         decision_case_service._validate_frozen_candidate_prediction_source(
             prediction, early_invalid_label
         )
+
+
+def test_historical_invalid_entry_uses_fifth_frozen_weekday_session() -> None:
+    _, records = _frozen_raw_score_training_records(("2040-01",))
+    invalid_entry = next(record for record in records if record.evaluation_entry_at is None)
+    assert invalid_entry.entry_window_ends_at is not None
+    assert invalid_entry.unified_maturity_at is not None
+
+    expected_entry = _raw_score_evaluation_entry_at(invalid_entry.selection_cutoff_at)
+    expected_date = expected_entry
+    while expected_date.weekday() >= 5:
+        expected_date += timedelta(days=1)
+    for _ in range(4):
+        expected_date += timedelta(days=1)
+        while expected_date.weekday() >= 5:
+            expected_date += timedelta(days=1)
+
+    assert invalid_entry.entry_window_ends_at == raw_score_entry_window_end(
+        expected_entry, RAW_SCORE_MARKET_CALENDAR_VERSION
+    )
+    assert invalid_entry.entry_window_ends_at.date() == expected_date.date()
+    assert invalid_entry.unified_maturity_at == raw_score_maturity_at(
+        expected_date, RAW_SCORE_MARKET_CALENDAR_VERSION
+    )
+
+
+def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_window() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is None
+    )
+    short_window_end = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+    short_window_end = short_window_end.replace(hour=16) + timedelta(days=1)
+    while short_window_end.weekday() >= 5:
+        short_window_end += timedelta(days=1)
+    maturity = raw_score_maturity_at(short_window_end, RAW_SCORE_MARKET_CALENDAR_VERSION)
+    record["entry_window_ends_at"] = short_window_end.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
 
 
 def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:

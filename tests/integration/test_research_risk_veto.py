@@ -4610,6 +4610,15 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 else qualification_history[0].qualification
             )
             assert original_qualification is not None
+            alert_available_at = publication_time + timedelta(seconds=1)
+            alert_evidence = qualification_evidence.model_copy(
+                update={
+                    "evidence_id": "synthetic-candidate-diagnostic-alert-evidence",
+                    "kind": "DIAGNOSTIC_ALERT",
+                    "evaluation_end": alert_available_at,
+                    "available_at": alert_available_at,
+                }
+            )
             first_alert = original_qualification.model_copy(
                 update={
                     "decision_id": "synthetic-candidate-diagnostic-alert-after-publication-1",
@@ -4617,6 +4626,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     "cause": "DIAGNOSTIC_ALERT",
                     "previous_decision_id": original_qualification.decision_id,
                     "recorded_at": publication_time + timedelta(seconds=1),
+                    "alerts": (*original_qualification.alerts, alert_evidence),
+                }
+            )
+            second_alert_evidence = alert_evidence.model_copy(
+                update={
+                    "evidence_id": "synthetic-candidate-diagnostic-alert-evidence-2",
+                    "evaluation_end": publication_time + timedelta(seconds=2),
+                    "available_at": publication_time + timedelta(seconds=2),
                 }
             )
             second_alert = first_alert.model_copy(
@@ -4624,6 +4641,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     "decision_id": "synthetic-candidate-diagnostic-alert-after-publication-2",
                     "previous_decision_id": first_alert.decision_id,
                     "recorded_at": publication_time + timedelta(seconds=2),
+                    "alerts": (*first_alert.alerts, second_alert_evidence),
                 }
             )
             qualification_history_state["value"] = (

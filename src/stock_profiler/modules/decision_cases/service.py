@@ -663,17 +663,23 @@ def _validate_candidate_calibration_sources(
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
     historical_events = tuple(
-        event
-        for event in ledger.research_event_history(connection, access_scope)
-        if event.corrects_event_id is None
-        and event.validation_status == "PASSED"
-        and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
-        and event.case.research is not None
-        and event.result.research is not None
+        sorted(
+            (
+                event
+                for event in ledger.research_event_history(connection, access_scope)
+                if event.corrects_event_id is None
+                and event.validation_status == "PASSED"
+                and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+                and event.case.research is not None
+                and event.result.research is not None
+            ),
+            key=lambda event: event.decision_event_id,
+        )
     )
     historical_events_by_id = {event.decision_event_id: event for event in historical_events}
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     mature_source_event_ids: dict[tuple[str, str, str], str] = {}
+    unavailable_probability_identities: set[tuple[str, str, str]] = set()
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
@@ -714,6 +720,13 @@ def _validate_candidate_calibration_sources(
         for source_record in model.training_records:
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
+            identity = (
+                source_record.month,
+                source_record.security_id,
+                source_record.research_id,
+            )
+            if source_record.historical_calibrated_probability is None:
+                unavailable_probability_identities.add(identity)
             if (
                 source_record.label_available_at > command.label_watermark_at
                 or source_record.unified_maturity_at > command.label_watermark_at
@@ -724,11 +737,6 @@ def _validate_candidate_calibration_sources(
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
                 if source_record.historical_calibrated_probability is not None:
-                    identity = (
-                        source_record.month,
-                        source_record.security_id,
-                        source_record.research_id,
-                    )
                     _retain_immutable_mature_source_row(
                         cutoff_mature_source_rows, identity, source_record
                     )
@@ -739,13 +747,13 @@ def _validate_candidate_calibration_sources(
                 and source_record.label_available_at <= command.label_watermark_at
                 and source_record.unified_maturity_at <= command.label_watermark_at
             ):
-                identity = (
-                    source_record.month,
-                    source_record.security_id,
-                    source_record.research_id,
-                )
                 _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
                 mature_source_event_ids.setdefault(identity, event.decision_event_id)
+    unavailable_probability_identities.difference_update(frozen_training_rows)
+    for identity in unavailable_probability_identities:
+        mature_source_rows.pop(identity, None)
+        mature_source_event_ids.pop(identity, None)
+        cutoff_mature_source_rows.pop(identity, None)
     cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
@@ -776,27 +784,19 @@ def _validate_candidate_calibration_sources(
         watermark_incomplete_source_months,
     )
     recent_diagnostic_months = set(watermark_mature_months[-24:])
-    recent_diagnostic_records_by_identity = {
-        identity: _calibration_record_from_raw_score(
-            record,
-            mature_source_event_ids[identity],
-        )
-        for identity, record in mature_source_rows.items()
-        if identity[0] in recent_diagnostic_months
-    }
-    for identity, record in frozen_training_rows.items():
-        if identity[0] in recent_diagnostic_months:
-            _retain_frozen_calibration_record(recent_diagnostic_records_by_identity, record)
-    records_by_event: dict[str, list[CalibrationRecord]] = {}
-    events_by_month: dict[str, str] = {}
-    for record in command.training_records:
-        if (
-            record.month in events_by_month
-            and events_by_month[record.month] != record.source_research_event_id
-        ):
-            raise CandidateCalibrationProvenanceInvalid()
-        events_by_month[record.month] = record.source_research_event_id
-        records_by_event.setdefault(record.source_research_event_id, []).append(record)
+    recent_diagnostic_records_by_identity = _recent_calibration_diagnostic_records(
+        mature_source_rows,
+        mature_source_event_ids,
+        frozen_training_rows,
+        recent_diagnostic_months,
+        unavailable_probability_identities,
+    )
+    records_by_event = _calibration_records_by_source_event(command.training_records)
+    for records in records_by_event.values():
+        for record in records:
+            identity = (record.month, record.security_id, record.research_id)
+            if identity in unavailable_probability_identities:
+                raise CandidateCalibrationProvenanceInvalid()
 
     for event_id, records in records_by_event.items():
         source_event = ledger.get_decision_event(event_id, connection)
@@ -839,7 +839,7 @@ def _validate_candidate_calibration_sources(
         expected_identities = set(expected_source_rows) | {
             identity for identity in frozen_by_identity if identity[0] in submitted_months
         }
-        if set(records_by_identity) != expected_identities:
+        if not set(records_by_identity).issubset(expected_identities):
             raise CandidateCalibrationProvenanceInvalid()
         for identity, record in records_by_identity.items():
             frozen_record = frozen_by_identity.get(identity)
@@ -982,13 +982,52 @@ def _fully_matured_calibration_months(
 def _calibration_source_rows_by_identity(
     records: Iterable[RawScoreTrainingRecord],
     months: set[str],
+    excluded_identities: set[tuple[str, str, str]] | None = None,
 ) -> dict[tuple[str, str, str], RawScoreTrainingRecord]:
     """Include only matured-probability evidence eligible for calibration."""
+    excluded = excluded_identities or set()
     return {
         (record.month, record.security_id, record.research_id): record
         for record in records
-        if record.month in months and record.historical_calibrated_probability is not None
+        if record.month in months
+        and record.historical_calibrated_probability is not None
+        and (record.month, record.security_id, record.research_id) not in excluded
     }
+
+
+def _calibration_records_by_source_event(
+    records: Iterable[CalibrationRecord],
+) -> dict[str, list[CalibrationRecord]]:
+    """Partition rows by provenance while allowing a mature month to span events."""
+    grouped: dict[str, list[CalibrationRecord]] = {}
+    for record in records:
+        grouped.setdefault(record.source_research_event_id, []).append(record)
+    return grouped
+
+
+def _recent_calibration_diagnostic_records(
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    mature_source_event_ids: dict[tuple[str, str, str], str],
+    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord],
+    recent_months: set[str],
+    unavailable_probability_identities: set[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], CalibrationRecord]:
+    """Preserve committed attribution before adding newly observed source diagnostics."""
+    records = {
+        identity: record
+        for identity, record in frozen_training_rows.items()
+        if identity[0] in recent_months
+    }
+    for identity, source in mature_source_rows.items():
+        if (
+            identity[0] in recent_months
+            and identity not in unavailable_probability_identities
+            and identity not in records
+        ):
+            records[identity] = _calibration_record_from_raw_score(
+                source, mature_source_event_ids[identity]
+            )
+    return records
 
 
 def _calibration_record_from_raw_score(

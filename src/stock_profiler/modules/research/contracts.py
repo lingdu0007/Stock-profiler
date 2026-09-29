@@ -24,7 +24,10 @@ from pydantic import (
     model_validator,
 )
 
-from stock_profiler.modules.portfolio.market_calendar import six_month_terminal_evaluation_at
+from stock_profiler.modules.portfolio.market_calendar import (
+    six_month_terminal_evaluation_at,
+    synthetic_market_calendar,
+)
 
 RESEARCH_CONTRACT_VERSION = "1.0.0"
 RESEARCH_DEFINITION_ID = "synthetic-monthly-research"
@@ -777,6 +780,12 @@ class RawScoreModelSnapshot(ResearchContract):
                         )
                         or record.entry_window_ends_at <= record.raw_score_frozen_at
                         or record.market_calendar_version is None
+                        or record.entry_window_ends_at
+                        != raw_score_entry_window_end(
+                            record.evaluation_entry_at
+                            or _raw_score_evaluation_entry_at(record.selection_cutoff_at),
+                            record.market_calendar_version,
+                        )
                         or (
                             record.evaluation_entry_at is not None
                             and not (
@@ -942,6 +951,24 @@ def raw_score_maturity_at(evaluation_entry_at: datetime, market_calendar_version
     return six_month_terminal_evaluation_at(evaluation_entry_at, market_calendar_version)
 
 
+def raw_score_entry_window_end(
+    evaluation_entry_at: datetime, market_calendar_version: str
+) -> datetime:
+    """Return the fifth frozen weekday session close in the versioned synthetic calendar."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    sessions = calendar.terminal_sessions or calendar.sessions
+    window_sessions = tuple(
+        session.closed_at
+        for session in sessions
+        if session.closed_at.date() >= evaluation_entry_at.date()
+    )[:5]
+    if len(window_sessions) != 5:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return window_sessions[-1]
+
+
 def _raw_score_label_available_at(
     evaluation_entry_at: datetime,
     market_calendar_version: str | None,
@@ -981,7 +1008,9 @@ def _frozen_raw_score_training_records(
         record_count = 9 if month_index < 20 or month_index >= 36 else 8
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        entry_window_ends_at = evaluation_entry_at + timedelta(days=1)
+        entry_window_ends_at = raw_score_entry_window_end(
+            evaluation_entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION
+        )
         cohort_id = f"synthetic-training-cohort-{month}"
         member_security_ids = tuple(
             f"synthetic-training-security-{month_index * 10 + member_index:04}"

@@ -1656,6 +1656,27 @@ def test_previous_frozen_calibration_identities_remain_in_expected_cohort() -> N
     assert expected == {frozen_only_identity}
 
 
+def test_recent_diagnostics_preserve_frozen_source_event_attribution() -> None:
+    source = frozen_raw_score_model_snapshot().training_records[0]
+    identity = (source.month, source.security_id, source.research_id)
+    source_record = decision_case_service._calibration_record_from_raw_score(
+        source, "synthetic-source-event-current"
+    )
+    frozen_record = source_record.model_copy(
+        update={"source_research_event_id": "synthetic-source-event-frozen"}
+    )
+
+    records = decision_case_service._recent_calibration_diagnostic_records(
+        {identity: source},
+        {identity: "synthetic-source-event-current"},
+        {identity: frozen_record},
+        {source.month},
+        set(),
+    )
+
+    assert records[identity] == frozen_record
+
+
 def test_candidate_release_freezes_member_probability_into_prediction_cohort() -> None:
     original = command()
     outcome = freeze_candidate_release(original)
@@ -1746,6 +1767,30 @@ def test_calibration_source_population_excludes_records_without_frozen_probabili
         missing_probability.research_id,
     ) not in source_rows
     assert len(source_rows) == 2
+
+
+def test_unavailable_probability_identity_cannot_reenter_from_another_source_row() -> None:
+    source_records = frozen_raw_score_model_snapshot().training_records
+    unavailable = source_records[0].model_copy(update={"historical_calibrated_probability": None})
+    duplicate_available = source_records[0]
+    identity = (unavailable.month, unavailable.security_id, unavailable.research_id)
+
+    source_rows = decision_case_service._calibration_source_rows_by_identity(
+        (unavailable, duplicate_available), {unavailable.month}, {identity}
+    )
+
+    assert identity not in source_rows
+
+
+def test_calibration_provenance_groups_allow_one_month_to_span_research_events() -> None:
+    records = command().training_records[:2]
+    first = records[0].model_copy(update={"source_research_event_id": "synthetic-source-event-a"})
+    second = records[1].model_copy(update={"source_research_event_id": "synthetic-source-event-b"})
+
+    grouped = decision_case_service._calibration_records_by_source_event((first, second))
+
+    assert set(grouped) == {"synthetic-source-event-a", "synthetic-source-event-b"}
+    assert {record.month for rows in grouped.values() for record in rows} == {first.month}
 
 
 def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None:
