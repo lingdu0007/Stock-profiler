@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import math
-from calendar import monthrange
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
 from typing import Literal, NamedTuple
 
@@ -276,6 +275,7 @@ def freeze_candidate_release(
     command: CandidateReleaseCommand,
     *,
     published_at: datetime | None = None,
+    initial_calibration: bool = True,
 ) -> CandidateReleaseOutcome:
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
     publication_time = published_at or command.published_at
@@ -315,7 +315,7 @@ def freeze_candidate_release(
     qualification_status = _qualification_explanation_status(qualification, publication_time)
     state_qualified = qualification_status != "NOT_QUALIFIED"
     try:
-        calibration = _fit_calibrator(command)
+        calibration = _fit_calibrator(command, initial_calibration=initial_calibration)
     except ValueError as error:
         return _release_outcome(
             command,
@@ -757,7 +757,11 @@ def _release_outcome(
     )
 
 
-def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
+def _fit_calibrator(
+    command: CandidateReleaseCommand,
+    *,
+    initial_calibration: bool = True,
+) -> CalibrationSnapshot:
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
     months = command.training_window_months
@@ -806,8 +810,18 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     if not set(months).issubset(mature_months):
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_MATURE")
-    if months != mature_months[-len(months) :]:
-        raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST")
+    if initial_calibration:
+        expected_months = mature_months[: len(months)]
+    else:
+        if len(months) != _MINIMUM_MATURE_MONTHS:
+            raise ValueError("CALIBRATION_ROLLING_WINDOW_MUST_BE_60_MONTHS")
+        expected_months = mature_months[-_MINIMUM_MATURE_MONTHS:]
+    if months != expected_months:
+        raise ValueError(
+            "CALIBRATION_INITIAL_WINDOW_NOT_EARLIEST"
+            if initial_calibration
+            else "CALIBRATION_TRAINING_WINDOW_NOT_LATEST"
+        )
     records = tuple(record for month in months for record in by_month[month])
     if len(months) > _MINIMUM_MATURE_MONTHS:
         for window_length in range(_MINIMUM_MATURE_MONTHS, len(months)):
@@ -1033,15 +1047,3 @@ def _probability(calibration: CalibrationSnapshot, score: Decimal) -> Decimal:
             max(probability, _MINIMUM_REUSABLE_PROBABILITY),
             _MAXIMUM_REUSABLE_PROBABILITY,
         )
-
-
-def six_month_anniversary(value: datetime) -> datetime:
-    utc_value = value.astimezone(UTC)
-    month_index = utc_value.year * 12 + utc_value.month - 1 + 6
-    year, zero_based_month = divmod(month_index, 12)
-    month = zero_based_month + 1
-    return utc_value.replace(
-        year=year,
-        month=month,
-        day=min(utc_value.day, monthrange(year, month)[1]),
-    )

@@ -1005,7 +1005,8 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
                 "training_window_months": (outside_month, *original.training_window_months[:-1]),
                 "training_records": (*outside_month_records, *original.training_records),
             }
-        )
+        ),
+        initial_calibration=False,
     )
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
@@ -1543,7 +1544,7 @@ def test_declared_window_must_contain_only_mature_months() -> None:
         update={"training_records": (*immature_records, *extra_month_records)}
     )
 
-    release = freeze_candidate_release(candidate)
+    release = freeze_candidate_release(candidate, initial_calibration=False)
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
@@ -1592,7 +1593,7 @@ def test_declared_mature_window_cannot_omit_newer_mature_months() -> None:
         }
     )
 
-    release = freeze_candidate_release(candidate)
+    release = freeze_candidate_release(candidate, initial_calibration=False)
 
     assert release.disposition == "FAILED"
     assert release.availability_failure == "CALIBRATION"
@@ -1781,13 +1782,32 @@ def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> N
     older_window = authoritative_months[:60]
 
     with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
-        decision_case_service._validate_latest_mature_calibration_window(
+        decision_case_service._validate_calibration_training_window(
             older_window, authoritative_months
         )
 
-    decision_case_service._validate_latest_mature_calibration_window(
+    decision_case_service._validate_calibration_training_window(
         authoritative_months[-60:], authoritative_months
     )
+
+
+def test_initial_calibration_can_use_the_earliest_qualifying_mature_prefix() -> None:
+    authoritative_months = tuple(
+        f"{2040 + index // 12:04}-{index % 12 + 1:02}" for index in range(61)
+    )
+
+    decision_case_service._validate_calibration_training_window(
+        authoritative_months[:60],
+        authoritative_months,
+        initial_calibration=True,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_calibration_training_window(
+            authoritative_months[-60:],
+            authoritative_months,
+            initial_calibration=True,
+        )
 
 
 def test_backdated_label_watermark_cannot_hide_cutoff_mature_rows_in_selected_months() -> None:
@@ -2059,6 +2079,13 @@ def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> N
             "training_records": tuple(records),
         }
     )
+    initial_prefix = candidate.model_copy(update={"training_window_months": months[:60]})
+
+    calibration = candidate_module._fit_calibrator(initial_prefix)
+
+    assert calibration.training_window_months == months[:60]
+    with pytest.raises(ValueError, match="CALIBRATION_TRAINING_WINDOW_NOT_LATEST"):
+        candidate_module._fit_calibrator(initial_prefix, initial_calibration=False)
 
     with pytest.raises(ValueError, match="CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM"):
         candidate_module._fit_calibrator(candidate)

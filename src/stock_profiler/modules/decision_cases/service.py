@@ -646,7 +646,7 @@ def _validate_candidate_calibration_sources(
     connection: Transaction,
     access_scope: ResultAccessScope,
     candidate_model_version: str,
-) -> None:
+) -> bool:
     """Bind calibration rows to the complete frozen out-of-sample research snapshot."""
     if any(
         record.raw_score_model_version != candidate_model_version
@@ -750,8 +750,10 @@ def _validate_candidate_calibration_sources(
         set(frozen_candidate_predictions),
         cutoff_incomplete_source_months,
     )
-    _validate_latest_mature_calibration_window(
-        command.training_window_months, globally_mature_months
+    _validate_calibration_training_window(
+        command.training_window_months,
+        globally_mature_months,
+        initial_calibration=not prior_calibration_snapshots,
     )
     records_by_event: dict[str, list[CalibrationRecord]] = {}
     events_by_month: dict[str, str] = {}
@@ -879,6 +881,7 @@ def _validate_candidate_calibration_sources(
                 or latest_source_record.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+    return not prior_calibration_snapshots
 
 
 def _prior_calibration_snapshot_matches(
@@ -896,15 +899,23 @@ def _prior_calibration_snapshot_matches(
     )
 
 
-def _validate_latest_mature_calibration_window(
+def _validate_calibration_training_window(
     training_window_months: tuple[str, ...],
     authoritative_mature_months: tuple[str, ...],
+    *,
+    initial_calibration: bool = False,
 ) -> None:
-    """Reject a caller window that omits labels mature by the frozen knowledge cutoff."""
-    if len(training_window_months) >= 60 and (
-        len(authoritative_mature_months) < len(training_window_months)
-        or training_window_months != authoritative_mature_months[-len(training_window_months) :]
-    ):
+    """Bind the initial prefix or later rolling window to cutoff-mature months."""
+    if len(training_window_months) < 60:
+        return
+    if len(authoritative_mature_months) < len(training_window_months):
+        raise CandidateCalibrationProvenanceInvalid()
+    expected_window = (
+        authoritative_mature_months[: len(training_window_months)]
+        if initial_calibration
+        else authoritative_mature_months[-len(training_window_months) :]
+    )
+    if training_window_months != expected_window:
         raise CandidateCalibrationProvenanceInvalid()
 
 
@@ -2292,6 +2303,7 @@ def _commit_framework_result(
     candidate_calibration_failure: str | None = None
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
     candidate_model_version: str | None = None
+    candidate_initial_calibration = True
 
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
@@ -2350,7 +2362,7 @@ def _commit_framework_result(
         ):
             try:
                 assert execution_case.access_scope is not None
-                _validate_candidate_calibration_sources(
+                candidate_initial_calibration = _validate_candidate_calibration_sources(
                     execution_case.candidate_release,
                     ledger,
                     connection,
@@ -2864,6 +2876,7 @@ def _commit_framework_result(
                     candidate_release = freeze_candidate_release(
                         publication_command,
                         published_at=publication_time,
+                        initial_calibration=candidate_initial_calibration,
                     )
                 committed_at = ledger.observed_at()
                 if (
