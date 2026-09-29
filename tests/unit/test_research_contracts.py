@@ -108,6 +108,8 @@ def test_candidate_prediction_requires_its_original_probability_in_the_mature_la
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=Decimal("0.50"),
+        entry_window_starts_at=datetime(2040, 2, 1, 7, tzinfo=UTC),
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         matures_by=source.unified_maturity_at,
     )
 
@@ -124,6 +126,8 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
     prediction = decision_case_service._FrozenCandidatePrediction(
         raw_success_score=source.raw_success_score,
         calibrated_probability=source.historical_calibrated_probability,
+        entry_window_starts_at=datetime(2040, 2, 1, 7, tzinfo=UTC),
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
         matures_by=source.unified_maturity_at,
     )
 
@@ -132,6 +136,56 @@ def test_mature_candidate_prediction_cannot_be_omitted_from_source_history() -> 
             {identity: prediction},
             {},
             source.label_available_at,
+        )
+
+
+def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    frozen_window_end = datetime(2040, 2, 6, 8, tzinfo=UTC)
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        entry_window_starts_at=datetime(2040, 2, 1, 1, tzinfo=UTC),
+        entry_window_ends_at=frozen_window_end,
+        matures_by=datetime(2040, 8, 6, 8, tzinfo=UTC),
+    )
+    early_invalid_label = source.model_copy(
+        update={
+            "evaluation_entry_at": None,
+            "entry_window_ends_at": frozen_window_end,
+            "unified_maturity_at": source.unified_maturity_at,
+        }
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, early_invalid_label
+        )
+
+
+def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.entry_window_ends_at is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        entry_window_starts_at=datetime(2040, 2, 1, 7, tzinfo=UTC),
+        entry_window_ends_at=source.entry_window_ends_at,
+        matures_by=source.unified_maturity_at,
+    )
+    out_of_window_entry = source.model_copy(
+        update={"evaluation_entry_at": datetime(2040, 2, 5, 8, tzinfo=UTC)}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, out_of_window_entry
         )
 
 

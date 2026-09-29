@@ -153,6 +153,8 @@ class CandidateCalibrationVersionMismatch(ValueError):
 class _FrozenCandidatePrediction:
     raw_success_score: Decimal
     calibrated_probability: Decimal
+    entry_window_starts_at: datetime
+    entry_window_ends_at: datetime
     matures_by: datetime
 
 
@@ -812,18 +814,30 @@ def _frozen_candidate_prediction_rows(
     )
     if final_window_session is None:
         raise CandidateCalibrationProvenanceInvalid()
+    first_window_session = next(
+        (
+            session
+            for session in command.market_sessions
+            if session.market_date == outcome.valid_market_dates[0]
+        ),
+        None,
+    )
+    if first_window_session is None:
+        raise CandidateCalibrationProvenanceInvalid()
     prediction_month = command.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
     matures_by = six_month_anniversary(final_window_session.closes_at)
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
         if member.calibrated_probability is None:
-            raise CandidateCalibrationProvenanceInvalid()
+            continue
         identity = (prediction_month, member.security_id, member.research_id)
         if identity in predictions:
             raise CandidateCalibrationProvenanceInvalid()
         predictions[identity] = _FrozenCandidatePrediction(
             raw_success_score=member.raw_success_score,
             calibrated_probability=member.calibrated_probability,
+            entry_window_starts_at=first_window_session.opens_at,
+            entry_window_ends_at=final_window_session.closes_at,
             matures_by=matures_by,
         )
     return predictions
@@ -837,6 +851,18 @@ def _validate_frozen_candidate_prediction_source(
     if (
         source.raw_success_score != prediction.raw_success_score
         or source.historical_calibrated_probability != prediction.calibrated_probability
+        or source.entry_window_ends_at != prediction.entry_window_ends_at
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    if source.evaluation_entry_at is not None and not (
+        prediction.entry_window_starts_at
+        <= source.evaluation_entry_at
+        < prediction.entry_window_ends_at
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at
+    if source.unified_maturity_at is None or source.unified_maturity_at < six_month_anniversary(
+        maturity_anchor
     ):
         raise CandidateCalibrationProvenanceInvalid()
 

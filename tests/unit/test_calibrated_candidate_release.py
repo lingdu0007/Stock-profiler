@@ -1521,6 +1521,35 @@ def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions()
     assert prediction.matures_by == _six_month_anniversary(final_session.closes_at)
 
 
+def test_candidate_member_without_frozen_probability_is_not_added_to_history() -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+    failed_member = outcome.members[0].model_copy(update={"calibrated_probability": None})
+    failed_outcome = outcome.model_copy(update={"members": (failed_member, *outcome.members[1:])})
+
+    predictions = decision_case_service._frozen_candidate_prediction_rows(original, failed_outcome)
+
+    assert (
+        original.knowledge_cutoff.strftime("%Y-%m"),
+        failed_member.security_id,
+        failed_member.research_id,
+    ) not in predictions
+
+
+def test_probability_bearing_abstained_or_vetoed_member_remains_in_history() -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+    member = outcome.members[0].model_copy(update={"candidate": False, "risk_status": "REJECTED"})
+    gated_outcome = outcome.model_copy(
+        update={"disposition": "RECOMMENDATION_ABSTAINED", "members": (member,)}
+    )
+    month = original.knowledge_cutoff.astimezone(UTC).strftime("%Y-%m")
+
+    predictions = decision_case_service._frozen_candidate_prediction_rows(original, gated_outcome)
+
+    assert (month, member.security_id, member.research_id) in predictions
+
+
 def test_previous_frozen_calibration_record_cannot_be_rewritten() -> None:
     record = command().training_records[0]
     retained: dict[tuple[str, str, str], CalibrationRecord] = {}
