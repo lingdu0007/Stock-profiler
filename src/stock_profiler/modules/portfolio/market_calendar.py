@@ -66,12 +66,13 @@ class SyntheticMarketCalendar:
         )
 
     def last_terminal_session_on_or_before(self, target_date: date) -> MarketSession | None:
+        sessions = self.terminal_sessions or self.sessions
+        if self.sessions and self.sessions[0].closed_at.date() <= target_date <= (
+            self.sessions[-1].closed_at.date()
+        ):
+            sessions = self.sessions
         return next(
-            (
-                session
-                for session in reversed(self.terminal_sessions or self.sessions)
-                if session.closed_at.date() <= target_date
-            ),
+            (session for session in reversed(sessions) if session.closed_at.date() <= target_date),
             None,
         )
 

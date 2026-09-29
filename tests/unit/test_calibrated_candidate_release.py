@@ -1354,6 +1354,17 @@ def test_v2_market_calendar_extends_candidate_sessions_without_revising_v1() -> 
     assert calendar.sessions[3].closed_at == datetime(2042, 5, 23, 15, tzinfo=UTC)
 
 
+def test_terminal_maturity_honors_frozen_v1_sessions_inside_their_coverage() -> None:
+    calendar = synthetic_market_calendar("synthetic-market-calendar-v1")
+    assert calendar is not None
+
+    maturity = six_month_terminal_evaluation_at(
+        datetime(2041, 11, 25, tzinfo=UTC), calendar.version_id
+    )
+
+    assert maturity == datetime(2042, 5, 25, 15, tzinfo=UTC)
+
+
 def test_terminal_maturity_uses_the_frozen_candidate_market_schedule() -> None:
     calendar = synthetic_market_calendar("synthetic-market-calendar-v2")
     assert calendar is not None
