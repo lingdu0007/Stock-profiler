@@ -8,6 +8,7 @@ from typing import Literal, cast
 
 import pytest
 
+from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
@@ -20,6 +21,7 @@ from stock_profiler.modules.research.contracts import (
     RawScoreCalculationError,
     RawScoreFeatureTransform,
     RawScoreModelSnapshot,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -59,6 +61,40 @@ from stock_profiler.modules.research.service import (
     prepare_research_risk_plan,
     validate_research_draft,
 )
+
+
+def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
+    frozen_at = datetime(2040, 1, 31, 7, tzinfo=UTC)
+    original = RawScoreTrainingRecord(
+        month="2040-01",
+        cohort_id="synthetic-cohort",
+        security_id="SYNTH-ALPHA",
+        research_id="synthetic-research-alpha",
+        selection_cutoff_at=frozen_at,
+        raw_score_frozen_at=frozen_at,
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        raw_success_score=Decimal("0.4"),
+        historical_calibrated_probability=Decimal("0.42"),
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
+        evaluation_entry_at=datetime(2040, 2, 4, 7, tzinfo=UTC),
+        unified_maturity_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
+        terminal_label=True,
+        label_available_at=datetime(2040, 8, 4, 7, tzinfo=UTC),
+        source_model_version="synthetic-model-v1",
+    )
+    identity = (original.month, original.security_id, original.research_id)
+    retained: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+
+    decision_case_service._retain_immutable_mature_source_row(retained, identity, original)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_immutable_mature_source_row(
+            retained,
+            identity,
+            original.model_copy(update={"raw_success_score": Decimal("0.5")}),
+        )
+
+    assert retained[identity] is original
 
 
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:

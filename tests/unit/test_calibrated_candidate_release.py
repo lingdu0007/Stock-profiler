@@ -19,6 +19,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
     finalize_candidate_release_publication,
     freeze_candidate_release,
 )
+from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 
@@ -1457,6 +1458,37 @@ def test_declared_mature_month_window_rejects_calendar_gaps() -> None:
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_MONTHS_NOT_CONSECUTIVE",)
 
 
+def test_previous_frozen_calibration_identities_remain_in_expected_cohort() -> None:
+    original = command()
+    frozen_only_record = original.training_records[1]
+    frozen_only_identity = (
+        frozen_only_record.month,
+        frozen_only_record.security_id,
+        frozen_only_record.research_id,
+    )
+
+    expected = decision_case_service._expected_calibration_identities(
+        original.training_window_months,
+        {},
+        {frozen_only_identity: frozen_only_record},
+    )
+
+    assert expected == {frozen_only_identity}
+
+
+def test_previous_frozen_calibration_record_cannot_be_rewritten() -> None:
+    record = command().training_records[0]
+    retained: dict[tuple[str, str, str], CalibrationRecord] = {}
+
+    decision_case_service._retain_frozen_calibration_record(retained, record)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_frozen_calibration_record(
+            retained,
+            record.model_copy(update={"out_of_sample_probability": Decimal("0.7")}),
+        )
+
+
 def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> None:
     original = command()
     first_year, first_month = (int(part) for part in original.training_window_months[0].split("-"))
@@ -1509,3 +1541,43 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
     assert release.calibration is not None
     assert release.calibration.training_window_months == candidate.training_window_months
     assert release.calibration.training_record_count >= 500
+
+    extra_year, extra_month = divmod(first_index - 4, 12)
+    extra_month_name = f"{extra_year:04d}-{extra_month + 1:02d}"
+    extra_cutoff = datetime(
+        extra_year,
+        extra_month + 1,
+        monthrange(extra_year, extra_month + 1)[1],
+        7,
+        tzinfo=UTC,
+    )
+    extra_entry = extra_cutoff + timedelta(days=5)
+    extra_maturity = _six_month_anniversary(extra_entry)
+    extra_records = tuple(
+        original.training_records[index].model_copy(
+            update={
+                "record_id": f"synthetic-unneeded-expansion-{extra_month_name}-{index:02d}",
+                "month": extra_month_name,
+                "source_research_event_id": f"synthetic-research-event-{extra_month_name}",
+                "raw_score_frozen_at": extra_cutoff,
+                "raw_score_training_watermark_at": extra_cutoff - timedelta(days=1),
+                "entry_at": extra_entry,
+                "entry_window_ends_at": extra_entry + timedelta(days=1),
+                "unified_maturity_at": extra_maturity,
+                "label_available_at": extra_maturity,
+            }
+        )
+        for index in range(8)
+    )
+    overexpanded = freeze_candidate_release(
+        candidate.model_copy(
+            update={
+                "training_window_months": (extra_month_name, *candidate.training_window_months),
+                "training_records": (*extra_records, *candidate.training_records),
+            }
+        )
+    )
+
+    assert overexpanded.disposition == "FAILED"
+    assert overexpanded.availability_failure == "CALIBRATION"
+    assert overexpanded.reasons == ("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM",)

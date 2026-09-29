@@ -3466,6 +3466,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALENDAR_WINDOW_MISSING"),
         ("ACCEPT", "AT_RISK_QUALIFICATION"),
         ("ACCEPT", "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION"),
+        ("ACCEPT", "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE"),
         ("ACCEPT", "QUALIFICATION_EXPIRES_DURING_FIT"),
         ("ACCEPT", "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER"),
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
@@ -3511,6 +3512,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALENDAR_WINDOW_MISSING",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
+        "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -3825,6 +3827,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
+        "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_REVOKED_AFTER_REPORT_SAVE",
         "CORRECTION_AFTER_CANDIDATE_WINDOW",
@@ -4467,6 +4470,40 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "publish_report",
             revoke_qualification_after_report_save,
         )
+    if candidate_scenario == "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE":
+        publish_report = DecisionLedger.publish_report
+        clock_state = {"now": publication_time}
+        monkeypatch.setattr(UtcClock, "now", lambda self: clock_state["now"])
+
+        def record_diagnostic_alert_after_report_save(
+            ledger: DecisionLedger, connection: Any, fact: DecisionEventFact, *args: Any
+        ) -> Any:
+            report = publish_report(ledger, connection, fact, *args)
+            clock_state["now"] = publication_time + timedelta(seconds=2)
+            original_qualification = qualification_history[0].qualification
+            assert original_qualification is not None
+            at_risk = original_qualification.model_copy(
+                update={
+                    "decision_id": "synthetic-candidate-diagnostic-alert-after-publication",
+                    "status": "AT_RISK",
+                    "cause": "DIAGNOSTIC_ALERT",
+                    "previous_decision_id": original_qualification.decision_id,
+                    "recorded_at": publication_time + timedelta(seconds=1),
+                }
+            )
+            qualification_history_state["value"] = (
+                *qualification_history,
+                GovernanceOutcome(
+                    disposition="APPROVED", reasons=("DIAGNOSTIC_ALERT",), qualification=at_risk
+                ),
+            )
+            return report
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "publish_report",
+            record_diagnostic_alert_after_report_save,
+        )
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
@@ -4502,6 +4539,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALENDAR_WINDOW_MISSING": "FAILED",
         "AT_RISK_QUALIFICATION": direct.disposition,
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION": "CANDIDATES",
+        "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE": "CANDIDATES",
         "QUALIFICATION_EXPIRES_DURING_FIT": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_SUSPENDED_AT_CUTOFF_RESTORED_AFTER": "RECOMMENDATION_ABSTAINED",
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",

@@ -806,16 +806,18 @@ def _fit_calibrator(command: CandidateReleaseCommand) -> CalibrationSnapshot:
         raise ValueError("CALIBRATION_TRAINING_WINDOW_NOT_LATEST")
     records = tuple(record for month in months for record in by_month[month])
     if len(months) > _MINIMUM_MATURE_MONTHS:
-        rolling_months = months[-_MINIMUM_MATURE_MONTHS:]
-        rolling_records = tuple(record for month in rolling_months for record in by_month[month])
-        rolling_positives = sum(record.terminal_success for record in rolling_records)
-        rolling_negatives = len(rolling_records) - rolling_positives
-        if (
-            len(rolling_records) >= _MINIMUM_MATURE_RECORDS
-            and rolling_positives >= _MINIMUM_RECORDS_PER_CLASS
-            and rolling_negatives >= _MINIMUM_RECORDS_PER_CLASS
-        ):
-            raise ValueError("CALIBRATION_INITIAL_WINDOW_EXPANSION_NOT_REQUIRED")
+        for window_length in range(_MINIMUM_MATURE_MONTHS, len(months)):
+            qualifying_records = tuple(
+                record for month in months[-window_length:] for record in by_month[month]
+            )
+            qualifying_positives = sum(record.terminal_success for record in qualifying_records)
+            qualifying_negatives = len(qualifying_records) - qualifying_positives
+            if (
+                len(qualifying_records) >= _MINIMUM_MATURE_RECORDS
+                and qualifying_positives >= _MINIMUM_RECORDS_PER_CLASS
+                and qualifying_negatives >= _MINIMUM_RECORDS_PER_CLASS
+            ):
+                raise ValueError("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM")
     if len(records) < _MINIMUM_MATURE_RECORDS:
         raise ValueError("CALIBRATION_REQUIRES_500_MATURE_RECORDS")
     positives = sum(record.terminal_success for record in records)

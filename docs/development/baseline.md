@@ -103,8 +103,11 @@ changed retry identities or later evidence do not replace it.
 The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
 research event with ten independently risk-vetted members. The host fits the
 versioned monotone Firth logistic calibrator from an initial window of at least
-60 consecutive mature months, expanding that window only until it contains at
-least 500 records and 50 examples from each class. After the first valid
+60 consecutive mature months, using the shortest consecutive suffix that
+contains at least 500 records and 50 examples from each class. Its population
+is the complete union of mature raw-score source rows and previously committed
+calibration rows; a repeated identity whose frozen score, probability or label
+changes fails closed. After the first valid
 calibration, every refit uses the fixed rolling latest 60 consecutive mature
 months; a missed sample floor then produces a visible calibration failure.
 The label watermark cannot exceed the research knowledge cutoff. It freezes
@@ -116,7 +119,10 @@ calendar-matched persisted qualification valid at the cutoff. Missing qualificat
 `RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains
 `VALID_NO_CANDIDATES`. Calibration or data failures remain visible and do not
 reuse older probabilities. A report published after the frozen window fails
-without moving it. The authenticated report projection shows the original
+without moving it. A post-commit diagnostic alert that only moves the matching
+qualification from `VALID` to `AT_RISK` does not invalidate the already frozen
+publication; revocation, suspension, expiry, or scope/version/calendar changes
+still fail their publication checks. The authenticated report projection shows the original
 research thesis, principal risks, evidence freshness, market qualification,
 calibration and fixed validity dates. These synthetic D0 cases remain
 non-actionable and expose no personal position information.

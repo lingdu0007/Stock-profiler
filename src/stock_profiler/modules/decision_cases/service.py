@@ -592,6 +592,18 @@ def _validate_candidate_calibration_sources(
         and event.result.research is not None
     )
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
+    for event in prior_calibration_snapshots:
+        prior_command = event.case.candidate_release
+        if prior_command is None:
+            continue
+        for record in prior_command.training_records:
+            if (
+                record.label_available_at > command.label_watermark_at
+                or record.unified_maturity_at > command.label_watermark_at
+            ):
+                continue
+            _retain_frozen_calibration_record(frozen_training_rows, record)
     for event in historical_events:
         source_case_research = event.case.research
         if source_case_research is None:
@@ -610,7 +622,7 @@ def _validate_candidate_calibration_sources(
                     source_record.security_id,
                     source_record.research_id,
                 )
-                mature_source_rows[identity] = source_record
+                _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
     globally_mature_months = tuple(sorted({identity[0] for identity in mature_source_rows}))
     if len(command.training_window_months) >= 60 and (
         len(globally_mature_months) < len(command.training_window_months)
@@ -656,6 +668,11 @@ def _validate_candidate_calibration_sources(
             (record.month, record.security_id, record.research_id): record
             for record in snapshot_records
         }
+        frozen_by_identity = {
+            identity: record
+            for identity, record in frozen_training_rows.items()
+            if record.source_research_event_id == event_id
+        }
         records_by_identity = {
             (record.month, record.security_id, record.research_id): record for record in records
         }
@@ -667,9 +684,17 @@ def _validate_candidate_calibration_sources(
             for identity, source_record in snapshot_by_identity.items()
             if identity[0] in submitted_months
         }
-        if set(records_by_identity) != set(expected_source_rows):
+        expected_identities = set(expected_source_rows) | {
+            identity for identity in frozen_by_identity if identity[0] in submitted_months
+        }
+        if set(records_by_identity) != expected_identities:
             raise CandidateCalibrationProvenanceInvalid()
         for identity, record in records_by_identity.items():
+            frozen_record = frozen_by_identity.get(identity)
+            if frozen_record is not None:
+                if not _same_frozen_calibration_record(record, frozen_record):
+                    raise CandidateCalibrationProvenanceInvalid()
+                continue
             source_record = expected_source_rows[identity]
             if (
                 source_record.raw_score_frozen_at != record.raw_score_frozen_at
@@ -702,11 +727,11 @@ def _validate_candidate_calibration_sources(
         ):
             raise CandidateCalibrationProvenanceInvalid()
     if len(command.training_window_months) >= 60:
-        expected_identities = {
-            identity
-            for identity in mature_source_rows
-            if identity[0] in command.training_window_months
-        }
+        expected_identities = _expected_calibration_identities(
+            command.training_window_months,
+            mature_source_rows,
+            frozen_training_rows,
+        )
         submitted_identities = {
             (record.month, record.security_id, record.research_id)
             for record in command.training_records
@@ -717,7 +742,16 @@ def _validate_candidate_calibration_sources(
             latest_source_record = mature_source_rows.get(
                 (record.month, record.security_id, record.research_id)
             )
-            if latest_source_record is None or (
+            frozen_record = frozen_training_rows.get(
+                (record.month, record.security_id, record.research_id)
+            )
+            if latest_source_record is None and frozen_record is None:
+                raise CandidateCalibrationProvenanceInvalid()
+            if frozen_record is not None and not _same_frozen_calibration_record(
+                record, frozen_record
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
+            if latest_source_record is not None and (
                 latest_source_record.raw_success_score != record.raw_success_score
                 or latest_source_record.historical_calibrated_probability
                 != record.out_of_sample_probability
@@ -727,6 +761,45 @@ def _validate_candidate_calibration_sources(
                 or latest_source_record.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+
+
+def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
+    """Compare immutable sample content while allowing record IDs to be regenerated."""
+    return left.model_copy(update={"record_id": right.record_id}) == right
+
+
+def _retain_frozen_calibration_record(
+    rows: dict[tuple[str, str, str], CalibrationRecord], record: CalibrationRecord
+) -> None:
+    """Preserve previously published cohort evidence without allowing identity rewrites."""
+    identity = (record.month, record.security_id, record.research_id)
+    previous = rows.setdefault(identity, record)
+    if not _same_frozen_calibration_record(previous, record):
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _expected_calibration_identities(
+    months: tuple[str, ...],
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord],
+) -> set[tuple[str, str, str]]:
+    """Union mature source labels with identities already frozen by prior calibration."""
+    return {
+        identity
+        for identity in (*mature_source_rows.keys(), *frozen_training_rows.keys())
+        if identity[0] in months
+    }
+
+
+def _retain_immutable_mature_source_row(
+    rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    identity: tuple[str, str, str],
+    record: RawScoreTrainingRecord,
+) -> None:
+    """Keep the first persisted identity and reject any later rewrite of its evidence."""
+    previous = rows.setdefault(identity, record)
+    if previous != record:
+        raise CandidateCalibrationProvenanceInvalid()
 
 
 def _validate_candidate_qualification_snapshots(
@@ -3267,12 +3340,18 @@ def _publish_report_or_record_failure(
     ):
         confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
         assert fact.case.access_scope is not None
+        governance_history = ledger.governance_history(connection, fact.case.access_scope)
         try:
-            current_qualifications = _validate_candidate_qualification_snapshots(
-                fact.case,
-                ledger.governance_history(connection, fact.case.access_scope),
-                confirmed_at,
-            )
+            if _has_post_commit_diagnostic_alert(
+                fact, candidate_command.qualifications, governance_history
+            ):
+                current_qualifications = candidate_command.qualifications
+            else:
+                current_qualifications = _validate_candidate_qualification_snapshots(
+                    fact.case,
+                    governance_history,
+                    confirmed_at,
+                )
         except (ValueError, CandidateQualificationHistoryAmbiguous):
             failed_report = _record_candidate_publication_failure(
                 ledger,
@@ -3305,10 +3384,13 @@ def _publish_report_or_record_failure(
             if failed_report is not None:
                 return failed_report, None
             return None, DecisionEventCommitError("candidate publication window expired")
-        if (
-            confirmed_outcome.model_copy(update={"published_at": candidate_outcome.published_at})
-            != candidate_outcome
-        ):
+        outcome_without_qualification_change = confirmed_outcome.model_copy(
+            update={
+                "published_at": candidate_outcome.published_at,
+                "qualification": candidate_outcome.qualification,
+            }
+        )
+        if outcome_without_qualification_change != candidate_outcome:
             failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
@@ -3356,6 +3438,52 @@ def _record_candidate_publication_failure(
     if report is None or report.report_publication is None:
         return None
     return report if report.report_publication.status == "FAILED" else None
+
+
+def _has_post_commit_diagnostic_alert(
+    fact: DecisionEventFact,
+    qualifications: tuple[MarketStateQualification, ...],
+    history: tuple[GovernanceOutcome, ...],
+) -> bool:
+    """Allow only a post-commit diagnostic alert that preserves qualification authority."""
+    if not qualifications or fact.case.access_scope is None:
+        return False
+    records = tuple(
+        outcome.qualification for outcome in history if outcome.qualification is not None
+    )
+    committed_at = datetime.fromisoformat(fact.committed_at)
+    for frozen in qualifications:
+        if frozen.status != "VALID":
+            continue
+        frozen_record = next(
+            (record for record in records if record.decision_id == frozen.qualification_id), None
+        )
+        if frozen_record is None:
+            continue
+        successors = tuple(
+            record for record in records if record.previous_decision_id == frozen_record.decision_id
+        )
+        if len(successors) != 1:
+            continue
+        alert = successors[0]
+        if (
+            alert.status != "AT_RISK"
+            or alert.cause != "DIAGNOSTIC_ALERT"
+            or alert.recorded_at <= committed_at
+            or alert.scope != frozen_record.scope
+            or alert.version != frozen_record.version
+            or alert.authorization_id != frozen_record.authorization_id
+            or alert.formal_passing_evidence != frozen_record.formal_passing_evidence
+            or alert.authorization_evidence != frozen_record.authorization_evidence
+        ):
+            continue
+        try:
+            current = current_qualification(history, alert.scope, alert.version)
+        except ValueError:
+            continue
+        if current is not None and current.decision_id == alert.decision_id:
+            return True
+    return False
 
 
 _CANDIDATE_RELEASE_STAGE_STATUSES: dict[
