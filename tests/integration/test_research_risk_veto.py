@@ -3473,6 +3473,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "REVOKED_SAME_TIMESTAMP"),
         ("ACCEPT", "REVOKED_AFTER_CUTOFF"),
         ("ACCEPT", "NO_CANDIDATES"),
+        ("ACCEPT", "QUALIFICATION_SNAPSHOT_MISSING"),
         ("ACCEPT", "UNRELATED_QUALIFICATION_SCOPE"),
         ("ACCEPT", "UNRELATED_CALENDAR_QUALIFICATION"),
         ("ACCEPT", "UNRELATED_LATEST_SCOPE"),
@@ -3525,6 +3526,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
+        "QUALIFICATION_SNAPSHOT_MISSING",
         "UNRELATED_QUALIFICATION_SCOPE",
         "UNRELATED_CALENDAR_QUALIFICATION",
         "UNRELATED_LATEST_SCOPE",
@@ -3842,6 +3844,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_SAME_TIMESTAMP",
         "REVOKED_AFTER_CUTOFF",
         "NO_CANDIDATES",
+        "QUALIFICATION_SNAPSHOT_MISSING",
         "UNRELATED_QUALIFICATION_SCOPE",
         "UNRELATED_CALENDAR_QUALIFICATION",
         "UNRELATED_LATEST_SCOPE",
@@ -4024,7 +4027,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                     MarketStateQualification(
                         market_state="BULL",
                         status=qualification_status,
-                        qualification_id=qualification_record.decision_id,
+                        qualification_id=(
+                            "missing-qualification-record"
+                            if candidate_scenario == "QUALIFICATION_SNAPSHOT_MISSING"
+                            else qualification_record.decision_id
+                        ),
                         capability_version=capability_version.version_id,
                         market_calendar_version=command.market_calendar_version,
                         recorded_at=qualification_recorded_at,
@@ -4656,6 +4663,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "REVOKED_SAME_TIMESTAMP": "RECOMMENDATION_ABSTAINED",
         "REVOKED_AFTER_CUTOFF": "RECOMMENDATION_ABSTAINED",
         "NO_CANDIDATES": "VALID_NO_CANDIDATES",
+        "QUALIFICATION_SNAPSHOT_MISSING": "CANDIDATES",
         "QUALIFICATION_NOT_OBTAINED_RECORDED": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK": "FAILED",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
@@ -4808,6 +4816,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert saved_candidate_release.disposition == "FAILED"
         assert saved_candidate_release.availability_failure == "CALIBRATION"
         assert "CANDIDATE_CALIBRATION_LINEAGE_INVALID" in saved_candidate_release.reasons
+        return
+    if candidate_scenario == "QUALIFICATION_SNAPSHOT_MISSING":
+        assert saved_candidate_release.disposition == "FAILED"
+        assert saved_candidate_release.availability_failure == "DATA"
+        assert saved_candidate_release.reasons == ("CANDIDATE_QUALIFICATION_NOT_IN_LEDGER",)
+        assert execution.report.report_publication is not None
+        assert execution.report.report_publication.status == "PUBLISHED"
+        assert execution.publication_status == "PUBLISHED"
         return
     direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
     assert saved_candidate_release == direct

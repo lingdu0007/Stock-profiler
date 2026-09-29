@@ -1501,7 +1501,10 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     prediction = predictions[(month, member.security_id, member.research_id)]
     assert prediction.raw_success_score == member.raw_success_score
     assert prediction.calibrated_probability == member.calibrated_probability
-    assert prediction.matures_by == raw_score_maturity_at(original.market_sessions[-1].closes_at)
+    assert prediction.matures_by == raw_score_maturity_at(
+        original.market_sessions[-1].closes_at,
+        original.market_sessions[-1].closes_at,
+    )
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
     )
@@ -1621,7 +1624,10 @@ def test_prediction_maturity_uses_frozen_window_not_trailing_calendar_sessions()
     ]
 
     assert outcome.valid_market_dates[-1] == final_session.market_date
-    assert prediction.matures_by == raw_score_maturity_at(final_session.closes_at)
+    assert prediction.matures_by == raw_score_maturity_at(
+        final_session.closes_at,
+        final_session.closes_at,
+    )
 
 
 def test_candidate_member_without_frozen_probability_is_not_added_to_history() -> None:

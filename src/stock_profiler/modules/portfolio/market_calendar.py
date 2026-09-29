@@ -11,8 +11,11 @@ def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def six_month_terminal_evaluation_at(value: datetime) -> datetime:
-    """Resolve the six-calendar-month synthetic target to its preceding weekday session."""
+def six_month_terminal_evaluation_at(
+    value: datetime,
+    terminal_session_close_at: datetime | None,
+) -> datetime:
+    """Resolve the six-month target to the preceding weekday's terminal session close."""
     month_index = value.year * 12 + value.month - 1 + 6
     year, month_zero = divmod(month_index, 12)
     candidate = value.replace(
@@ -22,7 +25,16 @@ def six_month_terminal_evaluation_at(value: datetime) -> datetime:
     )
     while candidate.weekday() >= 5:
         candidate -= timedelta(days=1)
-    return candidate
+    if terminal_session_close_at is None:
+        return candidate.replace(hour=23, minute=59, second=59, microsecond=999999)
+    close_clock = terminal_session_close_at.astimezone(value.tzinfo)
+    return candidate.replace(
+        hour=close_clock.hour,
+        minute=close_clock.minute,
+        second=close_clock.second,
+        microsecond=close_clock.microsecond,
+        tzinfo=value.tzinfo,
+    )
 
 
 @dataclass(frozen=True)

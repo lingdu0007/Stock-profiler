@@ -880,7 +880,9 @@ def _frozen_candidate_prediction_rows(
     final_window_session = window_sessions[-1]
     assert final_window_session is not None
     prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
-    matures_by = raw_score_maturity_at(final_window_session.closes_at)
+    matures_by = raw_score_maturity_at(
+        final_window_session.closes_at, final_window_session.closes_at
+    )
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
         if member.calibrated_probability is None:
@@ -925,7 +927,7 @@ def _validate_frozen_candidate_prediction_source(
         raise CandidateCalibrationProvenanceInvalid()
     maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at
     if source.unified_maturity_at is None or source.unified_maturity_at < raw_score_maturity_at(
-        maturity_anchor
+        maturity_anchor, source.entry_window_ends_at
     ):
         raise CandidateCalibrationProvenanceInvalid()
 
@@ -2129,37 +2131,10 @@ def _commit_framework_result(
     committed_at: str | None = None
     candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
     candidate_version_failure: str | None = None
+    candidate_data_failure: str | None = None
     candidate_calibration_failure: str | None = None
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
     candidate_model_version: str | None = None
-
-    def unpublished_candidate_validation_failure(error: ValueError) -> DecisionCaseExecution:
-        failed = StageResult(
-            phase="CANDIDATE_RELEASE",
-            status="FAILED",
-            gate_results=(GateResult(gate_id="FROZEN_RESEARCH_HANDOFF", status="FAILED"),),
-            reasons=(str(error),),
-        )
-        ledger.record_stage_result(
-            connection,
-            case=execution_case,
-            stage_result=failed,
-            framework_run_id=execution_case.framework_run_id,
-        )
-        ledger.record_stage_result(
-            connection,
-            case=execution_case,
-            stage_result=_failed_host_validation(str(error)),
-            framework_run_id=execution_case.framework_run_id,
-        )
-        return _unpublished_execution(
-            execution_case,
-            framework_run_status=framework_run_status_from_stage(framework_stage_results[-1]),
-            business_result_status=None,
-            business_lifecycle=None,
-            business_commit_status="NOT_ATTEMPTED",
-            stage_results=ledger.get_stage_results(execution_case.business_object_id, connection),
-        )
 
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
@@ -2195,7 +2170,8 @@ def _commit_framework_result(
             candidate_version_failure = "CANDIDATE_QUALIFICATION_VERSION_MISMATCH"
             candidate_qualifications = ()
         except ValueError as error:
-            return unpublished_candidate_validation_failure(error)
+            candidate_data_failure = str(error)
+            candidate_qualifications = ()
         try:
             candidate_model_version = _validate_candidate_release_source(
                 execution_case,
@@ -2209,8 +2185,12 @@ def _commit_framework_result(
         except CandidateResearchHandoffUnavailable as error:
             candidate_research_failure = error
         except ValueError as error:
-            return unpublished_candidate_validation_failure(error)
-        if candidate_research_failure is None and candidate_version_failure is None:
+            candidate_data_failure = str(error)
+        if (
+            candidate_research_failure is None
+            and candidate_version_failure is None
+            and candidate_data_failure is None
+        ):
             try:
                 assert execution_case.access_scope is not None
                 _validate_candidate_calibration_sources(
@@ -2691,6 +2671,13 @@ def _commit_framework_result(
                         reason=candidate_version_failure,
                         availability_failure="VERSION",
                     )
+                elif candidate_data_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        publication_command,
+                        published_at=publication_time,
+                        reason=candidate_data_failure,
+                        availability_failure="DATA",
+                    )
                 elif candidate_research_failure is not None:
                     if candidate_research_failure.disposition == "BLOCKED":
                         candidate_release = candidate_release_blocked_by_business_prerequisite(
@@ -2725,6 +2712,7 @@ def _commit_framework_result(
                 if (
                     successful_prerequisite
                     and candidate_version_failure is None
+                    and candidate_data_failure is None
                     and candidate_calibration_failure is None
                     and candidate_research_failure is None
                 ):
