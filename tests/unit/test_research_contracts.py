@@ -433,6 +433,32 @@ def test_historical_invalid_entry_uses_fifth_frozen_weekday_session() -> None:
     )
 
 
+def test_frozen_training_uses_next_session_within_covered_history() -> None:
+    snapshot = frozen_raw_score_model_snapshot()
+    first_month_records = tuple(
+        record for record in snapshot.calibration_history_records if record.month == "2032-09"
+    )
+    expected_entry = datetime(2032, 10, 1, 8, tzinfo=UTC)
+
+    assert first_month_records
+    assert all(
+        record.evaluation_entry_at in {None, expected_entry} for record in first_month_records
+    )
+    assert any(record.evaluation_entry_at == expected_entry for record in first_month_records)
+    assert all(
+        record.entry_window_ends_at == datetime(2032, 10, 7, 15, tzinfo=UTC)
+        for record in first_month_records
+    )
+
+
+def test_raw_score_entry_fails_before_frozen_calendar_coverage() -> None:
+    with pytest.raises(ValueError, match="MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE"):
+        _raw_score_evaluation_entry_at(
+            datetime(2031, 12, 31, 23, 59, 59, tzinfo=UTC),
+            RAW_SCORE_MARKET_CALENDAR_VERSION,
+        )
+
+
 def test_prediction_window_uses_the_active_calendar_sessions_when_available() -> None:
     selection_cutoff = datetime(2042, 6, 3, 16, tzinfo=UTC)
     market_calendar_version = "synthetic-market-calendar-v1"

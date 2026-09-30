@@ -59,6 +59,9 @@ def next_market_session_open_after(
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
     cutoff_date = value.astimezone(UTC).date()
+    first_covered_date = calendar.terminal_session_coverage_from
+    if first_covered_date is not None and cutoff_date < first_covered_date:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
     if calendar.sessions and calendar.sessions[0].closed_at.date() <= cutoff_date <= (
         calendar.sessions[-1].closed_at.date()
     ):
@@ -111,6 +114,9 @@ class SyntheticMarketCalendar:
         """Return the next sessions across saved and extended calendar coverage."""
         if count <= 0:
             return ()
+        first_covered_date = self.terminal_session_coverage_from
+        if first_covered_date is not None and value.astimezone(UTC).date() < first_covered_date:
+            return ()
         if self.sessions:
             first_date = self.sessions[0].closed_at.date()
             last_date = self.sessions[-1].closed_at.date()
@@ -131,6 +137,14 @@ class SyntheticMarketCalendar:
         return tuple(
             session for session in sessions if session.closed_at - timedelta(hours=7) > value
         )[:count]
+
+    @property
+    def terminal_session_coverage_from(self) -> date | None:
+        """Return the first date whose terminal session history is authoritative."""
+        sessions = self.terminal_sessions or self.sessions
+        if not sessions:
+            return None
+        return sessions[0].closed_at.date()
 
     def session_at_or_before(self, value: datetime) -> MarketSession | None:
         """Resolve the latest completed session using the same coverage precedence."""
@@ -194,6 +208,32 @@ def _weekday_sessions(
     return tuple(sessions)
 
 
+def _weekday_sessions_with_stable_anchor(
+    *,
+    start: date,
+    anchor: date,
+    end: date,
+    close_at: time,
+    anchor_ordinal: int,
+    excluded_dates: frozenset[date] = frozenset(),
+) -> tuple[MarketSession, ...]:
+    """Extend a calendar backward while preserving session IDs at its old anchor."""
+    preceding_sessions = _weekday_sessions(
+        start=start,
+        end=anchor - timedelta(days=1),
+        close_at=close_at,
+        first_ordinal=0,
+        excluded_dates=excluded_dates,
+    )
+    return _weekday_sessions(
+        start=start,
+        end=end,
+        close_at=close_at,
+        first_ordinal=anchor_ordinal - len(preceding_sessions),
+        excluded_dates=excluded_dates,
+    )
+
+
 def synthetic_market_calendar(version_id: str) -> SyntheticMarketCalendar | None:
     """Return one known immutable synthetic calendar version, if it exists."""
     return next(
@@ -216,11 +256,12 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_weekday_sessions(
-            start=date(2037, 1, 1),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(15),
-            first_ordinal=1_000_000,
+            anchor_ordinal=1_000_000,
         ),
     ),
     SyntheticMarketCalendar(
@@ -250,11 +291,12 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_weekday_sessions(
-            start=date(2037, 1, 1),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(15),
-            first_ordinal=1_000_000,
+            anchor_ordinal=1_000_000,
             excluded_dates=frozenset({date(2042, 6, 6)}),
         ),
     ),
@@ -269,11 +311,12 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_weekday_sessions(
-            start=date(2037, 1, 1),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(15),
-            first_ordinal=1_000_000,
+            anchor_ordinal=1_000_000,
             excluded_dates=frozenset({date(2042, 6, 6)}),
         ),
     ),
@@ -293,11 +336,12 @@ _SYNTHETIC_MARKET_CALENDARS = (
         ),
         monthly_selection_cutoffs=(),
         terminal_session_coverage_through=date(2050, 12, 31),
-        terminal_sessions=_weekday_sessions(
-            start=date(2037, 1, 1),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
             end=date(2050, 12, 31),
             close_at=time(8),
-            first_ordinal=1_000_000,
+            anchor_ordinal=1_000_000,
         ),
     ),
 )
