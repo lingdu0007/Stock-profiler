@@ -883,11 +883,16 @@ def _fit_calibrator(
     diagnostic_population = (
         command.training_records if recent_diagnostic_records is None else recent_diagnostic_records
     )
+    diagnostic_watermark_at = (
+        command.label_watermark_at
+        if recent_diagnostic_records is None
+        else command.knowledge_cutoff
+    )
     diagnostic_records_by_month: dict[str, list[CalibrationRecord]] = {}
     for record in diagnostic_population:
         if (
-            record.unified_maturity_at <= command.label_watermark_at
-            and record.label_available_at <= command.label_watermark_at
+            record.unified_maturity_at <= diagnostic_watermark_at
+            and record.label_available_at <= diagnostic_watermark_at
         ):
             diagnostic_records_by_month.setdefault(record.month, []).append(record)
     mature_diagnostic_months = tuple(sorted(diagnostic_records_by_month))

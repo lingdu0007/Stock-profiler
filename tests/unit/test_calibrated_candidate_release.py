@@ -2127,6 +2127,60 @@ def test_recent_diagnostic_window_uses_latest_cutoff_mature_months() -> None:
     assert recent_months != earlier_watermark_months[-24:]
 
 
+def test_recent_diagnostics_use_cutoff_mature_labels_after_fit_watermark() -> None:
+    original = command()
+    diagnostic_month = "2045-12"
+    raw_score_frozen_at = datetime(2045, 12, 31, 7, tzinfo=UTC)
+    entry = _raw_score_evaluation_entry_at(
+        raw_score_frozen_at,
+        original.training_records[0].market_calendar_version,
+    )
+    entry_window_end = raw_score_entry_window_end(
+        entry,
+        original.training_records[0].market_calendar_version,
+    )
+    maturity = six_month_terminal_evaluation_at(
+        entry,
+        original.training_records[0].market_calendar_version,
+    )
+    newer_diagnostics = tuple(
+        record.model_copy(
+            update={
+                "record_id": f"synthetic-new-diagnostic-{index:02d}",
+                "month": diagnostic_month,
+                "source_research_event_id": "synthetic-new-diagnostic-source",
+                "raw_score_frozen_at": raw_score_frozen_at,
+                "raw_score_training_watermark_at": raw_score_frozen_at - timedelta(days=1),
+                "entry_at": entry,
+                "entry_window_ends_at": entry_window_end,
+                "unified_maturity_at": maturity,
+                "label_available_at": maturity,
+            }
+        )
+        for index, record in enumerate(original.training_records[:10])
+    )
+    command_with_earlier_fit_watermark = original.model_copy(
+        update={"label_watermark_at": datetime(2046, 6, 4, 8, tzinfo=UTC)}
+    )
+
+    calibration = candidate_module._fit_calibrator(
+        command_with_earlier_fit_watermark,
+        recent_diagnostic_records=(*original.training_records, *newer_diagnostics),
+    )
+    recent_records = tuple(
+        record
+        for record in (*original.training_records, *newer_diagnostics)
+        if record.month in calibration.recent_diagnostic_months
+    )
+
+    assert calibration.recent_diagnostic_months[-1] == diagnostic_month
+    assert calibration.recent_diagnostic_sample_count == 240
+    assert calibration.recent_diagnostics == candidate_module._calibration_diagnostics(
+        recent_records,
+        tuple(float(record.out_of_sample_probability) for record in recent_records),
+    )
+
+
 def test_closed_post_commit_diagnostic_alert_preserves_original_qualification() -> None:
     committed_at = datetime(2046, 7, 1, 8, tzinfo=UTC)
 
