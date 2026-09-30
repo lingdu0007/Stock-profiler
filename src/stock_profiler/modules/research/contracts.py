@@ -663,9 +663,7 @@ class RawScoreModelSnapshot(ResearchContract):
                 raise ValueError("raw-score label watermark date does not match its month")
             if not self.training_cohorts or not self.training_records:
                 raise ValueError("raw-score training provenance is required")
-            training_cohorts_by_id = {
-                cohort.cohort_id: cohort for cohort in self.training_cohorts
-            }
+            training_cohorts_by_id = {cohort.cohort_id: cohort for cohort in self.training_cohorts}
             history_cohorts_by_id = {
                 cohort.cohort_id: cohort for cohort in self.calibration_history_cohorts
             }
@@ -949,9 +947,7 @@ class RawScoreModelSnapshot(ResearchContract):
                 or not record.raw_success_score.is_finite()
                 or (
                     record.historical_calibrated_probability is not None
-                    and not Decimal("0")
-                    < record.historical_calibrated_probability
-                    < Decimal("1")
+                    and not Decimal("0") < record.historical_calibrated_probability < Decimal("1")
                 )
                 or record.entry_window_ends_at is None
                 or record.unified_maturity_at is None

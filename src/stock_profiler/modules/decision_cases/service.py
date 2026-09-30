@@ -942,9 +942,11 @@ def _validate_candidate_calibration_sources(
             },
         )
     calibration_months = set(
-        (*command.calibrator_selection_window_months,
-         *command.training_window_months,
-         *command.recent_diagnostic_window_months)
+        (
+            *command.calibrator_selection_window_months,
+            *command.training_window_months,
+            *command.recent_diagnostic_window_months,
+        )
     )
     unavailable_probability_count = sum(
         1
@@ -3112,9 +3114,7 @@ def _commit_framework_result(
                         published_at=publication_time,
                         initial_calibration=candidate_initial_calibration,
                         recent_diagnostic_records=candidate_recent_diagnostic_records,
-                        unavailable_probability_count=(
-                            candidate_unavailable_probability_count
-                        ),
+                        unavailable_probability_count=(candidate_unavailable_probability_count),
                     )
                 committed_at = ledger.observed_at()
                 if (

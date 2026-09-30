@@ -499,13 +499,16 @@ def test_frozen_calibration_reports_missing_probability_availability_failures() 
 def test_incomplete_recent_diagnostic_cohort_is_visible_without_blocking_release() -> None:
     original = command()
     recent_months = set(original.recent_diagnostic_window_months)
-    sparse_diagnostics = tuple(
-        record
-        for record in original.recent_diagnostic_records
-        if record.month not in recent_months
-    ) + tuple(
-        record for record in original.recent_diagnostic_records if record.month in recent_months
-    )[:80]
+    sparse_diagnostics = (
+        tuple(
+            record
+            for record in original.recent_diagnostic_records
+            if record.month not in recent_months
+        )
+        + tuple(
+            record for record in original.recent_diagnostic_records if record.month in recent_months
+        )[:80]
+    )
 
     release = freeze_candidate_release(
         original.model_copy(update={"recent_diagnostic_records": sparse_diagnostics})
