@@ -549,6 +549,11 @@ export interface components {
             training_record_count: number;
             /** Training Window Months */
             training_window_months: string[];
+            /**
+             * Unavailable Probability Count
+             * @default 0
+             */
+            unavailable_probability_count: number;
         };
         /**
          * CalibratorSelectionSnapshot

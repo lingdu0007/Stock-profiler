@@ -120,7 +120,9 @@ outcomes have matured. Each eventual label row must retain its original frozen
 candidate score, probability and five-session entry window; omitted or rewritten
 outcomes fail closed, and an executable entry must fall within an actual saved
 market session in that window. Members with no frozen probability remain visible
-as availability failures and do not enter later calibration cohorts.
+as availability failures, carry a `CALIBRATION`, `DATA`, or `SYSTEM` classification,
+and do not enter later calibration cohorts. The frozen calibration snapshot
+counts those unavailable probabilities without exposing member identities.
 Rolling-window completeness uses all source labels mature and available by the
 frozen knowledge cutoff, regardless of caller-supplied label or publication clocks.
 The label watermark cannot exceed the research knowledge cutoff. It freezes
@@ -129,7 +131,9 @@ identities, historically frozen out-of-sample diagnostics, per-security
 probabilities, and the five-session window selected from the saved market
 calendar. The recent diagnostic cohort reports calibration drift only; it does
 not affect fitting, fit-window choice, or high-probability qualification. A
-candidate requires probability at least 0.80, complete
+diagnostic cohort below its sample floor reports `INSUFFICIENT_DATA` while the
+production fit remains eligible for release. A candidate requires probability
+at least 0.80, complete
 data, an accepted independent risk result and a scope-, version-, state- and
 calendar-matched persisted qualification valid at the cutoff. Missing qualification yields
 `RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains

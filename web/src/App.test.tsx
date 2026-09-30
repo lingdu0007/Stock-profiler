@@ -120,6 +120,7 @@ describe("App", () => {
             training_record_count: 600,
             positive_record_count: 300,
             negative_record_count: 300,
+            unavailable_probability_count: 0,
             out_of_sample_diagnostics: {
               log_loss: "0.42",
               brier_score: "0.13",
@@ -230,6 +231,7 @@ describe("App", () => {
     expect(release).toHaveTextContent("CANDIDATES");
     expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
     expect(release).toHaveTextContent("2046-07-01T09:01:00Z");
+    expect(release).toHaveTextContent("Unavailable probabilities");
     expect(release).not.toHaveTextContent("2046-07-01T09:00:00Z");
     expect(release).toHaveTextContent("0.87");
     expect(release).toHaveTextContent(
@@ -335,6 +337,7 @@ describe("App", () => {
               training_record_count: 500,
               positive_record_count: 250,
               negative_record_count: 250,
+              unavailable_probability_count: 0,
               intercept: "-0.4",
               structured_inputs: {},
               transformed_inputs: {},

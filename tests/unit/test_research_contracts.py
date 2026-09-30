@@ -1484,6 +1484,7 @@ def test_missing_candidate_calibration_fields_preserve_legacy_serialization() ->
 def test_v2_calibration_snapshot_can_preserve_a_member_without_frozen_probability() -> None:
     payload = _command().raw_score_model.model_dump(mode="json")
     payload["training_records"][0]["historical_calibrated_probability"] = None
+    payload["training_records"][0]["historical_calibration_failure"] = "CALIBRATION"
 
     snapshot = RawScoreModelSnapshot.model_validate(payload)
 
@@ -1493,6 +1494,52 @@ def test_v2_calibration_snapshot_can_preserve_a_member_without_frozen_probabilit
         record.historical_calibrated_probability is not None
         for record in snapshot.training_records[1:]
     )
+
+
+def test_training_and_calibration_history_use_distinct_frozen_cohort_identities() -> None:
+    snapshot = _command().raw_score_model
+
+    training_ids = {cohort.cohort_id for cohort in snapshot.training_cohorts}
+    history_ids = {cohort.cohort_id for cohort in snapshot.calibration_history_cohorts}
+
+    assert training_ids.isdisjoint(history_ids)
+
+
+def test_calibration_history_rejects_reused_training_cohort_identity() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    training_cohort = payload["training_cohorts"][0]
+    history_cohort = payload["calibration_history_cohorts"][0]
+    assert isinstance(training_cohort, dict)
+    assert isinstance(history_cohort, dict)
+    old_cohort_id = history_cohort["cohort_id"]
+    reused_cohort_id = training_cohort["cohort_id"]
+    history_cohort["cohort_id"] = reused_cohort_id
+    for record in payload["calibration_history_records"]:
+        if record["cohort_id"] == old_cohort_id:
+            record["cohort_id"] = reused_cohort_id
+
+    with pytest.raises(ValueError, match="frozen cohort identity was reused"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_calibration_history_preserves_a_classified_missing_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    record = payload["calibration_history_records"][0]
+    record["historical_calibrated_probability"] = None
+    record["historical_calibration_failure"] = "CALIBRATION"
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_history_records[0].historical_calibrated_probability is None
+    assert snapshot.calibration_history_records[0].historical_calibration_failure == "CALIBRATION"
+
+
+def test_calibration_history_requires_a_classification_for_missing_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["calibration_history_records"][0]["historical_calibrated_probability"] = None
+
+    with pytest.raises(ValueError, match="calibration probability failure must be classified"):
+        RawScoreModelSnapshot.model_validate(payload)
 
 
 def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() -> None:

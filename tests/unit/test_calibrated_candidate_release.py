@@ -28,6 +28,7 @@ from stock_profiler.modules.portfolio.market_calendar import (
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
+    RawScoreTrainingCohort,
     RawScoreTrainingRecord,
     _raw_score_evaluation_entry_at,
     frozen_raw_score_model_snapshot,
@@ -156,6 +157,13 @@ def _six_month_anniversary(value: datetime) -> datetime:
         month=month,
         day=min(value.day, monthrange(year, month)[1]),
     )
+
+
+def _month_after(month: str, count: int = 1) -> str:
+    year, month_number = (int(part) for part in month.split("-"))
+    month_index = year * 12 + month_number - 1 + count
+    next_year, zero_based_month = divmod(month_index, 12)
+    return f"{next_year:04}-{zero_based_month + 1:02}"
 
 
 def command(
@@ -479,6 +487,37 @@ def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> Non
     assert release.calibration.recent_diagnostics.log_loss.is_finite()
 
 
+def test_frozen_calibration_reports_missing_probability_availability_failures() -> None:
+    original = command()
+
+    release = freeze_candidate_release(original, unavailable_probability_count=3)
+
+    assert release.calibration is not None
+    assert release.calibration.unavailable_probability_count == 3
+
+
+def test_incomplete_recent_diagnostic_cohort_is_visible_without_blocking_release() -> None:
+    original = command()
+    recent_months = set(original.recent_diagnostic_window_months)
+    sparse_diagnostics = tuple(
+        record
+        for record in original.recent_diagnostic_records
+        if record.month not in recent_months
+    ) + tuple(
+        record for record in original.recent_diagnostic_records if record.month in recent_months
+    )[:80]
+
+    release = freeze_candidate_release(
+        original.model_copy(update={"recent_diagnostic_records": sparse_diagnostics})
+    )
+
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.recent_diagnostic_sample_count == 80
+    assert release.calibration.recent_diagnostic_status == "INSUFFICIENT_DATA"
+    assert release.calibration.recent_diagnostics is None
+
+
 def test_recent_diagnostic_cohort_drops_labels_after_the_frozen_watermark() -> None:
     original = command()
     after_watermark = original.recent_diagnostic_records[0].model_copy(
@@ -534,6 +573,82 @@ def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
     assert diagnostics.recalibration_fit_status == "AVAILABLE"
     assert diagnostics.calibration_slope == Decimal("0.00000000")
     assert diagnostics.calibration_intercept is not None
+
+
+@pytest.mark.parametrize(
+    ("invalid_case", "expected_error"),
+    (
+        ("selection_window_mismatch", "CALIBRATOR_SELECTION_WINDOW_MISMATCH"),
+        ("empty_selection", "CALIBRATOR_SELECTION_REQUIRES_MATURE_MONTHS"),
+        ("diagnostic_month_count", "RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS"),
+        ("selection_not_earlier", "CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER"),
+        ("diagnostics_not_later", "RECENT_DIAGNOSTIC_WINDOW_NOT_LATER"),
+        ("duplicate_selection_identity", "CALIBRATOR_SELECTION_RECORD_IDENTITIES_NOT_UNIQUE"),
+        ("duplicate_diagnostic_identity", "RECENT_DIAGNOSTIC_RECORD_IDENTITIES_NOT_UNIQUE"),
+        ("selection_label_not_mature", "CALIBRATOR_SELECTION_LABEL_NOT_MATURE"),
+    ),
+)
+def test_calibrator_rejects_invalid_selection_or_diagnostic_provenance(
+    invalid_case: str,
+    expected_error: str,
+) -> None:
+    original = command()
+    update: dict[str, object] = {}
+    if invalid_case == "selection_window_mismatch":
+        update["calibrator_selection_window_months"] = ()
+    elif invalid_case == "empty_selection":
+        update.update(
+            calibrator_selection_window_months=(),
+            calibrator_selection_records=(),
+        )
+    elif invalid_case == "diagnostic_month_count":
+        update["recent_diagnostic_window_months"] = original.recent_diagnostic_window_months[:-1]
+    elif invalid_case == "selection_not_earlier":
+        later_month = _month_after(original.training_window_months[-1])
+        selection_record = original.calibrator_selection_records[0].model_copy(
+            update={"month": later_month, "record_id": "synthetic-late-selection"}
+        )
+        update.update(
+            calibrator_selection_window_months=(later_month,),
+            calibrator_selection_records=(selection_record,),
+            recent_diagnostic_window_months=tuple(
+                _month_after(later_month, offset) for offset in range(1, 25)
+            ),
+        )
+    elif invalid_case == "diagnostics_not_later":
+        history = calibration_history_records()
+        history_months = tuple(dict.fromkeys(record.month for record in history))
+        fitting_months = history_months[-60:]
+        diagnostic_months = history_months[24:48]
+        update.update(
+            training_window_months=fitting_months,
+            training_records=tuple(record for record in history if record.month in fitting_months),
+            recent_diagnostic_window_months=diagnostic_months,
+            recent_diagnostic_records=tuple(
+                record for record in history if record.month in diagnostic_months
+            ),
+        )
+    elif invalid_case == "duplicate_selection_identity":
+        update["calibrator_selection_records"] = (
+            *original.calibrator_selection_records,
+            original.calibrator_selection_records[0],
+        )
+    elif invalid_case == "duplicate_diagnostic_identity":
+        update["recent_diagnostic_records"] = (
+            *original.recent_diagnostic_records,
+            original.recent_diagnostic_records[0],
+        )
+    elif invalid_case == "selection_label_not_mature":
+        late_label = original.calibrator_selection_records[0].model_copy(
+            update={"label_available_at": original.label_watermark_at + timedelta(seconds=1)}
+        )
+        update["calibrator_selection_records"] = (
+            late_label,
+            *original.calibrator_selection_records[1:],
+        )
+
+    with pytest.raises(ValueError, match=expected_error):
+        candidate_module._fit_calibrator(original.model_copy(update=update))
 
 
 def test_full_window_diagnostic_fit_failure_does_not_fail_production_calibration() -> None:
@@ -2346,6 +2461,20 @@ def test_calibration_source_population_rejects_conflicting_duplicate_identity() 
 
     with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
         decision_case_service._raw_score_calibration_source_records(model_with_conflict)
+
+
+def test_calibration_provenance_rejects_rewritten_cohort_identity_across_events() -> None:
+    cohort = frozen_raw_score_model_snapshot().training_cohorts[0]
+    member_security_id = next(iter(cohort.completed_research_ids))
+    rewritten_members = dict(cohort.completed_research_ids)
+    rewritten_members[member_security_id] = "synthetic-rewritten-research"
+    rewritten_cohort = cohort.model_copy(update={"completed_research_ids": rewritten_members})
+    cohorts_by_id: dict[str, RawScoreTrainingCohort] = {}
+
+    decision_case_service._retain_immutable_cohort(cohorts_by_id, cohort)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_immutable_cohort(cohorts_by_id, rewritten_cohort)
 
 
 def test_unavailable_probability_identity_cannot_reenter_from_another_source_row() -> None:

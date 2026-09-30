@@ -106,6 +106,7 @@ from stock_profiler.modules.research.contracts import (
     RawScore,
     RawScoreCalculationError,
     RawScoreModelSnapshot,
+    RawScoreTrainingCohort,
     RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDraft,
@@ -648,7 +649,7 @@ def _validate_candidate_calibration_sources(
     connection: Transaction,
     access_scope: ResultAccessScope,
     candidate_model_version: str,
-) -> tuple[bool, tuple[CalibrationRecord, ...]]:
+) -> tuple[bool, tuple[CalibrationRecord, ...], int]:
     """Bind calibration rows to the complete frozen out-of-sample research snapshot."""
     if any(
         record.raw_score_model_version != candidate_model_version
@@ -687,6 +688,8 @@ def _validate_candidate_calibration_sources(
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     mature_source_event_ids: dict[tuple[str, str, str], str] = {}
     unavailable_probability_identities: set[tuple[str, str, str]] = set()
+    all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    frozen_cohorts_by_id: dict[str, RawScoreTrainingCohort] = {}
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     cutoff_mature_source_event_ids: dict[tuple[str, str, str], str] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
@@ -724,6 +727,8 @@ def _validate_candidate_calibration_sources(
         model = source_case_research.raw_score_model
         if model.calibration_evidence_version != "frozen-oos-calibration-v2":
             continue
+        for cohort in (*model.training_cohorts, *model.calibration_history_cohorts):
+            _retain_immutable_cohort(frozen_cohorts_by_id, cohort)
         for source_record in _raw_score_calibration_source_records(model):
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
@@ -732,6 +737,7 @@ def _validate_candidate_calibration_sources(
                 source_record.security_id,
                 source_record.research_id,
             )
+            _retain_immutable_source_row(all_source_rows, identity, source_record)
             if source_record.historical_calibrated_probability is None:
                 unavailable_probability_identities.add(identity)
             if (
@@ -935,23 +941,27 @@ def _validate_candidate_calibration_sources(
                 for record in command.calibrator_selection_records
             },
         )
-    if command.recent_diagnostic_window_months:
-        _validate_cutoff_complete_calibration_population(
-            command.recent_diagnostic_window_months,
-            cutoff_mature_source_rows,
-            cutoff_frozen_training_rows,
-            cutoff_matured_candidate_prediction_ids,
-            {
-                (record.month, record.security_id, record.research_id)
-                for record in command.recent_diagnostic_records
-            },
-        )
+    calibration_months = set(
+        (*command.calibrator_selection_window_months,
+         *command.training_window_months,
+         *command.recent_diagnostic_window_months)
+    )
+    unavailable_probability_count = sum(
+        1
+        for identity, record in all_source_rows.items()
+        if record.historical_calibrated_probability is None
+        if identity[0] in calibration_months
+        and record.unified_maturity_at is not None
+        and record.unified_maturity_at <= candidate_cutoff
+        and record.label_available_at <= candidate_cutoff
+    )
     return (
         not prior_calibration_snapshots,
         tuple(
             recent_diagnostic_records_by_identity[identity]
             for identity in sorted(recent_diagnostic_records_by_identity)
         ),
+        unavailable_probability_count,
     )
 
 
@@ -1369,6 +1379,16 @@ def _retain_immutable_source_row(
         raise CandidateCalibrationProvenanceInvalid()
     previous = rows.setdefault(identity, record)
     if previous != record:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _retain_immutable_cohort(
+    cohorts: dict[str, RawScoreTrainingCohort],
+    cohort: RawScoreTrainingCohort,
+) -> None:
+    """Keep frozen cohort membership stable across all historical research events."""
+    previous = cohorts.setdefault(cohort.cohort_id, cohort)
+    if previous != cohort:
         raise CandidateCalibrationProvenanceInvalid()
 
 
@@ -2512,6 +2532,7 @@ def _commit_framework_result(
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
     candidate_model_version: str | None = None
     candidate_initial_calibration = True
+    candidate_unavailable_probability_count = 0
     candidate_recent_diagnostic_records: tuple[CalibrationRecord, ...] = ()
 
     framework_stage_results = _framework_stage_results(execution_case, framework)
@@ -2574,6 +2595,7 @@ def _commit_framework_result(
                 (
                     candidate_initial_calibration,
                     candidate_recent_diagnostic_records,
+                    candidate_unavailable_probability_count,
                 ) = _validate_candidate_calibration_sources(
                     execution_case.candidate_release,
                     ledger,
@@ -3090,6 +3112,9 @@ def _commit_framework_result(
                         published_at=publication_time,
                         initial_calibration=candidate_initial_calibration,
                         recent_diagnostic_records=candidate_recent_diagnostic_records,
+                        unavailable_probability_count=(
+                            candidate_unavailable_probability_count
+                        ),
                     )
                 committed_at = ledger.observed_at()
                 if (

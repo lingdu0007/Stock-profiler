@@ -113,6 +113,10 @@ export function CandidateReleaseEvidence({
               value={String(release.calibration.training_record_count)}
             />
             <Record
+              label="Unavailable probabilities"
+              value={String(release.calibration.unavailable_probability_count)}
+            />
+            <Record
               label="Out-of-sample log loss"
               value={release.calibration.out_of_sample_diagnostics.log_loss}
             />

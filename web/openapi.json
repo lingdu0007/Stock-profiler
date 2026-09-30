@@ -837,6 +837,12 @@
             },
             "title": "Training Window Months",
             "type": "array"
+          },
+          "unavailable_probability_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Unavailable Probability Count",
+            "type": "integer"
           }
         },
         "required": [

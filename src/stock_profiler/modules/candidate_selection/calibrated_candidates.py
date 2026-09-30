@@ -224,6 +224,7 @@ class CalibrationSnapshot(UniverseContract):
     training_record_count: int
     positive_record_count: int
     negative_record_count: int
+    unavailable_probability_count: int = Field(default=0, ge=0)
     out_of_sample_diagnostics: CalibrationDiagnostics
     recent_diagnostic_months: tuple[str, ...] = Field(min_length=24, max_length=24)
     recent_diagnostic_sample_count: int = Field(ge=0)
@@ -295,6 +296,7 @@ def freeze_candidate_release(
     published_at: datetime | None = None,
     initial_calibration: bool = True,
     recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
+    unavailable_probability_count: int = 0,
 ) -> CandidateReleaseOutcome:
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
     publication_time = published_at or command.published_at
@@ -342,6 +344,7 @@ def freeze_candidate_release(
                 if recent_diagnostic_records is None
                 else recent_diagnostic_records
             ),
+            unavailable_probability_count=unavailable_probability_count,
         )
     except ValueError as error:
         return _release_outcome(
@@ -797,6 +800,7 @@ def _fit_calibrator(
     *,
     initial_calibration: bool = True,
     recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
+    unavailable_probability_count: int = 0,
 ) -> CalibrationSnapshot:
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
@@ -985,6 +989,7 @@ def _fit_calibrator(
         training_record_count=len(records),
         positive_record_count=positives,
         negative_record_count=negatives,
+        unavailable_probability_count=unavailable_probability_count,
         out_of_sample_diagnostics=out_of_sample_diagnostics,
         recent_diagnostic_months=recent_months,
         recent_diagnostic_sample_count=len(recent_records),

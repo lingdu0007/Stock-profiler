@@ -559,6 +559,9 @@ class RawScoreTrainingRecord(ResearchContract):
     historical_calibrated_probability: Decimal | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    historical_calibration_failure: Literal["CALIBRATION", "DATA", "SYSTEM"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     entry_window_ends_at: AwareDatetime | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -572,6 +575,15 @@ class RawScoreTrainingRecord(ResearchContract):
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_calibration_availability(self) -> RawScoreTrainingRecord:
+        if (
+            self.historical_calibrated_probability is not None
+            and self.historical_calibration_failure is not None
+        ):
+            raise ValueError("calibration probability and failure classification are exclusive")
+        return self
 
 
 class RawScoreModelSnapshot(ResearchContract):
@@ -651,6 +663,17 @@ class RawScoreModelSnapshot(ResearchContract):
                 raise ValueError("raw-score label watermark date does not match its month")
             if not self.training_cohorts or not self.training_records:
                 raise ValueError("raw-score training provenance is required")
+            training_cohorts_by_id = {
+                cohort.cohort_id: cohort for cohort in self.training_cohorts
+            }
+            history_cohorts_by_id = {
+                cohort.cohort_id: cohort for cohort in self.calibration_history_cohorts
+            }
+            if any(
+                training_cohorts_by_id[cohort_id] != history_cohorts_by_id[cohort_id]
+                for cohort_id in training_cohorts_by_id.keys() & history_cohorts_by_id.keys()
+            ):
+                raise ValueError("raw-score frozen cohort identity was reused with new membership")
             security_month_keys = [
                 (record.month, record.security_id) for record in self.training_records
             ]
@@ -770,6 +793,12 @@ class RawScoreModelSnapshot(ResearchContract):
                 for record in self.training_records
             ):
                 raise ValueError("raw-score calibration probability version is incomplete")
+            if self.calibration_evidence_version == "frozen-oos-calibration-v2" and any(
+                record.historical_calibrated_probability is None
+                and record.historical_calibration_failure is None
+                for record in self.training_records
+            ):
+                raise ValueError("calibration probability failure must be classified")
             if has_calibration_evidence:
                 for record in self.training_records:
                     assert record.raw_score_frozen_at is not None
@@ -908,13 +937,22 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score calibration history exceeds the label watermark")
             if (
+                record.historical_calibrated_probability is None
+                and record.historical_calibration_failure is None
+            ):
+                raise ValueError("calibration probability failure must be classified")
+            if (
                 record.raw_score_frozen_at != record.selection_cutoff_at
                 or record.raw_score_training_watermark_at is None
                 or record.raw_score_training_watermark_at > record.raw_score_frozen_at
                 or record.raw_success_score is None
                 or not record.raw_success_score.is_finite()
-                or record.historical_calibrated_probability is None
-                or not Decimal("0") < record.historical_calibrated_probability < Decimal("1")
+                or (
+                    record.historical_calibrated_probability is not None
+                    and not Decimal("0")
+                    < record.historical_calibrated_probability
+                    < Decimal("1")
+                )
                 or record.entry_window_ends_at is None
                 or record.unified_maturity_at is None
                 or record.market_calendar_version is None
@@ -1189,6 +1227,8 @@ def _legacy_raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> date
 
 def _frozen_raw_score_training_records(
     training_months: tuple[str, ...],
+    *,
+    cohort_id_prefix: str = "synthetic-training-cohort",
 ) -> tuple[tuple[RawScoreTrainingCohort, ...], tuple[RawScoreTrainingRecord, ...]]:
     cohorts: list[RawScoreTrainingCohort] = []
     records: list[RawScoreTrainingRecord] = []
@@ -1200,7 +1240,7 @@ def _frozen_raw_score_training_records(
         entry_window_ends_at = raw_score_entry_window_end(
             evaluation_entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION
         )
-        cohort_id = f"synthetic-training-cohort-{month}"
+        cohort_id = f"{cohort_id_prefix}-{month}"
         member_security_ids = tuple(
             f"synthetic-training-security-{month_index * 10 + member_index:04}"
             for member_index in range(10)
@@ -1265,7 +1305,8 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         calibration_history_start_year, calibration_history_start_month, 111
     )
     calibration_history_cohorts, calibration_history_records = _frozen_raw_score_training_records(
-        calibration_history_months
+        calibration_history_months,
+        cohort_id_prefix="synthetic-calibration-history-cohort",
     )
     label_watermark_at = max(
         record.label_available_at for record in (*training_records, *calibration_history_records)
