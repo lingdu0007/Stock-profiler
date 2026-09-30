@@ -1084,6 +1084,24 @@ def test_raw_score_calibration_history_rejects_non_executable_entry(
         RawScoreModelSnapshot.model_validate(payload)
 
 
+def test_raw_score_calibration_history_binds_prediction_timestamp_to_month() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    record = payload["calibration_history_records"][0]
+    wrong_month = "2041-11"
+    cohort_id = record["cohort_id"]
+    for cohort_record in payload["calibration_history_records"]:
+        if cohort_record["cohort_id"] == cohort_id:
+            cohort_record["month"] = wrong_month
+    next(
+        cohort
+        for cohort in payload["calibration_history_cohorts"]
+        if cohort["cohort_id"] == cohort_id
+    )["month"] = wrong_month
+
+    with pytest.raises(ValueError, match="prediction cutoff does not match its month"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_records"][0]["label_available_at"] = (

@@ -888,6 +888,10 @@ class RawScoreModelSnapshot(ResearchContract):
                 or cohort.completed_research_ids.get(record.security_id) != record.research_id
             ):
                 raise ValueError("raw-score calibration history must bind to frozen cohorts")
+            if record.selection_cutoff_at.strftime("%Y-%m") != record.month:
+                raise ValueError(
+                    "raw-score calibration history prediction cutoff does not match its month"
+                )
             if record.source_model_version != self.model_version:
                 raise ValueError("raw-score calibration history model version is inconsistent")
             if (
