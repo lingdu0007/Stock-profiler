@@ -1039,6 +1039,19 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
         ResearchCommand.model_validate(payload)
 
 
+def test_raw_score_calibration_history_rejects_success_without_a_valid_entry() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    invalid_entry_record = next(
+        record
+        for record in payload["calibration_history_records"]
+        if record["evaluation_entry_at"] is None
+    )
+    invalid_entry_record["terminal_label"] = True
+
+    with pytest.raises(ValueError, match="invalid entry must be labeled unsuccessful"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_records"][0]["label_available_at"] = (

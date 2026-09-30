@@ -940,6 +940,8 @@ class RawScoreModelSnapshot(ResearchContract):
                 )
             ):
                 raise ValueError("raw-score calibration history evidence is incomplete")
+            if record.evaluation_entry_at is None and record.terminal_label:
+                raise ValueError("invalid entry must be labeled unsuccessful")
             records_by_cohort.setdefault(record.cohort_id, []).append(record)
         if set(cohorts) != set(records_by_cohort):
             raise ValueError("raw-score calibration history cohorts must contain records")
