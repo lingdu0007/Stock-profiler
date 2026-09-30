@@ -503,23 +503,27 @@ def _case(
 ) -> FrozenDecisionCase:
     raw_score_model = frozen_raw_score_model_snapshot()
     if no_candidate_calibration:
-        records = tuple(
-            record.model_copy(
-                update={
-                    "terminal_label": (
-                        record.raw_success_score is not None
-                        and record.raw_success_score <= Decimal("0.5")
-                        and record.evaluation_entry_at is not None
-                    )
-                }
+        def no_candidate_label(record: RawScoreTrainingRecord) -> bool:
+            return (
+                record.raw_success_score is not None
+                and record.raw_success_score <= Decimal("0.5")
+                and record.evaluation_entry_at is not None
             )
+
+        records = tuple(
+            record.model_copy(update={"terminal_label": no_candidate_label(record)})
             for record in raw_score_model.training_records
+        )
+        calibration_history_records = tuple(
+            record.model_copy(update={"terminal_label": no_candidate_label(record)})
+            for record in raw_score_model.calibration_history_records
         )
         positives = sum(record.terminal_label for record in records)
         raw_score_model = RawScoreModelSnapshot.model_validate(
             {
                 **raw_score_model.model_dump(mode="python"),
                 "training_records": records,
+                "calibration_history_records": calibration_history_records,
                 "positive_record_count": positives,
                 "negative_record_count": len(records) - positives,
             }
