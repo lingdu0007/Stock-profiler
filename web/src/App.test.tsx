@@ -81,6 +81,38 @@ describe("App", () => {
           },
           calibration: {
             calibrator_version: "monotone-firth-logistic-v1",
+            calibrator_selection: {
+              diagnostics: {
+                log_loss: "0.48",
+                brier_score: "0.15",
+                reliability_curve: [
+                  {
+                    lower_probability: "0.8",
+                    upper_probability: "0.9",
+                    sample_count: 80,
+                    mean_predicted_probability: "0.85",
+                    observed_success_rate: "0.82"
+                  }
+                ],
+                recalibration_fit_status: "AVAILABLE",
+                calibration_intercept: "-0.03",
+                calibration_slope: "0.95"
+              },
+              label_watermark_at: "2041-01-01T08:00:00Z",
+              policy: "PRE_REGISTERED_V1_SINGLE_FAMILY",
+              record_count: 240,
+              selected_calibrator_version: "monotone-firth-logistic-v1",
+              window_months: Array.from({ length: 24 }, (_, index) => {
+                const year = 2039 + Math.floor(index / 12);
+                const month = (index % 12) + 1;
+                return `${year}-${String(month).padStart(2, "0")}`;
+              })
+            },
+            calibrator_selection_window_months: Array.from({ length: 24 }, (_, index) => {
+              const year = 2039 + Math.floor(index / 12);
+              const month = (index % 12) + 1;
+              return `${year}-${String(month).padStart(2, "0")}`;
+            }),
             intercept: "-1.2",
             slope: "2.7",
             training_window_months: ["2041-01", "2045-12"],
