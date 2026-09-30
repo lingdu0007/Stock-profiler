@@ -3449,6 +3449,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
         ("ACCEPT", "QUALIFICATION_NOT_OBTAINED_RECORDED"),
         ("ACCEPT", "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK"),
+        ("ACCEPT", "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE"),
         ("ACCEPT", "UPSTREAM_RESEARCH_DATA_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
@@ -3506,6 +3507,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_DECLARED_OLDER_WINDOW",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
+        "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE",
         "UPSTREAM_RESEARCH_DATA_FAILED",
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
@@ -3871,6 +3873,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
+        "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE",
         "AT_RISK_QUALIFICATION",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_DIAGNOSTIC_ALERT_AFTER_REPORT_SAVE",
@@ -4283,6 +4286,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_EXPIRES_DURING_FIT",
         "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
+        "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE",
     }:
         validate_qualification_snapshots = (
             decision_case_service._validate_candidate_qualification_snapshots
@@ -4323,6 +4327,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             if (
                 validation_count == 2
                 and candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK"
+            ):
+                raise decision_case_service.CandidateQualificationVersionMismatch()
+            if (
+                validation_count == 3
+                and candidate_scenario == "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE"
             ):
                 raise decision_case_service.CandidateQualificationVersionMismatch()
             snapshots = validate_qualification_snapshots(*args, **kwargs)
@@ -4788,6 +4797,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "QUALIFICATION_SNAPSHOT_MISSING": "CANDIDATES",
         "QUALIFICATION_NOT_OBTAINED_RECORDED": "RECOMMENDATION_ABSTAINED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK": "FAILED",
+        "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE": "CANDIDATES",
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_CALENDAR_QUALIFICATION": "FAILED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
@@ -4940,6 +4950,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert direct is not None
     assert execution.report.result.candidate_release is not None
     saved_candidate_release = execution.report.result.candidate_release
+    if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK":
+        assert saved_candidate_release.availability_failure == "VERSION"
+        return
+    if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE":
+        assert saved_candidate_release.availability_failure == "VERSION"
+        return
     if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
         assert saved_candidate_release.disposition == "FAILED"
         assert execution.report.report_publication is not None

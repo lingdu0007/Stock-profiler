@@ -401,6 +401,7 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None = None
     raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -416,6 +417,10 @@ class StageResult(FrozenContract):
             self.phase != "RAW_SCORE" or self.status != "SUCCEEDED"
         ):
             raise ValueError("raw score payloads require a successful RAW_SCORE stage")
+        if self.availability_failure is not None and (
+            self.phase != "PUBLICATION" or self.status != "FAILED"
+        ):
+            raise ValueError("availability failures belong to failed publication stages")
         return self
 
 
@@ -696,12 +701,14 @@ class FormalReport(FrozenContract):
         failed_release = candidate_release.model_copy(
             update={
                 "disposition": "FAILED",
+                "availability_failure": failure_stage.availability_failure,
                 "members": failed_members,
                 "population": candidate_release.population.model_copy(
                     update={
                         "valid_monthly": False,
                         "recommendation_coverage_denominator": False,
                         "recommendation_coverage_pass": False,
+                        "availability_failure": failure_stage.availability_failure,
                     }
                 ),
                 "reasons": tuple(dict.fromkeys((*candidate_release.reasons, reason))),

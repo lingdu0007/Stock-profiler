@@ -3861,12 +3861,26 @@ def _publish_report_or_record_failure(
                 qualification_history_for_validation,
                 confirmed_at,
             )
+        except CandidateQualificationVersionMismatch:
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+                availability_failure="VERSION",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError(
+                "candidate qualification version changed before publication"
+            )
         except (ValueError, CandidateQualificationHistoryAmbiguous):
             failed_report = _record_candidate_publication_failure(
                 ledger,
                 connection,
                 fact,
                 "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+                availability_failure="DATA",
             )
             if failed_report is not None:
                 return failed_report, None
@@ -3947,14 +3961,21 @@ def _publish_report_or_record_failure(
             else current_governance_history
         )
         publication_failure_reason: str | None = None
+        publication_failure_availability: (
+            Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None
+        ) = None
         try:
             current_qualifications = _validate_candidate_qualification_snapshots(
                 fact.case,
                 qualification_history_for_validation,
                 recorded_time,
             )
+        except CandidateQualificationVersionMismatch:
+            publication_failure_reason = "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+            publication_failure_availability = "VERSION"
         except (ValueError, CandidateQualificationHistoryAmbiguous):
             publication_failure_reason = "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+            publication_failure_availability = "DATA"
         if publication_failure_reason is None:
             confirmed_outcome = finalize_candidate_release_publication(
                 candidate_command.model_copy(update={"qualifications": current_qualifications}),
@@ -3979,6 +4000,7 @@ def _publish_report_or_record_failure(
                 connection,
                 fact,
                 publication_failure_reason,
+                availability_failure=publication_failure_availability,
             )
             if failed_report is not None:
                 return failed_report, None
@@ -3993,6 +4015,8 @@ def _record_publication_failure(
     connection: Transaction,
     fact: DecisionEventFact,
     reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None = None,
 ) -> None:
     """Discard unconfirmed output and retain the corresponding closed gate."""
     ledger.discard_unconfirmed_publication(connection)
@@ -4001,7 +4025,7 @@ def _record_publication_failure(
         ledger,
         connection,
         fact,
-        _publication_failure_stage(reason),
+        _publication_failure_stage(reason, availability_failure=availability_failure),
         allow_repeated_occurrence=True,
     )
 
@@ -4011,9 +4035,17 @@ def _record_candidate_publication_failure(
     connection: Transaction,
     fact: DecisionEventFact,
     reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None = None,
 ) -> FormalReport | None:
     """Expose the persisted candidate result only for recognized closed gate failures."""
-    _record_publication_failure(ledger, connection, fact, reason)
+    _record_publication_failure(
+        ledger,
+        connection,
+        fact,
+        reason,
+        availability_failure=availability_failure,
+    )
     report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     if report is None or report.report_publication is None:
         return None
@@ -4161,7 +4193,11 @@ def _candidate_release_stage_result(
     )
 
 
-def _publication_failure_stage(reason: str) -> StageResult:
+def _publication_failure_stage(
+    reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None = None,
+) -> StageResult:
     """Keep an acknowledged failure distinct from an unresolved report write."""
     if reason == "PUBLICATION_COMMIT_UNCERTAIN":
         return StageResult(
@@ -4181,6 +4217,7 @@ def _publication_failure_stage(reason: str) -> StageResult:
             GateResult(gate_id="FORMAL_REPORT_SAVED", status="FAILED"),
         ),
         reasons=(reason,),
+        availability_failure=availability_failure,
     )
 
 
