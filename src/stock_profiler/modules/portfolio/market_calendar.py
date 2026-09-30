@@ -58,7 +58,7 @@ def next_market_session_open_after(
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
-    cutoff_date = value.date()
+    cutoff_date = value.astimezone(UTC).date()
     if calendar.sessions and calendar.sessions[0].closed_at.date() <= cutoff_date <= (
         calendar.sessions[-1].closed_at.date()
     ):

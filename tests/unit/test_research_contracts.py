@@ -444,6 +444,25 @@ def test_prediction_window_uses_the_active_calendar_sessions_when_available() ->
     )
 
 
+def test_entry_window_switches_to_saved_sessions_when_crossing_into_coverage() -> None:
+    market_calendar_version = "synthetic-market-calendar-v1"
+    entry_at = datetime(2042, 5, 19, 8, tzinfo=UTC)
+
+    window_end = raw_score_entry_window_end(entry_at, market_calendar_version)
+
+    assert window_end == datetime(2042, 5, 25, 15, tzinfo=UTC)
+    assert raw_score_entry_is_executable(window_end, market_calendar_version)
+
+
+def test_entry_executability_normalizes_equivalent_timezone_instants() -> None:
+    entry_utc = datetime(2037, 1, 1, 8, tzinfo=UTC)
+    equivalent_entry = datetime.fromisoformat("2036-12-31T22:00:00-10:00")
+
+    assert equivalent_entry == entry_utc
+    assert raw_score_entry_is_executable(entry_utc, RAW_SCORE_MARKET_CALENDAR_VERSION)
+    assert raw_score_entry_is_executable(equivalent_entry, RAW_SCORE_MARKET_CALENDAR_VERSION)
+
+
 def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
     original = frozen_raw_score_model_snapshot()
     training_months = _training_month_sequence(2037, 6, 60)

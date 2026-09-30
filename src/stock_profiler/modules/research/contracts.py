@@ -731,7 +731,7 @@ class RawScoreModelSnapshot(ResearchContract):
             if any(
                 record.evaluation_entry_at is not None
                 and record.market_calendar_version is None
-                and record.evaluation_entry_at.weekday() >= 5
+                and record.evaluation_entry_at.astimezone(UTC).weekday() >= 5
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must be a synthetic trading day")
@@ -957,8 +957,29 @@ def _raw_score_market_sessions(
     calendar = synthetic_market_calendar(market_calendar_version)
     if calendar is None:
         raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
-    first_session_date = first_date.date()
+    first_session_date = first_date.astimezone(UTC).date()
     saved_sessions = calendar.sessions
+    if saved_sessions and first_session_date < saved_sessions[0].closed_at.date():
+        terminal_sessions = calendar.terminal_sessions or saved_sessions
+        first_coverage_date = saved_sessions[0].closed_at.date()
+        last_coverage_date = saved_sessions[-1].closed_at.date()
+        saved_session_closes = tuple(session.closed_at for session in saved_sessions)
+        preceding_sessions = tuple(
+            session.closed_at
+            for session in terminal_sessions
+            if first_session_date <= session.closed_at.date() < first_coverage_date
+        )
+        if not preceding_sessions or preceding_sessions[0].date() != first_session_date:
+            raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+        following_sessions = tuple(
+            session.closed_at
+            for session in terminal_sessions
+            if session.closed_at.date() > last_coverage_date
+        )
+        window_sessions = (preceding_sessions + saved_session_closes + following_sessions)[:5]
+        if len(window_sessions) == 5:
+            return window_sessions
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
     if saved_sessions and saved_sessions[0].closed_at.date() <= first_session_date <= (
         saved_sessions[-1].closed_at.date()
     ):
@@ -1020,7 +1041,7 @@ def raw_score_entry_is_executable(
     if calendar is None:
         return False
     session_close = market_session_close_on(
-        evaluation_entry_at.date(),
+        evaluation_entry_at.astimezone(UTC).date(),
         market_calendar_version,
     )
     if session_close is None:
