@@ -509,7 +509,8 @@ def _validate_candidate_release_source(
         or source_event.case.access_scope is None
         or case.access_scope is None
         or not source_event.case.access_scope.same_scope_as(case.access_scope)
-        or source_event.case.knowledge_cutoff != case.knowledge_cutoff
+        or datetime.fromisoformat(source_event.case.knowledge_cutoff)
+        != datetime.fromisoformat(case.knowledge_cutoff)
         or source_event.result.research is None
     ):
         raise ValueError("CANDIDATE_RESEARCH_EVENT_INVALID")
@@ -1075,7 +1076,8 @@ def _frozen_candidate_prediction_rows_from_events(
     if (
         research_event.decision_event_id != command.research_event_id
         or research_event.business_object_id != command.research_object_id
-        or research_event.case.knowledge_cutoff != candidate_event.case.knowledge_cutoff
+        or datetime.fromisoformat(research_event.case.knowledge_cutoff)
+        != datetime.fromisoformat(candidate_event.case.knowledge_cutoff)
     ):
         raise CandidateCalibrationProvenanceInvalid()
     return _frozen_candidate_prediction_rows_from_source(

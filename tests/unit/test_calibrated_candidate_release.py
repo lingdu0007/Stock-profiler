@@ -1994,6 +1994,9 @@ def test_prior_candidate_predictions_use_the_referenced_research_event() -> None
             ),
         ),
     )
+    research_event.case.knowledge_cutoff = original.knowledge_cutoff.isoformat().replace(
+        "+00:00", "Z"
+    )
 
     predictions = decision_case_service._frozen_candidate_prediction_rows_from_events(
         candidate_event, research_event
