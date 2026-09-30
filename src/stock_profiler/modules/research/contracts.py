@@ -729,7 +729,9 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score evaluation entry must follow the selection cutoff")
             if any(
-                record.evaluation_entry_at is not None and record.evaluation_entry_at.weekday() >= 5
+                record.evaluation_entry_at is not None
+                and record.market_calendar_version is None
+                and record.evaluation_entry_at.weekday() >= 5
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must be a synthetic trading day")

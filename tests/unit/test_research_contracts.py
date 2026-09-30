@@ -444,6 +444,83 @@ def test_prediction_window_uses_the_active_calendar_sessions_when_available() ->
     )
 
 
+def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
+    original = frozen_raw_score_model_snapshot()
+    training_months = _training_month_sequence(2037, 6, 60)
+    month_mapping = dict(zip(original.training_months, training_months, strict=True))
+    market_calendar_version = RAW_SCORE_MARKET_CALENDAR_VERSION
+    updated_records: list[dict[str, object]] = []
+    label_times: list[datetime] = []
+    for record in original.training_records:
+        month = month_mapping[record.month]
+        year, month_number = (int(part) for part in month.split("-"))
+        cutoff_at = (
+            datetime(2042, 5, 22, 15, tzinfo=UTC)
+            if month == "2042-05"
+            else datetime(
+                year,
+                month_number,
+                monthrange(year, month_number)[1],
+                23,
+                59,
+                59,
+                tzinfo=UTC,
+            )
+        )
+        entry_at = _raw_score_evaluation_entry_at(cutoff_at, market_calendar_version)
+        entry_window_ends_at = raw_score_entry_window_end(entry_at, market_calendar_version)
+        outcome_entry_at = entry_at if record.evaluation_entry_at is not None else None
+        maturity_anchor = outcome_entry_at or entry_window_ends_at
+        maturity_at = raw_score_maturity_at(maturity_anchor, market_calendar_version)
+        label_times.append(maturity_at)
+        updated_records.append(
+            record.model_copy(
+                update={
+                    "month": month,
+                    "selection_cutoff_at": cutoff_at,
+                    "raw_score_frozen_at": cutoff_at,
+                    "raw_score_training_watermark_at": cutoff_at - timedelta(days=1),
+                    "evaluation_entry_at": outcome_entry_at,
+                    "entry_window_ends_at": entry_window_ends_at,
+                    "unified_maturity_at": maturity_at,
+                    "label_available_at": maturity_at,
+                }
+            ).model_dump(mode="python")
+        )
+    updated_cohorts = tuple(
+        cohort.model_copy(update={"month": month_mapping[cohort.month]}).model_dump(mode="python")
+        for cohort in original.training_cohorts
+    )
+    label_watermark_at = max(label_times)
+    payload = original.model_dump(mode="python")
+    payload.update(
+        {
+            "training_window_id": "synthetic-window-shifted-for-saved-calendar-entry",
+            "training_window_start_month": training_months[0],
+            "training_window_end_month": training_months[-1],
+            "training_months": training_months,
+            "label_watermark_month": label_watermark_at.strftime("%Y-%m"),
+            "label_watermark_at": label_watermark_at,
+            "training_cohorts": updated_cohorts,
+            "training_records": updated_records,
+        }
+    )
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+    saved_weekend_entries = tuple(
+        record.evaluation_entry_at
+        for record in snapshot.training_records
+        if record.month == "2042-05" and record.evaluation_entry_at is not None
+    )
+
+    assert saved_weekend_entries
+    assert all(entry.weekday() >= 5 for entry in saved_weekend_entries)
+    assert all(
+        raw_score_entry_is_executable(entry, market_calendar_version)
+        for entry in saved_weekend_entries
+    )
+
+
 def test_missing_session_inside_saved_calendar_coverage_is_not_executable() -> None:
     missing_session_entry = datetime(2042, 5, 23, 10, tzinfo=UTC)
 
