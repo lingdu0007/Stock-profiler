@@ -8621,6 +8621,18 @@
         "additionalProperties": false,
         "description": "A phase-specific outcome; lifecycle states have no global terminal meaning.",
         "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
           "gate_results": {
             "items": {
               "$ref": "#/components/schemas/GateResult"

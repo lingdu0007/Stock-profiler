@@ -3520,6 +3520,8 @@ export interface components {
          * @description A phase-specific outcome; lifecycle states have no global terminal meaning.
          */
         StageResult: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
             /** Gate Results */
             gate_results: components["schemas"]["GateResult"][];
             /**
