@@ -105,6 +105,7 @@ from stock_profiler.modules.research.contracts import (
     RISK_OUTPUT_CONTRACT_VERSION,
     RawScore,
     RawScoreCalculationError,
+    RawScoreModelSnapshot,
     RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDraft,
@@ -723,8 +724,7 @@ def _validate_candidate_calibration_sources(
         model = source_case_research.raw_score_model
         if model.calibration_evidence_version != "frozen-oos-calibration-v2":
             continue
-        calibration_history = model.calibration_history_records or model.training_records
-        for source_record in calibration_history:
+        for source_record in _raw_score_calibration_source_records(model):
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
             identity = (
@@ -739,9 +739,7 @@ def _validate_candidate_calibration_sources(
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
                 if source_record.historical_calibrated_probability is not None:
-                    _retain_immutable_mature_source_row(
-                        cutoff_mature_source_rows, identity, source_record
-                    )
+                    _retain_immutable_source_row(cutoff_mature_source_rows, identity, source_record)
                     cutoff_mature_source_event_ids.setdefault(identity, event.decision_event_id)
             else:
                 cutoff_incomplete_source_months.add(source_record.month)
@@ -750,7 +748,7 @@ def _validate_candidate_calibration_sources(
                 and source_record.label_available_at <= command.label_watermark_at
                 and source_record.unified_maturity_at <= command.label_watermark_at
             ):
-                _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
+                _retain_immutable_source_row(mature_source_rows, identity, source_record)
                 mature_source_event_ids.setdefault(identity, event.decision_event_id)
     unavailable_probability_identities.difference_update(frozen_training_rows)
     unavailable_probability_identities.difference_update(cutoff_frozen_training_rows)
@@ -824,7 +822,7 @@ def _validate_candidate_calibration_sources(
         ):
             raise CandidateCalibrationProvenanceInvalid()
         source_model = source_event.case.research.raw_score_model
-        snapshot_records = source_model.calibration_history_records or source_model.training_records
+        snapshot_records = _raw_score_calibration_source_records(source_model)
         records_by_identity = {
             (record.month, record.security_id, record.research_id): record for record in records
         }
@@ -1005,7 +1003,10 @@ def _validate_calibration_training_window(
     """Bind a fitting window between frozen selection and diagnostic cohorts."""
     if len(training_window_months) < 60:
         return
-    if selection_window_months and selection_window_months != authoritative_mature_months[:24]:
+    if (
+        selection_window_months
+        and selection_window_months != authoritative_mature_months[: len(selection_window_months)]
+    ):
         raise CandidateCalibrationProvenanceInvalid()
     if recent_diagnostic_window_months and recent_diagnostic_window_months != tuple(
         sorted(authoritative_mature_months)[-24:]
@@ -1355,7 +1356,7 @@ def _validate_cutoff_complete_calibration_population(
         raise CandidateCalibrationProvenanceInvalid()
 
 
-def _retain_immutable_mature_source_row(
+def _retain_immutable_source_row(
     rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     identity: tuple[str, str, str],
     record: RawScoreTrainingRecord,
@@ -1369,6 +1370,17 @@ def _retain_immutable_mature_source_row(
     previous = rows.setdefault(identity, record)
     if previous != record:
         raise CandidateCalibrationProvenanceInvalid()
+
+
+def _raw_score_calibration_source_records(
+    model: RawScoreModelSnapshot,
+) -> tuple[RawScoreTrainingRecord, ...]:
+    """Merge both frozen raw-score sources while rejecting rewritten identities."""
+    rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    for record in (*model.training_records, *model.calibration_history_records):
+        identity = (record.month, record.security_id, record.research_id)
+        _retain_immutable_source_row(rows, identity, record)
+    return tuple(rows[identity] for identity in sorted(rows))
 
 
 def _validate_candidate_qualification_snapshots(

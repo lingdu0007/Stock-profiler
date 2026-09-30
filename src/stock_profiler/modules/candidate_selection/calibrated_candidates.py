@@ -218,7 +218,7 @@ class CalibrationSnapshot(UniverseContract):
     intercept: Decimal
     slope: Decimal
     calibrator_selection: CalibratorSelectionSnapshot
-    calibrator_selection_window_months: tuple[str, ...] = Field(min_length=24, max_length=24)
+    calibrator_selection_window_months: tuple[str, ...] = Field(min_length=1)
     training_window_months: tuple[str, ...]
     label_watermark_at: AwareDatetime
     training_record_count: int
@@ -255,7 +255,7 @@ class CalibratorSelectionSnapshot(UniverseContract):
 
     policy: Literal["PRE_REGISTERED_V1_SINGLE_FAMILY"]
     selected_calibrator_version: Literal["monotone-firth-logistic-v1"]
-    window_months: tuple[str, ...] = Field(min_length=24, max_length=24)
+    window_months: tuple[str, ...] = Field(min_length=1)
     label_watermark_at: AwareDatetime
     record_count: int = Field(ge=1)
     diagnostics: CalibrationDiagnostics
@@ -882,8 +882,8 @@ def _fit_calibrator(
                 raise ValueError("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM")
     if selection_months != command.calibrator_selection_window_months:
         raise ValueError("CALIBRATOR_SELECTION_WINDOW_MISMATCH")
-    if len(selection_months) != 24:
-        raise ValueError("CALIBRATOR_SELECTION_REQUIRES_24_MATURE_MONTHS")
+    if not selection_months:
+        raise ValueError("CALIBRATOR_SELECTION_REQUIRES_MATURE_MONTHS")
     if len(set(diagnostic_months)) != 24:
         raise ValueError("RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS")
     if (

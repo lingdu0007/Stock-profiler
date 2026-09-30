@@ -1401,7 +1401,10 @@ def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
                         item_id=case.frozen_input_fingerprint,
                         source="frozen-synthetic-case",
                         content=json.dumps(
-                            case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+                            _frozen_framework_context_input(case),
+                            ensure_ascii=True,
+                            separators=(",", ":"),
+                            sort_keys=True,
                         ),
                     ),
                 )
@@ -1417,6 +1420,20 @@ def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
             structured_output=StructuredOutputMode.JSON_SCHEMA_STRICT,
         ),
     )
+
+
+def _frozen_framework_context_input(case: FrozenDecisionCase) -> dict[str, object]:
+    """Keep host-owned calibration evidence out of the framework context budget."""
+    payload = deepcopy(case.input)
+    candidate_release = payload.get("candidate_release")
+    if isinstance(candidate_release, dict):
+        for evidence_field in (
+            "calibrator_selection_records",
+            "training_records",
+            "recent_diagnostic_records",
+        ):
+            candidate_release.pop(evidence_field, None)
+    return payload
 
 
 async def execute_frozen_decision_case(

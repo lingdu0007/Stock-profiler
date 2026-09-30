@@ -278,10 +278,10 @@ def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> Non
     identity = (original.month, original.security_id, original.research_id)
     retained: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
 
-    decision_case_service._retain_immutable_mature_source_row(retained, identity, original)
+    decision_case_service._retain_immutable_source_row(retained, identity, original)
 
     with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
-        decision_case_service._retain_immutable_mature_source_row(
+        decision_case_service._retain_immutable_source_row(
             retained,
             identity,
             original.model_copy(update={"raw_success_score": Decimal("0.5")}),
@@ -1121,6 +1121,22 @@ def test_raw_score_calibration_history_allows_one_cohort_per_month() -> None:
 
     with pytest.raises(ValueError, match="one frozen cohort per month"):
         RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_raw_score_calibration_history_allows_missing_months_from_unavailable_cohorts() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    removed_cohort = payload["calibration_history_cohorts"].pop(50)
+    payload["calibration_history_records"] = [
+        record
+        for record in payload["calibration_history_records"]
+        if record["cohort_id"] != removed_cohort["cohort_id"]
+    ]
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    months = tuple(sorted({record.month for record in snapshot.calibration_history_records}))
+    assert removed_cohort["month"] not in months
+    assert len(months) == len(snapshot.calibration_history_cohorts)
 
 
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:

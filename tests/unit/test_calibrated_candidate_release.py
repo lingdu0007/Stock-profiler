@@ -287,6 +287,30 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
     )
 
 
+def test_calibrator_selection_window_has_no_unregistered_24_month_floor() -> None:
+    original = command()
+    selection_months = tuple(
+        dict.fromkeys(record.month for record in original.calibrator_selection_records)
+    )[:12]
+    selection_records = tuple(
+        record
+        for record in original.calibrator_selection_records
+        if record.month in set(selection_months)
+    )
+    shorter_selection = original.model_copy(
+        update={
+            "calibrator_selection_window_months": selection_months,
+            "calibrator_selection_records": selection_records,
+        }
+    )
+
+    release = freeze_candidate_release(shorter_selection)
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.calibration is not None
+    assert release.calibration.calibrator_selection_window_months == selection_months
+
+
 def test_recent_diagnostic_window_cannot_participate_in_fitting() -> None:
     original = command()
     overlapping = original.model_copy(
@@ -2294,6 +2318,36 @@ def test_calibration_source_population_excludes_records_without_frozen_probabili
     assert len(source_rows) == 2
 
 
+def test_calibration_source_population_unions_training_and_history_records() -> None:
+    model = frozen_raw_score_model_snapshot()
+
+    source_records = decision_case_service._raw_score_calibration_source_records(model)
+
+    source_identities = {
+        (record.month, record.security_id, record.research_id) for record in source_records
+    }
+    expected_identities = {
+        (record.month, record.security_id, record.research_id)
+        for record in (*model.training_records, *model.calibration_history_records)
+    }
+    assert source_identities == expected_identities
+    assert len(source_records) == len(expected_identities)
+
+
+def test_calibration_source_population_rejects_conflicting_duplicate_identity() -> None:
+    model = frozen_raw_score_model_snapshot()
+    training_record = model.training_records[0]
+    conflicting_history_record = training_record.model_copy(
+        update={"historical_calibrated_probability": Decimal("0.99")}
+    )
+    model_with_conflict = model.model_copy(
+        update={"calibration_history_records": (conflicting_history_record,)}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._raw_score_calibration_source_records(model_with_conflict)
+
+
 def test_unavailable_probability_identity_cannot_reenter_from_another_source_row() -> None:
     source_records = frozen_raw_score_model_snapshot().training_records
     unavailable = source_records[0].model_copy(update={"historical_calibrated_probability": None})
@@ -2330,10 +2384,10 @@ def test_mature_calibration_source_rejects_duplicate_security_month_across_resea
     rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     first_identity = (first.month, first.security_id, first.research_id)
     second_identity = (second.month, second.security_id, second.research_id)
-    decision_case_service._retain_immutable_mature_source_row(rows, first_identity, first)
+    decision_case_service._retain_immutable_source_row(rows, first_identity, first)
 
     with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
-        decision_case_service._retain_immutable_mature_source_row(rows, second_identity, second)
+        decision_case_service._retain_immutable_source_row(rows, second_identity, second)
 
 
 def test_backdated_publication_request_does_not_hide_committed_calibration_history() -> None:

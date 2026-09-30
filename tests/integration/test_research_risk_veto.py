@@ -10,10 +10,16 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
-from m_agent.adapters import DeterministicModelAdapter, InMemoryRunStore, PlaintextPayloadCodec
+from m_agent.adapters import (
+    DeterministicContextProvider,
+    DeterministicModelAdapter,
+    InMemoryRunStore,
+    PlaintextPayloadCodec,
+)
 from m_agent.runtime import (
     AgentDefinition,
     ContextItem,
+    ContextRequest,
     DefinitionRegistry,
     ModelRequest,
     PolicyAction,
@@ -503,6 +509,7 @@ def _case(
 ) -> FrozenDecisionCase:
     raw_score_model = frozen_raw_score_model_snapshot()
     if no_candidate_calibration:
+
         def no_candidate_label(record: RawScoreTrainingRecord) -> bool:
             return (
                 record.raw_success_score is not None
@@ -3596,11 +3603,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         for record in source_records
         if record.raw_score_frozen_at is not None and record.unified_maturity_at is not None
     )
-    calibration_history = source_fact.case.research.raw_score_model.calibration_history_records
-    calibration_history_months = tuple(sorted({record.month for record in calibration_history}))
-    selection_months = calibration_history_months[:24]
-    training_months = calibration_history_months[24:84]
-    recent_diagnostic_months = calibration_history_months[-24:]
+    raw_score_model = source_fact.case.research.raw_score_model
+    calibration_source_records = (
+        *raw_score_model.training_records,
+        *raw_score_model.calibration_history_records,
+    )
+    calibration_source_months = tuple(
+        sorted({record.month for record in calibration_source_records})
+    )
+    selection_months = calibration_source_months[:24]
+    training_months = calibration_source_months[24:84]
+    recent_diagnostic_months = calibration_source_months[-24:]
     older_training_months = tuple(
         f"{int(month[:4]) - 1:04}{month[4:]}" for month in training_months
     )
@@ -3635,19 +3648,21 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     selection_records = tuple(
         calibration_record(index, row)
         for index, row in enumerate(
-            record for record in calibration_history if record.month in selection_months
+            record for record in calibration_source_records if record.month in selection_months
         )
     )
     training_records = tuple(
         calibration_record(index, row)
         for index, row in enumerate(
-            record for record in calibration_history if record.month in training_months
+            record for record in calibration_source_records if record.month in training_months
         )
     )
     recent_diagnostic_records = tuple(
         calibration_record(index, row)
         for index, row in enumerate(
-            record for record in calibration_history if record.month in recent_diagnostic_months
+            record
+            for record in calibration_source_records
+            if record.month in recent_diagnostic_months
         )
     )
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
@@ -4776,6 +4791,16 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             "record_stage_result",
             advance_clock_before_publication_confirmation,
         )
+    definition = frozen_decision_case._frozen_definition(candidate_case)
+    context_provider = definition.context_provider
+    assert isinstance(context_provider, DeterministicContextProvider)
+    context_items = asyncio.run(context_provider.provide(ContextRequest(input="{}")))
+    visible_input = json.loads(context_items[0].content)
+    visible_candidate_release = visible_input["candidate_release"]
+    assert "calibrator_selection_records" not in visible_candidate_release
+    assert "training_records" not in visible_candidate_release
+    assert "recent_diagnostic_records" not in visible_candidate_release
+
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {

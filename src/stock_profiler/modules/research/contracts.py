@@ -938,12 +938,6 @@ class RawScoreModelSnapshot(ResearchContract):
                 cohort.completed_research_ids
             ):
                 raise ValueError("raw-score calibration history must cover frozen cohort members")
-        months = tuple(sorted({record.month for record in self.calibration_history_records}))
-        if any(
-            int(month[:4]) * 12 + int(month[5:7]) != int(previous[:4]) * 12 + int(previous[5:7]) + 1
-            for previous, month in zip(months, months[1:], strict=False)
-        ):
-            raise ValueError("raw-score calibration history months must be contiguous")
 
     @property
     def has_sufficient_training_evidence(self) -> bool:

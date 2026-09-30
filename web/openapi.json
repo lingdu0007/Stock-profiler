@@ -763,8 +763,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 24,
-            "minItems": 24,
+            "minItems": 1,
             "title": "Calibrator Selection Window Months",
             "type": "array"
           },
@@ -891,8 +890,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 24,
-            "minItems": 24,
+            "minItems": 1,
             "title": "Window Months",
             "type": "array"
           }

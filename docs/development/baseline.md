@@ -102,9 +102,9 @@ changed retry identities or later evidence do not replace it.
 
 The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
 research event with ten independently risk-vetted members. Calibration uses
-three ordered, disjoint out-of-sample cohorts: an earlier 24-month selection
-cohort, a later fitting cohort, and the latest 24-month drift diagnostic cohort.
-The V1 family is preregistered as monotone Firth logistic; the immutable
+three ordered, disjoint out-of-sample cohorts: an earlier pre-registered
+selection cohort, a later fitting cohort, and the latest 24-month drift
+diagnostic cohort. The V1 family is preregistered as monotone Firth logistic; the immutable
 selection evidence freezes the selected family, selection label watermark,
 sample identity, and out-of-sample diagnostics. Selection and diagnostic rows
 never enter production parameter fitting. Initial fitting expands from the
@@ -112,8 +112,7 @@ earliest eligible month between those cohorts through the first prefix of at
 least 60 mature months, 500 records, and 50 examples from each class that meets
 every floor. After the first valid calibration, every refit uses the fixed
 rolling latest 60 eligible mature fitting months; a missed sample floor then
-produces a visible calibration failure. The three cohorts require at least
-108 mature out-of-sample months in total.
+produces a visible calibration failure.
 Its population
 is the complete union of mature raw-score source rows, previously committed
 calibration rows, and previously frozen candidate predictions whose six-month
