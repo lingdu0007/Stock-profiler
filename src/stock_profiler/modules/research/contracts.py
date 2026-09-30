@@ -874,14 +874,22 @@ class RawScoreModelSnapshot(ResearchContract):
         cohorts = {cohort.cohort_id: cohort for cohort in self.calibration_history_cohorts}
         if len(cohorts) != len(self.calibration_history_cohorts):
             raise ValueError("raw-score calibration history cohorts must be unique")
+        cohort_months = {cohort.month for cohort in self.calibration_history_cohorts}
+        if len(cohort_months) != len(self.calibration_history_cohorts):
+            raise ValueError("raw-score calibration history must have one frozen cohort per month")
         records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
         identities: set[tuple[str, str, str]] = set()
+        security_month_identities: set[tuple[str, str]] = set()
         for record in self.calibration_history_records:
             identity = (record.month, record.security_id, record.research_id)
+            security_month_identity = (record.month, record.security_id)
             cohort = cohorts.get(record.cohort_id)
             if identity in identities:
                 raise ValueError("raw-score calibration history records must be unique")
+            if security_month_identity in security_month_identities:
+                raise ValueError("raw-score calibration history security-months must be unique")
             identities.add(identity)
+            security_month_identities.add(security_month_identity)
             if (
                 cohort is None
                 or record.month != cohort.month
