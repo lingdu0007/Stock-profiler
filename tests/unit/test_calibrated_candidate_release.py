@@ -329,6 +329,32 @@ def test_candidate_window_uses_terminal_sessions_after_saved_coverage() -> None:
     assert release.valid_market_dates == tuple(session.market_date for session in expected_sessions)
 
 
+def test_candidate_window_rejects_sessions_after_terminal_calendar_coverage() -> None:
+    original = command()
+    cutoff = datetime(2050, 12, 31, 9, tzinfo=UTC)
+    submitted_sessions = tuple(
+        MarketSession(
+            market_date=datetime(2051, 1, day, tzinfo=UTC).date(),
+            opens_at=datetime(2051, 1, day, 1, tzinfo=UTC),
+            closes_at=datetime(2051, 1, day, 8, tzinfo=UTC),
+            session_sequence=2_000_000 + day,
+        )
+        for day in range(3, 8)
+    )
+    outside_coverage = original.model_copy(
+        update={
+            "knowledge_cutoff": cutoff,
+            "published_at": cutoff + timedelta(hours=1),
+            "market_sessions": submitted_sessions,
+        }
+    )
+
+    selected_window, failure = candidate_module._candidate_window(outside_coverage)
+
+    assert selected_window == submitted_sessions
+    assert failure == "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
+
+
 def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> None:
     original = command()
     recent_months = set(original.training_window_months[-24:])
@@ -1417,6 +1443,34 @@ def test_firth_solver_rejects_score_watermark_after_freeze_time() -> None:
 
     assert release.availability_failure == "CALIBRATION"
     assert release.reasons == ("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE",)
+
+
+def test_firth_solver_rejects_entry_before_prediction_time() -> None:
+    original = command()
+    first = original.training_records[0].model_copy(
+        update={"entry_at": original.training_records[0].raw_score_frozen_at - timedelta(seconds=1)}
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW"):
+        before_prediction = original.model_copy(
+            update={"training_records": (first, *original.training_records[1:])}
+        )
+        candidate_module._fit_calibrator(before_prediction)
+
+
+def test_firth_solver_rejects_entry_after_frozen_window() -> None:
+    original = command()
+    first = original.training_records[0].model_copy(
+        update={
+            "entry_at": original.training_records[0].entry_window_ends_at + timedelta(seconds=1)
+        }
+    )
+
+    with pytest.raises(ValueError, match="CALIBRATION_EXECUTABLE_ENTRY_OUTSIDE_ENTRY_WINDOW"):
+        after_window = original.model_copy(
+            update={"training_records": (first, *original.training_records[1:])}
+        )
+        candidate_module._fit_calibrator(after_window)
 
 
 def test_firth_solver_rejects_raw_score_timestamp_from_a_different_month() -> None:
