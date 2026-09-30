@@ -701,6 +701,8 @@ def _validate_candidate_calibration_sources(
         prior_outcome = event.result.candidate_release
         if prior_command is None or prior_outcome is None:
             continue
+        if not _same_calibrator_selection_evidence(prior_command, command):
+            raise CandidateCalibrationProvenanceInvalid()
         if prior_outcome.calibration is not None:
             research_event = historical_events_by_id.get(prior_command.research_event_id)
             predictions = _frozen_candidate_prediction_rows_from_events(event, research_event)
@@ -725,11 +727,12 @@ def _validate_candidate_calibration_sources(
         if source_case_research is None:
             continue
         model = source_case_research.raw_score_model
-        if model.calibration_evidence_version != "frozen-oos-calibration-v2":
+        source_records = _candidate_calibration_source_records(model, candidate_model_version)
+        if not source_records:
             continue
         for cohort in (*model.training_cohorts, *model.calibration_history_cohorts):
             _retain_immutable_cohort(frozen_cohorts_by_id, cohort)
-        for source_record in _raw_score_calibration_source_records(model):
+        for source_record in source_records:
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
             identity = (
@@ -985,6 +988,34 @@ def _prior_calibration_snapshot_matches(
         and prior_model_versions == current_model_versions
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    )
+
+
+def _same_calibrator_selection_evidence(
+    left: CandidateReleaseCommand,
+    right: CandidateReleaseCommand,
+) -> bool:
+    """Preserve selected family, watermark months, members, and frozen diagnostics."""
+    if left.calibrator_version != right.calibrator_version:
+        return False
+    if left.calibrator_selection_window_months != right.calibrator_selection_window_months:
+        return False
+    left_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in left.calibrator_selection_records
+    }
+    right_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in right.calibrator_selection_records
+    }
+    return bool(
+        len(left_records) == len(left.calibrator_selection_records)
+        and len(right_records) == len(right.calibrator_selection_records)
+        and left_records.keys() == right_records.keys()
+        and all(
+            _same_frozen_calibration_record(left_records[identity], right_records[identity])
+            for identity in left_records
+        )
     )
 
 
@@ -1421,6 +1452,19 @@ def _raw_score_calibration_source_records(
         identity = (record.month, record.security_id, record.research_id)
         _retain_immutable_source_row(rows, identity, record)
     return tuple(rows[identity] for identity in sorted(rows))
+
+
+def _candidate_calibration_source_records(
+    model: RawScoreModelSnapshot,
+    candidate_model_version: str,
+) -> tuple[RawScoreTrainingRecord, ...]:
+    """Return only source rows produced under the candidate's frozen score model."""
+    if (
+        model.model_version != candidate_model_version
+        or model.calibration_evidence_version != "frozen-oos-calibration-v2"
+    ):
+        return ()
+    return _raw_score_calibration_source_records(model)
 
 
 def _validate_candidate_qualification_snapshots(

@@ -2597,6 +2597,59 @@ def test_prior_calibration_snapshot_does_not_cross_frozen_version(
     )
 
 
+@pytest.mark.parametrize(
+    "selection_updates",
+    (
+        {"calibrator_selection_window_months": command().calibrator_selection_window_months[:12]},
+        {
+            "calibrator_selection_records": command().calibrator_selection_records[:-1],
+        },
+        {
+            "calibrator_selection_records": (
+                command()
+                .calibrator_selection_records[0]
+                .model_copy(update={"out_of_sample_probability": Decimal("0.51")}),
+                *command().calibrator_selection_records[1:],
+            ),
+        },
+    ),
+    ids=("window", "member-identity", "frozen-diagnostic-input"),
+)
+def test_calibrator_selection_evidence_is_immutable_across_refits(
+    selection_updates: dict[str, object],
+) -> None:
+    frozen_command = command()
+    changed_command = frozen_command.model_copy(update=selection_updates)
+
+    assert not decision_case_service._same_calibrator_selection_evidence(
+        frozen_command, changed_command
+    )
+
+
+def test_selection_evidence_comparison_ignores_regenerated_record_ids() -> None:
+    frozen_command = command()
+    changed_ids = tuple(
+        record.model_copy(update={"record_id": f"regenerated-{index}"})
+        for index, record in enumerate(frozen_command.calibrator_selection_records)
+    )
+    refit_command = frozen_command.model_copy(update={"calibrator_selection_records": changed_ids})
+
+    assert decision_case_service._same_calibrator_selection_evidence(frozen_command, refit_command)
+
+
+def test_candidate_calibration_source_rows_exclude_other_model_versions() -> None:
+    model = frozen_raw_score_model_snapshot()
+    previous_model = model.model_copy(update={"model_version": "raw-score-v0"})
+
+    assert (
+        decision_case_service._candidate_calibration_source_records(
+            previous_model, model.model_version
+        )
+        == ()
+    )
+    assert decision_case_service._candidate_calibration_source_records(model, model.model_version)
+
+
 def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> None:
     authoritative_months = tuple(
         f"{2040 + index // 12:04}-{index % 12 + 1:02}" for index in range(63)
