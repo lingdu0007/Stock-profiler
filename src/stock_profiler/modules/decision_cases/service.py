@@ -681,11 +681,11 @@ def _validate_candidate_calibration_sources(
     mature_source_event_ids: dict[tuple[str, str, str], str] = {}
     unavailable_probability_identities: set[tuple[str, str, str]] = set()
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    cutoff_mature_source_event_ids: dict[tuple[str, str, str], str] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     cutoff_incomplete_source_months: set[str] = set()
-    watermark_incomplete_source_months: set[str] = set()
     for event in prior_calibration_snapshots:
         prior_command = event.case.candidate_release
         prior_outcome = event.result.candidate_release
@@ -728,11 +728,6 @@ def _validate_candidate_calibration_sources(
             if source_record.historical_calibrated_probability is None:
                 unavailable_probability_identities.add(identity)
             if (
-                source_record.label_available_at > command.label_watermark_at
-                or source_record.unified_maturity_at > command.label_watermark_at
-            ):
-                watermark_incomplete_source_months.add(source_record.month)
-            if (
                 source_record.label_available_at <= candidate_cutoff
                 and source_record.unified_maturity_at <= candidate_cutoff
             ):
@@ -740,6 +735,7 @@ def _validate_candidate_calibration_sources(
                     _retain_immutable_mature_source_row(
                         cutoff_mature_source_rows, identity, source_record
                     )
+                    cutoff_mature_source_event_ids.setdefault(identity, event.decision_event_id)
             else:
                 cutoff_incomplete_source_months.add(source_record.month)
             if (
@@ -750,10 +746,12 @@ def _validate_candidate_calibration_sources(
                 _retain_immutable_mature_source_row(mature_source_rows, identity, source_record)
                 mature_source_event_ids.setdefault(identity, event.decision_event_id)
     unavailable_probability_identities.difference_update(frozen_training_rows)
+    unavailable_probability_identities.difference_update(cutoff_frozen_training_rows)
     for identity in unavailable_probability_identities:
         mature_source_rows.pop(identity, None)
         mature_source_event_ids.pop(identity, None)
         cutoff_mature_source_rows.pop(identity, None)
+        cutoff_mature_source_event_ids.pop(identity, None)
     cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
@@ -771,23 +769,11 @@ def _validate_candidate_calibration_sources(
         globally_mature_months,
         initial_calibration=not prior_calibration_snapshots,
     )
-    watermark_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
-        frozen_candidate_predictions,
-        mature_source_rows,
-        command.label_watermark_at,
-    )
-    watermark_mature_months = _fully_matured_calibration_months(
-        set(mature_source_rows),
-        set(frozen_training_rows),
-        watermark_matured_candidate_prediction_ids,
-        set(frozen_candidate_predictions),
-        watermark_incomplete_source_months,
-    )
-    recent_diagnostic_months = set(watermark_mature_months[-24:])
+    recent_diagnostic_months = set(_recent_calibration_month_window(globally_mature_months))
     recent_diagnostic_records_by_identity = _recent_calibration_diagnostic_records(
-        mature_source_rows,
-        mature_source_event_ids,
-        frozen_training_rows,
+        cutoff_mature_source_rows,
+        cutoff_mature_source_event_ids,
+        cutoff_frozen_training_rows,
         recent_diagnostic_months,
         unavailable_probability_identities,
     )
@@ -1028,6 +1014,13 @@ def _recent_calibration_diagnostic_records(
                 source, mature_source_event_ids[identity]
             )
     return records
+
+
+def _recent_calibration_month_window(
+    authoritative_mature_months: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Select diagnostics from the latest mature months known at the candidate cutoff."""
+    return tuple(sorted(authoritative_mature_months)[-24:])
 
 
 def _calibration_record_from_raw_score(

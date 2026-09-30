@@ -2115,6 +2115,18 @@ def test_initial_calibration_can_use_the_earliest_qualifying_mature_prefix() -> 
         )
 
 
+def test_recent_diagnostic_window_uses_latest_cutoff_mature_months() -> None:
+    cutoff_mature_months = tuple(
+        f"{2037 + index // 12:04}-{index % 12 + 1:02}" for index in range(61)
+    )
+    earlier_watermark_months = cutoff_mature_months[:-1]
+
+    recent_months = decision_case_service._recent_calibration_month_window(cutoff_mature_months)
+
+    assert recent_months == cutoff_mature_months[-24:]
+    assert recent_months != earlier_watermark_months[-24:]
+
+
 def test_closed_post_commit_diagnostic_alert_preserves_original_qualification() -> None:
     committed_at = datetime(2046, 7, 1, 8, tzinfo=UTC)
 
