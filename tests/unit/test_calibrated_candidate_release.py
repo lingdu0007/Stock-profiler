@@ -28,6 +28,7 @@ from stock_profiler.modules.portfolio.market_calendar import (
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
+    RawScoreTrainingRecord,
     _raw_score_evaluation_entry_at,
     frozen_raw_score_model_snapshot,
     raw_score_entry_window_end,
@@ -2321,6 +2322,18 @@ def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None
     cutoff = datetime.fromisoformat("2040-01-31T23:00:00-08:00")
 
     assert decision_case_service._candidate_prediction_month(cutoff) == "2040-01"
+
+
+def test_mature_calibration_source_rejects_duplicate_security_month_across_research_ids() -> None:
+    first = frozen_raw_score_model_snapshot().calibration_history_records[0]
+    second = first.model_copy(update={"research_id": f"{first.research_id}-renamed"})
+    rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    first_identity = (first.month, first.security_id, first.research_id)
+    second_identity = (second.month, second.security_id, second.research_id)
+    decision_case_service._retain_immutable_mature_source_row(rows, first_identity, first)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_immutable_mature_source_row(rows, second_identity, second)
 
 
 def test_backdated_publication_request_does_not_hide_committed_calibration_history() -> None:

@@ -1361,6 +1361,11 @@ def _retain_immutable_mature_source_row(
     record: RawScoreTrainingRecord,
 ) -> None:
     """Keep the first persisted identity and reject any later rewrite of its evidence."""
+    if any(
+        previous_identity[:2] == identity[:2] and previous_identity != identity
+        for previous_identity in rows
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
     previous = rows.setdefault(identity, record)
     if previous != record:
         raise CandidateCalibrationProvenanceInvalid()
