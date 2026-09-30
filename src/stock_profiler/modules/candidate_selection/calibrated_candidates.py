@@ -652,24 +652,12 @@ def _candidate_window(
         for session, saved in zip(window, saved_window, strict=True)
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
-    completed_sessions = tuple(
-        session for session in calendar.sessions if session.closed_at <= command.knowledge_cutoff
+    last_completed_session = calendar.session_at_or_before(command.knowledge_cutoff)
+    last_completed_sequence = (
+        last_completed_session.ordinal
+        if last_completed_session is not None
+        else saved_window[0].ordinal - 1
     )
-    if completed_sessions:
-        last_completed_sequence = max(session.ordinal for session in completed_sessions)
-    elif calendar.sessions:
-        last_completed_sequence = calendar.sessions[0].ordinal - 1
-    else:
-        completed_terminal_sessions = tuple(
-            session
-            for session in calendar.terminal_sessions
-            if session.closed_at <= command.knowledge_cutoff
-        )
-        last_completed_sequence = (
-            max(session.ordinal for session in completed_terminal_sessions)
-            if completed_terminal_sessions
-            else saved_window[0].ordinal - 1
-        )
     if last_completed_sequence != command.last_completed_market_session_sequence:
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     return window, None

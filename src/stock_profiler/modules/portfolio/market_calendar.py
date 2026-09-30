@@ -132,6 +132,30 @@ class SyntheticMarketCalendar:
             session for session in sessions if session.closed_at - timedelta(hours=7) > value
         )[:count]
 
+    def session_at_or_before(self, value: datetime) -> MarketSession | None:
+        """Resolve the latest completed session using the same coverage precedence."""
+        value_date = value.astimezone(UTC).date()
+        if self.sessions and self.sessions[0].closed_at.date() <= value_date <= (
+            self.sessions[-1].closed_at.date()
+        ):
+            completed_sessions = tuple(
+                session for session in self.sessions if session.closed_at <= value
+            )
+            if completed_sessions:
+                return completed_sessions[-1]
+            first_saved_date = self.sessions[0].closed_at.date()
+            prior_sessions = tuple(
+                session
+                for session in self.terminal_sessions
+                if session.closed_at.date() < first_saved_date and session.closed_at <= value
+            )
+            return prior_sessions[-1] if prior_sessions else None
+        extended_sessions = self.terminal_sessions or self.sessions
+        completed_sessions = tuple(
+            session for session in extended_sessions if session.closed_at <= value
+        )
+        return completed_sessions[-1] if completed_sessions else None
+
     def next_monthly_selection_cutoff_after(self, closed_at: datetime) -> datetime | None:
         return next(
             (cutoff for cutoff in self.monthly_selection_cutoffs if cutoff > closed_at),

@@ -656,10 +656,15 @@ def _validate_candidate_calibration_sources(
         raise CandidateCalibrationVersionMismatch()
 
     candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    candidate_release_events = ledger.candidate_release_history(connection, access_scope)
     prior_calibration_snapshots = tuple(
         event
-        for event in ledger.candidate_calibration_history(connection, access_scope)
+        for event in candidate_release_events
         if _prior_calibration_snapshot_matches(event, command)
+    )
+    unavailable_candidate_probability_identities = _unavailable_candidate_probability_identities(
+        candidate_release_events,
+        candidate_cutoff,
     )
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
@@ -748,6 +753,7 @@ def _validate_candidate_calibration_sources(
                 mature_source_event_ids.setdefault(identity, event.decision_event_id)
     unavailable_probability_identities.difference_update(frozen_training_rows)
     unavailable_probability_identities.difference_update(cutoff_frozen_training_rows)
+    unavailable_probability_identities.update(unavailable_candidate_probability_identities)
     for identity in unavailable_probability_identities:
         mature_source_rows.pop(identity, None)
         mature_source_event_ids.pop(identity, None)
@@ -922,6 +928,28 @@ def _prior_calibration_snapshot_matches(
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
     )
+
+
+def _unavailable_candidate_probability_identities(
+    candidate_release_events: tuple[DecisionEventFact, ...],
+    knowledge_cutoff: datetime,
+) -> set[tuple[str, str, str]]:
+    """Keep failed no-probability predictions out of all later calibration cohorts."""
+    unavailable: set[tuple[str, str, str]] = set()
+    for event in candidate_release_events:
+        if datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff:
+            continue
+        command = event.case.candidate_release
+        outcome = event.result.candidate_release
+        if command is None or outcome is None:
+            continue
+        month = _candidate_prediction_month(command.knowledge_cutoff)
+        unavailable.update(
+            (month, member.security_id, member.research_id)
+            for member in outcome.members
+            if member.calibrated_probability is None
+        )
+    return unavailable
 
 
 def _validate_calibration_training_window(

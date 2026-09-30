@@ -222,6 +222,24 @@ class DecisionLedger:
             and fact.result.candidate_release.calibration is not None
         )
 
+    def candidate_release_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read same-scope candidate outcomes, including releases without calibration."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection,
+                "candidate release history is unavailable",
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.candidate_release is not None
+            and fact.result.candidate_release is not None
+        )
+
     def execution_plan_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]:

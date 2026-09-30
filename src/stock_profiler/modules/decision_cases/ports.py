@@ -171,6 +171,12 @@ class DecisionLedger(Protocol[Transaction]):
         access_scope: ResultAccessScope,
     ) -> tuple[DecisionEventFact, ...]: ...
 
+    def candidate_release_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def monitoring_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...

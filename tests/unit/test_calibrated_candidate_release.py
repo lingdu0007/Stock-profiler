@@ -157,6 +157,11 @@ def command(
     published: datetime | None = None,
 ) -> CandidateReleaseCommand:
     cutoff = datetime(2046, 7, 1, 8, tzinfo=UTC)
+    market_calendar_version = "synthetic-calendar-v1"
+    calendar = synthetic_market_calendar(market_calendar_version)
+    assert calendar is not None
+    last_completed_session = calendar.session_at_or_before(cutoff)
+    assert last_completed_session is not None
     sessions = tuple(
         MarketSession(
             market_date=datetime(2046, 7, day, tzinfo=UTC).date(),
@@ -181,9 +186,9 @@ def command(
         purpose="CANDIDATE_BUY",
         knowledge_cutoff=cutoff,
         published_at=published or datetime(2046, 7, 1, 9, tzinfo=UTC),
-        last_completed_market_session_sequence=100,
+        last_completed_market_session_sequence=last_completed_session.ordinal,
         market_state="BULL",
-        market_calendar_version="synthetic-calendar-v1",
+        market_calendar_version=market_calendar_version,
         qualifications=(
             MarketStateQualification(
                 market_state="BULL",
@@ -254,6 +259,9 @@ def test_candidate_window_includes_terminal_sessions_before_saved_coverage() -> 
         for session in calendar.terminal_sessions
         if session.closed_at.date() < first_saved_date
     )
+    last_completed_session = calendar.session_at_or_before(cutoff)
+    assert last_completed_session is not None
+    assert last_completed_session.ordinal == 1_002_475
     resolved_sessions = tuple(
         sorted((*terminal_prefix, *calendar.sessions), key=lambda session: session.closed_at)
     )
@@ -271,7 +279,7 @@ def test_candidate_window_includes_terminal_sessions_before_saved_coverage() -> 
         update={
             "knowledge_cutoff": cutoff,
             "label_watermark_at": cutoff,
-            "last_completed_market_session_sequence": 100,
+            "last_completed_market_session_sequence": last_completed_session.ordinal,
             "market_sessions": expected_sessions,
         }
     )
@@ -287,6 +295,38 @@ def test_candidate_window_includes_terminal_sessions_before_saved_coverage() -> 
     assert release.valid_market_dates == tuple(session.market_date for session in expected_sessions)
     assert late_publication.disposition == "FAILED"
     assert late_publication.reasons == ("PUBLICATION_AFTER_CANDIDATE_WINDOW",)
+
+
+def test_candidate_window_uses_terminal_sessions_after_saved_coverage() -> None:
+    original = command()
+    cutoff = datetime(2046, 8, 1, 8, tzinfo=UTC)
+    calendar = synthetic_market_calendar(original.market_calendar_version)
+    assert calendar is not None
+    expected_sessions = tuple(
+        MarketSession(
+            market_date=session.closed_at.date(),
+            opens_at=session.closed_at - timedelta(hours=7),
+            closes_at=session.closed_at,
+            session_sequence=session.ordinal,
+        )
+        for session in calendar.sessions_after_open(cutoff, 5)
+    )
+    last_completed_session = calendar.session_at_or_before(cutoff)
+    assert last_completed_session is not None
+    command_after_coverage = original.model_copy(
+        update={
+            "knowledge_cutoff": cutoff,
+            "published_at": cutoff + timedelta(hours=1),
+            "label_watermark_at": cutoff,
+            "last_completed_market_session_sequence": last_completed_session.ordinal,
+            "market_sessions": expected_sessions,
+        }
+    )
+
+    release = freeze_candidate_release(command_after_coverage)
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.valid_market_dates == tuple(session.market_date for session in expected_sessions)
 
 
 def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> None:
@@ -2056,6 +2096,52 @@ def test_prior_candidate_predictions_use_the_referenced_research_event() -> None
     )
     assert predictions[identity].raw_score_frozen_at == original.knowledge_cutoff
     assert predictions[identity].raw_score_training_watermark_at == research_watermark
+
+
+def test_failed_candidate_member_without_probability_stays_out_of_calibration_history() -> None:
+    original = command()
+    missing_probability_member = SimpleNamespace(
+        security_id="SYNTH-UNAVAILABLE",
+        research_id="synthetic-unavailable-research",
+        calibrated_probability=None,
+    )
+    failed_release_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(members=(missing_probability_member,))
+            ),
+        ),
+    )
+    later_unavailable_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=(original.knowledge_cutoff + timedelta(days=1)).isoformat(),
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(members=(missing_probability_member,))
+            ),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (failed_release_event, later_unavailable_event),
+        original.knowledge_cutoff,
+    )
+
+    assert unavailable == {
+        (
+            original.knowledge_cutoff.strftime("%Y-%m"),
+            "SYNTH-UNAVAILABLE",
+            "synthetic-unavailable-research",
+        )
+    }
 
 
 def test_calibration_source_population_excludes_records_without_frozen_probability() -> None:
