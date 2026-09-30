@@ -777,6 +777,7 @@ class RawScoreModelSnapshot(ResearchContract):
                     assert record.raw_success_score is not None
                     assert record.entry_window_ends_at is not None
                     assert record.unified_maturity_at is not None
+                    assert record.market_calendar_version is not None
                     if (
                         record.raw_score_frozen_at != record.selection_cutoff_at
                         or record.raw_score_training_watermark_at > record.raw_score_frozen_at
@@ -789,34 +790,7 @@ class RawScoreModelSnapshot(ResearchContract):
                                 < Decimal("1")
                             )
                         )
-                        or record.entry_window_ends_at <= record.raw_score_frozen_at
-                        or record.market_calendar_version is None
-                        or record.entry_window_ends_at
-                        != raw_score_entry_window_end(
-                            _raw_score_evaluation_entry_at(
-                                record.selection_cutoff_at, record.market_calendar_version
-                            ),
-                            record.market_calendar_version,
-                        )
-                        or (
-                            record.evaluation_entry_at is not None
-                            and (
-                                not (
-                                    record.raw_score_frozen_at
-                                    <= record.evaluation_entry_at
-                                    <= record.entry_window_ends_at
-                                )
-                                or record.evaluation_entry_at
-                                < _raw_score_evaluation_entry_at(
-                                    record.selection_cutoff_at,
-                                    record.market_calendar_version,
-                                )
-                                or not raw_score_entry_is_executable(
-                                    record.evaluation_entry_at,
-                                    record.market_calendar_version,
-                                )
-                            )
-                        )
+                        or not _raw_score_entry_window_is_valid(record)
                     ):
                         raise ValueError(
                             "raw-score calibration evidence has invalid clocks or label"
@@ -940,6 +914,8 @@ class RawScoreModelSnapshot(ResearchContract):
                 )
             ):
                 raise ValueError("raw-score calibration history evidence is incomplete")
+            if not _raw_score_entry_window_is_valid(record):
+                raise ValueError("raw-score calibration history has invalid entry window or clock")
             if record.evaluation_entry_at is None and record.terminal_label:
                 raise ValueError("invalid entry must be labeled unsuccessful")
             records_by_cohort.setdefault(record.cohort_id, []).append(record)
@@ -1120,6 +1096,33 @@ def raw_score_entry_is_executable(
         return False
     opens_at = session_close - timedelta(hours=7)
     return opens_at <= evaluation_entry_at <= session_close
+
+
+def _raw_score_entry_window_is_valid(record: RawScoreTrainingRecord) -> bool:
+    """Validate the frozen five-session window and any selected executable entry."""
+    if (
+        record.raw_score_frozen_at is None
+        or record.entry_window_ends_at is None
+        or record.market_calendar_version is None
+        or record.entry_window_ends_at <= record.raw_score_frozen_at
+    ):
+        return False
+    first_entry_at = _raw_score_evaluation_entry_at(
+        record.selection_cutoff_at, record.market_calendar_version
+    )
+    if record.entry_window_ends_at != raw_score_entry_window_end(
+        first_entry_at, record.market_calendar_version
+    ):
+        return False
+    if record.evaluation_entry_at is None:
+        return True
+    return bool(
+        record.raw_score_frozen_at <= record.evaluation_entry_at <= record.entry_window_ends_at
+        and record.evaluation_entry_at >= first_entry_at
+        and raw_score_entry_is_executable(
+            record.evaluation_entry_at, record.market_calendar_version
+        )
+    )
 
 
 def _raw_score_label_available_at(

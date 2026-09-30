@@ -1052,6 +1052,38 @@ def test_raw_score_calibration_history_rejects_success_without_a_valid_entry() -
         RawScoreModelSnapshot.model_validate(payload)
 
 
+@pytest.mark.parametrize("invalid_entry", ["midnight", "window_end"])
+def test_raw_score_calibration_history_rejects_non_executable_entry(
+    invalid_entry: str,
+) -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["calibration_history_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    if invalid_entry == "midnight":
+        entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+        invalid_entry_at = entry.replace(hour=0, minute=0, second=0)
+        record["evaluation_entry_at"] = invalid_entry_at.isoformat()
+        record["unified_maturity_at"] = raw_score_maturity_at(
+            invalid_entry_at, record["market_calendar_version"]
+        ).isoformat()
+    else:
+        window_end = datetime.fromisoformat(record["entry_window_ends_at"].replace("Z", "+00:00"))
+        invalid_window_end = window_end.replace(hour=0, minute=0, second=0)
+        record["evaluation_entry_at"] = None
+        record["terminal_label"] = False
+        record["entry_window_ends_at"] = invalid_window_end.isoformat()
+        record["unified_maturity_at"] = raw_score_maturity_at(
+            invalid_window_end, record["market_calendar_version"]
+        ).isoformat()
+    record["label_available_at"] = record["unified_maturity_at"]
+
+    with pytest.raises(ValueError, match="invalid entry window or clock"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
     payload = _command().model_dump(mode="json")
     payload["raw_score_model"]["training_records"][0]["label_available_at"] = (
