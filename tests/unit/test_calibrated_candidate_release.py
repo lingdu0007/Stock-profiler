@@ -2524,11 +2524,18 @@ def test_mature_calibration_source_rejects_duplicate_security_month_across_resea
 
 def test_backdated_publication_request_does_not_hide_committed_calibration_history() -> None:
     frozen_command = command()
+    prior_command = frozen_command.model_copy(
+        update={
+            "knowledge_cutoff": frozen_command.knowledge_cutoff - timedelta(days=60),
+            "published_at": frozen_command.published_at - timedelta(days=60),
+        }
+    )
     prior_event = cast(
         DecisionEventFact,
         SimpleNamespace(
             case=SimpleNamespace(
-                knowledge_cutoff=(frozen_command.knowledge_cutoff - timedelta(days=60)).isoformat()
+                knowledge_cutoff=prior_command.knowledge_cutoff.isoformat(),
+                candidate_release=prior_command,
             ),
             result=SimpleNamespace(
                 candidate_release=SimpleNamespace(
@@ -2537,11 +2544,57 @@ def test_backdated_publication_request_does_not_hide_committed_calibration_histo
                     )
                 )
             ),
-            committed_at=(frozen_command.published_at + timedelta(days=1)).isoformat(),
+            committed_at=(prior_command.published_at + timedelta(days=1)).isoformat(),
         ),
     )
 
     assert decision_case_service._prior_calibration_snapshot_matches(prior_event, frozen_command)
+
+
+@pytest.mark.parametrize(
+    "prior_updates",
+    (
+        {"capability_version": "candidate-v2"},
+        {
+            "training_records": tuple(
+                record.model_copy(update={"raw_score_model_version": "raw-score-v2"})
+                for record in command().training_records
+            ),
+        },
+    ),
+    ids=("capability-version", "raw-score-model-version"),
+)
+def test_prior_calibration_snapshot_does_not_cross_frozen_version(
+    prior_updates: dict[str, object],
+) -> None:
+    current_command = command()
+    prior_command = current_command.model_copy(
+        update={
+            **prior_updates,
+            "knowledge_cutoff": current_command.knowledge_cutoff - timedelta(days=60),
+            "published_at": current_command.published_at - timedelta(days=60),
+        }
+    )
+    prior_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                knowledge_cutoff=prior_command.knowledge_cutoff.isoformat(),
+                candidate_release=prior_command,
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    calibration=SimpleNamespace(
+                        calibrator_version=current_command.calibrator_version
+                    )
+                )
+            ),
+        ),
+    )
+
+    assert not decision_case_service._prior_calibration_snapshot_matches(
+        prior_event, current_command
+    )
 
 
 def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> None:

@@ -971,14 +971,32 @@ def _prior_calibration_snapshot_matches(
     event: DecisionEventFact,
     command: CandidateReleaseCommand,
 ) -> bool:
-    """Include prior frozen fits based on their domain cutoff, not caller clocks."""
+    """Include prior fits only within the same frozen candidate and raw-score versions."""
     release = event.result.candidate_release
+    prior_command = event.case.candidate_release
+    if release is None or release.calibration is None or prior_command is None:
+        return False
+    current_model_versions = _calibration_source_model_versions(command)
+    prior_model_versions = _calibration_source_model_versions(prior_command)
     return bool(
-        release is not None
-        and release.calibration is not None
-        and release.calibration.calibrator_version == command.calibrator_version
+        release.calibration.calibrator_version == command.calibrator_version
+        and prior_command.capability_version == command.capability_version
+        and current_model_versions
+        and prior_model_versions == current_model_versions
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    )
+
+
+def _calibration_source_model_versions(command: CandidateReleaseCommand) -> frozenset[str]:
+    """Return raw-score versions represented by all calibration source cohorts."""
+    return frozenset(
+        record.raw_score_model_version
+        for record in (
+            *command.calibrator_selection_records,
+            *command.training_records,
+            *command.recent_diagnostic_records,
+        )
     )
 
 
