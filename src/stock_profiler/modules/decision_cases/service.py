@@ -723,7 +723,8 @@ def _validate_candidate_calibration_sources(
         model = source_case_research.raw_score_model
         if model.calibration_evidence_version != "frozen-oos-calibration-v2":
             continue
-        for source_record in model.training_records:
+        calibration_history = model.calibration_history_records or model.training_records
+        for source_record in calibration_history:
             if source_record.unified_maturity_at is None:
                 raise CandidateCalibrationProvenanceInvalid()
             identity = (
@@ -774,9 +775,13 @@ def _validate_candidate_calibration_sources(
     _validate_calibration_training_window(
         command.training_window_months,
         globally_mature_months,
+        selection_window_months=command.calibrator_selection_window_months,
+        recent_diagnostic_window_months=command.recent_diagnostic_window_months,
         initial_calibration=not prior_calibration_snapshots,
     )
     recent_diagnostic_months = set(_recent_calibration_month_window(globally_mature_months))
+    if command.recent_diagnostic_window_months != tuple(sorted(recent_diagnostic_months)):
+        raise CandidateCalibrationProvenanceInvalid()
     recent_diagnostic_records_by_identity = _recent_calibration_diagnostic_records(
         cutoff_mature_source_rows,
         cutoff_mature_source_event_ids,
@@ -784,7 +789,12 @@ def _validate_candidate_calibration_sources(
         recent_diagnostic_months,
         unavailable_probability_identities,
     )
-    records_by_event = _calibration_records_by_source_event(command.training_records)
+    submitted_records = (
+        *command.calibrator_selection_records,
+        *command.training_records,
+        *command.recent_diagnostic_records,
+    )
+    records_by_event = _calibration_records_by_source_event(submitted_records)
     for records in records_by_event.values():
         for record in records:
             identity = (record.month, record.security_id, record.research_id)
@@ -813,7 +823,8 @@ def _validate_candidate_calibration_sources(
             or not raw_scores
         ):
             raise CandidateCalibrationProvenanceInvalid()
-        snapshot_records = source_event.case.research.raw_score_model.training_records
+        source_model = source_event.case.research.raw_score_model
+        snapshot_records = source_model.calibration_history_records or source_model.training_records
         records_by_identity = {
             (record.month, record.security_id, record.research_id): record for record in records
         }
@@ -870,6 +881,15 @@ def _validate_candidate_calibration_sources(
             record.unified_maturity_at <= command.label_watermark_at
             and record.label_available_at <= command.label_watermark_at
             for record in records
+            if record.month
+            in set(command.calibrator_selection_window_months) | set(command.training_window_months)
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        if not all(
+            record.unified_maturity_at <= command.knowledge_cutoff
+            and record.label_available_at <= command.knowledge_cutoff
+            for record in records
+            if record.month in set(command.recent_diagnostic_window_months)
         ):
             raise CandidateCalibrationProvenanceInvalid()
     if len(command.training_window_months) >= 60:
@@ -906,6 +926,28 @@ def _validate_candidate_calibration_sources(
                 or latest_source_record.label_available_at != record.label_available_at
             ):
                 raise CandidateCalibrationProvenanceInvalid()
+    if command.calibrator_selection_window_months:
+        _validate_cutoff_complete_calibration_population(
+            command.calibrator_selection_window_months,
+            cutoff_mature_source_rows,
+            cutoff_frozen_training_rows,
+            cutoff_matured_candidate_prediction_ids,
+            {
+                (record.month, record.security_id, record.research_id)
+                for record in command.calibrator_selection_records
+            },
+        )
+    if command.recent_diagnostic_window_months:
+        _validate_cutoff_complete_calibration_population(
+            command.recent_diagnostic_window_months,
+            cutoff_mature_source_rows,
+            cutoff_frozen_training_rows,
+            cutoff_matured_candidate_prediction_ids,
+            {
+                (record.month, record.security_id, record.research_id)
+                for record in command.recent_diagnostic_records
+            },
+        )
     return (
         not prior_calibration_snapshots,
         tuple(
@@ -956,17 +998,31 @@ def _validate_calibration_training_window(
     training_window_months: tuple[str, ...],
     authoritative_mature_months: tuple[str, ...],
     *,
+    selection_window_months: tuple[str, ...] = (),
+    recent_diagnostic_window_months: tuple[str, ...] = (),
     initial_calibration: bool = False,
 ) -> None:
-    """Bind the initial prefix or later rolling window to cutoff-mature months."""
+    """Bind a fitting window between frozen selection and diagnostic cohorts."""
     if len(training_window_months) < 60:
         return
-    if len(authoritative_mature_months) < len(training_window_months):
+    if selection_window_months and selection_window_months != authoritative_mature_months[:24]:
+        raise CandidateCalibrationProvenanceInvalid()
+    if recent_diagnostic_window_months and recent_diagnostic_window_months != tuple(
+        sorted(authoritative_mature_months)[-24:]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    fitting_months = tuple(
+        month
+        for month in authoritative_mature_months
+        if (not selection_window_months or month > selection_window_months[-1])
+        and (not recent_diagnostic_window_months or month < recent_diagnostic_window_months[0])
+    )
+    if len(fitting_months) < len(training_window_months):
         raise CandidateCalibrationProvenanceInvalid()
     expected_window = (
-        authoritative_mature_months[: len(training_window_months)]
+        fitting_months[: len(training_window_months)]
         if initial_calibration
-        else authoritative_mature_months[-len(training_window_months) :]
+        else fitting_months[-len(training_window_months) :]
     )
     if training_window_months != expected_window:
         raise CandidateCalibrationProvenanceInvalid()

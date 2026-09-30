@@ -163,8 +163,12 @@ class CandidateReleaseCommand(UniverseContract):
     qualifications: tuple[MarketStateQualification, ...] = ()
     calibrator_version: str = Field(default=CALIBRATOR_VERSION, min_length=1)
     label_watermark_at: AwareDatetime
+    calibrator_selection_window_months: tuple[str, ...]
+    calibrator_selection_records: tuple[CalibrationRecord, ...]
     training_window_months: tuple[str, ...]
     training_records: tuple[CalibrationRecord, ...]
+    recent_diagnostic_window_months: tuple[str, ...]
+    recent_diagnostic_records: tuple[CalibrationRecord, ...]
     candidates: tuple[CandidateInput, ...] = Field(min_length=1)
     market_sessions: tuple[MarketSession, ...]
 
@@ -213,6 +217,8 @@ class CalibrationSnapshot(UniverseContract):
     calibrator_version: Literal["monotone-firth-logistic-v1"]
     intercept: Decimal
     slope: Decimal
+    calibrator_selection: CalibratorSelectionSnapshot
+    calibrator_selection_window_months: tuple[str, ...] = Field(min_length=24, max_length=24)
     training_window_months: tuple[str, ...]
     label_watermark_at: AwareDatetime
     training_record_count: int
@@ -242,6 +248,17 @@ class CalibrationDiagnostics(UniverseContract):
     recalibration_fit_status: Literal["AVAILABLE", "CALCULATION_FAILED"]
     calibration_intercept: Decimal | None
     calibration_slope: Decimal | None
+
+
+class CalibratorSelectionSnapshot(UniverseContract):
+    """Persist the preregistered v1 family decision and its independent OOS evidence."""
+
+    policy: Literal["PRE_REGISTERED_V1_SINGLE_FAMILY"]
+    selected_calibrator_version: Literal["monotone-firth-logistic-v1"]
+    window_months: tuple[str, ...] = Field(min_length=24, max_length=24)
+    label_watermark_at: AwareDatetime
+    record_count: int = Field(ge=1)
+    diagnostics: CalibrationDiagnostics
 
 
 class CandidatePopulation(UniverseContract):
@@ -320,7 +337,11 @@ def freeze_candidate_release(
         calibration = _fit_calibrator(
             command,
             initial_calibration=initial_calibration,
-            recent_diagnostic_records=recent_diagnostic_records,
+            recent_diagnostic_records=(
+                command.recent_diagnostic_records
+                if recent_diagnostic_records is None
+                else recent_diagnostic_records
+            ),
         )
     except ValueError as error:
         return _release_outcome(
@@ -780,6 +801,10 @@ def _fit_calibrator(
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
     months = command.training_window_months
+    selection_months = tuple(
+        sorted({record.month for record in command.calibrator_selection_records})
+    )
+    diagnostic_months = tuple(sorted(command.recent_diagnostic_window_months))
     if len(months) < _MINIMUM_MATURE_MONTHS:
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     by_month: dict[str, list[CalibrationRecord]] = {}
@@ -855,6 +880,36 @@ def _fit_calibrator(
                 and qualifying_negatives >= _MINIMUM_RECORDS_PER_CLASS
             ):
                 raise ValueError("CALIBRATION_INITIAL_WINDOW_EXCEEDS_MINIMUM")
+    if selection_months != command.calibrator_selection_window_months:
+        raise ValueError("CALIBRATOR_SELECTION_WINDOW_MISMATCH")
+    if len(selection_months) != 24:
+        raise ValueError("CALIBRATOR_SELECTION_REQUIRES_24_MATURE_MONTHS")
+    if len(set(diagnostic_months)) != 24:
+        raise ValueError("RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS")
+    if (
+        set(selection_months) & set(months)
+        or set(diagnostic_months) & set(months)
+        or set(selection_months) & set(diagnostic_months)
+    ):
+        raise ValueError("CALIBRATION_WINDOWS_MUST_BE_DISJOINT")
+    if not selection_months[-1] < months[0]:
+        raise ValueError("CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER")
+    if not months[-1] < diagnostic_months[0]:
+        raise ValueError("RECENT_DIAGNOSTIC_WINDOW_NOT_LATER")
+    if len({record.record_id for record in command.calibrator_selection_records}) != len(
+        command.calibrator_selection_records
+    ):
+        raise ValueError("CALIBRATOR_SELECTION_RECORD_IDENTITIES_NOT_UNIQUE")
+    if len({record.record_id for record in command.recent_diagnostic_records}) != len(
+        command.recent_diagnostic_records
+    ):
+        raise ValueError("RECENT_DIAGNOSTIC_RECORD_IDENTITIES_NOT_UNIQUE")
+    if any(
+        record.label_available_at > command.label_watermark_at
+        or record.unified_maturity_at > command.label_watermark_at
+        for record in command.calibrator_selection_records
+    ):
+        raise ValueError("CALIBRATOR_SELECTION_LABEL_NOT_MATURE")
     if len(records) < _MINIMUM_MATURE_RECORDS:
         raise ValueError("CALIBRATION_REQUIRES_500_MATURE_RECORDS")
     positives = sum(record.terminal_success for record in records)
@@ -867,8 +922,20 @@ def _fit_calibrator(
         raise ValueError("CALIBRATION_FIT_FAILED") from error
     probabilities = tuple(float(record.out_of_sample_probability) for record in records)
     out_of_sample_diagnostics = _calibration_diagnostics(records, probabilities)
+    selection_records = tuple(
+        record
+        for record in command.calibrator_selection_records
+        if record.month in set(command.calibrator_selection_window_months)
+    )
+    selection_diagnostics = _calibration_diagnostics(
+        selection_records,
+        tuple(float(record.out_of_sample_probability) for record in selection_records),
+    )
+    selection_watermark_at = max(record.label_available_at for record in selection_records)
     diagnostic_population = (
-        command.training_records if recent_diagnostic_records is None else recent_diagnostic_records
+        command.recent_diagnostic_records
+        if recent_diagnostic_records is None
+        else recent_diagnostic_records
     )
     diagnostic_watermark_at = (
         command.label_watermark_at
@@ -882,10 +949,9 @@ def _fit_calibrator(
             and record.label_available_at <= diagnostic_watermark_at
         ):
             diagnostic_records_by_month.setdefault(record.month, []).append(record)
-    mature_diagnostic_months = tuple(sorted(diagnostic_records_by_month))
-    recent_months = mature_diagnostic_months[-24:]
+    recent_months = diagnostic_months
     recent_records = tuple(
-        record for month in recent_months for record in diagnostic_records_by_month[month]
+        record for month in recent_months for record in diagnostic_records_by_month.get(month, ())
     )
     recent_diagnostics = None
     recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
@@ -905,6 +971,15 @@ def _fit_calibrator(
         calibrator_version=command.calibrator_version,
         intercept=Decimal(str(intercept)).quantize(Decimal("0.00000001")),
         slope=Decimal(str(slope)).quantize(Decimal("0.00000001")),
+        calibrator_selection=CalibratorSelectionSnapshot(
+            policy="PRE_REGISTERED_V1_SINGLE_FAMILY",
+            selected_calibrator_version=command.calibrator_version,
+            window_months=command.calibrator_selection_window_months,
+            label_watermark_at=selection_watermark_at,
+            record_count=len(selection_records),
+            diagnostics=selection_diagnostics,
+        ),
+        calibrator_selection_window_months=command.calibrator_selection_window_months,
         training_window_months=months,
         label_watermark_at=command.label_watermark_at,
         training_record_count=len(records),

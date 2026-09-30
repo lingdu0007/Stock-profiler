@@ -101,12 +101,19 @@ purpose cases. The first committed scope/purpose/month snapshot is immutable;
 changed retry identities or later evidence do not replace it.
 
 The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
-research event with ten independently risk-vetted members. The host fits the
-versioned monotone Firth logistic calibrator by expanding from the earliest
-eligible out-of-sample month through the first prefix of at least 60 mature
-months, 500 records, and 50 examples from each class that meets every floor.
-After the first valid calibration, every refit uses the fixed rolling latest 60
-mature months; a missed sample floor then produces a visible calibration failure.
+research event with ten independently risk-vetted members. Calibration uses
+three ordered, disjoint out-of-sample cohorts: an earlier 24-month selection
+cohort, a later fitting cohort, and the latest 24-month drift diagnostic cohort.
+The V1 family is preregistered as monotone Firth logistic; the immutable
+selection evidence freezes the selected family, selection label watermark,
+sample identity, and out-of-sample diagnostics. Selection and diagnostic rows
+never enter production parameter fitting. Initial fitting expands from the
+earliest eligible month between those cohorts through the first prefix of at
+least 60 mature months, 500 records, and 50 examples from each class that meets
+every floor. After the first valid calibration, every refit uses the fixed
+rolling latest 60 eligible mature fitting months; a missed sample floor then
+produces a visible calibration failure. The three cohorts require at least
+108 mature out-of-sample months in total.
 Its population
 is the complete union of mature raw-score source rows, previously committed
 calibration rows, and previously frozen candidate predictions whose six-month
@@ -118,9 +125,12 @@ as availability failures and do not enter later calibration cohorts.
 Rolling-window completeness uses all source labels mature and available by the
 frozen knowledge cutoff, regardless of caller-supplied label or publication clocks.
 The label watermark cannot exceed the research knowledge cutoff. It freezes
-fitted parameters, historically frozen out-of-sample diagnostics,
-per-security probabilities and the five-session window selected from the saved
-market calendar. A candidate requires probability at least 0.80, complete
+selection provenance, fitted parameters, fitting and diagnostic window
+identities, historically frozen out-of-sample diagnostics, per-security
+probabilities, and the five-session window selected from the saved market
+calendar. The recent diagnostic cohort reports calibration drift only; it does
+not affect fitting, fit-window choice, or high-probability qualification. A
+candidate requires probability at least 0.80, complete
 data, an accepted independent risk result and a scope-, version-, state- and
 calendar-matched persisted qualification valid at the cutoff. Missing qualification yields
 `RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains

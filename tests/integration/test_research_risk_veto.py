@@ -3108,15 +3108,16 @@ def test_insufficient_raw_score_model_evidence_is_saved_as_raw_score_failure(
     ]
     training_months = [month for month in model_payload["training_months"] if month != last_month]
     positive_record_count = sum(record["terminal_label"] for record in training_records)
+    calibration_history_watermark = max(
+        record["label_available_at"] for record in model_payload["calibration_history_records"]
+    )
     model_payload.update(
         {
             "training_window_month_count": len(training_months),
             "training_window_end_month": training_months[-1],
             "training_months": training_months,
-            "label_watermark_at": max(record["label_available_at"] for record in training_records),
-            "label_watermark_month": max(
-                record["label_available_at"] for record in training_records
-            )[:7],
+            "label_watermark_at": calibration_history_watermark,
+            "label_watermark_month": calibration_history_watermark[:7],
             "mature_months": len(training_months),
             "training_record_count": len(training_records),
             "positive_record_count": positive_record_count,
@@ -3591,7 +3592,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         for record in source_records
         if record.raw_score_frozen_at is not None and record.unified_maturity_at is not None
     )
-    training_months = source_fact.case.research.raw_score_model.training_months
+    calibration_history = source_fact.case.research.raw_score_model.calibration_history_records
+    calibration_history_months = tuple(sorted({record.month for record in calibration_history}))
+    selection_months = calibration_history_months[:24]
+    training_months = calibration_history_months[24:84]
+    recent_diagnostic_months = calibration_history_months[-24:]
     older_training_months = tuple(
         f"{int(month[:4]) - 1:04}{month[4:]}" for month in training_months
     )
@@ -3623,8 +3628,23 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             market_calendar_version=row.market_calendar_version,
         )
 
+    selection_records = tuple(
+        calibration_record(index, row)
+        for index, row in enumerate(
+            record for record in calibration_history if record.month in selection_months
+        )
+    )
     training_records = tuple(
-        calibration_record(index, row) for index, row in enumerate(source_records)
+        calibration_record(index, row)
+        for index, row in enumerate(
+            record for record in calibration_history if record.month in training_months
+        )
+    )
+    recent_diagnostic_records = tuple(
+        calibration_record(index, row)
+        for index, row in enumerate(
+            record for record in calibration_history if record.month in recent_diagnostic_months
+        )
     )
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
         training_records = (
@@ -3835,6 +3855,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         market_state="BULL",
         market_calendar_version="synthetic-market-calendar-v2",
         label_watermark_at=cutoff,
+        calibrator_selection_window_months=selection_months,
+        calibrator_selection_records=selection_records,
         calibrator_version=(
             "unknown-calibrator-v2"
             if candidate_scenario == "CALIBRATOR_VERSION_UNSUPPORTED"
@@ -3850,6 +3872,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             else training_months
         ),
         training_records=training_records,
+        recent_diagnostic_window_months=recent_diagnostic_months,
+        recent_diagnostic_records=recent_diagnostic_records,
         candidates=candidates,
         market_sessions=(() if candidate_scenario == "CALENDAR_WINDOW_MISSING" else sessions),
     )

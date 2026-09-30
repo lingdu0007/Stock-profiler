@@ -756,6 +756,18 @@
       "CalibrationSnapshot": {
         "additionalProperties": false,
         "properties": {
+          "calibrator_selection": {
+            "$ref": "#/components/schemas/CalibratorSelectionSnapshot"
+          },
+          "calibrator_selection_window_months": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 24,
+            "title": "Calibrator Selection Window Months",
+            "type": "array"
+          },
           "calibrator_version": {
             "const": "monotone-firth-logistic-v1",
             "title": "Calibrator Version",
@@ -832,6 +844,8 @@
           "calibrator_version",
           "intercept",
           "slope",
+          "calibrator_selection",
+          "calibrator_selection_window_months",
           "training_window_months",
           "label_watermark_at",
           "training_record_count",
@@ -844,6 +858,54 @@
           "recent_diagnostics"
         ],
         "title": "CalibrationSnapshot",
+        "type": "object"
+      },
+      "CalibratorSelectionSnapshot": {
+        "additionalProperties": false,
+        "description": "Persist the preregistered v1 family decision and its independent OOS evidence.",
+        "properties": {
+          "diagnostics": {
+            "$ref": "#/components/schemas/CalibrationDiagnostics"
+          },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
+          "policy": {
+            "const": "PRE_REGISTERED_V1_SINGLE_FAMILY",
+            "title": "Policy",
+            "type": "string"
+          },
+          "record_count": {
+            "minimum": 1.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "selected_calibrator_version": {
+            "const": "monotone-firth-logistic-v1",
+            "title": "Selected Calibrator Version",
+            "type": "string"
+          },
+          "window_months": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 24,
+            "title": "Window Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "policy",
+          "selected_calibrator_version",
+          "window_months",
+          "label_watermark_at",
+          "record_count",
+          "diagnostics"
+        ],
+        "title": "CalibratorSelectionSnapshot",
         "type": "object"
       },
       "CandidateEvidenceClock": {

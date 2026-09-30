@@ -74,10 +74,16 @@ def _calibration_record(
 
 
 def training_records() -> tuple[CalibrationRecord, ...]:
+    records = calibration_history_records()
+    months = tuple(dict.fromkeys(record.month for record in records))[24:84]
+    return tuple(record for record in records if record.month in months)
+
+
+def calibration_history_records() -> tuple[CalibrationRecord, ...]:
     records: list[CalibrationRecord] = []
-    months = tuple(f"{year}-{month:02d}" for year in range(2040, 2046) for month in range(1, 13))[
-        :-1
-    ][-60:]
+    months = tuple(f"{year}-{month:02d}" for year in range(2036, 2046) for month in range(1, 13))[
+        8:119
+    ]
     for month in months:
         year, month_number = (int(part) for part in month.split("-"))
         month_end = datetime(year, month_number, monthrange(year, month_number)[1], 8, tzinfo=UTC)
@@ -105,9 +111,9 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
     threshold = generator.random()
     strength = generator.uniform(-3, 3)
     records: list[CalibrationRecord] = []
-    months = tuple(f"{year}-{month:02d}" for year in range(2040, 2046) for month in range(1, 13))[
-        :-1
-    ][-60:]
+    months = tuple(f"{year}-{month:02d}" for year in range(2036, 2046) for month in range(1, 13))[
+        8:119
+    ]
     for month in months:
         year, month_number = (int(part) for part in month.split("-"))
         entry_window_ends_at = datetime(
@@ -136,7 +142,8 @@ def weak_positive_signal_records() -> tuple[CalibrationRecord, ...]:
                     terminal_success=generator.random() < probability,
                 )
             )
-    return tuple(records)
+    fitting_months = set(months[24:84])
+    return tuple(record for record in records if record.month in fitting_months)
 
 
 def _six_month_anniversary(value: datetime) -> datetime:
@@ -173,6 +180,12 @@ def command(
     )
     records = training_records()
     months = tuple(dict.fromkeys(record.month for record in records))
+    history = calibration_history_records()
+    history_months = tuple(dict.fromkeys(record.month for record in history))
+    selection_months = history_months[:24]
+    recent_months = history_months[-24:]
+    selection_records = tuple(record for record in history if record.month in selection_months)
+    recent_diagnostic_records = tuple(record for record in history if record.month in recent_months)
     return CandidateReleaseCommand(
         contract_version="1.0.0",
         synthetic=True,
@@ -201,8 +214,12 @@ def command(
             ),
         ),
         label_watermark_at=cutoff,
+        calibrator_selection_window_months=selection_months,
+        calibrator_selection_records=selection_records,
         training_window_months=months,
         training_records=records,
+        recent_diagnostic_window_months=recent_months,
+        recent_diagnostic_records=recent_diagnostic_records,
         candidates=(
             CandidateInput(
                 security_id="SYNTH-ALPHA",
@@ -224,16 +241,37 @@ def command(
 
 
 def test_freezes_calibration_probabilities_and_five_market_day_candidate_window() -> None:
-    release = freeze_candidate_release(command())
+    original = command()
+    release = freeze_candidate_release(original)
 
     assert release.disposition == "CANDIDATES", release.reasons
     assert release.calibration is not None
+    assert release.calibration.calibrator_selection.policy == "PRE_REGISTERED_V1_SINGLE_FAMILY"
+    assert (
+        release.calibration.calibrator_selection.selected_calibrator_version
+        == "monotone-firth-logistic-v1"
+    )
+    assert release.calibration.calibrator_selection.record_count == len(
+        command().calibrator_selection_records
+    )
+    assert release.calibration.calibrator_selection.diagnostics.log_loss.is_finite()
     assert release.calibration.label_watermark_at == datetime(2046, 7, 1, 8, tzinfo=UTC)
     assert release.calibration.training_record_count == 600
     assert release.calibration.out_of_sample_diagnostics.log_loss.is_finite()
     assert release.calibration.out_of_sample_diagnostics.brier_score.is_finite()
     assert release.calibration.out_of_sample_diagnostics.reliability_curve
-    assert release.calibration.recent_diagnostic_months == command().training_window_months[-24:]
+    assert release.calibration.calibrator_selection_window_months == (
+        original.calibrator_selection_window_months
+    )
+    assert release.calibration.recent_diagnostic_months == tuple(
+        dict.fromkeys(record.month for record in original.recent_diagnostic_records)
+    )
+    selection_ids = {record.record_id for record in original.calibrator_selection_records}
+    training_ids = {record.record_id for record in original.training_records}
+    diagnostic_ids = {record.record_id for record in original.recent_diagnostic_records}
+    assert not selection_ids & training_ids
+    assert not training_ids & diagnostic_ids
+    assert not selection_ids & diagnostic_ids
     assert release.calibration.recent_diagnostic_sample_count >= 200
     assert release.calibration.recent_diagnostic_status == "AVAILABLE"
     assert release.calibration.recent_diagnostics is not None
@@ -246,6 +284,40 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
         datetime(2046, 7, 5, 1, tzinfo=UTC).date(),
         datetime(2046, 7, 6, 1, tzinfo=UTC).date(),
     )
+
+
+def test_recent_diagnostic_window_cannot_participate_in_fitting() -> None:
+    original = command()
+    overlapping = original.model_copy(
+        update={"recent_diagnostic_window_months": original.training_window_months[-24:]}
+    )
+
+    release = freeze_candidate_release(overlapping)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_WINDOWS_MUST_BE_DISJOINT",)
+
+
+def test_calibrator_selection_records_cannot_be_reused_for_fitting() -> None:
+    original = command()
+    fitting_months = original.training_window_months[:24]
+    reused_records = tuple(
+        record.model_copy(update={"month": fitting_months[index // 10]})
+        for index, record in enumerate(original.calibrator_selection_records)
+    )
+    overlapping = original.model_copy(
+        update={
+            "calibrator_selection_window_months": fitting_months,
+            "calibrator_selection_records": reused_records,
+        }
+    )
+
+    release = freeze_candidate_release(overlapping)
+
+    assert release.disposition == "FAILED"
+    assert release.availability_failure == "CALIBRATION"
+    assert release.reasons == ("CALIBRATION_WINDOWS_MUST_BE_DISJOINT",)
 
 
 def test_candidate_window_includes_terminal_sessions_before_saved_coverage() -> None:
@@ -357,10 +429,10 @@ def test_candidate_window_rejects_sessions_after_terminal_calendar_coverage() ->
 
 def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> None:
     original = command()
-    recent_months = set(original.training_window_months[-24:])
+    recent_months = set(original.recent_diagnostic_window_months)
     recent_index = 0
     records: list[CalibrationRecord] = []
-    for record in original.training_records:
+    for record in original.recent_diagnostic_records:
         if record.month in recent_months:
             probability = Decimal("0.5") if recent_index % 2 == 0 else Decimal("0.50000000000001")
             records.append(record.model_copy(update={"out_of_sample_probability": probability}))
@@ -369,7 +441,7 @@ def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> Non
             records.append(record)
 
     release = freeze_candidate_release(
-        original.model_copy(update={"training_records": tuple(records)})
+        original.model_copy(update={"recent_diagnostic_records": tuple(records)})
     )
 
     assert release.disposition == "CANDIDATES", release.reasons
@@ -384,7 +456,7 @@ def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> Non
 
 def test_recent_diagnostic_cohort_drops_labels_after_the_frozen_watermark() -> None:
     original = command()
-    after_watermark = original.training_records[0].model_copy(
+    after_watermark = original.recent_diagnostic_records[0].model_copy(
         update={
             "record_id": "synthetic-after-watermark-diagnostic",
             "label_available_at": original.label_watermark_at + timedelta(seconds=1),
@@ -393,7 +465,7 @@ def test_recent_diagnostic_cohort_drops_labels_after_the_frozen_watermark() -> N
 
     calibration = candidate_module._fit_calibrator(
         original,
-        recent_diagnostic_records=(*original.training_records, after_watermark),
+        recent_diagnostic_records=(*original.recent_diagnostic_records, after_watermark),
     )
 
     assert calibration.recent_diagnostic_status == "AVAILABLE"
@@ -412,7 +484,7 @@ def test_recent_diagnostic_calculation_failure_is_visible_but_does_not_fail_fit(
     ) -> candidate_module.CalibrationDiagnostics:
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 3:
             raise ValueError("synthetic recent diagnostic calculation failure")
         return diagnostics(records, probabilities)
 
@@ -1135,6 +1207,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
 
     intramonth_mature_entry = original.training_records[0].model_copy(
         update={
+            "month": "2040-12",
             "raw_score_frozen_at": datetime(2040, 12, 14, 7, tzinfo=UTC),
             "raw_score_training_watermark_at": datetime(2040, 12, 13, 7, tzinfo=UTC),
             "entry_window_ends_at": datetime(2040, 12, 21, 8, tzinfo=UTC),
@@ -1160,22 +1233,22 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     assert release.availability_failure is None
     assert release.calibration is not None
 
-    outside_month = "2040-11"
+    outside_month = "2043-11"
     outside_month_records = tuple(
         record.model_copy(
             update={
                 "record_id": f"synthetic-label-{outside_month}-{index:02d}",
                 "month": outside_month,
                 "source_research_event_id": f"synthetic-research-event-{outside_month}",
-                "raw_score_frozen_at": datetime(2040, 11, 30, 7, tzinfo=UTC),
-                "raw_score_training_watermark_at": datetime(2040, 11, 29, 7, tzinfo=UTC),
-                "entry_window_ends_at": datetime(2040, 12, 6, 8, tzinfo=UTC),
-                "entry_at": datetime(2040, 12, 5, 8, tzinfo=UTC),
+                "raw_score_frozen_at": datetime(2043, 11, 30, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2043, 11, 29, 7, tzinfo=UTC),
+                "entry_window_ends_at": datetime(2043, 12, 6, 8, tzinfo=UTC),
+                "entry_at": datetime(2043, 12, 5, 8, tzinfo=UTC),
                 "unified_maturity_at": six_month_terminal_evaluation_at(
-                    datetime(2040, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                    datetime(2043, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
                 ),
                 "label_available_at": six_month_terminal_evaluation_at(
-                    datetime(2040, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                    datetime(2043, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
                 ),
             }
         )
@@ -1195,7 +1268,10 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     assert release.reasons == ("CALIBRATION_TRAINING_WINDOW_NOT_LATEST",)
 
     immature = original.training_records[0].model_copy(
-        update={"label_available_at": datetime(2041, 1, 31, 23, 59, 59, tzinfo=UTC)}
+        update={
+            "label_available_at": original.training_records[0].unified_maturity_at
+            - timedelta(seconds=1)
+        }
     )
     release = freeze_candidate_release(
         original.model_copy(update={"training_records": (immature, *original.training_records[1:])})
@@ -1203,7 +1279,7 @@ def test_calibration_rejects_invalid_population_and_labels() -> None:
     assert "LABEL_BEFORE_UNIFIED_SIX_MONTH_MATURITY" in release.reasons
 
     utc_boundary = next(
-        index for index, record in enumerate(original.training_records) if record.month == "2045-08"
+        index for index, record in enumerate(original.training_records) if record.month == "2040-08"
     )
     timezone_maturity = original.training_records[utc_boundary].model_copy(
         update={
@@ -1818,22 +1894,22 @@ def test_declared_mature_window_cannot_omit_newer_mature_months() -> None:
 def test_declared_latest_mature_months_can_span_calendar_gaps() -> None:
     original = command()
     missing_month = "2042-01"
-    earlier_month = "2040-10"
+    earlier_month = "2043-11"
     earlier_records = tuple(
         record.model_copy(
             update={
                 "record_id": f"synthetic-label-{earlier_month}-{index:02d}",
                 "month": earlier_month,
                 "source_research_event_id": f"synthetic-research-event-{earlier_month}",
-                "raw_score_frozen_at": datetime(2040, 10, 31, 7, tzinfo=UTC),
-                "raw_score_training_watermark_at": datetime(2040, 10, 30, 7, tzinfo=UTC),
-                "entry_window_ends_at": datetime(2040, 11, 6, 8, tzinfo=UTC),
-                "entry_at": datetime(2040, 11, 5, 8, tzinfo=UTC),
+                "raw_score_frozen_at": datetime(2043, 11, 30, 7, tzinfo=UTC),
+                "raw_score_training_watermark_at": datetime(2043, 11, 29, 7, tzinfo=UTC),
+                "entry_window_ends_at": datetime(2043, 12, 6, 8, tzinfo=UTC),
+                "entry_at": datetime(2043, 12, 5, 8, tzinfo=UTC),
                 "unified_maturity_at": six_month_terminal_evaluation_at(
-                    datetime(2040, 11, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                    datetime(2043, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
                 ),
                 "label_available_at": six_month_terminal_evaluation_at(
-                    datetime(2040, 11, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
+                    datetime(2043, 12, 5, 8, tzinfo=UTC), "synthetic-calendar-v1"
                 ),
             }
         )
@@ -2348,17 +2424,29 @@ def test_recent_diagnostics_use_cutoff_mature_labels_after_fit_watermark() -> No
         )
         for index, record in enumerate(original.training_records[:10])
     )
+    diagnostic_window = (*original.recent_diagnostic_window_months[1:], diagnostic_month)
     command_with_earlier_fit_watermark = original.model_copy(
-        update={"label_watermark_at": datetime(2046, 6, 4, 8, tzinfo=UTC)}
+        update={
+            "label_watermark_at": datetime(2046, 6, 4, 8, tzinfo=UTC),
+            "recent_diagnostic_window_months": diagnostic_window,
+            "recent_diagnostic_records": (
+                *(
+                    record
+                    for record in original.recent_diagnostic_records
+                    if record.month in diagnostic_window
+                ),
+                *newer_diagnostics,
+            ),
+        }
     )
 
     calibration = candidate_module._fit_calibrator(
         command_with_earlier_fit_watermark,
-        recent_diagnostic_records=(*original.training_records, *newer_diagnostics),
+        recent_diagnostic_records=(*original.recent_diagnostic_records, *newer_diagnostics),
     )
     recent_records = tuple(
         record
-        for record in (*original.training_records, *newer_diagnostics)
+        for record in (*original.recent_diagnostic_records, *newer_diagnostics)
         if record.month in calibration.recent_diagnostic_months
     )
 
@@ -2604,47 +2692,23 @@ def test_previous_frozen_calibration_record_cannot_be_rewritten() -> None:
 
 def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> None:
     original = command()
-    first_year, first_month = (int(part) for part in original.training_window_months[0].split("-"))
-    first_index = first_year * 12 + first_month - 1
-    month_names = tuple(
-        f"{year:04d}-{month + 1:02d}"
-        for year, month in (
-            divmod(month_index, 12) for month_index in range(first_index - 3, first_index)
-        )
-    )
-    month_records: list[CalibrationRecord] = []
-    for month in month_names:
-        year, month_number = (int(part) for part in month.split("-"))
-        cutoff = datetime(year, month_number, monthrange(year, month_number)[1], 7, tzinfo=UTC)
-        entry = cutoff + timedelta(days=5)
-        maturity = six_month_terminal_evaluation_at(entry, "synthetic-calendar-v1")
-        month_records.extend(
-            original.training_records[index].model_copy(
-                update={
-                    "record_id": f"synthetic-initial-expansion-{month}-{index:02d}",
-                    "month": month,
-                    "source_research_event_id": f"synthetic-research-event-{month}",
-                    "raw_score_frozen_at": cutoff,
-                    "raw_score_training_watermark_at": cutoff - timedelta(days=1),
-                    "entry_at": entry,
-                    "entry_window_ends_at": entry + timedelta(days=1),
-                    "unified_maturity_at": maturity,
-                    "label_available_at": maturity,
-                }
-            )
-            for index in range(8)
-        )
-    # Eight labels per rolling month provide 480 records, so three older mature months
-    # are needed to reach the initial 500-record calibration floor.
-    reduced_rolling_records = tuple(
+    history = calibration_history_records()
+    history_months = tuple(dict.fromkeys(record.month for record in history))
+    months = history_months[24:87]
+    records_by_month = {
+        month: tuple(record for record in history if record.month == month) for month in months
+    }
+    # Sixty months at eight records give 480. The three newer fitting months
+    # add 27 records, so the first qualifying initial prefix is 63 months.
+    reduced_records = tuple(
         record
-        for month in original.training_window_months
-        for record in tuple(item for item in original.training_records if item.month == month)[:8]
+        for index, month in enumerate(months)
+        for record in records_by_month[month][: (8 if index < 60 else 9)]
     )
     candidate = original.model_copy(
         update={
-            "training_window_months": (*month_names, *original.training_window_months),
-            "training_records": (*month_records, *reduced_rolling_records),
+            "training_window_months": months,
+            "training_records": reduced_records,
         }
     )
 
@@ -2655,38 +2719,15 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
     assert release.calibration.training_window_months == candidate.training_window_months
     assert release.calibration.training_record_count >= 500
 
-    extra_year, extra_month = divmod(first_index - 4, 12)
-    extra_month_name = f"{extra_year:04d}-{extra_month + 1:02d}"
-    extra_cutoff = datetime(
-        extra_year,
-        extra_month + 1,
-        monthrange(extra_year, extra_month + 1)[1],
-        7,
-        tzinfo=UTC,
-    )
-    extra_entry = extra_cutoff + timedelta(days=5)
-    extra_maturity = six_month_terminal_evaluation_at(extra_entry, "synthetic-calendar-v1")
-    extra_records = tuple(
-        original.training_records[index].model_copy(
-            update={
-                "record_id": f"synthetic-unneeded-expansion-{extra_month_name}-{index:02d}",
-                "month": extra_month_name,
-                "source_research_event_id": f"synthetic-research-event-{extra_month_name}",
-                "raw_score_frozen_at": extra_cutoff,
-                "raw_score_training_watermark_at": extra_cutoff - timedelta(days=1),
-                "entry_at": extra_entry,
-                "entry_window_ends_at": extra_entry + timedelta(days=1),
-                "unified_maturity_at": extra_maturity,
-                "label_available_at": extra_maturity,
-            }
-        )
-        for index in range(8)
-    )
+    overexpanded_month = history_months[23]
+    overexpanded_records = tuple(
+        record for record in history if record.month == overexpanded_month
+    )[:8]
     overexpanded = freeze_candidate_release(
         candidate.model_copy(
             update={
-                "training_window_months": (extra_month_name, *candidate.training_window_months),
-                "training_records": (*extra_records, *candidate.training_records),
+                "training_window_months": (overexpanded_month, *candidate.training_window_months),
+                "training_records": (*overexpanded_records, *candidate.training_records),
             }
         )
     )
@@ -2698,10 +2739,8 @@ def test_initial_expanding_window_adds_months_until_record_floor_is_met() -> Non
 
 def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> None:
     original = command()
-    months = tuple(
-        f"{year:04d}-{month + 1:02d}"
-        for year, month in (divmod(2040 * 12 + index, 12) for index in range(61))
-    )
+    history_months = tuple(dict.fromkeys(record.month for record in calibration_history_records()))
+    months = (*original.training_window_months, history_months[84])
     assert len(months) == 61
     counts = (9, *([8] * 32), *([7] * 4), *([9] * 23), 8)
     assert len(counts) == 61
@@ -2754,23 +2793,22 @@ def test_initial_calibration_does_not_expand_past_first_qualifying_prefix() -> N
     assert fit_window_release.calibration is not None
     calibration = fit_window_release.calibration
     assert calibration.training_window_months == months[:60]
-    fit_window_recent_records = tuple(
-        record for record in initial_prefix_records if record.month in months[-25:-1]
-    )
-    assert calibration.recent_diagnostic_months == months[-25:-1]
-    assert calibration.recent_diagnostic_sample_count == len(fit_window_recent_records)
+    assert calibration.recent_diagnostic_months == original.recent_diagnostic_window_months
+    assert calibration.recent_diagnostic_sample_count == len(original.recent_diagnostic_records)
 
-    expected_recent_records = tuple(record for record in records if record.month in months[-24:])
+    expected_recent_records = original.recent_diagnostic_records
     latest_diagnostic_release = freeze_candidate_release(
         initial_prefix,
         published_at=initial_prefix.published_at,
         initial_calibration=True,
-        recent_diagnostic_records=tuple(records),
+        recent_diagnostic_records=original.recent_diagnostic_records,
     )
     assert latest_diagnostic_release.disposition == "VALID_NO_CANDIDATES"
     assert latest_diagnostic_release.calibration is not None
     with_latest_diagnostics = latest_diagnostic_release.calibration
-    assert with_latest_diagnostics.recent_diagnostic_months == months[-24:]
+    assert with_latest_diagnostics.recent_diagnostic_months == (
+        original.recent_diagnostic_window_months
+    )
     assert with_latest_diagnostics.recent_diagnostic_sample_count == len(expected_recent_records)
     assert with_latest_diagnostics.recent_diagnostics == candidate_module._calibration_diagnostics(
         expected_recent_records,

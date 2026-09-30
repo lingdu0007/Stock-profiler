@@ -513,6 +513,9 @@ export interface components {
         };
         /** CalibrationSnapshot */
         CalibrationSnapshot: {
+            calibrator_selection: components["schemas"]["CalibratorSelectionSnapshot"];
+            /** Calibrator Selection Window Months */
+            calibrator_selection_window_months: string[];
             /**
              * Calibrator Version
              * @constant
@@ -546,6 +549,32 @@ export interface components {
             training_record_count: number;
             /** Training Window Months */
             training_window_months: string[];
+        };
+        /**
+         * CalibratorSelectionSnapshot
+         * @description Persist the preregistered v1 family decision and its independent OOS evidence.
+         */
+        CalibratorSelectionSnapshot: {
+            diagnostics: components["schemas"]["CalibrationDiagnostics"];
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
+            /**
+             * Policy
+             * @constant
+             */
+            policy: "PRE_REGISTERED_V1_SINGLE_FAMILY";
+            /** Record Count */
+            record_count: number;
+            /**
+             * Selected Calibrator Version
+             * @constant
+             */
+            selected_calibrator_version: "monotone-firth-logistic-v1";
+            /** Window Months */
+            window_months: string[];
         };
         /**
          * CandidateEvidenceClock

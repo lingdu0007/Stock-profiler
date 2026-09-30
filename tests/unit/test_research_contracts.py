@@ -634,6 +634,13 @@ def test_fifth_session_close_is_a_valid_frozen_entry() -> None:
         datetime.fromisoformat(item["label_available_at"].replace("Z", "+00:00"))
         for item in raw_score["training_records"]
     )
+    watermark = max(
+        watermark,
+        max(
+            datetime.fromisoformat(item["label_available_at"].replace("Z", "+00:00"))
+            for item in raw_score["calibration_history_records"]
+        ),
+    )
     raw_score["label_watermark_at"] = watermark.isoformat()
     raw_score["label_watermark_month"] = watermark.strftime("%Y-%m")
 
@@ -902,7 +909,10 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
         record.evaluation_entry_at is None for record in command.raw_score_model.training_records
     )
     assert (
-        max(record.label_available_at for record in command.raw_score_model.training_records)
+        max(
+            record.label_available_at
+            for record in command.raw_score_model.calibration_history_records
+        )
         == command.raw_score_model.label_watermark_at
     )
     assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
@@ -991,6 +1001,15 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
     snapshot = frozen_raw_score_model_snapshot()
 
     assert len(snapshot.training_months) == 60
+    calibration_history_months = tuple(
+        sorted({record.month for record in snapshot.calibration_history_records})
+    )
+    assert len(calibration_history_months) == 111
+    assert calibration_history_months[:24] == _training_month_sequence(2032, 9, 24)
+    assert calibration_history_months[-24:] == _training_month_sequence(2039, 12, 24)
+    assert len(snapshot.calibration_history_records) >= 500
+    assert any(record.terminal_label for record in snapshot.calibration_history_records)
+    assert any(not record.terminal_label for record in snapshot.calibration_history_records)
     assert snapshot.training_months[0] == snapshot.training_window_start_month
     assert snapshot.training_months[-1] == snapshot.training_window_end_month
     assert snapshot.label_watermark_month == "2042-06"
@@ -1195,6 +1214,8 @@ def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     payload["raw_score_model"].pop("label_watermark_at", None)
     payload["raw_score_model"].pop("training_cohorts", None)
     payload["raw_score_model"].pop("training_records", None)
+    payload["raw_score_model"].pop("calibration_history_cohorts", None)
+    payload["raw_score_model"].pop("calibration_history_records", None)
 
     decoded = decode_legacy_research_command(payload)
 
@@ -1313,6 +1334,8 @@ def test_legacy_research_command_preserves_existing_training_provenance() -> Non
 def test_pre_calibration_research_snapshot_remains_replayable() -> None:
     payload = _command().raw_score_model.model_dump(mode="json")
     payload.pop("calibration_evidence_version")
+    payload.pop("calibration_history_cohorts")
+    payload.pop("calibration_history_records")
     for record in payload["training_records"]:
         for field_name in (
             "raw_score_frozen_at",
