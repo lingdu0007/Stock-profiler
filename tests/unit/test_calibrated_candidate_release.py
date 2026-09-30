@@ -243,6 +243,52 @@ def test_freezes_calibration_probabilities_and_five_market_day_candidate_window(
     )
 
 
+def test_candidate_window_includes_terminal_sessions_before_saved_coverage() -> None:
+    original = command()
+    cutoff = datetime(2046, 6, 28, 8, tzinfo=UTC)
+    calendar = synthetic_market_calendar(original.market_calendar_version)
+    assert calendar is not None
+    first_saved_date = calendar.sessions[0].closed_at.date()
+    terminal_prefix = tuple(
+        session
+        for session in calendar.terminal_sessions
+        if session.closed_at.date() < first_saved_date
+    )
+    resolved_sessions = tuple(
+        sorted((*terminal_prefix, *calendar.sessions), key=lambda session: session.closed_at)
+    )
+    expected_sessions = tuple(
+        MarketSession(
+            market_date=session.closed_at.date(),
+            opens_at=session.closed_at - timedelta(hours=7),
+            closes_at=session.closed_at,
+            session_sequence=session.ordinal,
+        )
+        for session in resolved_sessions
+        if session.closed_at - timedelta(hours=7) > cutoff
+    )[:5]
+    command_with_earlier_cutoff = original.model_copy(
+        update={
+            "knowledge_cutoff": cutoff,
+            "label_watermark_at": cutoff,
+            "last_completed_market_session_sequence": 100,
+            "market_sessions": expected_sessions,
+        }
+    )
+
+    release = freeze_candidate_release(command_with_earlier_cutoff)
+    late_publication = finalize_candidate_release_publication(
+        command_with_earlier_cutoff,
+        release,
+        published_at=datetime(2046, 7, 6, 7, tzinfo=UTC),
+    )
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.valid_market_dates == tuple(session.market_date for session in expected_sessions)
+    assert late_publication.disposition == "FAILED"
+    assert late_publication.reasons == ("PUBLICATION_AFTER_CANDIDATE_WINDOW",)
+
+
 def test_recent_diagnostic_failure_does_not_fail_production_calibration() -> None:
     original = command()
     recent_months = set(original.training_window_months[-24:])

@@ -107,6 +107,31 @@ class SyntheticMarketCalendar:
             None,
         )
 
+    def sessions_after_open(self, value: datetime, count: int) -> tuple[MarketSession, ...]:
+        """Return the next sessions across saved and extended calendar coverage."""
+        if count <= 0:
+            return ()
+        if self.sessions:
+            first_date = self.sessions[0].closed_at.date()
+            last_date = self.sessions[-1].closed_at.date()
+            extended_sessions = self.terminal_sessions or self.sessions
+            sessions = (
+                tuple(
+                    session
+                    for session in extended_sessions
+                    if session.closed_at.date() < first_date
+                )
+                + self.sessions
+                + tuple(
+                    session for session in extended_sessions if session.closed_at.date() > last_date
+                )
+            )
+        else:
+            sessions = self.terminal_sessions
+        return tuple(
+            session for session in sessions if session.closed_at - timedelta(hours=7) > value
+        )[:count]
+
     def next_monthly_selection_cutoff_after(self, closed_at: datetime) -> datetime | None:
         return next(
             (cutoff for cutoff in self.monthly_selection_cutoffs if cutoff > closed_at),

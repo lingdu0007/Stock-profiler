@@ -634,43 +634,42 @@ def _candidate_window(
     )[:5]
     if len(window) != 5:
         return window, "CANDIDATE_WINDOW_CALENDAR_INCOMPLETE"
-    if any(
-        right.session_sequence != left.session_sequence + 1
-        for left, right in zip(window, window[1:], strict=False)
-    ):
-        return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     calendar = synthetic_market_calendar(command.market_calendar_version)
     if calendar is None:
         return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
-    saved_window = tuple(
-        session
-        for session in calendar.sessions
-        if session.closed_at - timedelta(hours=7) > command.knowledge_cutoff
-    )[:5]
-    if len(saved_window) != 5 or any(
-        (saved := calendar.session_for(session.session_sequence)) is None
-        or saved.closed_at.date() != session.market_date
-        or saved.closed_at - timedelta(hours=7) != session.opens_at
-        or saved.closed_at != session.closes_at
-        for session in window
-    ):
+    saved_window = calendar.sessions_after_open(command.knowledge_cutoff, 5)
+    if len(saved_window) != 5:
         return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
     if any(
-        session.session_sequence != saved.ordinal
-        or session.market_date != saved.closed_at.date()
+        session.market_date != saved.closed_at.date()
         or session.opens_at != saved.closed_at - timedelta(hours=7)
         or session.closes_at != saved.closed_at
         for session, saved in zip(window, saved_window, strict=True)
     ):
         return window, "CANDIDATE_WINDOW_CALENDAR_SNAPSHOT_MISMATCH"
+    if any(
+        session.session_sequence != saved.ordinal
+        for session, saved in zip(window, saved_window, strict=True)
+    ):
+        return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     completed_sessions = tuple(
         session for session in calendar.sessions if session.closed_at <= command.knowledge_cutoff
     )
-    last_completed_sequence = (
-        max(session.ordinal for session in completed_sessions)
-        if completed_sessions
-        else saved_window[0].ordinal - 1
-    )
+    if completed_sessions:
+        last_completed_sequence = max(session.ordinal for session in completed_sessions)
+    elif calendar.sessions:
+        last_completed_sequence = calendar.sessions[0].ordinal - 1
+    else:
+        completed_terminal_sessions = tuple(
+            session
+            for session in calendar.terminal_sessions
+            if session.closed_at <= command.knowledge_cutoff
+        )
+        last_completed_sequence = (
+            max(session.ordinal for session in completed_terminal_sessions)
+            if completed_terminal_sessions
+            else saved_window[0].ordinal - 1
+        )
     if last_completed_sequence != command.last_completed_market_session_sequence:
         return window, "CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID"
     return window, None
