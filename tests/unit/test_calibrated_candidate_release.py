@@ -2851,6 +2851,40 @@ def test_prior_calibration_snapshot_does_not_cross_frozen_version(
     )
 
 
+def test_prior_calibration_snapshot_ignores_diagnostic_only_model_version_changes() -> None:
+    current_command = command()
+    prior_command = current_command.model_copy(
+        update={
+            "knowledge_cutoff": current_command.knowledge_cutoff - timedelta(days=60),
+            "published_at": current_command.published_at - timedelta(days=60),
+            "recent_diagnostic_records": (
+                current_command.recent_diagnostic_records[0].model_copy(
+                    update={"raw_score_model_version": "diagnostic-only-version"}
+                ),
+                *current_command.recent_diagnostic_records[1:],
+            ),
+        }
+    )
+    prior_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                knowledge_cutoff=prior_command.knowledge_cutoff.isoformat(),
+                candidate_release=prior_command,
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    calibration=SimpleNamespace(
+                        calibrator_version=current_command.calibrator_version
+                    )
+                )
+            ),
+        ),
+    )
+
+    assert decision_case_service._prior_calibration_snapshot_matches(prior_event, current_command)
+
+
 @pytest.mark.parametrize(
     "selection_updates",
     (

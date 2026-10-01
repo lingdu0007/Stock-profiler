@@ -1031,13 +1031,12 @@ def _same_calibrator_selection_evidence(
 
 
 def _calibration_source_model_versions(command: CandidateReleaseCommand) -> frozenset[str]:
-    """Return raw-score versions represented by all calibration source cohorts."""
+    """Return model versions used by the selection and production fitting cohorts."""
     return frozenset(
         record.raw_score_model_version
         for record in (
             *command.calibrator_selection_records,
             *command.training_records,
-            *command.recent_diagnostic_records,
         )
     )
 
