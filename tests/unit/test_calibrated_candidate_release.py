@@ -2837,6 +2837,61 @@ def test_late_research_commit_cannot_validate_candidate_failure_roster() -> None
     assert unavailable == set()
 
 
+def test_calibration_source_rejects_historical_event_committed_after_cutoff() -> None:
+    cutoff = command().knowledge_cutoff
+    late_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            committed_at=(cutoff + timedelta(seconds=1)).isoformat(),
+            decision_event_id="late-historical-event",
+            case=SimpleNamespace(
+                knowledge_cutoff=(cutoff - timedelta(days=1)).isoformat(),
+            ),
+        ),
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_calibration_source_event_availability(
+            late_event,
+            cutoff,
+            current_research_event_id="current-research-event",
+        )
+
+
+def test_calibration_source_allows_current_cutoff_event_as_batch_snapshot() -> None:
+    cutoff = command().knowledge_cutoff
+    current_batch_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            committed_at=(cutoff + timedelta(seconds=1)).isoformat(),
+            decision_event_id="current-research-event",
+            case=SimpleNamespace(knowledge_cutoff=cutoff.isoformat()),
+        ),
+    )
+
+    decision_case_service._validate_calibration_source_event_availability(
+        current_batch_event,
+        cutoff,
+        current_research_event_id="current-research-event",
+    )
+
+
+def test_frozen_candidate_probability_supersedes_research_failure_before_maturity() -> None:
+    original = command()
+    identity = (original.knowledge_cutoff.strftime("%Y-%m"), "SYNTH-RECOVERED", "research-a")
+
+    count = decision_case_service._unavailable_calibration_probability_count(
+        {},
+        set(),
+        {},
+        original.knowledge_cutoff,
+        {identity},
+        frozen_candidate_prediction_identities={identity},
+    )
+
+    assert count == 0
+
+
 def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples() -> None:
     original = command()
     missing_probability_member = SimpleNamespace(

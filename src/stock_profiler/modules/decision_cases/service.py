@@ -675,7 +675,13 @@ def _validate_candidate_calibration_sources(
                 event
                 for event in ledger.research_event_history(connection, access_scope)
                 if event.corrects_event_id is None
-                and datetime.fromisoformat(event.committed_at) <= candidate_cutoff
+                and (
+                    datetime.fromisoformat(event.committed_at) <= candidate_cutoff
+                    or (
+                        event.decision_event_id == command.research_event_id
+                        and datetime.fromisoformat(event.case.knowledge_cutoff) == candidate_cutoff
+                    )
+                )
                 and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
                 and event.case.research is not None
             ),
@@ -844,6 +850,12 @@ def _validate_candidate_calibration_sources(
 
     for event_id, records in records_by_event.items():
         source_event = ledger.get_decision_event(event_id, connection)
+        if source_event is not None:
+            _validate_calibration_source_event_availability(
+                source_event,
+                candidate_cutoff,
+                current_research_event_id=command.research_event_id,
+            )
         if (
             source_event is None
             or source_event.decision_event_id != event_id
@@ -984,6 +996,7 @@ def _validate_candidate_calibration_sources(
         frozen_cohorts_by_id,
         candidate_cutoff,
         unavailable_research_probability_identities,
+        set(frozen_candidate_predictions),
     )
     return (
         not prior_calibration_snapshots,
@@ -1017,6 +1030,26 @@ def _prior_calibration_snapshot_matches(
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
     )
+
+
+def _validate_calibration_source_event_availability(
+    event: DecisionEventFact,
+    candidate_cutoff: datetime,
+    *,
+    current_research_event_id: str,
+) -> None:
+    """Reject historical source events committed after this frozen cutoff.
+
+    The current release's research event can carry its immutable model
+    snapshot even though the batch itself is committed after its knowledge
+    cutoff.  Historical source events must already have existed at the
+    candidate cutoff.
+    """
+    event_cutoff = datetime.fromisoformat(event.case.knowledge_cutoff)
+    if (
+        event.decision_event_id != current_research_event_id or event_cutoff != candidate_cutoff
+    ) and datetime.fromisoformat(event.committed_at) > candidate_cutoff:
+        raise CandidateCalibrationProvenanceInvalid()
 
 
 def _same_calibrator_selection_evidence(
@@ -1064,6 +1097,7 @@ def _unavailable_calibration_probability_count(
     frozen_cohorts: dict[str, RawScoreTrainingCohort],
     candidate_cutoff: datetime,
     unavailable_research_probability_identities: set[tuple[str, str, str]] | None = None,
+    frozen_candidate_prediction_identities: set[tuple[str, str, str]] | None = None,
 ) -> int:
     """Count source and frozen-cohort members missing probabilities by stock-month."""
     available_probability_security_months = {
@@ -1073,6 +1107,9 @@ def _unavailable_calibration_probability_count(
         and record.raw_score_frozen_at is not None
         and record.raw_score_frozen_at <= candidate_cutoff
     }
+    available_probability_security_months.update(
+        identity[:2] for identity in (frozen_candidate_prediction_identities or set())
+    )
     unavailable_security_months = {
         identity[:2]
         for identity, record in all_source_rows.items()
