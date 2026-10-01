@@ -951,14 +951,11 @@ def _validate_candidate_calibration_sources(
             *command.recent_diagnostic_window_months,
         )
     )
-    unavailable_probability_count = sum(
-        1
-        for identity, record in all_source_rows.items()
-        if record.historical_calibrated_probability is None
-        if identity[0] in calibration_months
-        and record.unified_maturity_at is not None
-        and record.unified_maturity_at <= candidate_cutoff
-        and record.label_available_at <= candidate_cutoff
+    unavailable_probability_count = _unavailable_calibration_probability_count(
+        all_source_rows,
+        unavailable_candidate_probability_identities,
+        calibration_months,
+        candidate_cutoff,
     )
     return (
         not prior_calibration_snapshots,
@@ -1029,6 +1026,30 @@ def _calibration_source_model_versions(command: CandidateReleaseCommand) -> froz
             *command.recent_diagnostic_records,
         )
     )
+
+
+def _unavailable_calibration_probability_count(
+    all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    unavailable_candidate_probability_identities: set[tuple[str, str, str]],
+    calibration_months: set[str],
+    candidate_cutoff: datetime,
+) -> int:
+    """Count matured source and committed candidate identities lacking a probability."""
+    unavailable_identities = {
+        identity
+        for identity, record in all_source_rows.items()
+        if record.historical_calibrated_probability is None
+        and identity[0] in calibration_months
+        and record.unified_maturity_at is not None
+        and record.unified_maturity_at <= candidate_cutoff
+        and record.label_available_at <= candidate_cutoff
+    }
+    unavailable_identities.update(
+        identity
+        for identity in unavailable_candidate_probability_identities
+        if identity[0] in calibration_months
+    )
+    return len(unavailable_identities)
 
 
 def _unavailable_candidate_probability_identities(

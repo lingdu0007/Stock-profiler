@@ -2417,6 +2417,38 @@ def test_failed_candidate_member_without_probability_stays_out_of_calibration_hi
     }
 
 
+def test_unavailable_probability_count_includes_committed_candidate_without_source_row() -> None:
+    original = command()
+    member = SimpleNamespace(
+        security_id="SYNTH-UNAVAILABLE",
+        research_id="synthetic-unavailable-research",
+        calibrated_probability=None,
+    )
+    failed_release_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(candidate_release=SimpleNamespace(members=(member,))),
+        ),
+    )
+    unavailable_identities = decision_case_service._unavailable_candidate_probability_identities(
+        (failed_release_event,), original.knowledge_cutoff
+    )
+    member_month = original.knowledge_cutoff.strftime("%Y-%m")
+
+    count = decision_case_service._unavailable_calibration_probability_count(
+        {},
+        unavailable_identities,
+        {member_month},
+        original.knowledge_cutoff,
+    )
+
+    assert count == 1
+
+
 def test_calibration_source_population_excludes_records_without_frozen_probability() -> None:
     source_records = frozen_raw_score_model_snapshot().training_records
     missing_probability = source_records[0].model_copy(
