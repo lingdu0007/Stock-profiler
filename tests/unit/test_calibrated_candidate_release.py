@@ -2596,6 +2596,61 @@ def test_suppressed_failed_release_members_are_not_trusted_for_identity_exclusio
     assert unavailable == set()
 
 
+def test_suppressed_failed_release_counts_only_its_validated_research_roster() -> None:
+    original = command()
+    source_members = tuple(
+        SimpleNamespace(security_id=f"SOURCE-{member:02d}", research_id=f"SOURCE-R-{member:02d}")
+        for member in range(10)
+    )
+    source_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            decision_event_id=original.research_event_id,
+            business_object_id=original.research_object_id,
+            validation_status="PASSED",
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+                research=SimpleNamespace(members=source_members),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                research=SimpleNamespace(
+                    disposition="FROZEN",
+                    raw_scores=(object(),),
+                    risk_veto=object(),
+                )
+            ),
+        ),
+    )
+    failed_release = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            validation_status="PASSED",
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    members=(), disposition="FAILED", calibration=None
+                )
+            ),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (failed_release,), original.knowledge_cutoff, (source_event,)
+    )
+
+    assert unavailable == {
+        (original.knowledge_cutoff.strftime("%Y-%m"), member.security_id, member.research_id)
+        for member in source_members
+    }
+
+
 def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples() -> None:
     original = command()
     missing_probability_member = SimpleNamespace(

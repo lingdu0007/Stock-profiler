@@ -665,10 +665,6 @@ def _validate_candidate_calibration_sources(
         for event in candidate_release_events
         if _prior_calibration_snapshot_matches(event, command)
     )
-    unavailable_candidate_probability_identities = _unavailable_candidate_probability_identities(
-        candidate_release_events,
-        candidate_cutoff,
-    )
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
     research_events = tuple(
@@ -682,6 +678,11 @@ def _validate_candidate_calibration_sources(
             ),
             key=lambda event: event.decision_event_id,
         )
+    )
+    unavailable_candidate_probability_identities = _unavailable_candidate_probability_identities(
+        candidate_release_events,
+        candidate_cutoff,
+        research_events,
     )
     unavailable_research_probability_identities = _unavailable_research_probability_identities(
         research_events,
@@ -1137,9 +1138,17 @@ def _unavailable_research_probability_identities(
 def _unavailable_candidate_probability_identities(
     candidate_release_events: tuple[DecisionEventFact, ...],
     knowledge_cutoff: datetime,
+    research_events: tuple[DecisionEventFact, ...] = (),
 ) -> set[tuple[str, str, str]]:
-    """Keep failed no-probability predictions out of all later calibration cohorts."""
+    """Use validated candidate outcomes or their exact committed research source."""
     unavailable: set[tuple[str, str, str]] = set()
+    research_events_by_id = {
+        event.decision_event_id: event
+        for event in research_events
+        if event.validation_status == "PASSED"
+        and event.corrects_event_id is None
+        and event.result.research is not None
+    }
     for event in candidate_release_events:
         if (
             event.validation_status != "PASSED"
@@ -1158,6 +1167,38 @@ def _unavailable_candidate_probability_identities(
                 for member in outcome.members
                 if member.calibrated_probability is None
             )
+        elif (
+            outcome.calibration is None
+            and outcome.disposition in {"FAILED", "BLOCKED"}
+            and (source_event := research_events_by_id.get(command.research_event_id)) is not None
+        ):
+            source_command = source_event.case.research
+            source_research = source_event.result.research
+            source_scope = source_event.case.access_scope
+            release_scope = event.case.access_scope
+            scopes_match = (
+                source_scope is None
+                and release_scope is None
+                or source_scope is not None
+                and release_scope is not None
+                and source_scope.same_scope_as(release_scope)
+            )
+            if (
+                source_event.business_object_id == command.research_object_id
+                and source_command is not None
+                and source_research is not None
+                and source_research.disposition in {"FROZEN", "REJECTED"}
+                and source_research.raw_scores is not None
+                and source_research.risk_veto is not None
+                and scopes_match
+                and datetime.fromisoformat(source_event.case.knowledge_cutoff)
+                == datetime.fromisoformat(event.case.knowledge_cutoff)
+                and command.knowledge_cutoff == datetime.fromisoformat(event.case.knowledge_cutoff)
+            ):
+                unavailable.update(
+                    (month, member.security_id, member.research_id)
+                    for member in source_command.members
+                )
     return unavailable
 
 
