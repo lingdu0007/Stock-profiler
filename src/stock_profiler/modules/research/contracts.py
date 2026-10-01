@@ -1292,18 +1292,24 @@ def _frozen_raw_score_training_records(
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
     start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
-    training_months = _training_month_sequence(start_year, start_month, 60)
-    training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
     calibration_history_start_year, calibration_history_start_month = (
         int(part) for part in RAW_SCORE_CALIBRATION_HISTORY_START_MONTH.split("-")
     )
     calibration_history_months = _training_month_sequence(
         calibration_history_start_year, calibration_history_start_month, 111
     )
-    calibration_history_cohorts, calibration_history_records = _frozen_raw_score_training_records(
-        calibration_history_months,
+    training_months = _training_month_sequence(start_year, start_month, 60)
+    training_month_set = set(training_months)
+    training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
+    history_only_months = tuple(
+        month for month in calibration_history_months if month not in training_month_set
+    )
+    history_only_cohorts, history_only_records = _frozen_raw_score_training_records(
+        history_only_months,
         cohort_id_prefix="synthetic-calibration-history-cohort",
     )
+    calibration_history_cohorts = (*history_only_cohorts, *training_cohorts)
+    calibration_history_records = (*history_only_records, *training_records)
     label_watermark_at = max(
         record.label_available_at for record in (*training_records, *calibration_history_records)
     )

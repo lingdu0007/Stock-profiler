@@ -1165,9 +1165,17 @@ def _calibration_source_rows_by_identity(
 def _calibration_records_by_source_event(
     records: Iterable[CalibrationRecord],
 ) -> dict[str, list[CalibrationRecord]]:
-    """Partition rows by provenance while allowing a mature month to span events."""
+    """Partition unique frozen rows by provenance, allowing fit/diagnostic overlap."""
     grouped: dict[str, list[CalibrationRecord]] = {}
+    rows_by_identity: dict[tuple[str, str, str], CalibrationRecord] = {}
     for record in records:
+        identity = (record.month, record.security_id, record.research_id)
+        previous = rows_by_identity.get(identity)
+        if previous is not None:
+            if previous != record:
+                raise CandidateCalibrationProvenanceInvalid()
+            continue
+        rows_by_identity[identity] = record
         grouped.setdefault(record.source_research_event_id, []).append(record)
     return grouped
 

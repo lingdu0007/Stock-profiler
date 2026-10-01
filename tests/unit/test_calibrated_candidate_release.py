@@ -2535,6 +2535,24 @@ def test_historical_cohort_collection_rejects_two_pools_in_one_month() -> None:
         decision_case_service._retain_immutable_cohort(frozen, conflicting)
 
 
+def test_overlapping_fit_and_diagnostic_provenance_deduplicates_identical_rows() -> None:
+    record = command().training_records[0]
+
+    grouped = decision_case_service._calibration_records_by_source_event((record, record))
+
+    assert grouped[record.source_research_event_id] == [record]
+
+
+def test_overlapping_fit_and_diagnostic_provenance_rejects_changed_rows() -> None:
+    record = command().training_records[0]
+    changed = record.model_copy(
+        update={"out_of_sample_probability": record.out_of_sample_probability + Decimal("0.01")}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._calibration_records_by_source_event((record, changed))
+
+
 def test_unavailable_probability_count_includes_frozen_cohort_members_without_research() -> None:
     model = frozen_raw_score_model_snapshot()
     cohorts = (*model.training_cohorts, *model.calibration_history_cohorts)

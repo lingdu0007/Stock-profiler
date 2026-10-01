@@ -73,6 +73,18 @@ from stock_profiler.modules.research.service import (
 )
 
 
+def _set_training_cohort_definition_version(payload: dict[str, object], version: str) -> None:
+    raw_score_model = cast(dict[str, object], payload["raw_score_model"])
+    training_cohorts = cast(list[dict[str, object]], raw_score_model["training_cohorts"])
+    calibration_history_cohorts = cast(
+        list[dict[str, object]], raw_score_model["calibration_history_cohorts"]
+    )
+    training_cohort_ids = {cohort["cohort_id"] for cohort in training_cohorts}
+    for cohort in (*training_cohorts, *calibration_history_cohorts):
+        if cohort["cohort_id"] in training_cohort_ids:
+            cohort["research_definition_version"] = version
+
+
 def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScoreTrainingRecord:
     frozen_at = datetime(2040, 1, 31, 7, tzinfo=UTC)
     return RawScoreTrainingRecord(
@@ -199,7 +211,10 @@ def test_historical_research_command_replays_its_pre_calendar_maturity_window() 
     cutoff_at = datetime.fromisoformat("2042-10-31T15:30:00+00:00")
     start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
     training_months = _training_month_sequence(start_year, start_month, 64)
-    cohorts, training_records = _frozen_raw_score_training_records(training_months)
+    cohorts, training_records = _frozen_raw_score_training_records(
+        training_months,
+        cohort_id_prefix="synthetic-pre-calendar-training-cohort",
+    )
     records_payload: list[dict[str, object]] = []
     for source_record in training_records:
         record = source_record.model_dump(mode="json")
@@ -522,6 +537,7 @@ def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
             record.model_copy(
                 update={
                     "month": month,
+                    "cohort_id": f"synthetic-calendar-shift-training-cohort-{month}",
                     "selection_cutoff_at": cutoff_at,
                     "raw_score_frozen_at": cutoff_at,
                     "raw_score_training_watermark_at": cutoff_at - timedelta(days=1),
@@ -533,7 +549,14 @@ def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
             ).model_dump(mode="python")
         )
     updated_cohorts = tuple(
-        cohort.model_copy(update={"month": month_mapping[cohort.month]}).model_dump(mode="python")
+        cohort.model_copy(
+            update={
+                "month": month_mapping[cohort.month],
+                "cohort_id": (
+                    f"synthetic-calendar-shift-training-cohort-{month_mapping[cohort.month]}"
+                ),
+            }
+        ).model_dump(mode="python")
         for cohort in original.training_cohorts
     )
     label_watermark_at = max(label_times)
@@ -1226,10 +1249,7 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
         historical_cutoff,
         screening,
     )
-    raw_score_model = cast(dict[str, object], payload["raw_score_model"])
-    training_cohorts = cast(list[dict[str, object]], raw_score_model["training_cohorts"])
-    for cohort in training_cohorts:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
 
     decoded = decode_historical_research_command(payload)
 
@@ -1240,8 +1260,7 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
 
 def test_historical_research_command_recovers_missing_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -1262,8 +1281,7 @@ def test_historical_research_command_recovers_missing_audit_provenance() -> None
 
 def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for member in payload["members"]:
         member["structured_facts"].pop("money_flow", None)
 
@@ -1275,8 +1293,7 @@ def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> 
 
 def test_historical_handoff_fingerprint_preserves_the_original_command_payload() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -1422,8 +1439,7 @@ def test_legacy_research_command_restores_missing_percentiles_for_the_full_unive
 
 def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_LEGACY_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -1444,8 +1460,7 @@ def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
 
 def test_legacy_research_command_preserves_existing_training_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_LEGACY_DEFINITION_VERSION)
 
     decoded = decode_legacy_research_command(payload)
 
@@ -1522,29 +1537,30 @@ def test_v2_calibration_snapshot_can_preserve_a_member_without_frozen_probabilit
     )
 
 
-def test_training_and_calibration_history_use_distinct_frozen_cohort_identities() -> None:
+def test_training_and_calibration_history_reuse_the_same_monthly_frozen_cohorts() -> None:
     snapshot = _command().raw_score_model
 
-    training_ids = {cohort.cohort_id for cohort in snapshot.training_cohorts}
-    history_ids = {cohort.cohort_id for cohort in snapshot.calibration_history_cohorts}
+    training_cohorts = {cohort.month: cohort for cohort in snapshot.training_cohorts}
+    history_cohorts = {cohort.month: cohort for cohort in snapshot.calibration_history_cohorts}
+    shared_months = training_cohorts.keys() & history_cohorts.keys()
 
-    assert training_ids.isdisjoint(history_ids)
+    assert shared_months
+    assert all(training_cohorts[month] == history_cohorts[month] for month in shared_months)
 
 
 def test_calibration_history_rejects_reused_training_cohort_identity() -> None:
     payload = _command().raw_score_model.model_dump(mode="json")
     training_cohort = payload["training_cohorts"][0]
-    history_cohort = payload["calibration_history_cohorts"][0]
+    history_cohort = next(
+        cohort
+        for cohort in payload["calibration_history_cohorts"]
+        if cohort["month"] == training_cohort["month"]
+    )
     assert isinstance(training_cohort, dict)
     assert isinstance(history_cohort, dict)
-    old_cohort_id = history_cohort["cohort_id"]
-    reused_cohort_id = training_cohort["cohort_id"]
-    history_cohort["cohort_id"] = reused_cohort_id
-    for record in payload["calibration_history_records"]:
-        if record["cohort_id"] == old_cohort_id:
-            record["cohort_id"] = reused_cohort_id
+    history_cohort["member_security_ids"][-1] = "synthetic-alternate-uncompleted-member"
 
-    with pytest.raises(ValueError, match="frozen cohort identity was reused"):
+    with pytest.raises(ValueError, match="frozen cohort identity was reused with new membership"):
         RawScoreModelSnapshot.model_validate(payload)
 
 
@@ -2017,7 +2033,14 @@ def test_research_draft_requires_catalysts_falsification_conditions_and_unknowns
 
 def test_raw_score_training_rejects_mixed_research_definition_versions() -> None:
     payload = _command().model_dump(mode="json")
-    payload["raw_score_model"]["training_cohorts"][0]["research_definition_version"] = "2.0.0"
+    cohort_id = payload["raw_score_model"]["training_cohorts"][0]["cohort_id"]
+    for cohorts in (
+        payload["raw_score_model"]["training_cohorts"],
+        payload["raw_score_model"]["calibration_history_cohorts"],
+    ):
+        for cohort in cohorts:
+            if cohort["cohort_id"] == cohort_id:
+                cohort["research_definition_version"] = "2.0.0"
 
     with pytest.raises(ValueError, match="same research Definition"):
         ResearchCommand.model_validate(payload)
@@ -2025,8 +2048,7 @@ def test_raw_score_training_rejects_mixed_research_definition_versions() -> None
 
 def test_raw_score_training_definition_matches_the_executing_research_definition() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = "2.0.0"
+    _set_training_cohort_definition_version(payload, "2.0.0")
 
     with pytest.raises(ValueError, match="match the executing research Definition"):
         ResearchCommand.model_validate(payload)
@@ -2094,8 +2116,7 @@ def test_historical_current_draft_decodes_without_erasing_current_evidence_contr
 
 def test_current_research_command_does_not_accept_the_prior_definition_version() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
 
     with pytest.raises(ValueError, match="match the executing research Definition"):
         ResearchCommand.model_validate(payload)

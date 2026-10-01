@@ -3604,9 +3604,18 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if record.raw_score_frozen_at is not None and record.unified_maturity_at is not None
     )
     raw_score_model = source_fact.case.research.raw_score_model
-    calibration_source_records = (
+    calibration_source_rows = (
         *raw_score_model.training_records,
         *raw_score_model.calibration_history_records,
+    )
+    calibration_source_by_identity: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    for record in calibration_source_rows:
+        identity = (record.month, record.security_id, record.research_id)
+        previous = calibration_source_by_identity.setdefault(identity, record)
+        assert previous == record
+    calibration_source_records = tuple(
+        calibration_source_by_identity[identity]
+        for identity in sorted(calibration_source_by_identity)
     )
     calibration_source_months = tuple(
         sorted({record.month for record in calibration_source_records})
@@ -4522,7 +4531,34 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             include_member_details=False,
         )
     else:
-        direct = freeze_candidate_release(resolved_command, published_at=publication_time)
+        frozen_calibration_cohorts = {
+            cohort.cohort_id: cohort
+            for cohort in (
+                *raw_score_model.training_cohorts,
+                *raw_score_model.calibration_history_cohorts,
+            )
+        }
+        calibration_months = set(
+            (
+                *resolved_command.calibrator_selection_window_months,
+                *resolved_command.training_window_months,
+                *resolved_command.recent_diagnostic_window_months,
+            )
+        )
+        unavailable_probability_count = (
+            decision_case_service._unavailable_calibration_probability_count(
+                {},
+                set(),
+                frozen_calibration_cohorts,
+                calibration_months,
+                resolved_command.knowledge_cutoff,
+            )
+        )
+        direct = freeze_candidate_release(
+            resolved_command,
+            published_at=publication_time,
+            unavailable_probability_count=unavailable_probability_count,
+        )
         if candidate_scenario in {
             "QUALIFICATION_EXPIRES_DURING_FIT",
             "QUALIFICATION_BECOMES_AT_RISK_BEFORE_PUBLICATION",
@@ -5057,7 +5093,24 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert execution.publication_status == "PUBLISHED"
         return
     direct = direct.model_copy(update={"qualification": saved_candidate_release.qualification})
-    assert saved_candidate_release == direct
+    differences: dict[str, object] = {
+        field_name: (getattr(saved_candidate_release, field_name), getattr(direct, field_name))
+        for field_name in saved_candidate_release.model_fields
+        if getattr(saved_candidate_release, field_name) != getattr(direct, field_name)
+    }
+    if "calibration" in differences:
+        saved_calibration = saved_candidate_release.calibration
+        direct_calibration = direct.calibration
+        assert saved_calibration is not None and direct_calibration is not None
+        differences["calibration"] = {
+            field_name: (
+                getattr(saved_calibration, field_name),
+                getattr(direct_calibration, field_name),
+            )
+            for field_name in saved_calibration.model_fields
+            if getattr(saved_calibration, field_name) != getattr(direct_calibration, field_name)
+        }
+    assert not differences, differences
     if candidate_scenario == "NORMAL":
         assert execution.report.report_publication is not None
         assert execution.report.report_publication.status == "PUBLISHED"
