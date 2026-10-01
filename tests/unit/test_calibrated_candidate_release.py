@@ -2442,11 +2442,32 @@ def test_unavailable_probability_count_includes_committed_candidate_without_sour
     count = decision_case_service._unavailable_calibration_probability_count(
         {},
         unavailable_identities,
+        {},
         {member_month},
         original.knowledge_cutoff,
     )
 
     assert count == 1
+
+
+def test_unavailable_probability_count_includes_frozen_cohort_members_without_research() -> None:
+    model = frozen_raw_score_model_snapshot()
+    cohorts = (*model.training_cohorts, *model.calibration_history_cohorts)
+    unavailable_security_ids = {
+        (cohort.month, security_id)
+        for cohort in cohorts
+        for security_id in set(cohort.member_security_ids) - set(cohort.completed_research_ids)
+    }
+
+    count = decision_case_service._unavailable_calibration_probability_count(
+        {},
+        set(),
+        {cohort.cohort_id: cohort for cohort in cohorts},
+        {cohort.month for cohort in cohorts},
+        datetime(2045, 1, 1, tzinfo=UTC),
+    )
+
+    assert count == len(unavailable_security_ids)
 
 
 def test_calibration_source_population_excludes_records_without_frozen_probability() -> None:

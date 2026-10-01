@@ -954,6 +954,7 @@ def _validate_candidate_calibration_sources(
     unavailable_probability_count = _unavailable_calibration_probability_count(
         all_source_rows,
         unavailable_candidate_probability_identities,
+        frozen_cohorts_by_id,
         calibration_months,
         candidate_cutoff,
     )
@@ -1031,12 +1032,13 @@ def _calibration_source_model_versions(command: CandidateReleaseCommand) -> froz
 def _unavailable_calibration_probability_count(
     all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     unavailable_candidate_probability_identities: set[tuple[str, str, str]],
+    frozen_cohorts: dict[str, RawScoreTrainingCohort],
     calibration_months: set[str],
     candidate_cutoff: datetime,
 ) -> int:
-    """Count matured source and committed candidate identities lacking a probability."""
-    unavailable_identities = {
-        identity
+    """Count source and frozen-cohort members missing probabilities by stock-month."""
+    unavailable_security_months = {
+        identity[:2]
         for identity, record in all_source_rows.items()
         if record.historical_calibrated_probability is None
         and identity[0] in calibration_months
@@ -1044,12 +1046,18 @@ def _unavailable_calibration_probability_count(
         and record.unified_maturity_at <= candidate_cutoff
         and record.label_available_at <= candidate_cutoff
     }
-    unavailable_identities.update(
-        identity
+    unavailable_security_months.update(
+        identity[:2]
         for identity in unavailable_candidate_probability_identities
         if identity[0] in calibration_months
     )
-    return len(unavailable_identities)
+    unavailable_security_months.update(
+        (cohort.month, security_id)
+        for cohort in frozen_cohorts.values()
+        if cohort.month in calibration_months
+        for security_id in set(cohort.member_security_ids) - set(cohort.completed_research_ids)
+    )
+    return len(unavailable_security_months)
 
 
 def _unavailable_candidate_probability_identities(
