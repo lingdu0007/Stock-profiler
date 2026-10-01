@@ -1148,8 +1148,15 @@ def test_historical_partial_member_recovery_creates_missing_member_runs(
     payload = current_case.model_dump(mode="json")
     research_payload = payload["research"]
     assert isinstance(research_payload, dict)
-    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    raw_score_model = research_payload["raw_score_model"]
+    training_cohorts = raw_score_model["training_cohorts"]
+    training_cohort_ids = {cohort["cohort_id"] for cohort in training_cohorts}
+    for cohort in (
+        *training_cohorts,
+        *raw_score_model["calibration_history_cohorts"],
+    ):
+        if cohort["cohort_id"] in training_cohort_ids:
+            cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["input"]["research"] = research_payload
     payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["agent_definition"]["output_contract"]["version"] = (
@@ -1502,8 +1509,15 @@ def test_historical_current_member_research_runs_are_recovered_without_rebinding
     payload = current_case.model_dump(mode="json")
     research_payload = payload["research"]
     assert isinstance(research_payload, dict)
-    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    raw_score_model = research_payload["raw_score_model"]
+    training_cohorts = raw_score_model["training_cohorts"]
+    training_cohort_ids = {cohort["cohort_id"] for cohort in training_cohorts}
+    for cohort in (
+        *training_cohorts,
+        *raw_score_model["calibration_history_cohorts"],
+    ):
+        if cohort["cohort_id"] in training_cohort_ids:
+            cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["input"]["research"] = research_payload
     payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["agent_definition"]["output_contract"]["version"] = (
@@ -1708,8 +1722,15 @@ def test_historical_current_definition_accepts_the_later_prior_member_schema(
     payload = current_case.model_dump(mode="json")
     research_payload = payload["research"]
     assert isinstance(research_payload, dict)
-    for cohort in research_payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    raw_score_model = research_payload["raw_score_model"]
+    training_cohorts = raw_score_model["training_cohorts"]
+    training_cohort_ids = {cohort["cohort_id"] for cohort in training_cohorts}
+    for cohort in (
+        *training_cohorts,
+        *raw_score_model["calibration_history_cohorts"],
+    ):
+        if cohort["cohort_id"] in training_cohort_ids:
+            cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["input"]["research"] = research_payload
     payload["agent_definition"]["version"] = RESEARCH_PRIOR_DEFINITION_VERSION
     payload["agent_definition"]["output_contract"]["version"] = (
