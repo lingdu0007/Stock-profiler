@@ -529,6 +529,53 @@ def test_incomplete_recent_diagnostic_cohort_is_visible_without_blocking_release
     assert release.calibration.recent_diagnostics is None
 
 
+def test_duplicate_recent_diagnostic_record_is_visible_without_blocking_release() -> None:
+    original = command()
+    duplicate = original.recent_diagnostic_records[0]
+
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={"recent_diagnostic_records": (*original.recent_diagnostic_records, duplicate)}
+        )
+    )
+
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.calibration is not None
+    assert release.calibration.recent_diagnostic_status == "CALCULATION_FAILED"
+    assert release.calibration.recent_diagnostic_sample_count == len(
+        original.recent_diagnostic_records
+    )
+    assert release.calibration.recent_diagnostics is None
+
+
+def test_duplicate_outside_recent_diagnostic_window_does_not_change_diagnostics() -> None:
+    original = command()
+    older_record = next(
+        record
+        for record in original.training_records
+        if record.month not in original.recent_diagnostic_window_months
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={
+                "recent_diagnostic_records": (
+                    *original.recent_diagnostic_records,
+                    older_record,
+                    older_record,
+                )
+            }
+        )
+    )
+
+    assert release.disposition == "CANDIDATES"
+    assert release.calibration is not None
+    assert release.calibration.recent_diagnostic_status == "AVAILABLE"
+    assert release.calibration.recent_diagnostic_sample_count == len(
+        original.recent_diagnostic_records
+    )
+
+
 def test_recent_diagnostic_cohort_drops_labels_after_the_frozen_watermark() -> None:
     original = command()
     after_watermark = original.recent_diagnostic_records[0].model_copy(
@@ -595,7 +642,6 @@ def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
         ("selection_not_earlier", "CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER"),
         ("diagnostics_not_latest", "RECENT_DIAGNOSTIC_WINDOW_NOT_LATEST"),
         ("duplicate_selection_identity", "CALIBRATOR_SELECTION_RECORD_IDENTITIES_NOT_UNIQUE"),
-        ("duplicate_diagnostic_identity", "RECENT_DIAGNOSTIC_RECORD_IDENTITIES_NOT_UNIQUE"),
         ("selection_label_not_mature", "CALIBRATOR_SELECTION_LABEL_NOT_MATURE"),
     ),
 )
@@ -643,11 +689,6 @@ def test_calibrator_rejects_invalid_selection_or_diagnostic_provenance(
         update["calibrator_selection_records"] = (
             *original.calibrator_selection_records,
             original.calibrator_selection_records[0],
-        )
-    elif invalid_case == "duplicate_diagnostic_identity":
-        update["recent_diagnostic_records"] = (
-            *original.recent_diagnostic_records,
-            original.recent_diagnostic_records[0],
         )
     elif invalid_case == "selection_label_not_mature":
         late_label = original.calibrator_selection_records[0].model_copy(
@@ -2164,6 +2205,26 @@ def test_candidate_release_freezes_member_probability_into_prediction_cohort() -
     assert prediction.entry_sessions == tuple(
         (session.opens_at, session.closes_at) for session in original.market_sessions[:5]
     )
+
+
+def test_missing_calendar_coverage_becomes_candidate_calibration_provenance_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = command()
+    outcome = freeze_candidate_release(original)
+
+    def missing_calendar_coverage(*_args: object) -> datetime:
+        raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
+
+    monkeypatch.setattr(decision_case_service, "raw_score_maturity_at", missing_calendar_coverage)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._frozen_candidate_prediction_rows(
+            original,
+            outcome,
+            raw_score_frozen_at=original.knowledge_cutoff,
+            raw_score_training_watermark_at=original.label_watermark_at,
+        )
 
 
 def test_preopen_cutoff_window_replays_its_same_day_entry() -> None:

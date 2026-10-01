@@ -916,10 +916,6 @@ def _fit_calibrator(
         command.calibrator_selection_records
     ):
         raise ValueError("CALIBRATOR_SELECTION_RECORD_IDENTITIES_NOT_UNIQUE")
-    if len({record.record_id for record in command.recent_diagnostic_records}) != len(
-        command.recent_diagnostic_records
-    ):
-        raise ValueError("RECENT_DIAGNOSTIC_RECORD_IDENTITIES_NOT_UNIQUE")
     if any(
         record.label_available_at > command.label_watermark_at
         or record.unified_maturity_at > command.label_watermark_at
@@ -959,11 +955,20 @@ def _fit_calibrator(
         else command.knowledge_cutoff
     )
     diagnostic_records_by_month: dict[str, list[CalibrationRecord]] = {}
+    recent_month_set = set(diagnostic_months)
+    diagnostic_record_by_id: dict[str, CalibrationRecord] = {}
+    diagnostic_integrity_failed = False
     for record in diagnostic_population:
         if (
-            record.unified_maturity_at <= diagnostic_watermark_at
+            record.month in recent_month_set
+            and record.unified_maturity_at <= diagnostic_watermark_at
             and record.label_available_at <= diagnostic_watermark_at
         ):
+            previous = diagnostic_record_by_id.get(record.record_id)
+            if previous is not None:
+                diagnostic_integrity_failed = True
+                continue
+            diagnostic_record_by_id[record.record_id] = record
             diagnostic_records_by_month.setdefault(record.month, []).append(record)
     recent_months = diagnostic_months
     recent_records = tuple(
@@ -971,7 +976,9 @@ def _fit_calibrator(
     )
     recent_diagnostics = None
     recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
-    if len(recent_records) < _MINIMUM_RECENT_DIAGNOSTIC_RECORDS:
+    if diagnostic_integrity_failed:
+        recent_diagnostic_status = "CALCULATION_FAILED"
+    elif len(recent_records) < _MINIMUM_RECENT_DIAGNOSTIC_RECORDS:
         recent_diagnostic_status = "INSUFFICIENT_DATA"
     else:
         try:

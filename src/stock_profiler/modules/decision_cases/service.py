@@ -1334,9 +1334,12 @@ def _frozen_candidate_prediction_rows(
     final_window_session = window_sessions[-1]
     assert final_window_session is not None
     prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
-    matures_by = raw_score_maturity_at(
-        final_window_session.closes_at, command.market_calendar_version
-    )
+    try:
+        matures_by = raw_score_maturity_at(
+            final_window_session.closes_at, command.market_calendar_version
+        )
+    except ValueError as error:
+        raise CandidateCalibrationProvenanceInvalid() from error
     predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
     for member in outcome.members:
         if member.calibrated_probability is None:
