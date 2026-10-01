@@ -319,17 +319,25 @@ def test_calibrator_selection_window_has_no_unregistered_24_month_floor() -> Non
     assert release.calibration.calibrator_selection_window_months == selection_months
 
 
-def test_recent_diagnostic_window_cannot_participate_in_fitting() -> None:
+def test_recent_diagnostic_window_can_overlap_the_fixed_fit_window() -> None:
     original = command()
+    history = calibration_history_records()
+    history_months = tuple(dict.fromkeys(record.month for record in history))
+    fit_months = history_months[-60:]
     overlapping = original.model_copy(
-        update={"recent_diagnostic_window_months": original.training_window_months[-24:]}
+        update={
+            "training_window_months": fit_months,
+            "training_records": tuple(record for record in history if record.month in fit_months),
+        }
     )
+    release = freeze_candidate_release(overlapping, initial_calibration=False)
 
-    release = freeze_candidate_release(overlapping)
-
-    assert release.disposition == "FAILED"
-    assert release.availability_failure == "CALIBRATION"
-    assert release.reasons == ("CALIBRATION_WINDOWS_MUST_BE_DISJOINT",)
+    assert release.disposition == "CANDIDATES", release.reasons
+    assert release.calibration is not None
+    assert release.calibration.training_window_months == fit_months
+    assert set(release.calibration.training_window_months) & set(
+        release.calibration.recent_diagnostic_months
+    ) == set(original.recent_diagnostic_window_months)
 
 
 def test_calibrator_selection_records_cannot_be_reused_for_fitting() -> None:
@@ -585,7 +593,7 @@ def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
         ("empty_selection", "CALIBRATOR_SELECTION_REQUIRES_MATURE_MONTHS"),
         ("diagnostic_month_count", "RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS"),
         ("selection_not_earlier", "CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER"),
-        ("diagnostics_not_later", "RECENT_DIAGNOSTIC_WINDOW_NOT_LATER"),
+        ("diagnostics_not_latest", "RECENT_DIAGNOSTIC_WINDOW_NOT_LATEST"),
         ("duplicate_selection_identity", "CALIBRATOR_SELECTION_RECORD_IDENTITIES_NOT_UNIQUE"),
         ("duplicate_diagnostic_identity", "RECENT_DIAGNOSTIC_RECORD_IDENTITIES_NOT_UNIQUE"),
         ("selection_label_not_mature", "CALIBRATOR_SELECTION_LABEL_NOT_MATURE"),
@@ -618,7 +626,7 @@ def test_calibrator_rejects_invalid_selection_or_diagnostic_provenance(
                 _month_after(later_month, offset) for offset in range(1, 25)
             ),
         )
-    elif invalid_case == "diagnostics_not_later":
+    elif invalid_case == "diagnostics_not_latest":
         history = calibration_history_records()
         history_months = tuple(dict.fromkeys(record.month for record in history))
         fitting_months = history_months[-60:]
@@ -2473,6 +2481,60 @@ def test_unavailable_probability_count_includes_committed_candidate_without_sour
     assert count == 1
 
 
+def test_suppressed_failed_release_members_still_count_as_unavailable() -> None:
+    original = command()
+    failed_release_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    members=(),
+                    availability_failure="DATA",
+                    disposition="FAILED",
+                    calibration=None,
+                )
+            ),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (failed_release_event,),
+        original.knowledge_cutoff,
+    )
+
+    assert unavailable == {
+        (
+            original.knowledge_cutoff.strftime("%Y-%m"),
+            candidate.security_id,
+            candidate.research_id,
+        )
+        for candidate in original.candidates
+    }
+
+
+def test_historical_cohort_collection_rejects_two_pools_in_one_month() -> None:
+    model = frozen_raw_score_model_snapshot()
+    cohort = model.calibration_history_cohorts[0]
+    conflicting = cohort.model_copy(
+        update={
+            "cohort_id": f"{cohort.cohort_id}-alternate",
+            "member_security_ids": (*cohort.member_security_ids[:-1], "SYNTH-OTHER"),
+            "completed_research_ids": {
+                **cohort.completed_research_ids,
+                "SYNTH-OTHER": "synthetic-other-research",
+            },
+        }
+    )
+    frozen = {cohort.cohort_id: cohort}
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_immutable_cohort(frozen, conflicting)
+
+
 def test_unavailable_probability_count_includes_frozen_cohort_members_without_research() -> None:
     model = frozen_raw_score_model_snapshot()
     cohorts = (*model.training_cohorts, *model.calibration_history_cohorts)
@@ -2739,6 +2801,22 @@ def test_backdated_label_watermark_cannot_hide_newer_mature_cohort_months() -> N
 
     decision_case_service._validate_calibration_training_window(
         authoritative_months[-60:], authoritative_months
+    )
+
+
+def test_latest_60_mature_months_may_overlap_diagnostics() -> None:
+    authoritative_months = tuple(
+        f"{2040 + index // 12:04}-{index % 12 + 1:02}" for index in range(84)
+    )
+    selection_months = authoritative_months[:12]
+    fit_months = authoritative_months[-60:]
+    diagnostic_months = authoritative_months[-24:]
+
+    decision_case_service._validate_calibration_training_window(
+        fit_months,
+        authoritative_months,
+        selection_window_months=selection_months,
+        recent_diagnostic_window_months=diagnostic_months,
     )
 
 

@@ -61,7 +61,7 @@ def test_controlled_build_and_release_gates_are_pinned() -> None:
     assert "corepack pnpm@10.17.1 --dir web install --frozen-lockfile" in backend_workflow
     assert backend_workflow.index(
         "corepack pnpm@10.17.1 --dir web install --frozen-lockfile"
-    ) < backend_workflow.index("uv run pytest")
+    ) < backend_workflow.index("uv run python scripts/pytest_shard.py")
     assert "verify-release-candidate:" in workflow
     assert "needs: verify-release-candidate" in workflow
     assert "tags:" in workflow

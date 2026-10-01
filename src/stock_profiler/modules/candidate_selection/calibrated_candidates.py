@@ -903,16 +903,15 @@ def _fit_calibrator(
         raise ValueError("CALIBRATOR_SELECTION_REQUIRES_MATURE_MONTHS")
     if len(set(diagnostic_months)) != 24:
         raise ValueError("RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS")
-    if (
-        set(selection_months) & set(months)
-        or set(diagnostic_months) & set(months)
-        or set(selection_months) & set(diagnostic_months)
-    ):
+    if set(selection_months) & set(months) or set(selection_months) & set(diagnostic_months):
         raise ValueError("CALIBRATION_WINDOWS_MUST_BE_DISJOINT")
     if not selection_months[-1] < months[0]:
         raise ValueError("CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER")
-    if not months[-1] < diagnostic_months[0]:
-        raise ValueError("RECENT_DIAGNOSTIC_WINDOW_NOT_LATER")
+    authoritative_months = tuple(
+        sorted(set(selection_months) | set(months) | set(diagnostic_months))
+    )
+    if diagnostic_months != authoritative_months[-24:]:
+        raise ValueError("RECENT_DIAGNOSTIC_WINDOW_NOT_LATEST")
     if len({record.record_id for record in command.calibrator_selection_records}) != len(
         command.calibrator_selection_records
     ):

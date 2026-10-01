@@ -1074,11 +1074,17 @@ def _unavailable_candidate_probability_identities(
         if command is None or outcome is None:
             continue
         month = _candidate_prediction_month(command.knowledge_cutoff)
-        unavailable.update(
-            (month, member.security_id, member.research_id)
-            for member in outcome.members
-            if member.calibrated_probability is None
-        )
+        if outcome.members:
+            unavailable.update(
+                (month, member.security_id, member.research_id)
+                for member in outcome.members
+                if member.calibrated_probability is None
+            )
+        elif outcome.calibration is None and outcome.disposition in {"FAILED", "BLOCKED"}:
+            unavailable.update(
+                (month, candidate.security_id, candidate.research_id)
+                for candidate in command.candidates
+            )
     return unavailable
 
 
@@ -1105,8 +1111,7 @@ def _validate_calibration_training_window(
     fitting_months = tuple(
         month
         for month in authoritative_mature_months
-        if (not selection_window_months or month > selection_window_months[-1])
-        and (not recent_diagnostic_window_months or month < recent_diagnostic_window_months[0])
+        if not selection_window_months or month > selection_window_months[-1]
     )
     if len(fitting_months) < len(training_window_months):
         raise CandidateCalibrationProvenanceInvalid()
@@ -1467,6 +1472,11 @@ def _retain_immutable_cohort(
     cohort: RawScoreTrainingCohort,
 ) -> None:
     """Keep frozen cohort membership stable across all historical research events."""
+    if any(
+        previous.month == cohort.month and previous.cohort_id != cohort.cohort_id
+        for previous in cohorts.values()
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
     previous = cohorts.setdefault(cohort.cohort_id, cohort)
     if previous != cohort:
         raise CandidateCalibrationProvenanceInvalid()
