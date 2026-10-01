@@ -2623,6 +2623,7 @@ def _commit_framework_result(
     candidate_data_failure: str | None = None
     candidate_calibration_failure: str | None = None
     candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
+    candidate_research_source_validated = False
     candidate_model_version: str | None = None
     candidate_initial_calibration = True
     candidate_unavailable_probability_count = 0
@@ -2672,6 +2673,7 @@ def _commit_framework_result(
                     connection,
                 ),
             )
+            candidate_research_source_validated = True
         except (CandidateCalibrationVersionMismatch, CandidateResearchVersionMismatch) as error:
             candidate_version_failure = str(error)
         except CandidateResearchHandoffUnavailable as error:
@@ -3159,6 +3161,7 @@ def _commit_framework_result(
                         publication_command,
                         published_at=publication_time,
                         reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
+                        include_member_details=candidate_research_source_validated,
                     )
                 elif candidate_version_failure is not None:
                     candidate_release = candidate_release_availability_failure(
@@ -3166,6 +3169,7 @@ def _commit_framework_result(
                         published_at=publication_time,
                         reason=candidate_version_failure,
                         availability_failure="VERSION",
+                        include_member_details=candidate_research_source_validated,
                     )
                 elif candidate_data_failure is not None:
                     candidate_release = candidate_release_availability_failure(
@@ -3173,6 +3177,7 @@ def _commit_framework_result(
                         published_at=publication_time,
                         reason=candidate_data_failure,
                         availability_failure="DATA",
+                        include_member_details=candidate_research_source_validated,
                     )
                 elif candidate_research_failure is not None:
                     if candidate_research_failure.disposition == "BLOCKED":
@@ -3180,6 +3185,7 @@ def _commit_framework_result(
                             publication_command,
                             published_at=publication_time,
                             reason=candidate_research_failure.reason,
+                            include_member_details=candidate_research_source_validated,
                         )
                     else:
                         candidate_release = candidate_release_availability_failure(
@@ -3191,6 +3197,7 @@ def _commit_framework_result(
                                 if candidate_research_failure.disposition == "SYSTEM_FAILED"
                                 else "DATA"
                             ),
+                            include_member_details=candidate_research_source_validated,
                         )
                 elif candidate_calibration_failure is not None:
                     candidate_release = candidate_release_availability_failure(
@@ -3198,6 +3205,7 @@ def _commit_framework_result(
                         published_at=publication_time,
                         reason=candidate_calibration_failure,
                         availability_failure="CALIBRATION",
+                        include_member_details=candidate_research_source_validated,
                     )
                 else:
                     candidate_release = freeze_candidate_release(

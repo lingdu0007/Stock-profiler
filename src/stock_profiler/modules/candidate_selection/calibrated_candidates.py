@@ -458,11 +458,18 @@ def candidate_release_availability_failure(
     published_at: datetime,
     reason: str,
     availability_failure: CandidateAvailabilityFailure,
+    include_member_details: bool = True,
 ) -> CandidateReleaseOutcome:
     """Freeze a non-actionable availability result when host-side version checks fail."""
     command = command.model_copy(update={"published_at": published_at})
     window, window_failure = _candidate_window(command)
-    calendar_failure = _candidate_window_failure(command, window, window_failure)
+    members = None if include_member_details else ()
+    calendar_failure = _candidate_window_failure(
+        command,
+        window,
+        window_failure,
+        members=members,
+    )
     if calendar_failure is not None:
         return calendar_failure
     return _release_outcome(
@@ -470,6 +477,7 @@ def candidate_release_availability_failure(
         tuple(session.market_date for session in window),
         disposition="FAILED",
         reasons=(reason,),
+        members=members,
         availability_failure=availability_failure,
     )
 
@@ -479,6 +487,7 @@ def candidate_release_blocked_by_business_prerequisite(
     *,
     published_at: datetime,
     reason: str,
+    include_member_details: bool = True,
 ) -> CandidateReleaseOutcome:
     """Record that an unsuccessful earlier business outcome prevented release."""
     command = command.model_copy(update={"published_at": published_at})
@@ -488,6 +497,7 @@ def candidate_release_blocked_by_business_prerequisite(
         tuple(session.market_date for session in window),
         disposition="BLOCKED",
         reasons=(reason,),
+        members=None if include_member_details else (),
     )
 
 
@@ -709,6 +719,8 @@ def _candidate_window_failure(
     command: CandidateReleaseCommand,
     window: tuple[MarketSession, ...],
     failure: str | None,
+    *,
+    members: tuple[CalibratedMember, ...] | None = None,
 ) -> CandidateReleaseOutcome | None:
     if failure is None:
         return None
@@ -717,6 +729,7 @@ def _candidate_window_failure(
         tuple(session.market_date for session in window),
         disposition="FAILED",
         reasons=(failure,),
+        members=members,
         availability_failure="DATA",
     )
 

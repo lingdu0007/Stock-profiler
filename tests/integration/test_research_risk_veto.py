@@ -4512,12 +4512,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             availability_failure=(
                 "SYSTEM" if candidate_scenario == "UPSTREAM_RESEARCH_SYSTEM_FAILED" else "DATA"
             ),
+            include_member_details=False,
         )
     elif candidate_scenario == "UPSTREAM_RESEARCH_BLOCKED":
         direct = candidate_release_blocked_by_business_prerequisite(
             command,
             published_at=publication_time,
             reason="RESEARCH_PREREQUISITE_BLOCKED",
+            include_member_details=False,
         )
     else:
         direct = freeze_candidate_release(resolved_command, published_at=publication_time)
@@ -4861,6 +4863,17 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         direct.availability_failure,
         direct.reasons,
     )
+    if candidate_scenario in {
+        "UPSTREAM_RESEARCH_DATA_FAILED",
+        "UPSTREAM_RESEARCH_SYSTEM_FAILED",
+        "UPSTREAM_RESEARCH_BLOCKED",
+        "UPSTREAM_RESEARCH_EVENT_MISSING",
+    }:
+        assert direct.members == ()
+        assert execution.report is not None
+        candidate_release = execution.report.result.candidate_release
+        assert candidate_release is not None
+        assert candidate_release.members == ()
     if candidate_scenario == "CALIBRATION_FAILURE" or candidate_scenario in {
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",

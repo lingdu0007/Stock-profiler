@@ -1215,6 +1215,29 @@ def test_host_availability_failure_preserves_calendar_failures() -> None:
     assert invalid_sequence.reasons == ("CANDIDATE_WINDOW_CALENDAR_SEQUENCE_INVALID",)
 
 
+def test_unvalidated_candidate_failure_omits_candidate_member_details() -> None:
+    original = command()
+    failed_command = original.model_copy(update={"market_sessions": original.market_sessions[:4]})
+
+    unavailable = candidate_release_availability_failure(
+        original,
+        published_at=original.published_at,
+        reason="CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE",
+        availability_failure="DATA",
+        include_member_details=False,
+    )
+    unavailable_with_calendar_failure = candidate_release_availability_failure(
+        failed_command,
+        published_at=original.published_at,
+        reason="CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE",
+        availability_failure="DATA",
+        include_member_details=False,
+    )
+
+    assert unavailable.members == ()
+    assert unavailable_with_calendar_failure.members == ()
+
+
 def test_entry_invalid_record_is_a_mature_negative_calibration_label() -> None:
     original = command()
     records = tuple(
