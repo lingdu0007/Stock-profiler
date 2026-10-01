@@ -35,6 +35,9 @@ from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping as BusinessObjectMapping,
 )
 from stock_profiler.modules.decision_cases.ports import (
+    CandidateAvailabilityFailureFact as CandidateAvailabilityFailureFact,
+)
+from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError as DecisionEventCommitError,
 )
 from stock_profiler.modules.decision_cases.ports import (
@@ -250,6 +253,58 @@ class DecisionLedger:
                 continue
             failures.append(
                 ResearchAvailabilityFailureFact(
+                    case=case,
+                    framework_run_id=row.framework_run_id,
+                    stage_result=stage_result,
+                    recorded_at=row.recorded_at,
+                )
+            )
+        return tuple(failures)
+
+    def candidate_availability_failure_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[CandidateAvailabilityFailureFact, ...]:
+        """Read failed uncommitted candidate stages with their frozen case snapshots."""
+        statement = (
+            select(
+                DECISION_STAGE_EVENTS.c.framework_run_id,
+                DECISION_STAGE_EVENTS.c.stage_payload,
+                DECISION_STAGE_EVENTS.c.recorded_at,
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+            )
+            .select_from(
+                DECISION_STAGE_EVENTS.join(
+                    DECISION_CASE_BUSINESS_OBJECTS,
+                    DECISION_STAGE_EVENTS.c.business_object_id
+                    == DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id,
+                )
+            )
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        failures = []
+        for row in connection.execute(statement):
+            if row.case_payload is None:
+                continue
+            try:
+                case = FrozenDecisionCase.model_validate_json(row.case_payload)
+                stage_result = StageResult.model_validate_json(row.stage_payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                raise DecisionEventCommitError(
+                    "candidate availability history is unavailable"
+                ) from error
+            if (
+                case.access_scope is None
+                or not case.access_scope.same_scope_as(access_scope)
+                or case.candidate_release is None
+                or stage_result.phase not in {"FRAMEWORK_RUN", "CANDIDATE_RELEASE"}
+                or stage_result.status not in {"FAILED", "CANCELLED"}
+            ):
+                continue
+            failures.append(
+                CandidateAvailabilityFailureFact(
                     case=case,
                     framework_run_id=row.framework_run_id,
                     stage_result=stage_result,

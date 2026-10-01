@@ -61,6 +61,7 @@ from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correc
 from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping,
+    CandidateAvailabilityFailureFact,
     DecisionEventCommitError,
     DecisionEventCommitUncertainError,
     DecisionLedger,
@@ -683,6 +684,7 @@ def _validate_candidate_calibration_sources(
         candidate_release_events,
         candidate_cutoff,
         research_events,
+        ledger.candidate_availability_failure_history(connection, access_scope),
     )
     unavailable_research_probability_identities = _unavailable_research_probability_identities(
         research_events,
@@ -1008,6 +1010,8 @@ def _prior_calibration_snapshot_matches(
         and prior_command.capability_version == command.capability_version
         and current_model_versions
         and prior_model_versions == current_model_versions
+        and datetime.fromisoformat(event.committed_at)
+        <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
     )
@@ -1139,6 +1143,7 @@ def _unavailable_candidate_probability_identities(
     candidate_release_events: tuple[DecisionEventFact, ...],
     knowledge_cutoff: datetime,
     research_events: tuple[DecisionEventFact, ...] = (),
+    candidate_availability_failures: tuple[CandidateAvailabilityFailureFact, ...] = (),
 ) -> set[tuple[str, str, str]]:
     """Use validated candidate outcomes or their exact committed research source."""
     unavailable: set[tuple[str, str, str]] = set()
@@ -1199,6 +1204,49 @@ def _unavailable_candidate_probability_identities(
                     (month, member.security_id, member.research_id)
                     for member in source_command.members
                 )
+    for failure in candidate_availability_failures:
+        case = failure.case
+        command = case.candidate_release
+        stage = failure.stage_result
+        if (
+            command is None
+            or datetime.fromisoformat(case.knowledge_cutoff) > knowledge_cutoff
+            or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
+            or stage.phase not in {"FRAMEWORK_RUN", "CANDIDATE_RELEASE"}
+            or stage.status not in {"FAILED", "CANCELLED"}
+        ):
+            continue
+        source_event = research_events_by_id.get(command.research_event_id)
+        if source_event is None or source_event.business_object_id != command.research_object_id:
+            continue
+        source_command = source_event.case.research
+        source_research = source_event.result.research
+        source_scope = source_event.case.access_scope
+        candidate_scope = case.access_scope
+        scopes_match = (
+            source_scope is None
+            and candidate_scope is None
+            or source_scope is not None
+            and candidate_scope is not None
+            and source_scope.same_scope_as(candidate_scope)
+        )
+        if (
+            source_command is None
+            or source_research is None
+            or source_research.disposition not in {"FROZEN", "REJECTED"}
+            or source_research.raw_scores is None
+            or source_research.risk_veto is None
+            or not scopes_match
+            or datetime.fromisoformat(source_event.case.knowledge_cutoff)
+            != datetime.fromisoformat(case.knowledge_cutoff)
+            or datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+            != datetime.fromisoformat(case.knowledge_cutoff)
+        ):
+            continue
+        month = _candidate_prediction_month(command.knowledge_cutoff)
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in source_command.members
+        )
     return unavailable
 
 

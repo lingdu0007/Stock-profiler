@@ -22,7 +22,10 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 )
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import DecisionEventFact
-from stock_profiler.modules.decision_cases.ports import ResearchAvailabilityFailureFact
+from stock_profiler.modules.decision_cases.ports import (
+    CandidateAvailabilityFailureFact,
+    ResearchAvailabilityFailureFact,
+)
 from stock_profiler.modules.portfolio.market_calendar import (
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
@@ -2651,6 +2654,68 @@ def test_suppressed_failed_release_counts_only_its_validated_research_roster() -
     }
 
 
+def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster() -> None:
+    original = command()
+    cutoff = original.knowledge_cutoff
+    source_members = tuple(
+        SimpleNamespace(security_id=f"SOURCE-{member:02d}", research_id=f"SOURCE-R-{member:02d}")
+        for member in range(10)
+    )
+    source_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            decision_event_id=original.research_event_id,
+            business_object_id=original.research_object_id,
+            validation_status="PASSED",
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                knowledge_cutoff=cutoff.isoformat(),
+                research=SimpleNamespace(members=source_members),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                research=SimpleNamespace(
+                    disposition="FROZEN",
+                    raw_scores=(object(),),
+                    risk_veto=object(),
+                )
+            ),
+        ),
+    )
+    failed_candidate = cast(
+        CandidateAvailabilityFailureFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=cutoff.isoformat(),
+                access_scope=None,
+            ),
+            stage_result=SimpleNamespace(phase="FRAMEWORK_RUN", status="FAILED"),
+            recorded_at=cutoff.isoformat(),
+        ),
+    )
+    late_candidate = cast(
+        CandidateAvailabilityFailureFact,
+        SimpleNamespace(
+            case=failed_candidate.case,
+            stage_result=failed_candidate.stage_result,
+            recorded_at=(cutoff + timedelta(seconds=1)).isoformat(),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (),
+        cutoff,
+        (source_event,),
+        (failed_candidate, late_candidate),
+    )
+
+    assert unavailable == {
+        (cutoff.strftime("%Y-%m"), member.security_id, member.research_id)
+        for member in source_members
+    }
+
+
 def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples() -> None:
     original = command()
     missing_probability_member = SimpleNamespace(
@@ -3008,6 +3073,38 @@ def test_backdated_publication_request_does_not_hide_committed_calibration_histo
     assert decision_case_service._prior_calibration_snapshot_matches(prior_event, frozen_command)
 
 
+def test_prior_calibration_snapshot_must_be_committed_by_current_knowledge_cutoff() -> None:
+    current_command = command()
+    prior_command = current_command.model_copy(
+        update={
+            "knowledge_cutoff": current_command.knowledge_cutoff - timedelta(days=60),
+            "published_at": current_command.published_at - timedelta(days=60),
+        }
+    )
+    prior_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                knowledge_cutoff=prior_command.knowledge_cutoff.isoformat(),
+                candidate_release=prior_command,
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    calibration=SimpleNamespace(
+                        calibrator_version=current_command.calibrator_version
+                    )
+                )
+            ),
+            committed_at=(current_command.knowledge_cutoff + timedelta(seconds=1)).isoformat(),
+        ),
+    )
+
+    assert not decision_case_service._prior_calibration_snapshot_matches(
+        prior_event,
+        current_command,
+    )
+
+
 @pytest.mark.parametrize(
     "prior_updates",
     (
@@ -3046,6 +3143,7 @@ def test_prior_calibration_snapshot_does_not_cross_frozen_version(
                     )
                 )
             ),
+            committed_at=(prior_command.published_at + timedelta(days=1)).isoformat(),
         ),
     )
 
@@ -3082,6 +3180,7 @@ def test_prior_calibration_snapshot_ignores_diagnostic_only_model_version_change
                     )
                 )
             ),
+            committed_at=(prior_command.published_at + timedelta(days=1)).isoformat(),
         ),
     )
 

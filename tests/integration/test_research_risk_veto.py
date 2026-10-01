@@ -3527,6 +3527,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "UPSTREAM_RESEARCH_SYSTEM_FAILED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_EVENT_MISSING"),
+        ("ACCEPT", "UNCOMMITTED_FRAMEWORK_FAILURE"),
         ("ACCEPT", "RESEARCH_RISK_VERSION_MISMATCH"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
@@ -3586,6 +3587,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_SYSTEM_FAILED",
         "UPSTREAM_RESEARCH_BLOCKED",
         "UPSTREAM_RESEARCH_EVENT_MISSING",
+        "UNCOMMITTED_FRAMEWORK_FAILURE",
         "RESEARCH_RISK_VERSION_MISMATCH",
         "LATE_PUBLICATION",
         "LATE_COMMIT",
@@ -4396,6 +4398,59 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         }
     )
     assert alternate_batch_case.business_object_id == candidate_case.business_object_id
+
+    if candidate_scenario == "UNCOMMITTED_FRAMEWORK_FAILURE":
+        runtime = initialize_runtime_storage(migrated_settings)
+        ledger = DecisionLedger(runtime.engine)
+        assert candidate_case.access_scope is not None
+        ledger.persist_business_mapping_before_framework(candidate_case)
+        failed_stage = StageResult(
+            phase="FRAMEWORK_RUN",
+            status="FAILED",
+            gate_results=(GateResult(gate_id="RUN_FAILED", status="FAILED"),),
+            reasons=("CANDIDATE_FRAMEWORK_FAILED",),
+        )
+        future_stage = failed_stage.model_copy(
+            update={"reasons": ("CANDIDATE_FRAMEWORK_FAILED_AFTER_CUTOFF",)}
+        )
+        with ledger.serialize_case_execution() as connection:
+            ledger.record_stage_result(
+                connection,
+                case=candidate_case,
+                stage_result=failed_stage,
+                recorded_at=cutoff.isoformat(),
+            )
+            ledger.record_stage_result(
+                connection,
+                case=candidate_case,
+                stage_result=future_stage,
+                recorded_at=(cutoff + timedelta(seconds=1)).isoformat(),
+            )
+        with runtime.engine.connect() as connection:
+            candidate_failures = ledger.candidate_availability_failure_history(
+                connection,
+                candidate_case.access_scope,
+            )
+            research_events = ledger.research_event_history(
+                connection,
+                candidate_case.access_scope,
+            )
+        unavailable = decision_case_service._unavailable_candidate_probability_identities(
+            (),
+            cutoff,
+            research_events,
+            candidate_failures,
+        )
+        assert source_fact.case.research is not None
+        assert unavailable == {
+            (
+                cutoff.strftime("%Y-%m"),
+                member.security_id,
+                member.research_id,
+            )
+            for member in source_fact.case.research.members
+        }
+        return
 
     qualification_history_state = {"value": qualification_history}
     if qualification_history:

@@ -75,6 +75,16 @@ class ResearchAvailabilityFailureFact:
 
 
 @dataclass(frozen=True)
+class CandidateAvailabilityFailureFact:
+    """A failed candidate-path stage joined to its immutable case snapshot."""
+
+    case: FrozenDecisionCase
+    framework_run_id: str
+    stage_result: StageResult
+    recorded_at: str
+
+
+@dataclass(frozen=True)
 class FrameworkRunTransition:
     status: FrameworkRunStatus
     reason: str
@@ -180,6 +190,12 @@ class DecisionLedger(Protocol[Transaction]):
         connection: Transaction,
         access_scope: ResultAccessScope,
     ) -> tuple[ResearchAvailabilityFailureFact, ...]: ...
+
+    def candidate_availability_failure_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[CandidateAvailabilityFailureFact, ...]: ...
 
     def candidate_calibration_history(
         self,
