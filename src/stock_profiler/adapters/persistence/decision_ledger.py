@@ -282,6 +282,13 @@ class DecisionLedger:
                 )
             )
             .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .where(
+                ~select(DECISION_EVENTS.c.decision_event_id)
+                .where(
+                    DECISION_EVENTS.c.framework_run_id == DECISION_STAGE_EVENTS.c.framework_run_id
+                )
+                .exists()
+            )
             .order_by(DECISION_STAGE_EVENTS.c.sequence)
         )
         failures = []
@@ -299,7 +306,12 @@ class DecisionLedger:
                 case.access_scope is None
                 or not case.access_scope.same_scope_as(access_scope)
                 or case.candidate_release is None
-                or stage_result.phase not in {"FRAMEWORK_RUN", "CANDIDATE_RELEASE"}
+                or stage_result.phase
+                not in {
+                    "FRAMEWORK_RUN",
+                    "HOST_VALIDATION",
+                    "CANDIDATE_RELEASE",
+                }
                 or stage_result.status not in {"FAILED", "CANCELLED"}
             ):
                 continue

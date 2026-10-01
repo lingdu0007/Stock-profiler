@@ -1212,7 +1212,12 @@ def _unavailable_candidate_probability_identities(
             command is None
             or datetime.fromisoformat(case.knowledge_cutoff) > knowledge_cutoff
             or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
-            or stage.phase not in {"FRAMEWORK_RUN", "CANDIDATE_RELEASE"}
+            or stage.phase
+            not in {
+                "FRAMEWORK_RUN",
+                "HOST_VALIDATION",
+                "CANDIDATE_RELEASE",
+            }
             or stage.status not in {"FAILED", "CANCELLED"}
         ):
             continue

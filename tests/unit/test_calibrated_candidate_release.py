@@ -2654,7 +2654,10 @@ def test_suppressed_failed_release_counts_only_its_validated_research_roster() -
     }
 
 
-def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster() -> None:
+@pytest.mark.parametrize("phase", ["FRAMEWORK_RUN", "HOST_VALIDATION"])
+def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster(
+    phase: str,
+) -> None:
     original = command()
     cutoff = original.knowledge_cutoff
     source_members = tuple(
@@ -2690,7 +2693,7 @@ def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster
                 knowledge_cutoff=cutoff.isoformat(),
                 access_scope=None,
             ),
-            stage_result=SimpleNamespace(phase="FRAMEWORK_RUN", status="FAILED"),
+            stage_result=SimpleNamespace(phase=phase, status="FAILED"),
             recorded_at=cutoff.isoformat(),
         ),
     )

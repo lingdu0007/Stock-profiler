@@ -94,6 +94,7 @@ from stock_profiler.modules.decision_cases.domain import (
     GateResult,
     ResultAccessScope,
     StageResult,
+    stored_decision_event_payload,
 )
 from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError,
@@ -3528,6 +3529,8 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "UPSTREAM_RESEARCH_BLOCKED"),
         ("ACCEPT", "UPSTREAM_RESEARCH_EVENT_MISSING"),
         ("ACCEPT", "UNCOMMITTED_FRAMEWORK_FAILURE"),
+        ("ACCEPT", "UNCOMMITTED_HOST_VALIDATION_FAILURE"),
+        ("ACCEPT", "COMMITTED_NULL_CANDIDATE_FAILURE"),
         ("ACCEPT", "RESEARCH_RISK_VERSION_MISMATCH"),
         ("ACCEPT", "LATE_PUBLICATION"),
         ("ACCEPT", "LATE_COMMIT"),
@@ -3588,6 +3591,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_BLOCKED",
         "UPSTREAM_RESEARCH_EVENT_MISSING",
         "UNCOMMITTED_FRAMEWORK_FAILURE",
+        "UNCOMMITTED_HOST_VALIDATION_FAILURE",
+        "COMMITTED_NULL_CANDIDATE_FAILURE",
         "RESEARCH_RISK_VERSION_MISMATCH",
         "LATE_PUBLICATION",
         "LATE_COMMIT",
@@ -4399,13 +4404,24 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     )
     assert alternate_batch_case.business_object_id == candidate_case.business_object_id
 
-    if candidate_scenario == "UNCOMMITTED_FRAMEWORK_FAILURE":
+    if candidate_scenario in {
+        "UNCOMMITTED_FRAMEWORK_FAILURE",
+        "UNCOMMITTED_HOST_VALIDATION_FAILURE",
+        "COMMITTED_NULL_CANDIDATE_FAILURE",
+    }:
         runtime = initialize_runtime_storage(migrated_settings)
         ledger = DecisionLedger(runtime.engine)
         assert candidate_case.access_scope is not None
         ledger.persist_business_mapping_before_framework(candidate_case)
+        failure_phase: Literal["HOST_VALIDATION", "CANDIDATE_RELEASE", "FRAMEWORK_RUN"] = (
+            "HOST_VALIDATION"
+            if candidate_scenario == "UNCOMMITTED_HOST_VALIDATION_FAILURE"
+            else "CANDIDATE_RELEASE"
+            if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE"
+            else "FRAMEWORK_RUN"
+        )
         failed_stage = StageResult(
-            phase="FRAMEWORK_RUN",
+            phase=failure_phase,
             status="FAILED",
             gate_results=(GateResult(gate_id="RUN_FAILED", status="FAILED"),),
             reasons=("CANDIDATE_FRAMEWORK_FAILED",),
@@ -4418,6 +4434,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 connection,
                 case=candidate_case,
                 stage_result=failed_stage,
+                stage_event_id=f"ticket17-{candidate_scenario.lower()}",
                 recorded_at=cutoff.isoformat(),
             )
             ledger.record_stage_result(
@@ -4426,15 +4443,44 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 stage_result=future_stage,
                 recorded_at=(cutoff + timedelta(seconds=1)).isoformat(),
             )
+            if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE":
+                committed_fact = DecisionEventFact(
+                    decision_event_id=candidate_case.decision_event_id_for_framework_run(
+                        candidate_case.framework_run_id
+                    ),
+                    business_object_id=candidate_case.business_object_id,
+                    framework_run_id=candidate_case.framework_run_id,
+                    case=candidate_case,
+                    result=ExternalResult(
+                        outcome_code="CANDIDATE_RELEASE_COMMITTED",
+                        summary="A committed candidate release retained its failed stage.",
+                        key_reasons=("The candidate release stage was retained in history.",),
+                    ),
+                    validation_status="PASSED",
+                    committed_at=cutoff.isoformat(),
+                    stage_results=(failed_stage,),
+                )
+                connection.execute(
+                    DECISION_EVENTS.insert().values(
+                        decision_event_id=committed_fact.decision_event_id,
+                        event_sequence=None,
+                        business_object_id=candidate_case.business_object_id,
+                        framework_run_id=candidate_case.framework_run_id,
+                        corrects_event_id=None,
+                        event_payload=json.dumps(
+                            stored_decision_event_payload(committed_fact),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        committed_at=cutoff.isoformat(),
+                    )
+                )
         with runtime.engine.connect() as connection:
             candidate_failures = ledger.candidate_availability_failure_history(
                 connection,
                 candidate_case.access_scope,
             )
-            research_events = ledger.research_event_history(
-                connection,
-                candidate_case.access_scope,
-            )
+            research_events = (source_fact,)
         unavailable = decision_case_service._unavailable_candidate_probability_identities(
             (),
             cutoff,
@@ -4442,7 +4488,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             candidate_failures,
         )
         assert source_fact.case.research is not None
-        assert unavailable == {
+        expected_unavailable = {
             (
                 cutoff.strftime("%Y-%m"),
                 member.security_id,
@@ -4450,6 +4496,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             )
             for member in source_fact.case.research.members
         }
+        if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE":
+            assert candidate_failures == ()
+            assert unavailable == set()
+        else:
+            assert unavailable == expected_unavailable
         return
 
     qualification_history_state = {"value": qualification_history}
