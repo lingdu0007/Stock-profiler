@@ -51,6 +51,16 @@ jobs:
             paths: tests/integration/test_research_risk_veto.py
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: matrix.suite.id == 'core'
+        with:
+          node-version: "24"
+      - name: Enable Corepack for the core test shard
+        if: matrix.suite.id == 'core'
+        run: corepack enable
+      - name: Install the frozen frontend package set for the core test shard
+        if: matrix.suite.id == 'core'
+        run: corepack pnpm@10.17.1 --dir web install --frozen-lockfile
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
