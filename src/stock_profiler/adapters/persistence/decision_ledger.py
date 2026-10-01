@@ -266,13 +266,19 @@ class DecisionLedger:
         connection: Connection,
         access_scope: ResultAccessScope,
     ) -> tuple[CandidateAvailabilityFailureFact, ...]:
-        """Read failed uncommitted candidate stages with their frozen case snapshots."""
+        """Read failed candidate stages with their snapshots and any run commit time."""
+        committed_at = (
+            select(func.min(DECISION_EVENTS.c.committed_at))
+            .where(DECISION_EVENTS.c.framework_run_id == DECISION_STAGE_EVENTS.c.framework_run_id)
+            .scalar_subquery()
+        )
         statement = (
             select(
                 DECISION_STAGE_EVENTS.c.framework_run_id,
                 DECISION_STAGE_EVENTS.c.stage_payload,
                 DECISION_STAGE_EVENTS.c.recorded_at,
                 DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+                committed_at.label("committed_at"),
             )
             .select_from(
                 DECISION_STAGE_EVENTS.join(
@@ -282,13 +288,6 @@ class DecisionLedger:
                 )
             )
             .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
-            .where(
-                ~select(DECISION_EVENTS.c.decision_event_id)
-                .where(
-                    DECISION_EVENTS.c.framework_run_id == DECISION_STAGE_EVENTS.c.framework_run_id
-                )
-                .exists()
-            )
             .order_by(DECISION_STAGE_EVENTS.c.sequence)
         )
         failures = []
@@ -321,6 +320,7 @@ class DecisionLedger:
                     framework_run_id=row.framework_run_id,
                     stage_result=stage_result,
                     recorded_at=row.recorded_at,
+                    committed_at=row.committed_at,
                 )
             )
         return tuple(failures)

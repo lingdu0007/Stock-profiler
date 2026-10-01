@@ -82,6 +82,7 @@ class CandidateAvailabilityFailureFact:
     framework_run_id: str
     stage_result: StageResult
     recorded_at: str
+    committed_at: str | None = None
 
 
 @dataclass(frozen=True)

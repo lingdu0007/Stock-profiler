@@ -11,6 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from threading import Lock
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -674,6 +675,7 @@ def _validate_candidate_calibration_sources(
                 event
                 for event in ledger.research_event_history(connection, access_scope)
                 if event.corrects_event_id is None
+                and datetime.fromisoformat(event.committed_at) <= candidate_cutoff
                 and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
                 and event.case.research is not None
             ),
@@ -1111,6 +1113,7 @@ def _unavailable_research_probability_identities(
             or event.corrects_event_id is not None
             or event.validation_status != "PASSED"
             or event.result.research is not None
+            or datetime.fromisoformat(event.committed_at) > knowledge_cutoff
             or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
             or not any(
                 stage.phase in {"RESEARCH", "RAW_SCORE", "RISK_VETO"} and stage.status == "FAILED"
@@ -1152,12 +1155,14 @@ def _unavailable_candidate_probability_identities(
         for event in research_events
         if event.validation_status == "PASSED"
         and event.corrects_event_id is None
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
         and event.result.research is not None
     }
     for event in candidate_release_events:
         if (
             event.validation_status != "PASSED"
             or event.corrects_event_id is not None
+            or datetime.fromisoformat(event.committed_at) > knowledge_cutoff
             or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
         ):
             continue
@@ -1212,6 +1217,10 @@ def _unavailable_candidate_probability_identities(
             command is None
             or datetime.fromisoformat(case.knowledge_cutoff) > knowledge_cutoff
             or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
+            or (
+                failure.committed_at is not None
+                and datetime.fromisoformat(failure.committed_at) <= knowledge_cutoff
+            )
             or stage.phase
             not in {
                 "FRAMEWORK_RUN",
@@ -1537,8 +1546,8 @@ def _frozen_candidate_prediction_rows(
 
 
 def _candidate_prediction_month(knowledge_cutoff: datetime) -> str:
-    """Keep the cohort month attached to the frozen cutoff's own timezone."""
-    return knowledge_cutoff.strftime("%Y-%m")
+    """Bind equivalent cutoff instants to the contract's Shanghai calendar month."""
+    return knowledge_cutoff.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
 
 
 def _validate_frozen_candidate_prediction_source(

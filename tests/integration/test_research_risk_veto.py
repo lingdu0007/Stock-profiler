@@ -4480,7 +4480,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 connection,
                 candidate_case.access_scope,
             )
-            research_events = (source_fact,)
+            research_events = (source_fact.model_copy(update={"committed_at": cutoff.isoformat()}),)
         unavailable = decision_case_service._unavailable_candidate_probability_identities(
             (),
             cutoff,
@@ -4488,16 +4488,21 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             candidate_failures,
         )
         assert source_fact.case.research is not None
+        assert candidate_case.candidate_release is not None
+        failure_month = decision_case_service._candidate_prediction_month(
+            candidate_case.candidate_release.knowledge_cutoff
+        )
         expected_unavailable = {
             (
-                cutoff.strftime("%Y-%m"),
+                failure_month,
                 member.security_id,
                 member.research_id,
             )
             for member in source_fact.case.research.members
         }
         if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE":
-            assert candidate_failures == ()
+            assert len(candidate_failures) == 2
+            assert all(failure.committed_at == cutoff.isoformat() for failure in candidate_failures)
             assert unavailable == set()
         else:
             assert unavailable == expected_unavailable

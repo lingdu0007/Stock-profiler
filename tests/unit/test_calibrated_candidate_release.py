@@ -2442,6 +2442,7 @@ def test_prior_candidate_predictions_use_the_referenced_research_event() -> None
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2498,6 +2499,7 @@ def test_failed_candidate_member_without_probability_stays_out_of_calibration_hi
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2512,6 +2514,7 @@ def test_failed_candidate_member_without_probability_stays_out_of_calibration_hi
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2548,6 +2551,7 @@ def test_unavailable_probability_count_includes_committed_candidate_without_sour
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2575,6 +2579,7 @@ def test_suppressed_failed_release_members_are_not_trusted_for_identity_exclusio
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2611,6 +2616,7 @@ def test_suppressed_failed_release_counts_only_its_validated_research_roster() -
             decision_event_id=original.research_event_id,
             business_object_id=original.research_object_id,
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 knowledge_cutoff=original.knowledge_cutoff.isoformat(),
@@ -2630,6 +2636,7 @@ def test_suppressed_failed_release_counts_only_its_validated_research_roster() -
         DecisionEventFact,
         SimpleNamespace(
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2670,6 +2677,7 @@ def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster
             decision_event_id=original.research_event_id,
             business_object_id=original.research_object_id,
             validation_status="PASSED",
+            committed_at=cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 knowledge_cutoff=cutoff.isoformat(),
@@ -2695,6 +2703,7 @@ def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster
             ),
             stage_result=SimpleNamespace(phase=phase, status="FAILED"),
             recorded_at=cutoff.isoformat(),
+            committed_at=None,
         ),
     )
     late_candidate = cast(
@@ -2703,6 +2712,7 @@ def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster
             case=failed_candidate.case,
             stage_result=failed_candidate.stage_result,
             recorded_at=(cutoff + timedelta(seconds=1)).isoformat(),
+            committed_at=None,
         ),
     )
 
@@ -2719,6 +2729,114 @@ def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster
     }
 
 
+def test_candidate_stage_failure_counts_when_its_event_commits_after_cutoff() -> None:
+    original = command()
+    cutoff = original.knowledge_cutoff
+    source_members = tuple(
+        SimpleNamespace(security_id=f"SOURCE-{member:02d}", research_id=f"SOURCE-R-{member:02d}")
+        for member in range(10)
+    )
+    source_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            decision_event_id=original.research_event_id,
+            business_object_id=original.research_object_id,
+            validation_status="PASSED",
+            committed_at=cutoff.isoformat(),
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                knowledge_cutoff=cutoff.isoformat(),
+                research=SimpleNamespace(members=source_members),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                research=SimpleNamespace(
+                    disposition="FROZEN",
+                    raw_scores=(object(),),
+                    risk_veto=object(),
+                )
+            ),
+        ),
+    )
+    late_commit = cast(
+        CandidateAvailabilityFailureFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=cutoff.isoformat(),
+                access_scope=None,
+            ),
+            stage_result=SimpleNamespace(phase="FRAMEWORK_RUN", status="FAILED"),
+            recorded_at=cutoff.isoformat(),
+            committed_at=(cutoff + timedelta(seconds=1)).isoformat(),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (), cutoff, (source_event,), (late_commit,)
+    )
+
+    assert unavailable == {
+        (cutoff.strftime("%Y-%m"), member.security_id, member.research_id)
+        for member in source_members
+    }
+
+
+def test_late_research_commit_cannot_validate_candidate_failure_roster() -> None:
+    original = command()
+    cutoff = original.knowledge_cutoff
+    source_members = tuple(
+        SimpleNamespace(security_id=f"SOURCE-{member:02d}", research_id=f"SOURCE-R-{member:02d}")
+        for member in range(10)
+    )
+    late_source_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            decision_event_id=original.research_event_id,
+            business_object_id=original.research_object_id,
+            validation_status="PASSED",
+            committed_at=(cutoff + timedelta(seconds=1)).isoformat(),
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                knowledge_cutoff=cutoff.isoformat(),
+                research=SimpleNamespace(members=source_members),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                research=SimpleNamespace(
+                    disposition="FROZEN",
+                    raw_scores=(object(),),
+                    risk_veto=object(),
+                )
+            ),
+        ),
+    )
+    failed_candidate = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            validation_status="PASSED",
+            committed_at=cutoff.isoformat(),
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=cutoff.isoformat(),
+                access_scope=None,
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    members=(), disposition="FAILED", calibration=None
+                )
+            ),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (failed_candidate,), cutoff, (late_source_event,)
+    )
+
+    assert unavailable == set()
+
+
 def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples() -> None:
     original = command()
     missing_probability_member = SimpleNamespace(
@@ -2730,6 +2848,7 @@ def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples
         DecisionEventFact,
         SimpleNamespace(
             validation_status="FAILED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             corrects_event_id=None,
             case=SimpleNamespace(
                 candidate_release=original,
@@ -2756,6 +2875,7 @@ def test_unavailable_probability_count_includes_committed_failed_research_roster
         SimpleNamespace(
             corrects_event_id=None,
             validation_status="PASSED",
+            committed_at=original.knowledge_cutoff.isoformat(),
             case=SimpleNamespace(
                 research=SimpleNamespace(
                     members=tuple(
@@ -3029,10 +3149,89 @@ def test_calibration_provenance_groups_allow_one_month_to_span_research_events()
     assert {record.month for rows in grouped.values() for record in rows} == {first.month}
 
 
-def test_candidate_prediction_month_preserves_the_frozen_cutoff_offset() -> None:
+def test_candidate_prediction_month_uses_shanghai_for_equivalent_cutoff_instants() -> None:
+    cutoffs = (
+        datetime.fromisoformat("2042-06-30T23:59:59+08:00"),
+        datetime.fromisoformat("2042-07-01T00:59:59+09:00"),
+    )
+
+    assert {decision_case_service._candidate_prediction_month(cutoff) for cutoff in cutoffs} == {
+        "2042-06"
+    }
+
+
+def test_candidate_prediction_month_normalizes_non_shanghai_cutoff_offsets() -> None:
     cutoff = datetime.fromisoformat("2040-01-31T23:00:00-08:00")
 
-    assert decision_case_service._candidate_prediction_month(cutoff) == "2040-01"
+    assert decision_case_service._candidate_prediction_month(cutoff) == "2040-02"
+
+
+def test_unavailable_probability_ignores_committed_research_failure_after_cutoff() -> None:
+    original = command()
+    late_failure = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            committed_at=(original.knowledge_cutoff + timedelta(seconds=1)).isoformat(),
+            corrects_event_id=None,
+            validation_status="PASSED",
+            case=SimpleNamespace(
+                research=SimpleNamespace(
+                    members=tuple(
+                        SimpleNamespace(
+                            security_id=f"SYNTH-{member:02d}", research_id=f"R-{member:02d}"
+                        )
+                        for member in range(10)
+                    )
+                ),
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(research=None),
+            stage_results=(SimpleNamespace(phase="RESEARCH", status="FAILED"),),
+        ),
+    )
+
+    assert (
+        decision_case_service._unavailable_research_probability_identities(
+            (late_failure,), original.knowledge_cutoff
+        )
+        == set()
+    )
+
+
+def test_unavailable_probability_ignores_committed_candidate_failure_after_cutoff() -> None:
+    original = command()
+    late_failure = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            committed_at=(original.knowledge_cutoff + timedelta(seconds=1)).isoformat(),
+            validation_status="PASSED",
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    members=(
+                        SimpleNamespace(
+                            security_id="SYNTH-UNAVAILABLE",
+                            research_id="synthetic-unavailable-research",
+                            calibrated_probability=None,
+                        ),
+                    ),
+                    disposition="FAILED",
+                    calibration=None,
+                )
+            ),
+        ),
+    )
+
+    assert (
+        decision_case_service._unavailable_candidate_probability_identities(
+            (late_failure,), original.knowledge_cutoff
+        )
+        == set()
+    )
 
 
 def test_mature_calibration_source_rejects_duplicate_security_month_across_research_ids() -> None:
