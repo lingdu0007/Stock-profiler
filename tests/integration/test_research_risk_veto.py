@@ -91,7 +91,9 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenAgentDefinition,
     FrozenDecisionCase,
     FrozenOutputContract,
+    GateResult,
     ResultAccessScope,
+    StageResult,
 )
 from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError,
@@ -473,6 +475,44 @@ def _seed_selection_event(
             stage_results=(),
             decision_event_id=selection_event_id,
         )
+
+
+def test_research_history_retains_committed_failed_cohort_roster(
+    migrated_settings: Settings,
+) -> None:
+    case = _case(migrated_settings, risk_scenario="ACCEPT")
+    runtime = initialize_runtime_storage(migrated_settings)
+    ledger = DecisionLedger(runtime.engine)
+    stage = StageResult(
+        phase="RESEARCH",
+        status="FAILED",
+        gate_results=(GateResult(gate_id="RESEARCH_DATA", status="FAILED"),),
+        reasons=("RESEARCH_DATA_UNAVAILABLE",),
+    )
+    ledger.persist_business_mapping_before_framework(case)
+    with ledger.serialize_case_execution() as connection:
+        ledger.commit_event(
+            connection,
+            case=case,
+            framework_run_id=case.framework_run_id,
+            result=ExternalResult(
+                outcome_code="RESEARCH_DATA_FAILED",
+                summary="Synthetic research failure.",
+                key_reasons=("RESEARCH_DATA_UNAVAILABLE",),
+            ),
+            stage_results=(stage,),
+        )
+
+    assert case.access_scope is not None
+    with runtime.engine.connect() as connection:
+        history = ledger.research_event_history(connection, case.access_scope)
+
+    failed_event = next(
+        event for event in history if event.decision_event_id == case.decision_event_id
+    )
+    assert failed_event.result.research is None
+    assert failed_event.case.research is not None
+    assert len(failed_event.case.research.members) == 10
 
 
 def _draft(command: ResearchCommand) -> ResearchDraft:

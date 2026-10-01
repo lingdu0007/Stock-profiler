@@ -191,7 +191,7 @@ class DecisionLedger:
         connection: Connection,
         access_scope: ResultAccessScope,
     ) -> tuple[DecisionEventFact, ...]:
-        """Read same-owner, same-visibility original research facts in durable order."""
+        """Read same-scope frozen research facts, including committed failures."""
         return tuple(
             fact
             for fact in self._original_event_facts(
@@ -201,7 +201,6 @@ class DecisionLedger:
             if fact.case.access_scope is not None
             and fact.case.access_scope.same_scope_as(access_scope)
             and fact.case.research is not None
-            and fact.result.research is not None
         )
 
     def candidate_calibration_history(

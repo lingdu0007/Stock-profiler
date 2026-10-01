@@ -670,19 +670,25 @@ def _validate_candidate_calibration_sources(
     )
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
-    historical_events = tuple(
+    research_events = tuple(
         sorted(
             (
                 event
                 for event in ledger.research_event_history(connection, access_scope)
                 if event.corrects_event_id is None
-                and event.validation_status == "PASSED"
                 and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
                 and event.case.research is not None
-                and event.result.research is not None
             ),
             key=lambda event: event.decision_event_id,
         )
+    )
+    unavailable_research_probability_identities = _unavailable_research_probability_identities(
+        research_events, candidate_cutoff
+    )
+    historical_events = tuple(
+        event
+        for event in research_events
+        if event.validation_status == "PASSED" and event.result.research is not None
     )
     historical_events_by_id = {event.decision_event_id: event for event in historical_events}
     mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
@@ -969,6 +975,7 @@ def _validate_candidate_calibration_sources(
         unavailable_candidate_probability_identities,
         frozen_cohorts_by_id,
         candidate_cutoff,
+        unavailable_research_probability_identities,
     )
     return (
         not prior_calibration_snapshots,
@@ -1046,6 +1053,7 @@ def _unavailable_calibration_probability_count(
     unavailable_candidate_probability_identities: set[tuple[str, str, str]],
     frozen_cohorts: dict[str, RawScoreTrainingCohort],
     candidate_cutoff: datetime,
+    unavailable_research_probability_identities: set[tuple[str, str, str]] | None = None,
 ) -> int:
     """Count source and frozen-cohort members missing probabilities by stock-month."""
     unavailable_security_months = {
@@ -1060,11 +1068,41 @@ def _unavailable_calibration_probability_count(
         identity[:2] for identity in unavailable_candidate_probability_identities
     )
     unavailable_security_months.update(
+        identity[:2] for identity in (unavailable_research_probability_identities or set())
+    )
+    unavailable_security_months.update(
         (cohort.month, security_id)
         for cohort in frozen_cohorts.values()
         for security_id in set(cohort.member_security_ids) - set(cohort.completed_research_ids)
     )
     return len(unavailable_security_months)
+
+
+def _unavailable_research_probability_identities(
+    research_events: tuple[DecisionEventFact, ...],
+    knowledge_cutoff: datetime,
+) -> set[tuple[str, str, str]]:
+    """Count only validated, failed research rosters with no frozen research result."""
+    unavailable: set[tuple[str, str, str]] = set()
+    for event in research_events:
+        command = event.case.research
+        if (
+            command is None
+            or event.corrects_event_id is not None
+            or event.validation_status != "PASSED"
+            or event.result.research is not None
+            or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
+            or not any(
+                stage.phase == "RESEARCH" and stage.status == "FAILED"
+                for stage in event.stage_results
+            )
+        ):
+            continue
+        month = _candidate_prediction_month(datetime.fromisoformat(event.case.knowledge_cutoff))
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in command.members
+        )
+    return unavailable
 
 
 def _unavailable_candidate_probability_identities(
@@ -1074,7 +1112,11 @@ def _unavailable_candidate_probability_identities(
     """Keep failed no-probability predictions out of all later calibration cohorts."""
     unavailable: set[tuple[str, str, str]] = set()
     for event in candidate_release_events:
-        if datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff:
+        if (
+            event.validation_status != "PASSED"
+            or event.corrects_event_id is not None
+            or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
+        ):
             continue
         command = event.case.candidate_release
         outcome = event.result.candidate_release
@@ -1086,11 +1128,6 @@ def _unavailable_candidate_probability_identities(
                 (month, member.security_id, member.research_id)
                 for member in outcome.members
                 if member.calibrated_probability is None
-            )
-        elif outcome.calibration is None and outcome.disposition in {"FAILED", "BLOCKED"}:
-            unavailable.update(
-                (month, candidate.security_id, candidate.research_id)
-                for candidate in command.candidates
             )
     return unavailable
 
