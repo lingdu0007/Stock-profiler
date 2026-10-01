@@ -3457,6 +3457,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "CALIBRATION_COHORT_INCOMPLETE"),
         ("ACCEPT", "CALIBRATION_SOURCE_AFTER_CUTOFF"),
         ("ACCEPT", "CALIBRATION_LABEL_TAMPERED"),
+        ("ACCEPT", "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED"),
         ("ACCEPT", "CALIBRATION_LABEL_CLOCKS_TAMPERED"),
         ("ACCEPT", "CALIBRATION_DECLARED_OLDER_WINDOW"),
         ("ACCEPT", "QUALIFICATION_NOT_OBTAINED_RECORDED"),
@@ -3515,6 +3516,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_COHORT_INCOMPLETE",
         "CALIBRATION_SOURCE_AFTER_CUTOFF",
         "CALIBRATION_LABEL_TAMPERED",
+        "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED",
         "CALIBRATION_LABEL_CLOCKS_TAMPERED",
         "CALIBRATION_DECLARED_OLDER_WINDOW",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
@@ -3674,6 +3676,14 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             if record.month in recent_diagnostic_months
         )
     )
+    if candidate_scenario == "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED":
+        first_diagnostic_record = recent_diagnostic_records[0]
+        recent_diagnostic_records = (
+            first_diagnostic_record.model_copy(
+                update={"terminal_success": not first_diagnostic_record.terminal_success}
+            ),
+            *recent_diagnostic_records[1:],
+        )
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
         training_records = (
             training_records[0].model_copy(
@@ -4538,19 +4548,11 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 *raw_score_model.calibration_history_cohorts,
             )
         }
-        calibration_months = set(
-            (
-                *resolved_command.calibrator_selection_window_months,
-                *resolved_command.training_window_months,
-                *resolved_command.recent_diagnostic_window_months,
-            )
-        )
         unavailable_probability_count = (
             decision_case_service._unavailable_calibration_probability_count(
                 {},
                 set(),
                 frozen_calibration_cohorts,
-                calibration_months,
                 resolved_command.knowledge_cutoff,
             )
         )
@@ -4855,6 +4857,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "CALIBRATION_COHORT_INCOMPLETE": "FAILED",
         "CALIBRATION_SOURCE_AFTER_CUTOFF": "FAILED",
         "CALIBRATION_LABEL_TAMPERED": "FAILED",
+        "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED": "RECOMMENDATION_ABSTAINED",
         "CALIBRATION_LABEL_CLOCKS_TAMPERED": "FAILED",
         "CALIBRATION_DECLARED_OLDER_WINDOW": "FAILED",
         "UPSTREAM_RESEARCH_DATA_FAILED": "FAILED",
@@ -4957,6 +4960,8 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert direct.availability_failure == "CALIBRATION"
     if candidate_scenario == "CALIBRATION_LABEL_TAMPERED":
         assert direct.availability_failure == "CALIBRATION"
+    if candidate_scenario == "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED":
+        assert direct.availability_failure is None
     if candidate_scenario == "CALIBRATION_LABEL_CLOCKS_TAMPERED":
         assert direct.availability_failure == "CALIBRATION"
     if candidate_scenario in {
@@ -5052,6 +5057,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert direct is not None
     assert execution.report.result.candidate_release is not None
     saved_candidate_release = execution.report.result.candidate_release
+    if candidate_scenario == "CALIBRATION_DIAGNOSTIC_LABEL_TAMPERED":
+        assert saved_candidate_release.disposition == "RECOMMENDATION_ABSTAINED"
+        assert saved_candidate_release.availability_failure is None
+        assert saved_candidate_release.calibration is not None
+        assert saved_candidate_release.calibration.recent_diagnostic_status == "CALCULATION_FAILED"
+        assert saved_candidate_release.calibration.recent_diagnostics is None
+        return
     if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK":
         assert saved_candidate_release.availability_failure == "VERSION"
         return

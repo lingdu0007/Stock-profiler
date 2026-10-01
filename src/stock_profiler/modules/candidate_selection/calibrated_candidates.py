@@ -297,6 +297,7 @@ def freeze_candidate_release(
     initial_calibration: bool = True,
     recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
     unavailable_probability_count: int = 0,
+    recent_diagnostic_integrity_valid: bool = True,
 ) -> CandidateReleaseOutcome:
     """Calibrate each frozen member, combine independent gates, and fix its only window."""
     publication_time = published_at or command.published_at
@@ -345,6 +346,7 @@ def freeze_candidate_release(
                 else recent_diagnostic_records
             ),
             unavailable_probability_count=unavailable_probability_count,
+            recent_diagnostic_integrity_valid=recent_diagnostic_integrity_valid,
         )
     except ValueError as error:
         return _release_outcome(
@@ -814,6 +816,7 @@ def _fit_calibrator(
     initial_calibration: bool = True,
     recent_diagnostic_records: tuple[CalibrationRecord, ...] | None = None,
     unavailable_probability_count: int = 0,
+    recent_diagnostic_integrity_valid: bool = True,
 ) -> CalibrationSnapshot:
     if command.calibrator_version != CALIBRATOR_VERSION:
         raise ValueError("CALIBRATOR_VERSION_UNSUPPORTED")
@@ -903,7 +906,11 @@ def _fit_calibrator(
         raise ValueError("CALIBRATOR_SELECTION_REQUIRES_MATURE_MONTHS")
     if len(set(diagnostic_months)) != 24:
         raise ValueError("RECENT_DIAGNOSTIC_REQUIRES_24_MATURE_MONTHS")
-    if set(selection_months) & set(months) or set(selection_months) & set(diagnostic_months):
+    if (
+        set(selection_months) & set(months)
+        or set(selection_months) & set(diagnostic_months)
+        or set(months) & set(diagnostic_months)
+    ):
         raise ValueError("CALIBRATION_WINDOWS_MUST_BE_DISJOINT")
     if not selection_months[-1] < months[0]:
         raise ValueError("CALIBRATOR_SELECTION_WINDOW_NOT_EARLIER")
@@ -912,6 +919,22 @@ def _fit_calibrator(
     )
     if diagnostic_months != authoritative_months[-24:]:
         raise ValueError("RECENT_DIAGNOSTIC_WINDOW_NOT_LATEST")
+    eligible_fitting_months = tuple(
+        month
+        for month in authoritative_months
+        if month not in set(selection_months) and month not in set(diagnostic_months)
+    )
+    expected_fitting_months = (
+        eligible_fitting_months[: len(months)]
+        if initial_calibration
+        else eligible_fitting_months[-len(months) :]
+    )
+    if months != expected_fitting_months:
+        raise ValueError(
+            "CALIBRATION_INITIAL_WINDOW_NOT_EARLIEST"
+            if initial_calibration
+            else "CALIBRATION_TRAINING_WINDOW_NOT_LATEST"
+        )
     if len({record.record_id for record in command.calibrator_selection_records}) != len(
         command.calibrator_selection_records
     ):
@@ -957,6 +980,7 @@ def _fit_calibrator(
     diagnostic_records_by_month: dict[str, list[CalibrationRecord]] = {}
     recent_month_set = set(diagnostic_months)
     diagnostic_record_by_id: dict[str, CalibrationRecord] = {}
+    diagnostic_sample_identities: set[tuple[str, str, str]] = set()
     diagnostic_integrity_failed = False
     for record in diagnostic_population:
         if (
@@ -965,10 +989,12 @@ def _fit_calibrator(
             and record.label_available_at <= diagnostic_watermark_at
         ):
             previous = diagnostic_record_by_id.get(record.record_id)
-            if previous is not None:
+            sample_identity = (record.month, record.security_id, record.research_id)
+            if previous is not None or sample_identity in diagnostic_sample_identities:
                 diagnostic_integrity_failed = True
                 continue
             diagnostic_record_by_id[record.record_id] = record
+            diagnostic_sample_identities.add(sample_identity)
             diagnostic_records_by_month.setdefault(record.month, []).append(record)
     recent_months = diagnostic_months
     recent_records = tuple(
@@ -976,7 +1002,7 @@ def _fit_calibrator(
     )
     recent_diagnostics = None
     recent_diagnostic_status: Literal["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"]
-    if diagnostic_integrity_failed:
+    if diagnostic_integrity_failed or not recent_diagnostic_integrity_valid:
         recent_diagnostic_status = "CALCULATION_FAILED"
     elif len(recent_records) < _MINIMUM_RECENT_DIAGNOSTIC_RECORDS:
         recent_diagnostic_status = "INSUFFICIENT_DATA"

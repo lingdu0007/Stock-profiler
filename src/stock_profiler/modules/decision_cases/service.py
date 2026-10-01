@@ -649,7 +649,7 @@ def _validate_candidate_calibration_sources(
     connection: Transaction,
     access_scope: ResultAccessScope,
     candidate_model_version: str,
-) -> tuple[bool, tuple[CalibrationRecord, ...], int]:
+) -> tuple[bool, tuple[CalibrationRecord, ...], int, bool]:
     """Bind calibration rows to the complete frozen out-of-sample research snapshot."""
     if any(
         record.raw_score_model_version != candidate_model_version
@@ -796,17 +796,37 @@ def _validate_candidate_calibration_sources(
         recent_diagnostic_months,
         unavailable_probability_identities,
     )
-    submitted_records = (
+    production_records = (
         *command.calibrator_selection_records,
         *command.training_records,
-        *command.recent_diagnostic_records,
     )
-    records_by_event = _calibration_records_by_source_event(submitted_records)
+    records_by_event = _calibration_records_by_source_event(production_records)
     for records in records_by_event.values():
         for record in records:
             identity = (record.month, record.security_id, record.research_id)
             if identity in unavailable_probability_identities:
                 raise CandidateCalibrationProvenanceInvalid()
+    authoritative_diagnostic_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in recent_diagnostic_records_by_identity.values()
+    }
+    recent_diagnostic_integrity_valid = True
+    submitted_diagnostic_identities: set[tuple[str, str, str]] = set()
+    for record in command.recent_diagnostic_records:
+        identity = (record.month, record.security_id, record.research_id)
+        if (
+            record.unified_maturity_at <= command.knowledge_cutoff
+            and record.label_available_at <= command.knowledge_cutoff
+        ):
+            if (
+                identity in submitted_diagnostic_identities
+                or identity not in authoritative_diagnostic_records
+                or not _same_frozen_calibration_record(
+                    authoritative_diagnostic_records[identity], record
+                )
+            ):
+                recent_diagnostic_integrity_valid = False
+            submitted_diagnostic_identities.add(identity)
 
     for event_id, records in records_by_event.items():
         source_event = ledger.get_decision_event(event_id, connection)
@@ -944,18 +964,10 @@ def _validate_candidate_calibration_sources(
                 for record in command.calibrator_selection_records
             },
         )
-    calibration_months = set(
-        (
-            *command.calibrator_selection_window_months,
-            *command.training_window_months,
-            *command.recent_diagnostic_window_months,
-        )
-    )
     unavailable_probability_count = _unavailable_calibration_probability_count(
         all_source_rows,
         unavailable_candidate_probability_identities,
         frozen_cohorts_by_id,
-        calibration_months,
         candidate_cutoff,
     )
     return (
@@ -965,6 +977,7 @@ def _validate_candidate_calibration_sources(
             for identity in sorted(recent_diagnostic_records_by_identity)
         ),
         unavailable_probability_count,
+        recent_diagnostic_integrity_valid,
     )
 
 
@@ -1033,7 +1046,6 @@ def _unavailable_calibration_probability_count(
     all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
     unavailable_candidate_probability_identities: set[tuple[str, str, str]],
     frozen_cohorts: dict[str, RawScoreTrainingCohort],
-    calibration_months: set[str],
     candidate_cutoff: datetime,
 ) -> int:
     """Count source and frozen-cohort members missing probabilities by stock-month."""
@@ -1041,20 +1053,16 @@ def _unavailable_calibration_probability_count(
         identity[:2]
         for identity, record in all_source_rows.items()
         if record.historical_calibrated_probability is None
-        and identity[0] in calibration_months
         and record.unified_maturity_at is not None
         and record.unified_maturity_at <= candidate_cutoff
         and record.label_available_at <= candidate_cutoff
     }
     unavailable_security_months.update(
-        identity[:2]
-        for identity in unavailable_candidate_probability_identities
-        if identity[0] in calibration_months
+        identity[:2] for identity in unavailable_candidate_probability_identities
     )
     unavailable_security_months.update(
         (cohort.month, security_id)
         for cohort in frozen_cohorts.values()
-        if cohort.month in calibration_months
         for security_id in set(cohort.member_security_ids) - set(cohort.completed_research_ids)
     )
     return len(unavailable_security_months)
@@ -1108,10 +1116,15 @@ def _validate_calibration_training_window(
         sorted(authoritative_mature_months)[-24:]
     ):
         raise CandidateCalibrationProvenanceInvalid()
+    if set(selection_window_months) & set(recent_diagnostic_window_months) or set(
+        training_window_months
+    ) & set(recent_diagnostic_window_months):
+        raise CandidateCalibrationProvenanceInvalid()
     fitting_months = tuple(
         month
         for month in authoritative_mature_months
-        if not selection_window_months or month > selection_window_months[-1]
+        if (not selection_window_months or month > selection_window_months[-1])
+        and month not in set(recent_diagnostic_window_months)
     )
     if len(fitting_months) < len(training_window_months):
         raise CandidateCalibrationProvenanceInvalid()
@@ -1165,7 +1178,7 @@ def _calibration_source_rows_by_identity(
 def _calibration_records_by_source_event(
     records: Iterable[CalibrationRecord],
 ) -> dict[str, list[CalibrationRecord]]:
-    """Partition unique frozen rows by provenance, allowing fit/diagnostic overlap."""
+    """Partition identical frozen rows by their source event."""
     grouped: dict[str, list[CalibrationRecord]] = {}
     rows_by_identity: dict[tuple[str, str, str], CalibrationRecord] = {}
     for record in records:
@@ -2649,6 +2662,7 @@ def _commit_framework_result(
     candidate_initial_calibration = True
     candidate_unavailable_probability_count = 0
     candidate_recent_diagnostic_records: tuple[CalibrationRecord, ...] = ()
+    candidate_recent_diagnostic_integrity_valid = True
 
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
@@ -2712,6 +2726,7 @@ def _commit_framework_result(
                     candidate_initial_calibration,
                     candidate_recent_diagnostic_records,
                     candidate_unavailable_probability_count,
+                    candidate_recent_diagnostic_integrity_valid,
                 ) = _validate_candidate_calibration_sources(
                     execution_case.candidate_release,
                     ledger,
@@ -3235,6 +3250,9 @@ def _commit_framework_result(
                         initial_calibration=candidate_initial_calibration,
                         recent_diagnostic_records=candidate_recent_diagnostic_records,
                         unavailable_probability_count=(candidate_unavailable_probability_count),
+                        recent_diagnostic_integrity_valid=(
+                            candidate_recent_diagnostic_integrity_valid
+                        ),
                     )
                 committed_at = ledger.observed_at()
                 if (
