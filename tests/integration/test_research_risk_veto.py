@@ -477,7 +477,7 @@ def _seed_selection_event(
         )
 
 
-def test_research_history_retains_committed_failed_cohort_roster(
+def test_research_availability_history_loads_uncommitted_failed_cohort_stage(
     migrated_settings: Settings,
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
@@ -489,30 +489,29 @@ def test_research_history_retains_committed_failed_cohort_roster(
         gate_results=(GateResult(gate_id="RESEARCH_DATA", status="FAILED"),),
         reasons=("RESEARCH_DATA_UNAVAILABLE",),
     )
+    assert case.access_scope is not None
     ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
-        ledger.commit_event(
+        ledger.record_stage_result(
             connection,
             case=case,
-            framework_run_id=case.framework_run_id,
-            result=ExternalResult(
-                outcome_code="RESEARCH_DATA_FAILED",
-                summary="Synthetic research failure.",
-                key_reasons=("RESEARCH_DATA_UNAVAILABLE",),
-            ),
-            stage_results=(stage,),
+            stage_result=stage,
+            recorded_at=case.knowledge_cutoff,
         )
 
-    assert case.access_scope is not None
     with runtime.engine.connect() as connection:
-        history = ledger.research_event_history(connection, case.access_scope)
+        history = ledger.research_availability_failure_history(connection, case.access_scope)
 
-    failed_event = next(
-        event for event in history if event.decision_event_id == case.decision_event_id
+    failed_stage = next(
+        failure for failure in history if failure.framework_run_id == case.framework_run_id
     )
-    assert failed_event.result.research is None
-    assert failed_event.case.research is not None
-    assert len(failed_event.case.research.members) == 10
+    assert failed_stage.stage_result == stage
+    assert failed_stage.case.research is not None
+    assert len(failed_stage.case.research.members) == 10
+    unavailable_identities = decision_case_service._unavailable_research_probability_identities(
+        (), datetime.fromisoformat(case.knowledge_cutoff), history
+    )
+    assert len(unavailable_identities) == 10
 
 
 def _draft(command: ResearchCommand) -> ResearchDraft:

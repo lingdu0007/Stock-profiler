@@ -69,6 +69,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkRunTransition,
     FrozenFramework,
     MappedDurableRunMissingError,
+    ResearchAvailabilityFailureFact,
     ResearchMemberRunResult,
     Transaction,
 )
@@ -683,7 +684,9 @@ def _validate_candidate_calibration_sources(
         )
     )
     unavailable_research_probability_identities = _unavailable_research_probability_identities(
-        research_events, candidate_cutoff
+        research_events,
+        candidate_cutoff,
+        ledger.research_availability_failure_history(connection, access_scope),
     )
     historical_events = tuple(
         event
@@ -1056,6 +1059,13 @@ def _unavailable_calibration_probability_count(
     unavailable_research_probability_identities: set[tuple[str, str, str]] | None = None,
 ) -> int:
     """Count source and frozen-cohort members missing probabilities by stock-month."""
+    available_probability_security_months = {
+        identity[:2]
+        for identity, record in all_source_rows.items()
+        if record.historical_calibrated_probability is not None
+        and record.raw_score_frozen_at is not None
+        and record.raw_score_frozen_at <= candidate_cutoff
+    }
     unavailable_security_months = {
         identity[:2]
         for identity, record in all_source_rows.items()
@@ -1068,7 +1078,11 @@ def _unavailable_calibration_probability_count(
         identity[:2] for identity in unavailable_candidate_probability_identities
     )
     unavailable_security_months.update(
-        identity[:2] for identity in (unavailable_research_probability_identities or set())
+        {
+            identity[:2]
+            for identity in (unavailable_research_probability_identities or set())
+            if identity[:2] not in available_probability_security_months
+        }
     )
     unavailable_security_months.update(
         (cohort.month, security_id)
@@ -1081,8 +1095,9 @@ def _unavailable_calibration_probability_count(
 def _unavailable_research_probability_identities(
     research_events: tuple[DecisionEventFact, ...],
     knowledge_cutoff: datetime,
+    stage_failures: tuple[ResearchAvailabilityFailureFact, ...] = (),
 ) -> set[tuple[str, str, str]]:
-    """Count only validated, failed research rosters with no frozen research result."""
+    """Collect unavailable rosters from committed failures and uncommitted failed stages."""
     unavailable: set[tuple[str, str, str]] = set()
     for event in research_events:
         command = event.case.research
@@ -1093,12 +1108,26 @@ def _unavailable_research_probability_identities(
             or event.result.research is not None
             or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
             or not any(
-                stage.phase == "RESEARCH" and stage.status == "FAILED"
+                stage.phase in {"RESEARCH", "RAW_SCORE", "RISK_VETO"} and stage.status == "FAILED"
                 for stage in event.stage_results
             )
         ):
             continue
         month = _candidate_prediction_month(datetime.fromisoformat(event.case.knowledge_cutoff))
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in command.members
+        )
+    for failure in stage_failures:
+        command = failure.case.research
+        if (
+            command is None
+            or datetime.fromisoformat(failure.case.knowledge_cutoff) > knowledge_cutoff
+            or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
+            or failure.stage_result.phase not in {"RESEARCH", "RAW_SCORE", "RISK_VETO"}
+            or failure.stage_result.status != "FAILED"
+        ):
+            continue
+        month = _candidate_prediction_month(datetime.fromisoformat(failure.case.knowledge_cutoff))
         unavailable.update(
             (month, member.security_id, member.research_id) for member in command.members
         )

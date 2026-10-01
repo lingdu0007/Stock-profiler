@@ -43,6 +43,9 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
 )
+from stock_profiler.modules.decision_cases.ports import (
+    ResearchAvailabilityFailureFact as ResearchAvailabilityFailureFact,
+)
 from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
@@ -202,6 +205,58 @@ class DecisionLedger:
             and fact.case.access_scope.same_scope_as(access_scope)
             and fact.case.research is not None
         )
+
+    def research_availability_failure_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[ResearchAvailabilityFailureFact, ...]:
+        """Read failed uncommitted research-path stages with their frozen cohort inputs."""
+        statement = (
+            select(
+                DECISION_STAGE_EVENTS.c.framework_run_id,
+                DECISION_STAGE_EVENTS.c.stage_payload,
+                DECISION_STAGE_EVENTS.c.recorded_at,
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+            )
+            .select_from(
+                DECISION_STAGE_EVENTS.join(
+                    DECISION_CASE_BUSINESS_OBJECTS,
+                    DECISION_STAGE_EVENTS.c.business_object_id
+                    == DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id,
+                )
+            )
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        failures = []
+        for row in connection.execute(statement):
+            if row.case_payload is None:
+                continue
+            try:
+                case = FrozenDecisionCase.model_validate_json(row.case_payload)
+                stage_result = StageResult.model_validate_json(row.stage_payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                raise DecisionEventCommitError(
+                    "research availability history is unavailable"
+                ) from error
+            if (
+                case.access_scope is None
+                or not case.access_scope.same_scope_as(access_scope)
+                or case.research is None
+                or stage_result.phase not in {"RESEARCH", "RAW_SCORE", "RISK_VETO"}
+                or stage_result.status != "FAILED"
+            ):
+                continue
+            failures.append(
+                ResearchAvailabilityFailureFact(
+                    case=case,
+                    framework_run_id=row.framework_run_id,
+                    stage_result=stage_result,
+                    recorded_at=row.recorded_at,
+                )
+            )
+        return tuple(failures)
 
     def candidate_calibration_history(
         self,

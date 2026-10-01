@@ -22,6 +22,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 )
 from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.decision_cases.domain import DecisionEventFact
+from stock_profiler.modules.decision_cases.ports import ResearchAvailabilityFailureFact
 from stock_profiler.modules.portfolio.market_calendar import (
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
@@ -2656,6 +2657,61 @@ def test_unavailable_probability_count_includes_committed_failed_research_roster
     )
 
     assert count == 10
+
+
+@pytest.mark.parametrize("failed_phase", ("RESEARCH", "RAW_SCORE", "RISK_VETO"))
+def test_unavailable_probability_count_includes_uncommitted_failed_stage_roster(
+    failed_phase: str,
+) -> None:
+    original = command()
+    stage_failure = cast(
+        ResearchAvailabilityFailureFact,
+        SimpleNamespace(
+            case=SimpleNamespace(
+                research=SimpleNamespace(
+                    members=tuple(
+                        SimpleNamespace(
+                            security_id=f"SYNTH-{member:02d}", research_id=f"R-{member:02d}"
+                        )
+                        for member in range(10)
+                    )
+                ),
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            stage_result=SimpleNamespace(phase=failed_phase, status="FAILED"),
+            recorded_at=original.knowledge_cutoff.isoformat(),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_research_probability_identities(
+        (), original.knowledge_cutoff, (stage_failure,)
+    )
+    count = decision_case_service._unavailable_calibration_probability_count(
+        {}, set(), {}, original.knowledge_cutoff, unavailable
+    )
+
+    assert count == 10
+
+
+def test_recovered_research_probability_supersedes_failed_attempt_availability() -> None:
+    source = frozen_raw_score_model_snapshot().training_records[0]
+    failure = (
+        source.month,
+        source.security_id,
+        "a-later-failed-research-retry",
+    )
+
+    count = decision_case_service._unavailable_calibration_probability_count(
+        {
+            (source.month, source.security_id, source.research_id): source,
+        },
+        set(),
+        {},
+        datetime(2050, 1, 1, tzinfo=UTC),
+        {failure},
+    )
+
+    assert count == 0
 
 
 def test_unavailable_probability_ignores_unvalidated_research_failure_roster() -> None:
