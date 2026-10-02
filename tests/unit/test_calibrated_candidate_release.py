@@ -2661,7 +2661,7 @@ def test_suppressed_failed_release_counts_only_its_validated_research_roster() -
     }
 
 
-@pytest.mark.parametrize("phase", ["FRAMEWORK_RUN", "HOST_VALIDATION"])
+@pytest.mark.parametrize("phase", ["FRAMEWORK_RUN", "HOST_VALIDATION", "BUSINESS_COMMIT"])
 def test_uncommitted_candidate_failure_counts_only_its_validated_research_roster(
     phase: str,
 ) -> None:
@@ -2780,6 +2780,55 @@ def test_candidate_stage_failure_counts_when_its_event_commits_after_cutoff() ->
         (cutoff.strftime("%Y-%m"), member.security_id, member.research_id)
         for member in source_members
     }
+
+
+def test_committed_candidate_outcome_supersedes_its_commit_failure_stage() -> None:
+    original = command()
+    cutoff = original.knowledge_cutoff
+    framework_run_id = "synthetic-recovered-candidate-run"
+    member = SimpleNamespace(
+        security_id="RECOVERED-SECURITY",
+        research_id="recovered-research",
+        calibrated_probability=Decimal("0.91"),
+    )
+    committed_outcome = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            framework_run_id=framework_run_id,
+            validation_status="PASSED",
+            committed_at=cutoff.isoformat(),
+            corrects_event_id=None,
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(
+                candidate_release=SimpleNamespace(
+                    members=(member,), disposition="CANDIDATES", calibration=object()
+                )
+            ),
+        ),
+    )
+    commit_failure = cast(
+        CandidateAvailabilityFailureFact,
+        SimpleNamespace(
+            framework_run_id=framework_run_id,
+            case=SimpleNamespace(
+                candidate_release=original,
+                knowledge_cutoff=cutoff.isoformat(),
+                access_scope=None,
+            ),
+            stage_result=SimpleNamespace(phase="BUSINESS_COMMIT", status="FAILED"),
+            recorded_at=cutoff.isoformat(),
+            committed_at=cutoff.isoformat(),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_candidate_probability_identities(
+        (committed_outcome,), cutoff, candidate_availability_failures=(commit_failure,)
+    )
+
+    assert unavailable == set()
 
 
 def test_late_research_commit_cannot_validate_candidate_failure_roster() -> None:

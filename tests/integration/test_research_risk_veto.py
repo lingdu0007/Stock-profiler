@@ -3530,6 +3530,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
         ("ACCEPT", "UPSTREAM_RESEARCH_EVENT_MISSING"),
         ("ACCEPT", "UNCOMMITTED_FRAMEWORK_FAILURE"),
         ("ACCEPT", "UNCOMMITTED_HOST_VALIDATION_FAILURE"),
+        ("ACCEPT", "UNCOMMITTED_BUSINESS_COMMIT_FAILURE"),
         ("ACCEPT", "COMMITTED_NULL_CANDIDATE_FAILURE"),
         ("ACCEPT", "RESEARCH_RISK_VERSION_MISMATCH"),
         ("ACCEPT", "LATE_PUBLICATION"),
@@ -3592,6 +3593,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UPSTREAM_RESEARCH_EVENT_MISSING",
         "UNCOMMITTED_FRAMEWORK_FAILURE",
         "UNCOMMITTED_HOST_VALIDATION_FAILURE",
+        "UNCOMMITTED_BUSINESS_COMMIT_FAILURE",
         "COMMITTED_NULL_CANDIDATE_FAILURE",
         "RESEARCH_RISK_VERSION_MISMATCH",
         "LATE_PUBLICATION",
@@ -4407,15 +4409,20 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     if candidate_scenario in {
         "UNCOMMITTED_FRAMEWORK_FAILURE",
         "UNCOMMITTED_HOST_VALIDATION_FAILURE",
+        "UNCOMMITTED_BUSINESS_COMMIT_FAILURE",
         "COMMITTED_NULL_CANDIDATE_FAILURE",
     }:
         runtime = initialize_runtime_storage(migrated_settings)
         ledger = DecisionLedger(runtime.engine)
         assert candidate_case.access_scope is not None
         ledger.persist_business_mapping_before_framework(candidate_case)
-        failure_phase: Literal["HOST_VALIDATION", "CANDIDATE_RELEASE", "FRAMEWORK_RUN"] = (
+        failure_phase: Literal[
+            "HOST_VALIDATION", "BUSINESS_COMMIT", "CANDIDATE_RELEASE", "FRAMEWORK_RUN"
+        ] = (
             "HOST_VALIDATION"
             if candidate_scenario == "UNCOMMITTED_HOST_VALIDATION_FAILURE"
+            else "BUSINESS_COMMIT"
+            if candidate_scenario == "UNCOMMITTED_BUSINESS_COMMIT_FAILURE"
             else "CANDIDATE_RELEASE"
             if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE"
             else "FRAMEWORK_RUN"
@@ -4480,9 +4487,13 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
                 connection,
                 candidate_case.access_scope,
             )
+            candidate_events = ledger.candidate_release_history(
+                connection,
+                candidate_case.access_scope,
+            )
             research_events = (source_fact.model_copy(update={"committed_at": cutoff.isoformat()}),)
         unavailable = decision_case_service._unavailable_candidate_probability_identities(
-            (),
+            candidate_events,
             cutoff,
             research_events,
             candidate_failures,
@@ -4503,7 +4514,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if candidate_scenario == "COMMITTED_NULL_CANDIDATE_FAILURE":
             assert len(candidate_failures) == 2
             assert all(failure.committed_at == cutoff.isoformat() for failure in candidate_failures)
-            assert unavailable == set()
+            assert unavailable == expected_unavailable
         else:
             assert unavailable == expected_unavailable
         return

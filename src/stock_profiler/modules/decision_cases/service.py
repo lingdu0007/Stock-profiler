@@ -1195,6 +1195,16 @@ def _unavailable_candidate_probability_identities(
         and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
         and event.result.research is not None
     }
+    committed_candidate_events_without_outcomes = {
+        event.framework_run_id
+        for event in candidate_release_events
+        if event.validation_status == "PASSED"
+        and event.corrects_event_id is None
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= knowledge_cutoff
+        and event.case.candidate_release is not None
+        and event.result.candidate_release is None
+    }
     for event in candidate_release_events:
         if (
             event.validation_status != "PASSED"
@@ -1257,11 +1267,13 @@ def _unavailable_candidate_probability_identities(
             or (
                 failure.committed_at is not None
                 and datetime.fromisoformat(failure.committed_at) <= knowledge_cutoff
+                and failure.framework_run_id not in committed_candidate_events_without_outcomes
             )
             or stage.phase
             not in {
                 "FRAMEWORK_RUN",
                 "HOST_VALIDATION",
+                "BUSINESS_COMMIT",
                 "CANDIDATE_RELEASE",
             }
             or stage.status not in {"FAILED", "CANCELLED"}

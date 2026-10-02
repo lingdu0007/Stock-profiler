@@ -309,6 +309,7 @@ class DecisionLedger:
                 not in {
                     "FRAMEWORK_RUN",
                     "HOST_VALIDATION",
+                    "BUSINESS_COMMIT",
                     "CANDIDATE_RELEASE",
                 }
                 or stage_result.status not in {"FAILED", "CANCELLED"}
@@ -348,7 +349,7 @@ class DecisionLedger:
         connection: Connection,
         access_scope: ResultAccessScope,
     ) -> tuple[DecisionEventFact, ...]:
-        """Read same-scope candidate outcomes, including releases without calibration."""
+        """Read same-scope candidate attempts, including commits without outcomes."""
         return tuple(
             fact
             for fact in self._original_event_facts(
@@ -358,7 +359,6 @@ class DecisionLedger:
             if fact.case.access_scope is not None
             and fact.case.access_scope.same_scope_as(access_scope)
             and fact.case.candidate_release is not None
-            and fact.result.candidate_release is not None
         )
 
     def execution_plan_history(
