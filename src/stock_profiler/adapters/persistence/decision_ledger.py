@@ -247,7 +247,8 @@ class DecisionLedger:
                 case.access_scope is None
                 or not case.access_scope.same_scope_as(access_scope)
                 or case.research is None
-                or stage_result.phase not in {"RESEARCH", "RAW_SCORE", "RISK_VETO"}
+                or stage_result.phase
+                not in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
                 or stage_result.status != "FAILED"
             ):
                 continue

@@ -1143,6 +1143,16 @@ def _unavailable_research_probability_identities(
 ) -> set[tuple[str, str, str]]:
     """Collect unavailable rosters from committed failures and uncommitted failed stages."""
     unavailable: set[tuple[str, str, str]] = set()
+    successfully_committed_research_runs = {
+        event.framework_run_id
+        for event in research_events
+        if event.corrects_event_id is None
+        and event.validation_status == "PASSED"
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= knowledge_cutoff
+        and event.case.research is not None
+        and event.result.research is not None
+    }
     for event in research_events:
         command = event.case.research
         if (
@@ -1153,7 +1163,8 @@ def _unavailable_research_probability_identities(
             or datetime.fromisoformat(event.committed_at) > knowledge_cutoff
             or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
             or not any(
-                stage.phase in {"RESEARCH", "RAW_SCORE", "RISK_VETO"} and stage.status == "FAILED"
+                stage.phase in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
+                and stage.status == "FAILED"
                 for stage in event.stage_results
             )
         ):
@@ -1166,9 +1177,11 @@ def _unavailable_research_probability_identities(
         command = failure.case.research
         if (
             command is None
+            or failure.framework_run_id in successfully_committed_research_runs
             or datetime.fromisoformat(failure.case.knowledge_cutoff) > knowledge_cutoff
             or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
-            or failure.stage_result.phase not in {"RESEARCH", "RAW_SCORE", "RISK_VETO"}
+            or failure.stage_result.phase
+            not in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
             or failure.stage_result.status != "FAILED"
         ):
             continue

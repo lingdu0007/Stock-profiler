@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, localcontext
 from typing import Literal, NamedTuple
 
@@ -829,7 +829,7 @@ def _fit_calibrator(
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
-        if record.raw_score_frozen_at.strftime("%Y-%m") != record.month:
+        if record.raw_score_frozen_at.astimezone(UTC).strftime("%Y-%m") != record.month:
             raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
         if record.raw_score_training_watermark_at > record.raw_score_frozen_at:
             raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
@@ -919,22 +919,6 @@ def _fit_calibrator(
     )
     if diagnostic_months != authoritative_months[-24:]:
         raise ValueError("RECENT_DIAGNOSTIC_WINDOW_NOT_LATEST")
-    eligible_fitting_months = tuple(
-        month
-        for month in authoritative_months
-        if month not in set(selection_months) and month not in set(diagnostic_months)
-    )
-    expected_fitting_months = (
-        eligible_fitting_months[: len(months)]
-        if initial_calibration
-        else eligible_fitting_months[-len(months) :]
-    )
-    if months != expected_fitting_months:
-        raise ValueError(
-            "CALIBRATION_INITIAL_WINDOW_NOT_EARLIEST"
-            if initial_calibration
-            else "CALIBRATION_TRAINING_WINDOW_NOT_LATEST"
-        )
     if len({record.record_id for record in command.calibrator_selection_records}) != len(
         command.calibrator_selection_records
     ):

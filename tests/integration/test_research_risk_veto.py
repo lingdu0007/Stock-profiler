@@ -478,14 +478,16 @@ def _seed_selection_event(
         )
 
 
+@pytest.mark.parametrize("failed_phase", ("RESEARCH", "BUSINESS_COMMIT"))
 def test_research_availability_history_loads_uncommitted_failed_cohort_stage(
     migrated_settings: Settings,
+    failed_phase: Literal["RESEARCH", "BUSINESS_COMMIT"],
 ) -> None:
     case = _case(migrated_settings, risk_scenario="ACCEPT")
     runtime = initialize_runtime_storage(migrated_settings)
     ledger = DecisionLedger(runtime.engine)
     stage = StageResult(
-        phase="RESEARCH",
+        phase=failed_phase,
         status="FAILED",
         gate_results=(GateResult(gate_id="RESEARCH_DATA", status="FAILED"),),
         reasons=("RESEARCH_DATA_UNAVAILABLE",),

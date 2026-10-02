@@ -1,7 +1,7 @@
 import math
 import random
 from calendar import monthrange
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Literal, cast
@@ -1800,6 +1800,31 @@ def test_firth_solver_rejects_raw_score_timestamp_from_a_different_month() -> No
     assert release.reasons == ("CALIBRATION_RAW_SCORE_MONTH_MISMATCH",)
 
 
+def test_firth_solver_uses_utc_month_for_equivalent_raw_score_instants() -> None:
+    original = command()
+    source = original.training_records[0]
+    year, month = (int(part) for part in source.month.split("-"))
+    last_day = monthrange(year, month)[1]
+    utc_month_end = datetime(year, month, last_day, 23, 59, tzinfo=UTC)
+    equivalent_next_offset_month = utc_month_end.astimezone(timezone(timedelta(hours=9)))
+    assert equivalent_next_offset_month.strftime("%Y-%m") != source.month
+    adjusted_record = source.model_copy(
+        update={
+            "raw_score_frozen_at": equivalent_next_offset_month,
+            "raw_score_training_watermark_at": utc_month_end - timedelta(days=1),
+        }
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={"training_records": (adjusted_record, *original.training_records[1:])}
+        )
+    )
+
+    assert release.availability_failure is None
+    assert release.calibration is not None
+
+
 def test_firth_solver_rejects_nonfinite_final_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
     original_isfinite = math.isfinite
     records = training_records()
@@ -2972,7 +2997,10 @@ def test_unvalidated_failed_release_members_cannot_exclude_authoritative_samples
     )
 
 
-def test_unavailable_probability_count_includes_committed_failed_research_roster() -> None:
+@pytest.mark.parametrize("failed_phase", ("RESEARCH", "BUSINESS_COMMIT"))
+def test_unavailable_probability_count_includes_committed_failed_research_roster(
+    failed_phase: str,
+) -> None:
     original = command()
     research_event = cast(
         DecisionEventFact,
@@ -2992,7 +3020,7 @@ def test_unavailable_probability_count_includes_committed_failed_research_roster
                 knowledge_cutoff=original.knowledge_cutoff.isoformat(),
             ),
             result=SimpleNamespace(research=None),
-            stage_results=(SimpleNamespace(phase="RESEARCH", status="FAILED"),),
+            stage_results=(SimpleNamespace(phase=failed_phase, status="FAILED"),),
         ),
     )
 
@@ -3006,7 +3034,7 @@ def test_unavailable_probability_count_includes_committed_failed_research_roster
     assert count == 10
 
 
-@pytest.mark.parametrize("failed_phase", ("RESEARCH", "RAW_SCORE", "RISK_VETO"))
+@pytest.mark.parametrize("failed_phase", ("RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"))
 def test_unavailable_probability_count_includes_uncommitted_failed_stage_roster(
     failed_phase: str,
 ) -> None:
@@ -3027,6 +3055,7 @@ def test_unavailable_probability_count_includes_uncommitted_failed_stage_roster(
             ),
             stage_result=SimpleNamespace(phase=failed_phase, status="FAILED"),
             recorded_at=original.knowledge_cutoff.isoformat(),
+            framework_run_id="research-run-failed-then-recovered",
         ),
     )
 
@@ -3038,6 +3067,47 @@ def test_unavailable_probability_count_includes_uncommitted_failed_stage_roster(
     )
 
     assert count == 10
+
+
+def test_recovered_research_commit_supersedes_same_run_commit_failure() -> None:
+    original = command()
+    cutoff = original.knowledge_cutoff
+    members = tuple(
+        SimpleNamespace(security_id=f"SYNTH-{member:02d}", research_id=f"R-{member:02d}")
+        for member in range(10)
+    )
+    stage_failure = cast(
+        ResearchAvailabilityFailureFact,
+        SimpleNamespace(
+            framework_run_id="research-run-failed-then-recovered",
+            case=SimpleNamespace(
+                research=SimpleNamespace(members=members),
+                knowledge_cutoff=cutoff.isoformat(),
+            ),
+            stage_result=SimpleNamespace(phase="BUSINESS_COMMIT", status="FAILED"),
+            recorded_at=cutoff.isoformat(),
+        ),
+    )
+    committed_recovery = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            framework_run_id="research-run-failed-then-recovered",
+            corrects_event_id=None,
+            validation_status="PASSED",
+            committed_at=cutoff.isoformat(),
+            case=SimpleNamespace(
+                research=SimpleNamespace(members=members),
+                knowledge_cutoff=cutoff.isoformat(),
+            ),
+            result=SimpleNamespace(research=SimpleNamespace(disposition="FROZEN")),
+        ),
+    )
+
+    unavailable = decision_case_service._unavailable_research_probability_identities(
+        (committed_recovery,), cutoff, (stage_failure,)
+    )
+
+    assert unavailable == set()
 
 
 def test_recovered_research_probability_supersedes_failed_attempt_availability() -> None:
