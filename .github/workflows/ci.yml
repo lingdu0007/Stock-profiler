@@ -54,19 +54,35 @@ jobs:
           - id: research-risk-1
             paths: tests/integration/test_research_risk_veto.py
             shard_index: 0
-            shard_count: 4
+            shard_count: 8
           - id: research-risk-2
             paths: tests/integration/test_research_risk_veto.py
             shard_index: 1
-            shard_count: 4
+            shard_count: 8
           - id: research-risk-3
             paths: tests/integration/test_research_risk_veto.py
             shard_index: 2
-            shard_count: 4
+            shard_count: 8
           - id: research-risk-4
             paths: tests/integration/test_research_risk_veto.py
             shard_index: 3
-            shard_count: 4
+            shard_count: 8
+          - id: research-risk-5
+            paths: tests/integration/test_research_risk_veto.py
+            shard_index: 4
+            shard_count: 8
+          - id: research-risk-6
+            paths: tests/integration/test_research_risk_veto.py
+            shard_index: 5
+            shard_count: 8
+          - id: research-risk-7
+            paths: tests/integration/test_research_risk_veto.py
+            shard_index: 6
+            shard_count: 8
+          - id: research-risk-8
+            paths: tests/integration/test_research_risk_veto.py
+            shard_index: 7
+            shard_count: 8
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020

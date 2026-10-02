@@ -1,3 +1,4 @@
+import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -24,3 +25,18 @@ def test_pytest_shards_assign_every_collected_item_exactly_once() -> None:
         range(item_count)
     )
     assert max(map(len, assignments)) - min(map(len, assignments)) <= 1
+
+
+def test_research_risk_ci_matrix_uses_eight_complete_shards() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text(
+        encoding="utf-8"
+    )
+    matrix_entries = re.findall(
+        r"- id: research-risk-(\d+)\n\s+paths: tests/integration/test_research_risk_veto\.py\n"
+        r"\s+shard_index: (\d+)\n\s+shard_count: (\d+)",
+        workflow,
+    )
+
+    assert len(matrix_entries) == 8
+    assert [int(index) for _, index, _ in matrix_entries] == list(range(8))
+    assert {int(count) for _, _, count in matrix_entries} == {8}
