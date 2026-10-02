@@ -28,7 +28,7 @@ _RELIABILITY_BIN_COUNT = 10
 CandidateReleaseDisposition = Literal[
     "CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED", "FAILED", "BLOCKED"
 ]
-CandidateAvailabilityFailure = Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"]
+CandidateAvailabilityFailure = Literal["DATA", "SYSTEM", "CALIBRATION"]
 CandidateQualificationExplanationStatus = Literal["VALID", "AT_RISK", "NOT_QUALIFIED"]
 
 
@@ -321,7 +321,7 @@ def freeze_candidate_release(
             window_dates,
             disposition="FAILED",
             reasons=("CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",),
-            availability_failure="VERSION",
+            availability_failure="CALIBRATION",
         )
     if any(not candidate.data_complete for candidate in command.candidates):
         return _release_outcome(

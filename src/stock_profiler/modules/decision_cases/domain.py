@@ -401,7 +401,7 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
-    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION", "VERSION"] | None = None
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None
     raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,

@@ -605,7 +605,7 @@ export interface components {
         /** CandidatePopulation */
         CandidatePopulation: {
             /** Availability Failure */
-            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
             /** Recommendation Coverage Denominator */
             recommendation_coverage_denominator: boolean;
             /** Recommendation Coverage Pass */
@@ -622,7 +622,7 @@ export interface components {
              */
             actionable: false;
             /** Availability Failure */
-            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
             /** Batch Id */
             batch_id: string;
             calibration: components["schemas"]["CalibrationSnapshot"] | null;
@@ -3555,7 +3555,7 @@ export interface components {
          */
         StageResult: {
             /** Availability Failure */
-            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION" | "VERSION") | null;
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
             /** Gate Results */
             gate_results: components["schemas"]["GateResult"][];
             /**

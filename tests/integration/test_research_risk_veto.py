@@ -4650,21 +4650,21 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             qualification_failure_command,
             published_at=publication_time,
             reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
-            availability_failure="VERSION",
+            availability_failure="DATA",
         )
     elif candidate_scenario == "CALIBRATION_INFERENCE_MODEL_MISMATCH":
         direct = candidate_release_availability_failure(
             command,
             published_at=publication_time,
             reason="CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH",
-            availability_failure="VERSION",
+            availability_failure="CALIBRATION",
         )
     elif candidate_scenario == "CALIBRATOR_VERSION_UNSUPPORTED":
         direct = candidate_release_availability_failure(
             command,
             published_at=publication_time,
             reason="CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",
-            availability_failure="VERSION",
+            availability_failure="CALIBRATION",
         )
     elif candidate_scenario in {
         "CALIBRATION_RECORDS_MISSING",
@@ -4688,7 +4688,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
             command,
             published_at=publication_time,
             reason="CANDIDATE_RESEARCH_VERSION_MISMATCH",
-            availability_failure="VERSION",
+            availability_failure="DATA",
         )
     elif candidate_scenario in {
         "UPSTREAM_RESEARCH_DATA_FAILED",
@@ -5114,7 +5114,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UNRELATED_CALENDAR_QUALIFICATION",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
     }:
-        assert direct.availability_failure == "VERSION"
+        assert direct.availability_failure == (
+            "CALIBRATION"
+            if candidate_scenario
+            in {"CALIBRATION_INFERENCE_MODEL_MISMATCH", "CALIBRATOR_VERSION_UNSUPPORTED"}
+            else "DATA"
+        )
     elif candidate_scenario == "QUALIFICATION_EXPIRES_DURING_FIT":
         assert direct.members[0].market_state_qualified is False
     elif candidate_scenario in {
@@ -5236,10 +5241,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert saved_candidate_release.calibration.recent_diagnostics is None
         return
     if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK":
-        assert saved_candidate_release.availability_failure == "VERSION"
+        assert saved_candidate_release.availability_failure == "DATA"
         return
     if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE":
-        assert saved_candidate_release.availability_failure == "VERSION"
+        assert saved_candidate_release.availability_failure == "DATA"
         return
     if candidate_scenario == "UNRELATED_STATE_DIAGNOSTIC_ALERT_CANNOT_MASK_REVOCATION":
         assert saved_candidate_release.disposition == "FAILED"
@@ -5254,12 +5259,12 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         return
     if candidate_scenario == "CALIBRATION_MODEL_MISMATCH":
         assert saved_candidate_release.disposition == "FAILED"
-        assert saved_candidate_release.availability_failure == "VERSION"
+        assert saved_candidate_release.availability_failure == "CALIBRATION"
         assert "CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH" in saved_candidate_release.reasons
         return
     if candidate_scenario == "RESEARCH_RISK_VERSION_MISMATCH":
         assert saved_candidate_release.disposition == "FAILED"
-        assert saved_candidate_release.availability_failure == "VERSION"
+        assert saved_candidate_release.availability_failure == "DATA"
         assert "CANDIDATE_RESEARCH_VERSION_MISMATCH" in saved_candidate_release.reasons
         return
     if candidate_scenario == "CALIBRATION_EQUAL_TRAINING_WATERMARK":

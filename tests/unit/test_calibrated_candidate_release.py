@@ -1238,7 +1238,7 @@ def test_unavailable_calibration_inputs_are_saved_as_visible_failures() -> None:
     calendar_failure = freeze_candidate_release(missing_sessions)
 
     assert version_failure.disposition == "FAILED"
-    assert version_failure.availability_failure == "VERSION"
+    assert version_failure.availability_failure == "CALIBRATION"
     assert version_failure.reasons == ("CANDIDATE_CALIBRATOR_VERSION_UNSUPPORTED",)
     for failed_release in (version_failure, data_failure, window_failure, calendar_failure):
         assert len(failed_release.members) == len(original.candidates)
@@ -1263,7 +1263,7 @@ def test_host_availability_failure_preserves_calendar_failures() -> None:
         original.model_copy(update={"market_sessions": original.market_sessions[:4]}),
         published_at=original.published_at,
         reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
-        availability_failure="VERSION",
+        availability_failure="DATA",
     )
     invalid_sequence = candidate_release_availability_failure(
         original.model_copy(
@@ -1277,7 +1277,7 @@ def test_host_availability_failure_preserves_calendar_failures() -> None:
         ),
         published_at=original.published_at,
         reason="CANDIDATE_QUALIFICATION_VERSION_MISMATCH",
-        availability_failure="VERSION",
+        availability_failure="DATA",
     )
 
     assert incomplete.availability_failure == "DATA"

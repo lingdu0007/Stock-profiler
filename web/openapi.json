@@ -985,7 +985,7 @@
           "availability_failure": {
             "anyOf": [
               {
-                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
                 "type": "string"
               },
               {
@@ -1027,7 +1027,7 @@
           "availability_failure": {
             "anyOf": [
               {
-                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
                 "type": "string"
               },
               {
@@ -8690,7 +8690,7 @@
           "availability_failure": {
             "anyOf": [
               {
-                "enum": ["DATA", "SYSTEM", "CALIBRATION", "VERSION"],
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
                 "type": "string"
               },
               {
