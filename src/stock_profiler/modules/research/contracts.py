@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     AwareDatetime,
@@ -659,7 +660,10 @@ class RawScoreModelSnapshot(ResearchContract):
         if not legacy_decoding:
             if self.label_watermark_at is None:
                 raise ValueError("raw-score label watermark date is required")
-            if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
+            if (
+                self.label_watermark_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != self.label_watermark_month
+            ):
                 raise ValueError("raw-score label watermark date does not match its month")
             if not self.training_cohorts or not self.training_records:
                 raise ValueError("raw-score training provenance is required")
@@ -741,7 +745,8 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score training records must use the frozen model version")
             if any(
-                record.selection_cutoff_at.strftime("%Y-%m") != record.month
+                record.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != record.month
                 for record in self.training_records
             ):
                 raise ValueError("raw-score training record cutoff does not match its month")
@@ -923,7 +928,10 @@ class RawScoreModelSnapshot(ResearchContract):
                 or cohort.completed_research_ids.get(record.security_id) != record.research_id
             ):
                 raise ValueError("raw-score calibration history must bind to frozen cohorts")
-            if record.selection_cutoff_at.strftime("%Y-%m") != record.month:
+            if (
+                record.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != record.month
+            ):
                 raise ValueError(
                     "raw-score calibration history prediction cutoff does not match its month"
                 )
@@ -1030,7 +1038,7 @@ def _raw_score_month_end(month: str) -> datetime:
         year,
         month_number,
         monthrange(year, month_number)[1],
-        23,
+        15,
         59,
         59,
         tzinfo=UTC,
@@ -1324,7 +1332,9 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_window_start_month=RAW_SCORE_TRAINING_START_MONTH,
         training_window_end_month="2041-11",
         training_months=training_months,
-        label_watermark_month=label_watermark_at.strftime("%Y-%m"),
+        label_watermark_month=label_watermark_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+            "%Y-%m"
+        ),
         label_watermark_at=label_watermark_at,
         training_cohorts=training_cohorts,
         training_records=training_records,

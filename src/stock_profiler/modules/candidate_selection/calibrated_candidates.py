@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
 from typing import Literal, NamedTuple
+from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -829,7 +830,10 @@ def _fit_calibrator(
         raise ValueError("CALIBRATION_REQUIRES_60_MATURE_MONTHS")
     by_month: dict[str, list[CalibrationRecord]] = {}
     for record in command.training_records:
-        if record.raw_score_frozen_at.astimezone(UTC).strftime("%Y-%m") != record.month:
+        if (
+            record.raw_score_frozen_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+            != record.month
+        ):
             raise ValueError("CALIBRATION_RAW_SCORE_MONTH_MISMATCH")
         if record.raw_score_training_watermark_at > record.raw_score_frozen_at:
             raise ValueError("CALIBRATION_RAW_SCORE_NOT_OUT_OF_SAMPLE")
@@ -1155,9 +1159,7 @@ def _firth_logistic(
         while scale >= 1e-8:
             next_a = intercept + scale * delta_a
             next_b = (
-                max(0.0, slope + scale * delta_b)
-                if nonnegative_slope
-                else slope + scale * delta_b
+                max(0.0, slope + scale * delta_b) if nonnegative_slope else slope + scale * delta_b
             )
             try:
                 next_objective = state(next_a, next_b).objective

@@ -1858,12 +1858,12 @@ def test_firth_solver_rejects_raw_score_timestamp_from_a_different_month() -> No
     assert release.reasons == ("CALIBRATION_RAW_SCORE_MONTH_MISMATCH",)
 
 
-def test_firth_solver_uses_utc_month_for_equivalent_raw_score_instants() -> None:
+def test_firth_solver_uses_shanghai_month_for_equivalent_raw_score_instants() -> None:
     original = command()
     source = original.training_records[0]
     year, month = (int(part) for part in source.month.split("-"))
     last_day = monthrange(year, month)[1]
-    utc_month_end = datetime(year, month, last_day, 23, 59, tzinfo=UTC)
+    utc_month_end = datetime(year, month, last_day, 15, 59, tzinfo=UTC)
     equivalent_next_offset_month = utc_month_end.astimezone(timezone(timedelta(hours=9)))
     assert equivalent_next_offset_month.strftime("%Y-%m") != source.month
     adjusted_record = source.model_copy(
@@ -1879,6 +1879,37 @@ def test_firth_solver_uses_utc_month_for_equivalent_raw_score_instants() -> None
         )
     )
 
+    assert release.availability_failure is None
+    assert release.calibration is not None
+
+
+def test_firth_solver_uses_shanghai_month_for_frozen_raw_score_instants() -> None:
+    original = command()
+    source = original.training_records[0]
+    year, month = (int(part) for part in source.month.split("-"))
+    shanghai_month_start = datetime(
+        year,
+        month,
+        1,
+        0,
+        30,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    raw_score_frozen_at = shanghai_month_start.astimezone(UTC)
+    adjusted_record = source.model_copy(
+        update={
+            "raw_score_frozen_at": shanghai_month_start,
+            "raw_score_training_watermark_at": raw_score_frozen_at - timedelta(days=1),
+        }
+    )
+
+    release = freeze_candidate_release(
+        original.model_copy(
+            update={"training_records": (adjusted_record, *original.training_records[1:])}
+        )
+    )
+
+    assert raw_score_frozen_at.strftime("%Y-%m") != source.month
     assert release.availability_failure is None
     assert release.calibration is not None
 

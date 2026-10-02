@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from calendar import monthrange
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal, cast
@@ -244,7 +244,9 @@ def test_historical_research_command_replays_its_pre_calendar_maturity_window() 
             "training_window_month_count": len(training_months),
             "training_window_end_month": training_months[-1],
             "training_months": list(training_months),
-            "label_watermark_month": watermark_at[:7],
+            "label_watermark_month": datetime.fromisoformat(watermark_at.replace("Z", "+00:00"))
+            .astimezone(timezone(timedelta(hours=8)))
+            .strftime("%Y-%m"),
             "label_watermark_at": watermark_at,
             "training_cohorts": [cohort.model_dump(mode="json") for cohort in cohorts],
             "training_records": records_payload,
@@ -521,7 +523,7 @@ def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
                 year,
                 month_number,
                 monthrange(year, month_number)[1],
-                23,
+                15,
                 59,
                 59,
                 tzinfo=UTC,
@@ -567,7 +569,9 @@ def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
             "training_window_start_month": training_months[0],
             "training_window_end_month": training_months[-1],
             "training_months": training_months,
-            "label_watermark_month": label_watermark_at.strftime("%Y-%m"),
+            "label_watermark_month": label_watermark_at.astimezone(
+                timezone(timedelta(hours=8))
+            ).strftime("%Y-%m"),
             "label_watermark_at": label_watermark_at,
             "training_cohorts": updated_cohorts,
             "training_records": updated_records,
@@ -1143,6 +1147,52 @@ def test_raw_score_calibration_history_binds_prediction_timestamp_to_month() -> 
 
     with pytest.raises(ValueError, match="prediction cutoff does not match its month"):
         RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_raw_score_snapshots_use_shanghai_month_for_prediction_cutoffs() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+
+    for field_name in ("training_records", "calibration_history_records"):
+        record = payload[field_name][0]
+        year, month = (int(part) for part in record["month"].split("-"))
+        shanghai_cutoff = datetime(
+            year,
+            month,
+            1,
+            0,
+            30,
+            tzinfo=timezone(timedelta(hours=8)),
+        )
+        record["selection_cutoff_at"] = shanghai_cutoff.isoformat()
+        record["raw_score_frozen_at"] = shanghai_cutoff.isoformat()
+        record["raw_score_training_watermark_at"] = (
+            shanghai_cutoff.astimezone(UTC) - timedelta(days=1)
+        ).isoformat()
+        calendar_version = record["market_calendar_version"]
+        evaluation_entry_at = _raw_score_evaluation_entry_at(
+            shanghai_cutoff,
+            calendar_version,
+        )
+        entry_window_ends_at = raw_score_entry_window_end(
+            evaluation_entry_at,
+            calendar_version,
+        )
+        maturity_at = raw_score_maturity_at(evaluation_entry_at, calendar_version)
+        record["evaluation_entry_at"] = evaluation_entry_at.isoformat()
+        record["entry_window_ends_at"] = entry_window_ends_at.isoformat()
+        record["unified_maturity_at"] = maturity_at.isoformat()
+        record["label_available_at"] = maturity_at.isoformat()
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert all(
+        record.selection_cutoff_at.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m")
+        == record.month
+        for record in (
+            snapshot.training_records[0],
+            snapshot.calibration_history_records[0],
+        )
+    )
 
 
 def test_raw_score_calibration_history_allows_one_cohort_per_month() -> None:
