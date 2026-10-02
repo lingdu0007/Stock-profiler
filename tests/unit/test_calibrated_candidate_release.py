@@ -658,14 +658,11 @@ def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
 def test_calibration_diagnostics_report_negative_slope_for_inverted_predictions() -> None:
     original = command()
     records = tuple(
-        record.model_copy(
-            update={"terminal_success": record.raw_success_score < Decimal("0.5")}
-        )
+        record.model_copy(update={"terminal_success": record.raw_success_score < Decimal("0.5")})
         for record in original.training_records
     )
     probabilities = tuple(
-        candidate_module._sigmoid(2.0 * float(record.raw_success_score) - 1.0)
-        for record in records
+        candidate_module._sigmoid(2.0 * float(record.raw_success_score) - 1.0) for record in records
     )
 
     diagnostics = candidate_module._calibration_diagnostics(records, probabilities)
@@ -678,9 +675,7 @@ def test_calibration_diagnostics_report_negative_slope_for_inverted_predictions(
 def test_duplicate_authoritative_research_snapshot_preserves_diagnostic_row_identity() -> None:
     record = command().recent_diagnostic_records[0]
     authoritative = record.model_copy(update={"source_research_event_id": "research-event-a"})
-    duplicate_snapshot = record.model_copy(
-        update={"source_research_event_id": "research-event-b"}
-    )
+    duplicate_snapshot = record.model_copy(update={"source_research_event_id": "research-event-b"})
 
     assert decision_case_service._matches_authoritative_diagnostic_record(
         duplicate_snapshot,
@@ -692,6 +687,30 @@ def test_duplicate_authoritative_research_snapshot_preserves_diagnostic_row_iden
         authoritative,
         {"research-event-a"},
     )
+
+
+def test_prior_frozen_predictions_remain_in_scope_after_capability_version_change() -> None:
+    original = command()
+    prior_command = original.model_copy(update={"capability_version": "previous-capability-v0"})
+    prior_event = cast(
+        DecisionEventFact,
+        SimpleNamespace(
+            result=SimpleNamespace(candidate_release=freeze_candidate_release(original)),
+            case=SimpleNamespace(
+                candidate_release=prior_command,
+                knowledge_cutoff=original.knowledge_cutoff.isoformat(),
+            ),
+            committed_at=original.knowledge_cutoff.isoformat(),
+            corrects_event_id=None,
+            validation_status="PASSED",
+        ),
+    )
+
+    assert decision_case_service._prior_candidate_prediction_snapshot_matches(
+        prior_event,
+        original,
+    )
+    assert not decision_case_service._prior_calibration_snapshot_matches(prior_event, original)
 
 
 @pytest.mark.parametrize(

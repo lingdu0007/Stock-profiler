@@ -667,6 +667,11 @@ def _validate_candidate_calibration_sources(
         for event in candidate_release_events
         if _prior_calibration_snapshot_matches(event, command)
     )
+    prior_candidate_prediction_snapshots = tuple(
+        event
+        for event in candidate_release_events
+        if _prior_candidate_prediction_snapshot_matches(event, command)
+    )
     if prior_calibration_snapshots and len(command.training_window_months) != 60:
         raise CandidateCalibrationProvenanceInvalid()
     research_events = tuple(
@@ -724,13 +729,6 @@ def _validate_candidate_calibration_sources(
             continue
         if not _same_calibrator_selection_evidence(prior_command, command):
             raise CandidateCalibrationProvenanceInvalid()
-        if prior_outcome.calibration is not None:
-            research_event = historical_events_by_id.get(prior_command.research_event_id)
-            predictions = _frozen_candidate_prediction_rows_from_events(event, research_event)
-            for identity, prediction in predictions.items():
-                previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
-                if previous_prediction != prediction:
-                    raise CandidateCalibrationProvenanceInvalid()
         for record in prior_command.training_records:
             if (
                 record.label_available_at <= candidate_cutoff
@@ -743,6 +741,16 @@ def _validate_candidate_calibration_sources(
             ):
                 continue
             _retain_frozen_calibration_record(frozen_training_rows, record)
+    for event in prior_candidate_prediction_snapshots:
+        prior_command = event.case.candidate_release
+        if prior_command is None:
+            continue
+        research_event = historical_events_by_id.get(prior_command.research_event_id)
+        predictions = _frozen_candidate_prediction_rows_from_events(event, research_event)
+        for identity, prediction in predictions.items():
+            previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
+            if previous_prediction != prediction:
+                raise CandidateCalibrationProvenanceInvalid()
     for event in historical_events:
         source_case_research = event.case.research
         if source_case_research is None:
@@ -1040,6 +1048,32 @@ def _prior_calibration_snapshot_matches(
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
         and datetime.fromisoformat(event.case.knowledge_cutoff)
         <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    )
+
+
+def _prior_candidate_prediction_snapshot_matches(
+    event: DecisionEventFact,
+    command: CandidateReleaseCommand,
+) -> bool:
+    """Retain prediction lineage across capability changes for the same raw-score model."""
+    release = event.result.candidate_release
+    prior_command = event.case.candidate_release
+    if (
+        release is None
+        or release.calibration is None
+        or prior_command is None
+        or event.corrects_event_id is not None
+        or event.validation_status != "PASSED"
+    ):
+        return False
+    current_model_versions = _calibration_source_model_versions(command)
+    prior_model_versions = _calibration_source_model_versions(prior_command)
+    candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    return bool(
+        current_model_versions
+        and prior_model_versions == current_model_versions
+        and datetime.fromisoformat(event.committed_at) <= candidate_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
     )
 
 
@@ -1514,12 +1548,15 @@ def _matches_authoritative_diagnostic_record(
     """Allow an equivalent committed snapshot while validating its event attribution."""
     if submitted.source_research_event_id not in source_event_ids:
         return False
-    return submitted.model_copy(
-        update={
-            "record_id": authoritative.record_id,
-            "source_research_event_id": authoritative.source_research_event_id,
-        }
-    ) == authoritative
+    return (
+        submitted.model_copy(
+            update={
+                "record_id": authoritative.record_id,
+                "source_research_event_id": authoritative.source_research_event_id,
+            }
+        )
+        == authoritative
+    )
 
 
 def _frozen_candidate_prediction_rows_from_events(
