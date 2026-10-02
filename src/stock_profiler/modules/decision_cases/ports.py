@@ -65,6 +65,27 @@ class BusinessObjectMapping:
 
 
 @dataclass(frozen=True)
+class ResearchAvailabilityFailureFact:
+    """A failed research-path stage joined to its immutable case snapshot."""
+
+    case: FrozenDecisionCase
+    framework_run_id: str
+    stage_result: StageResult
+    recorded_at: str
+
+
+@dataclass(frozen=True)
+class CandidateAvailabilityFailureFact:
+    """A failed candidate-path stage joined to its immutable case snapshot."""
+
+    case: FrozenDecisionCase
+    framework_run_id: str
+    stage_result: StageResult
+    recorded_at: str
+    committed_at: str | None = None
+
+
+@dataclass(frozen=True)
 class FrameworkRunTransition:
     status: FrameworkRunStatus
     reason: str
@@ -158,6 +179,36 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def research_event_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]: ...
+
+    def research_availability_failure_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[ResearchAvailabilityFailureFact, ...]: ...
+
+    def candidate_availability_failure_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[CandidateAvailabilityFailureFact, ...]: ...
+
+    def candidate_calibration_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]: ...
+
+    def candidate_release_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]: ...
 
     def monitoring_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
@@ -302,7 +353,7 @@ class DecisionLedger(Protocol[Transaction]):
         framework_run_id: str | None = None,
         allow_repeated_occurrence: bool = False,
         recorded_at: str | None = None,
-    ) -> None: ...
+    ) -> str | None: ...
 
     def record_notification_attempt(
         self,

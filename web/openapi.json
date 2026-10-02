@@ -528,6 +528,650 @@
         "title": "BasisSubstitutionCheck",
         "type": "object"
       },
+      "CalibratedMember": {
+        "additionalProperties": false,
+        "properties": {
+          "calibrated_probability": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibrated Probability"
+          },
+          "candidate": {
+            "title": "Candidate",
+            "type": "boolean"
+          },
+          "data_complete": {
+            "title": "Data Complete",
+            "type": "boolean"
+          },
+          "evidence_clocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateEvidenceClock"
+            },
+            "title": "Evidence Clocks",
+            "type": "array"
+          },
+          "evidence_freshness": {
+            "title": "Evidence Freshness",
+            "type": "string"
+          },
+          "market_state_qualification_status": {
+            "enum": ["VALID", "AT_RISK", "NOT_QUALIFIED"],
+            "title": "Market State Qualification Status",
+            "type": "string"
+          },
+          "market_state_qualified": {
+            "title": "Market State Qualified",
+            "type": "boolean"
+          },
+          "principal_risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Principal Risks",
+            "type": "array"
+          },
+          "raw_success_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Raw Success Score",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_id": {
+            "title": "Research Id",
+            "type": "string"
+          },
+          "risk_gates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateRiskGate"
+            },
+            "title": "Risk Gates",
+            "type": "array"
+          },
+          "risk_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risk Reasons",
+            "type": "array"
+          },
+          "risk_status": {
+            "enum": ["ACCEPTED", "REJECTED", "FAILED"],
+            "title": "Risk Status",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "thesis": {
+            "title": "Thesis",
+            "type": "string"
+          },
+          "valid_market_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Valid Market Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "security_id",
+          "research_id",
+          "raw_success_score",
+          "calibrated_probability",
+          "candidate",
+          "risk_status",
+          "risk_gates",
+          "risk_reasons",
+          "market_state_qualified",
+          "market_state_qualification_status",
+          "data_complete",
+          "thesis",
+          "principal_risks",
+          "evidence_freshness",
+          "valid_market_dates",
+          "reasons"
+        ],
+        "title": "CalibratedMember",
+        "type": "object"
+      },
+      "CalibrationDiagnostics": {
+        "additionalProperties": false,
+        "description": "Frozen goodness-of-fit diagnostics over one explicitly named score cohort.",
+        "properties": {
+          "brier_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Brier Score",
+            "type": "string"
+          },
+          "calibration_intercept": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Intercept"
+          },
+          "calibration_slope": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Slope"
+          },
+          "log_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Log Loss",
+            "type": "string"
+          },
+          "recalibration_fit_status": {
+            "enum": ["AVAILABLE", "CALCULATION_FAILED"],
+            "title": "Recalibration Fit Status",
+            "type": "string"
+          },
+          "reliability_curve": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationReliabilityBin"
+            },
+            "title": "Reliability Curve",
+            "type": "array"
+          }
+        },
+        "required": [
+          "log_loss",
+          "brier_score",
+          "reliability_curve",
+          "recalibration_fit_status",
+          "calibration_intercept",
+          "calibration_slope"
+        ],
+        "title": "CalibrationDiagnostics",
+        "type": "object"
+      },
+      "CalibrationReliabilityBin": {
+        "additionalProperties": false,
+        "properties": {
+          "lower_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Probability",
+            "type": "string"
+          },
+          "mean_predicted_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mean Predicted Probability",
+            "type": "string"
+          },
+          "observed_success_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Observed Success Rate",
+            "type": "string"
+          },
+          "sample_count": {
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "upper_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Probability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lower_probability",
+          "upper_probability",
+          "sample_count",
+          "mean_predicted_probability",
+          "observed_success_rate"
+        ],
+        "title": "CalibrationReliabilityBin",
+        "type": "object"
+      },
+      "CalibrationSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "calibrator_selection": {
+            "$ref": "#/components/schemas/CalibratorSelectionSnapshot"
+          },
+          "calibrator_selection_window_months": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Calibrator Selection Window Months",
+            "type": "array"
+          },
+          "calibrator_version": {
+            "const": "monotone-firth-logistic-v1",
+            "title": "Calibrator Version",
+            "type": "string"
+          },
+          "intercept": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Intercept",
+            "type": "string"
+          },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
+          "negative_record_count": {
+            "title": "Negative Record Count",
+            "type": "integer"
+          },
+          "out_of_sample_diagnostics": {
+            "$ref": "#/components/schemas/CalibrationDiagnostics"
+          },
+          "positive_record_count": {
+            "title": "Positive Record Count",
+            "type": "integer"
+          },
+          "recent_diagnostic_months": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 24,
+            "title": "Recent Diagnostic Months",
+            "type": "array"
+          },
+          "recent_diagnostic_sample_count": {
+            "minimum": 0.0,
+            "title": "Recent Diagnostic Sample Count",
+            "type": "integer"
+          },
+          "recent_diagnostic_status": {
+            "enum": ["AVAILABLE", "INSUFFICIENT_DATA", "CALCULATION_FAILED"],
+            "title": "Recent Diagnostic Status",
+            "type": "string"
+          },
+          "recent_diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slope": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Slope",
+            "type": "string"
+          },
+          "training_record_count": {
+            "title": "Training Record Count",
+            "type": "integer"
+          },
+          "training_window_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Training Window Months",
+            "type": "array"
+          },
+          "unavailable_probability_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Unavailable Probability Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calibrator_version",
+          "intercept",
+          "slope",
+          "calibrator_selection",
+          "calibrator_selection_window_months",
+          "training_window_months",
+          "label_watermark_at",
+          "training_record_count",
+          "positive_record_count",
+          "negative_record_count",
+          "out_of_sample_diagnostics",
+          "recent_diagnostic_months",
+          "recent_diagnostic_sample_count",
+          "recent_diagnostic_status",
+          "recent_diagnostics"
+        ],
+        "title": "CalibrationSnapshot",
+        "type": "object"
+      },
+      "CalibratorSelectionSnapshot": {
+        "additionalProperties": false,
+        "description": "Persist the preregistered v1 family decision and its independent OOS evidence.",
+        "properties": {
+          "diagnostics": {
+            "$ref": "#/components/schemas/CalibrationDiagnostics"
+          },
+          "label_watermark_at": {
+            "format": "date-time",
+            "title": "Label Watermark At",
+            "type": "string"
+          },
+          "policy": {
+            "const": "PRE_REGISTERED_V1_SINGLE_FAMILY",
+            "title": "Policy",
+            "type": "string"
+          },
+          "record_count": {
+            "minimum": 1.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "selected_calibrator_version": {
+            "const": "monotone-firth-logistic-v1",
+            "title": "Selected Calibrator Version",
+            "type": "string"
+          },
+          "window_months": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Window Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "policy",
+          "selected_calibrator_version",
+          "window_months",
+          "label_watermark_at",
+          "record_count",
+          "diagnostics"
+        ],
+        "title": "CalibratorSelectionSnapshot",
+        "type": "object"
+      },
+      "CandidateEvidenceClock": {
+        "additionalProperties": false,
+        "description": "Source and validation clocks for one persisted research evidence item.",
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "source_published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Published At"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          }
+        },
+        "required": ["evidence_id", "knowledge_cutoff"],
+        "title": "CandidateEvidenceClock",
+        "type": "object"
+      },
+      "CandidatePopulation": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "recommendation_coverage_denominator": {
+            "title": "Recommendation Coverage Denominator",
+            "type": "boolean"
+          },
+          "recommendation_coverage_pass": {
+            "title": "Recommendation Coverage Pass",
+            "type": "boolean"
+          },
+          "valid_monthly": {
+            "title": "Valid Monthly",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid_monthly",
+          "recommendation_coverage_denominator",
+          "recommendation_coverage_pass"
+        ],
+        "title": "CandidatePopulation",
+        "type": "object"
+      },
+      "CandidateReleaseOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability_version": {
+            "title": "Capability Version",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "CANDIDATES",
+              "VALID_NO_CANDIDATES",
+              "RECOMMENDATION_ABSTAINED",
+              "FAILED",
+              "BLOCKED"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "market_calendar_version": {
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "market_state": {
+            "enum": ["BULL", "BEAR", "SIDEWAYS"],
+            "title": "Market State",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CalibratedMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "population": {
+            "$ref": "#/components/schemas/CandidatePopulation"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "qualification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketStateQualification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "research_event_id": {
+            "title": "Research Event Id",
+            "type": "string"
+          },
+          "research_object_id": {
+            "title": "Research Object Id",
+            "type": "string"
+          },
+          "valid_market_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Valid Market Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "disposition",
+          "knowledge_cutoff",
+          "published_at",
+          "qualification_scope",
+          "capability_version",
+          "research_object_id",
+          "research_event_id",
+          "market_calendar_version",
+          "market_state",
+          "calibration",
+          "members",
+          "population",
+          "valid_market_dates",
+          "reasons"
+        ],
+        "title": "CandidateReleaseOutcome",
+        "type": "object"
+      },
+      "CandidateRiskGate": {
+        "additionalProperties": false,
+        "description": "One frozen independent-risk gate carried into a candidate explanation.",
+        "properties": {
+          "gate_id": {
+            "minLength": 1,
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PASSED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["gate_id", "status"],
+        "title": "CandidateRiskGate",
+        "type": "object"
+      },
       "CapabilityVersion": {
         "additionalProperties": false,
         "properties": {
@@ -2391,6 +3035,16 @@
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
         "properties": {
+          "candidate_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateReleaseOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "concentration": {
             "anyOf": [
               {
@@ -2712,6 +3366,16 @@
           "qualification_scope": {
             "title": "Qualification Scope",
             "type": "string"
+          },
+          "report_publication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportPublication"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "report_version_id": {
             "title": "Report Version Id",
@@ -3409,6 +4073,76 @@
         },
         "required": ["disposition", "reasons", "authorization_id", "position_snapshot"],
         "title": "LiquidityOutcome",
+        "type": "object"
+      },
+      "MarketStateQualification": {
+        "additionalProperties": false,
+        "description": "Snapshot of one persisted qualification decision for one market state.",
+        "properties": {
+          "capability_version": {
+            "minLength": 1,
+            "title": "Capability Version",
+            "type": "string"
+          },
+          "current_status_recorded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Status Recorded At"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "market_state": {
+            "enum": ["BULL", "BEAR", "SIDEWAYS"],
+            "title": "Market State",
+            "type": "string"
+          },
+          "qualification_id": {
+            "minLength": 1,
+            "title": "Qualification Id",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["NOT_OBTAINED", "VALID", "AT_RISK", "SUSPENDED", "REVOKED", "EXPIRED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "valid_through": {
+            "format": "date-time",
+            "title": "Valid Through",
+            "type": "string"
+          }
+        },
+        "required": [
+          "market_state",
+          "status",
+          "qualification_id",
+          "capability_version",
+          "market_calendar_version",
+          "recorded_at",
+          "valid_through"
+        ],
+        "title": "MarketStateQualification",
         "type": "object"
       },
       "MaximumFundingLeg": {
@@ -5209,6 +5943,18 @@
             "title": "Kind",
             "type": "string"
           },
+          "market_calendar_version": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Calendar Version"
+          },
           "maturity_sufficient": {
             "anyOf": [
               {
@@ -6207,6 +6953,57 @@
         },
         "required": ["decision_id", "scope", "node", "registered_at"],
         "title": "RegisteredTaskNode",
+        "type": "object"
+      },
+      "ReportPublication": {
+        "additionalProperties": false,
+        "description": "Persist the report commit clock and its final publication disposition.",
+        "properties": {
+          "committed_at": {
+            "title": "Committed At",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "failure_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Recorded At"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "status": {
+            "enum": ["PUBLISHED", "FAILED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["status", "committed_at"],
+        "title": "ReportPublication",
         "type": "object"
       },
       "RequalificationApplication": {
@@ -7890,6 +8687,18 @@
         "additionalProperties": false,
         "description": "A phase-specific outcome; lifecycle states have no global terminal meaning.",
         "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM", "CALIBRATION"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
           "gate_results": {
             "items": {
               "$ref": "#/components/schemas/GateResult"
@@ -7910,6 +8719,7 @@
               "ISSUER_CONCENTRATION",
               "DRAWDOWN_PROTECTION",
               "LIQUIDITY_PROTECTION",
+              "CANDIDATE_RELEASE",
               "PORTFOLIO_STRESS",
               "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",

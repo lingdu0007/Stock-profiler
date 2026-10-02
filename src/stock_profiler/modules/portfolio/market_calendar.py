@@ -2,12 +2,85 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 
 def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def six_month_terminal_evaluation_at(value: datetime, market_calendar_version: str) -> datetime:
+    """Resolve the six-month target to the last saved session close on or before its date."""
+    anchor = value.astimezone(UTC)
+    month_index = anchor.year * 12 + anchor.month - 1 + 6
+    year, month_zero = divmod(month_index, 12)
+    target = anchor.replace(
+        year=year,
+        month=month_zero + 1,
+        day=min(anchor.day, monthrange(year, month_zero + 1)[1]),
+    )
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    if target.date() > calendar.terminal_session_coverage_through:
+        raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
+    session = calendar.last_terminal_session_on_or_before(target.date())
+    if session is None:
+        raise ValueError("MARKET_CALENDAR_TERMINAL_SESSION_UNAVAILABLE")
+    return session.closed_at
+
+
+def market_session_close_on(
+    market_date: date,
+    market_calendar_version: str,
+) -> datetime | None:
+    """Return the saved session close, preserving gaps inside active-calendar coverage."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        return None
+    if calendar.sessions and calendar.sessions[0].closed_at.date() <= market_date <= (
+        calendar.sessions[-1].closed_at.date()
+    ):
+        sessions = calendar.sessions
+    else:
+        sessions = calendar.terminal_sessions or calendar.sessions
+    session = next((item for item in sessions if item.closed_at.date() == market_date), None)
+    return session.closed_at if session is not None else None
+
+
+def next_market_session_open_after(
+    value: datetime,
+    market_calendar_version: str,
+) -> datetime:
+    """Return the first saved session open strictly after the frozen cutoff."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    cutoff_date = value.astimezone(UTC).date()
+    first_covered_date = calendar.terminal_session_coverage_from
+    if first_covered_date is not None and cutoff_date < first_covered_date:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    if calendar.sessions and calendar.sessions[0].closed_at.date() <= cutoff_date <= (
+        calendar.sessions[-1].closed_at.date()
+    ):
+        sessions = calendar.sessions
+    else:
+        sessions = calendar.terminal_sessions or calendar.sessions
+    session = next((item for item in sessions if item.closed_at - timedelta(hours=7) > value), None)
+    if session is None and sessions is calendar.sessions and calendar.terminal_sessions:
+        session = next(
+            (
+                item
+                for item in calendar.terminal_sessions
+                if item.closed_at - timedelta(hours=7) > value
+            ),
+            None,
+        )
+    if session is None:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return session.closed_at - timedelta(hours=7)
 
 
 @dataclass(frozen=True)
@@ -25,6 +98,8 @@ class SyntheticMarketCalendar:
     version_id: str
     sessions: tuple[MarketSession, ...]
     monthly_selection_cutoffs: tuple[datetime, ...]
+    terminal_session_coverage_through: date
+    terminal_sessions: tuple[MarketSession, ...] = ()
 
     def session_for(self, ordinal: int) -> MarketSession | None:
         return next((session for session in self.sessions if session.ordinal == ordinal), None)
@@ -35,11 +110,128 @@ class SyntheticMarketCalendar:
             None,
         )
 
+    def sessions_after_open(self, value: datetime, count: int) -> tuple[MarketSession, ...]:
+        """Return the next sessions across saved and extended calendar coverage."""
+        if count <= 0:
+            return ()
+        first_covered_date = self.terminal_session_coverage_from
+        if first_covered_date is not None and value.astimezone(UTC).date() < first_covered_date:
+            return ()
+        if self.sessions:
+            first_date = self.sessions[0].closed_at.date()
+            last_date = self.sessions[-1].closed_at.date()
+            extended_sessions = self.terminal_sessions or self.sessions
+            sessions = (
+                tuple(
+                    session
+                    for session in extended_sessions
+                    if session.closed_at.date() < first_date
+                )
+                + self.sessions
+                + tuple(
+                    session for session in extended_sessions if session.closed_at.date() > last_date
+                )
+            )
+        else:
+            sessions = self.terminal_sessions
+        return tuple(
+            session for session in sessions if session.closed_at - timedelta(hours=7) > value
+        )[:count]
+
+    @property
+    def terminal_session_coverage_from(self) -> date | None:
+        """Return the first date whose terminal session history is authoritative."""
+        sessions = self.terminal_sessions or self.sessions
+        if not sessions:
+            return None
+        return sessions[0].closed_at.date()
+
+    def session_at_or_before(self, value: datetime) -> MarketSession | None:
+        """Resolve the latest completed session using the same coverage precedence."""
+        value_date = value.astimezone(UTC).date()
+        if self.sessions and self.sessions[0].closed_at.date() <= value_date <= (
+            self.sessions[-1].closed_at.date()
+        ):
+            completed_sessions = tuple(
+                session for session in self.sessions if session.closed_at <= value
+            )
+            if completed_sessions:
+                return completed_sessions[-1]
+            first_saved_date = self.sessions[0].closed_at.date()
+            prior_sessions = tuple(
+                session
+                for session in self.terminal_sessions
+                if session.closed_at.date() < first_saved_date and session.closed_at <= value
+            )
+            return prior_sessions[-1] if prior_sessions else None
+        extended_sessions = self.terminal_sessions or self.sessions
+        completed_sessions = tuple(
+            session for session in extended_sessions if session.closed_at <= value
+        )
+        return completed_sessions[-1] if completed_sessions else None
+
     def next_monthly_selection_cutoff_after(self, closed_at: datetime) -> datetime | None:
         return next(
             (cutoff for cutoff in self.monthly_selection_cutoffs if cutoff > closed_at),
             None,
         )
+
+    def last_terminal_session_on_or_before(self, target_date: date) -> MarketSession | None:
+        sessions = self.terminal_sessions or self.sessions
+        if self.sessions and self.sessions[0].closed_at.date() <= target_date <= (
+            self.sessions[-1].closed_at.date()
+        ):
+            sessions = self.sessions
+        return next(
+            (session for session in reversed(sessions) if session.closed_at.date() <= target_date),
+            None,
+        )
+
+
+def _weekday_sessions(
+    *,
+    start: date,
+    end: date,
+    close_at: time,
+    first_ordinal: int,
+    excluded_dates: frozenset[date] = frozenset(),
+) -> tuple[MarketSession, ...]:
+    """Build ordered synthetic sessions within the frozen calendar coverage."""
+    sessions: list[MarketSession] = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5 and current not in excluded_dates:
+            closed_at = datetime.combine(current, close_at, tzinfo=UTC)
+            ordinal = first_ordinal + len(sessions)
+            sessions.append(MarketSession(ordinal, closed_at))
+        current += timedelta(days=1)
+    return tuple(sessions)
+
+
+def _weekday_sessions_with_stable_anchor(
+    *,
+    start: date,
+    anchor: date,
+    end: date,
+    close_at: time,
+    anchor_ordinal: int,
+    excluded_dates: frozenset[date] = frozenset(),
+) -> tuple[MarketSession, ...]:
+    """Extend a calendar backward while preserving session IDs at its old anchor."""
+    preceding_sessions = _weekday_sessions(
+        start=start,
+        end=anchor - timedelta(days=1),
+        close_at=close_at,
+        first_ordinal=0,
+        excluded_dates=excluded_dates,
+    )
+    return _weekday_sessions(
+        start=start,
+        end=end,
+        close_at=close_at,
+        first_ordinal=anchor_ordinal - len(preceding_sessions),
+        excluded_dates=excluded_dates,
+    )
 
 
 def synthetic_market_calendar(version_id: str) -> SyntheticMarketCalendar | None:
@@ -63,6 +255,14 @@ _SYNTHETIC_MARKET_CALENDARS = (
             )
         ),
         monthly_selection_cutoffs=(),
+        terminal_session_coverage_through=date(2050, 12, 31),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(15),
+            anchor_ordinal=1_000_000,
+        ),
     ),
     SyntheticMarketCalendar(
         version_id="synthetic-market-calendar-v1",
@@ -90,5 +290,58 @@ _SYNTHETIC_MARKET_CALENDARS = (
             MarketSession(6121, _utc("2042-06-17T15:00:00+00:00")),
         ),
         monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
+        terminal_session_coverage_through=date(2050, 12, 31),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(15),
+            anchor_ordinal=1_000_000,
+            excluded_dates=frozenset({date(2042, 6, 6)}),
+        ),
+    ),
+    SyntheticMarketCalendar(
+        version_id="synthetic-market-calendar-v2",
+        sessions=_weekday_sessions(
+            start=date(2042, 5, 20),
+            end=date(2042, 8, 26),
+            close_at=time(15),
+            first_ordinal=6101,
+            excluded_dates=frozenset({date(2042, 6, 6)}),
+        ),
+        monthly_selection_cutoffs=(_utc("2042-06-17T16:00:00+00:00"),),
+        terminal_session_coverage_through=date(2050, 12, 31),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(15),
+            anchor_ordinal=1_000_000,
+            excluded_dates=frozenset({date(2042, 6, 6)}),
+        ),
+    ),
+    SyntheticMarketCalendar(
+        version_id="synthetic-calendar-v1",
+        sessions=tuple(
+            MarketSession(
+                101 + index,
+                _utc("2046-07-02T08:00:00+00:00") + timedelta(days=offset),
+            )
+            for index, offset in enumerate(
+                offset
+                for offset in range(30)
+                if date(2046, 7, 2).weekday() < 5
+                and (date(2046, 7, 2) + timedelta(days=offset)).weekday() < 5
+            )
+        ),
+        monthly_selection_cutoffs=(),
+        terminal_session_coverage_through=date(2050, 12, 31),
+        terminal_sessions=_weekday_sessions_with_stable_anchor(
+            start=date(2032, 1, 1),
+            anchor=date(2037, 1, 1),
+            end=date(2050, 12, 31),
+            close_at=time(8),
+            anchor_ordinal=1_000_000,
+        ),
     ),
 )

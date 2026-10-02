@@ -100,6 +100,53 @@ All universe reports remain non-actionable, including simulated real-candidate
 purpose cases. The first committed scope/purpose/month snapshot is immutable;
 changed retry identities or later evidence do not replace it.
 
+The `candidate-release.1.0.0` frozen-case contract accepts one exact committed
+research event with ten independently risk-vetted members. Calibration uses
+three ordered, disjoint out-of-sample cohorts: an earlier pre-registered
+selection cohort, a later fitting cohort, and the latest 24-month drift
+diagnostic cohort. The V1 family is preregistered as monotone Firth logistic; the immutable
+selection evidence freezes the selected family, selection label watermark,
+sample identity, and out-of-sample diagnostics. Selection and diagnostic rows
+never enter production parameter fitting. Initial fitting expands from the
+earliest eligible month between those cohorts through the first prefix of at
+least 60 mature months, 500 records, and 50 examples from each class that meets
+every floor. After the first valid calibration, every refit uses the fixed
+rolling latest 60 eligible mature fitting months; a missed sample floor then
+produces a visible calibration failure.
+Its population
+is the complete union of mature raw-score source rows, previously committed
+calibration rows, and previously frozen candidate predictions whose six-month
+outcomes have matured. Each eventual label row must retain its original frozen
+candidate score, probability and five-session entry window; omitted or rewritten
+outcomes fail closed, and an executable entry must fall within an actual saved
+market session in that window. Members with no frozen probability remain visible
+as availability failures, carry a `CALIBRATION`, `DATA`, or `SYSTEM` classification,
+and do not enter later calibration cohorts. The frozen calibration snapshot
+counts those unavailable probabilities without exposing member identities.
+Rolling-window completeness uses all source labels mature and available by the
+frozen knowledge cutoff, regardless of caller-supplied label or publication clocks.
+The label watermark cannot exceed the research knowledge cutoff. It freezes
+selection provenance, fitted parameters, fitting and diagnostic window
+identities, historically frozen out-of-sample diagnostics, per-security
+probabilities, and the five-session window selected from the saved market
+calendar. The recent diagnostic cohort reports calibration drift only; it does
+not affect fitting, fit-window choice, or high-probability qualification. A
+diagnostic cohort below its sample floor reports `INSUFFICIENT_DATA` while the
+production fit remains eligible for release. A candidate requires probability
+at least 0.80, complete
+data, an accepted independent risk result and a scope-, version-, state- and
+calendar-matched persisted qualification valid at the cutoff. Missing qualification yields
+`RECOMMENDATION_ABSTAINED`; a valid batch with no passing member remains
+`VALID_NO_CANDIDATES`. Calibration or data failures remain visible and do not
+reuse older probabilities. A report published after the frozen window fails
+without moving it. A post-commit diagnostic alert that only moves the matching
+qualification from `VALID` to `AT_RISK` does not invalidate the already frozen
+publication; revocation, suspension, expiry, or scope/version/calendar changes
+still fail their publication checks. The authenticated report projection shows the original
+research thesis, principal risks, evidence freshness, market qualification,
+calibration and fixed validity dates. These synthetic D0 cases remain
+non-actionable and expose no personal position information.
+
 `stock-profiler decision-case-replay --business-identity <identity>` reuses the
 saved business mapping and frozen snapshot. For an older unmapped Run whose
 build provenance differs, add `--recovery-case /absolute/path/original-case.json`

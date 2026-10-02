@@ -25,6 +25,7 @@ from stock_profiler.modules.decision_cases.domain import (
     FrozenDecisionCase,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ReportPublication,
     ResultAccessScope,
     StageResult,
     stored_decision_event_payload,
@@ -34,6 +35,9 @@ from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping as BusinessObjectMapping,
 )
 from stock_profiler.modules.decision_cases.ports import (
+    CandidateAvailabilityFailureFact as CandidateAvailabilityFailureFact,
+)
+from stock_profiler.modules.decision_cases.ports import (
     DecisionEventCommitError as DecisionEventCommitError,
 )
 from stock_profiler.modules.decision_cases.ports import (
@@ -41,6 +45,9 @@ from stock_profiler.modules.decision_cases.ports import (
 )
 from stock_profiler.modules.decision_cases.ports import (
     FormalReportCommitUncertainError as FormalReportCommitUncertainError,
+)
+from stock_profiler.modules.decision_cases.ports import (
+    ResearchAvailabilityFailureFact as ResearchAvailabilityFailureFact,
 )
 from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
@@ -117,6 +124,20 @@ DECISION_NOTIFICATION_ATTEMPTS = Table(
     Column("reasons_payload", String, nullable=False),
     Column("recorded_at", String(40), nullable=False),
 )
+_CANDIDATE_PUBLICATION_CLOSURE_FAILURES = frozenset(
+    {
+        "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+        "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+    }
+)
+
+
+def _is_candidate_publication_closure_failure(stage: StageResult) -> bool:
+    return (
+        stage.phase == "PUBLICATION"
+        and stage.status == "FAILED"
+        and bool(set(stage.reasons).intersection(_CANDIDATE_PUBLICATION_CLOSURE_FAILURES))
+    )
 
 
 def _decode_research_event_payload(
@@ -170,6 +191,176 @@ class DecisionLedger:
     def observed_at(self) -> str:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
+
+    def research_event_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read same-scope frozen research facts, including committed failures."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection,
+                "research calibration history is unavailable",
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.research is not None
+        )
+
+    def research_availability_failure_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[ResearchAvailabilityFailureFact, ...]:
+        """Read failed uncommitted research-path stages with their frozen cohort inputs."""
+        statement = (
+            select(
+                DECISION_STAGE_EVENTS.c.framework_run_id,
+                DECISION_STAGE_EVENTS.c.stage_payload,
+                DECISION_STAGE_EVENTS.c.recorded_at,
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+            )
+            .select_from(
+                DECISION_STAGE_EVENTS.join(
+                    DECISION_CASE_BUSINESS_OBJECTS,
+                    DECISION_STAGE_EVENTS.c.business_object_id
+                    == DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id,
+                )
+            )
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        failures = []
+        for row in connection.execute(statement):
+            if row.case_payload is None:
+                continue
+            try:
+                case = FrozenDecisionCase.model_validate_json(row.case_payload)
+                stage_result = StageResult.model_validate_json(row.stage_payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                raise DecisionEventCommitError(
+                    "research availability history is unavailable"
+                ) from error
+            if (
+                case.access_scope is None
+                or not case.access_scope.same_scope_as(access_scope)
+                or case.research is None
+                or stage_result.phase
+                not in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
+                or stage_result.status != "FAILED"
+            ):
+                continue
+            failures.append(
+                ResearchAvailabilityFailureFact(
+                    case=case,
+                    framework_run_id=row.framework_run_id,
+                    stage_result=stage_result,
+                    recorded_at=row.recorded_at,
+                )
+            )
+        return tuple(failures)
+
+    def candidate_availability_failure_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[CandidateAvailabilityFailureFact, ...]:
+        """Read failed candidate stages with their snapshots and any run commit time."""
+        committed_at = (
+            select(func.min(DECISION_EVENTS.c.committed_at))
+            .where(DECISION_EVENTS.c.framework_run_id == DECISION_STAGE_EVENTS.c.framework_run_id)
+            .scalar_subquery()
+        )
+        statement = (
+            select(
+                DECISION_STAGE_EVENTS.c.framework_run_id,
+                DECISION_STAGE_EVENTS.c.stage_payload,
+                DECISION_STAGE_EVENTS.c.recorded_at,
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+                committed_at.label("committed_at"),
+            )
+            .select_from(
+                DECISION_STAGE_EVENTS.join(
+                    DECISION_CASE_BUSINESS_OBJECTS,
+                    DECISION_STAGE_EVENTS.c.business_object_id
+                    == DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id,
+                )
+            )
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        failures = []
+        for row in connection.execute(statement):
+            if row.case_payload is None:
+                continue
+            try:
+                case = FrozenDecisionCase.model_validate_json(row.case_payload)
+                stage_result = StageResult.model_validate_json(row.stage_payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                raise DecisionEventCommitError(
+                    "candidate availability history is unavailable"
+                ) from error
+            if (
+                case.access_scope is None
+                or not case.access_scope.same_scope_as(access_scope)
+                or case.candidate_release is None
+                or stage_result.phase
+                not in {
+                    "FRAMEWORK_RUN",
+                    "HOST_VALIDATION",
+                    "BUSINESS_COMMIT",
+                    "CANDIDATE_RELEASE",
+                }
+                or stage_result.status not in {"FAILED", "CANCELLED"}
+            ):
+                continue
+            failures.append(
+                CandidateAvailabilityFailureFact(
+                    case=case,
+                    framework_run_id=row.framework_run_id,
+                    stage_result=stage_result,
+                    recorded_at=row.recorded_at,
+                    committed_at=row.committed_at,
+                )
+            )
+        return tuple(failures)
+
+    def candidate_calibration_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read prior immutable calibration snapshots in the same access scope."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection,
+                "candidate calibration history is unavailable",
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.result.candidate_release is not None
+            and fact.result.candidate_release.calibration is not None
+        )
+
+    def candidate_release_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read same-scope candidate attempts, including commits without outcomes."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection,
+                "candidate release history is unavailable",
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.case.candidate_release is not None
+        )
 
     def execution_plan_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
@@ -856,10 +1047,11 @@ class DecisionLedger:
         framework_run_id: str | None = None,
         allow_repeated_occurrence: bool = False,
         recorded_at: str | None = None,
-    ) -> None:
-        """Append a phase outcome without replacing an earlier result family."""
+    ) -> str | None:
+        """Append a phase outcome and return its write timestamp when inserted."""
         durable_framework_run_id = framework_run_id or case.framework_run_id
         stage_payload = _canonical_json(stage_result.model_dump(mode="json", exclude_none=True))
+        write_timestamp = recorded_at or self.observed_at()
         if stage_event_id is not None:
             self._insert_or_validate_stage_result(
                 connection,
@@ -869,9 +1061,9 @@ class DecisionLedger:
                 decision_event_id=decision_event_id,
                 stage_payload=stage_payload,
                 stage_result=stage_result,
-                recorded_at=recorded_at or self.observed_at(),
+                recorded_at=write_timestamp,
             )
-            return
+            return write_timestamp
         occurrence_count = int(
             connection.execute(
                 select(func.count())
@@ -885,7 +1077,7 @@ class DecisionLedger:
             ).scalar_one()
         )
         if occurrence_count and not allow_repeated_occurrence:
-            return
+            return None
         occurrence = occurrence_count + 1 if allow_repeated_occurrence else 1
         self._insert_or_validate_stage_result(
             connection,
@@ -901,8 +1093,9 @@ class DecisionLedger:
             decision_event_id=decision_event_id,
             stage_payload=stage_payload,
             stage_result=stage_result,
-            recorded_at=recorded_at or self.observed_at(),
+            recorded_at=write_timestamp,
         )
+        return write_timestamp
 
     def _insert_or_validate_stage_result(
         self,
@@ -1306,7 +1499,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1334,7 +1527,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1375,7 +1568,7 @@ class DecisionLedger:
             return None
         if not self._has_confirmed_business_commit(
             connection, row.decision_event_id
-        ) or not self._has_confirmed_publication(connection, row.decision_event_id):
+        ) or not self._has_confirmed_report_visibility(connection, row.decision_event_id):
             return None
         return self._with_publication_history(
             connection,
@@ -1435,23 +1628,62 @@ class DecisionLedger:
         report: FormalReport,
     ) -> FormalReport:
         """Acquire saved stage facts; the report contract owns their visible selection."""
-        event_stages = tuple(
-            stage_result
-            for stage_result in (
-                StageResult.model_validate_json(payload)
-                for payload in connection.execute(
-                    select(DECISION_STAGE_EVENTS.c.stage_payload)
-                    .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
-                    .order_by(DECISION_STAGE_EVENTS.c.sequence)
-                ).scalars()
+        saved_stages = tuple(
+            (StageResult.model_validate_json(payload), recorded_at)
+            for payload, recorded_at in connection.execute(
+                select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
+                .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
+                .order_by(DECISION_STAGE_EVENTS.c.sequence)
             )
         )
+        event_stages = tuple(stage for stage, _ in saved_stages)
+        candidate_publication_failures = tuple(
+            (stage, recorded_at)
+            for stage, recorded_at in saved_stages
+            if _is_candidate_publication_closure_failure(stage)
+        )
+        if report.result.candidate_release is not None and candidate_publication_failures:
+            committed_at = next(
+                (
+                    recorded_at
+                    for stage, recorded_at in saved_stages
+                    if stage.phase == "BUSINESS_COMMIT" and stage.status == "SUCCEEDED"
+                ),
+                None,
+            )
+            if committed_at is None:
+                raise DecisionEventCommitError("candidate report commit clock is unavailable")
+            failure_stage, failure_recorded_at = candidate_publication_failures[-1]
+            return report.with_candidate_publication_failure(
+                failure_stage,
+                committed_at=committed_at,
+                failure_recorded_at=failure_recorded_at,
+            )
         projected = report.with_publication_history(event_stages)
         if report.result.monitoring is None:
+            if report.result.candidate_release is not None:
+                clocks = {
+                    stage.phase: recorded_at
+                    for stage, recorded_at in saved_stages
+                    if stage.status == "SUCCEEDED"
+                }
+                if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+                    raise DecisionEventCommitError(
+                        "candidate report publication clocks are unavailable"
+                    )
+                return projected.model_copy(
+                    update={
+                        "report_publication": ReportPublication(
+                            status="PUBLISHED",
+                            committed_at=clocks["BUSINESS_COMMIT"],
+                            published_at=clocks["PUBLICATION"],
+                        )
+                    }
+                )
             return projected
         from stock_profiler.modules.delivery.monitoring_contracts import MonitoringPublication
 
-        clocks: dict[str, str] = {}
+        monitoring_clocks: dict[str, str] = {}
         for payload, recorded_at in connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload, DECISION_STAGE_EVENTS.c.recorded_at)
             .where(DECISION_STAGE_EVENTS.c.decision_event_id == report.event_id)
@@ -1459,30 +1691,31 @@ class DecisionLedger:
         ):
             stage = StageResult.model_validate_json(payload)
             if stage.status == "SUCCEEDED":
-                clocks.setdefault(stage.phase, recorded_at)
-        if "BUSINESS_COMMIT" not in clocks or "PUBLICATION" not in clocks:
+                monitoring_clocks.setdefault(stage.phase, recorded_at)
+        if "BUSINESS_COMMIT" not in monitoring_clocks or "PUBLICATION" not in monitoring_clocks:
             raise DecisionEventCommitError("monitoring publication clocks are unavailable")
         return projected.model_copy(
             update={
                 "monitoring_publication": MonitoringPublication(
-                    committed_at=clocks["BUSINESS_COMMIT"], published_at=clocks["PUBLICATION"]
+                    committed_at=monitoring_clocks["BUSINESS_COMMIT"],
+                    published_at=monitoring_clocks["PUBLICATION"],
                 )
             }
         )
 
-    def _has_confirmed_publication(self, connection: Connection, decision_event_id: str) -> bool:
-        """Expose a report only after an append-only publication success was saved."""
+    def _has_confirmed_report_visibility(
+        self, connection: Connection, decision_event_id: str
+    ) -> bool:
+        """Expose a report after publication or a recognized candidate closure failure."""
         stage_payloads = connection.execute(
             select(DECISION_STAGE_EVENTS.c.stage_payload).where(
                 DECISION_STAGE_EVENTS.c.decision_event_id == decision_event_id
             )
         ).scalars()
-        return any(
-            stage_result.phase == "PUBLICATION" and stage_result.status == "SUCCEEDED"
-            for stage_result in (
-                StageResult.model_validate_json(payload) for payload in stage_payloads
-            )
-        )
+        stages = tuple(StageResult.model_validate_json(payload) for payload in stage_payloads)
+        if any(stage.phase == "PUBLICATION" and stage.status == "SUCCEEDED" for stage in stages):
+            return True
+        return any(_is_candidate_publication_closure_failure(stage) for stage in stages)
 
     def counts(self) -> dict[str, int]:
         """Expose only test-facing cardinalities for this D0 seam."""

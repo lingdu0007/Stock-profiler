@@ -3641,6 +3641,9 @@ def test_correction_migration_rejects_a_nested_case_that_breaks_the_mapping_line
     }
     event = DecisionEventFact.model_validate(event_payload)
     report = event.formal_report(case.report_version_id)
+    legacy_event_payload = event.model_dump(mode="json")
+    for stage_result in legacy_event_payload["stage_results"]:
+        stage_result.pop("availability_failure", None)
     engine = create_engine(settings.app_database_url)
     with engine.begin() as connection:
         connection.execute(
@@ -3691,7 +3694,7 @@ def test_correction_migration_rejects_a_nested_case_that_breaks_the_mapping_line
                 "decision_event_id": case.decision_event_id,
                 "business_object_id": case.business_object_id,
                 "framework_run_id": case.framework_run_id,
-                "event_payload": event.model_dump_json(),
+                "event_payload": json.dumps(legacy_event_payload),
                 "committed_at": case.report_generated_at,
             },
         )

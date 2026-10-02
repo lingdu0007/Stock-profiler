@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     AwareDatetime,
@@ -22,6 +23,13 @@ from pydantic import (
     PrivateAttr,
     StrictBool,
     model_validator,
+)
+
+from stock_profiler.modules.portfolio.market_calendar import (
+    market_session_close_on,
+    next_market_session_open_after,
+    six_month_terminal_evaluation_at,
+    synthetic_market_calendar,
 )
 
 RESEARCH_CONTRACT_VERSION = "1.0.0"
@@ -85,7 +93,9 @@ RAW_SCORE_TRAINING_WINDOW_POLICY: Literal["EXPANDING_60_TO_119_ROLLING_120"] = (
     "EXPANDING_60_TO_119_ROLLING_120"
 )
 RAW_SCORE_LABEL_HORIZON_MONTHS = 6
+RAW_SCORE_MARKET_CALENDAR_VERSION = "synthetic-market-calendar-v1"
 RAW_SCORE_TRAINING_START_MONTH = "2036-12"
+RAW_SCORE_CALIBRATION_HISTORY_START_MONTH = "2032-09"
 RAW_SCORE_PENALTY_STRENGTH = Decimal("1")
 RAW_SCORE_INTERCEPT = Decimal("-0.40")
 RAW_SCORE_L1_RATIO = Decimal("0.25")
@@ -533,17 +543,48 @@ class RawScoreTrainingCohort(ResearchContract):
 
 
 class RawScoreTrainingRecord(ResearchContract):
-    """Frozen evidence that one historical raw-score label is eligible."""
+    """Frozen out-of-sample score, executable entry, and terminal label evidence."""
 
     month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     cohort_id: str = Field(min_length=1)
     security_id: str = Field(min_length=1)
     research_id: str = Field(min_length=1)
     selection_cutoff_at: AwareDatetime
-    evaluation_entry_at: AwareDatetime
+    raw_score_frozen_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    raw_score_training_watermark_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    raw_success_score: Decimal | None = Field(default=None, exclude_if=lambda value: value is None)
+    historical_calibrated_probability: Decimal | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    historical_calibration_failure: Literal["CALIBRATION", "DATA", "SYSTEM"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    entry_window_ends_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    evaluation_entry_at: AwareDatetime | None = None
+    unified_maturity_at: AwareDatetime | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    market_calendar_version: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     terminal_label: StrictBool
     label_available_at: AwareDatetime
     source_model_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_calibration_availability(self) -> RawScoreTrainingRecord:
+        if (
+            self.historical_calibrated_probability is not None
+            and self.historical_calibration_failure is not None
+        ):
+            raise ValueError("calibration probability and failure classification are exclusive")
+        return self
 
 
 class RawScoreModelSnapshot(ResearchContract):
@@ -563,6 +604,15 @@ class RawScoreModelSnapshot(ResearchContract):
     label_watermark_at: AwareDatetime
     training_cohorts: tuple[RawScoreTrainingCohort, ...] = Field(min_length=1)
     training_records: tuple[RawScoreTrainingRecord, ...] = Field(min_length=1)
+    calibration_history_cohorts: tuple[RawScoreTrainingCohort, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    calibration_history_records: tuple[RawScoreTrainingRecord, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    calibration_evidence_version: (
+        Literal["frozen-oos-calibration-v1", "frozen-oos-calibration-v2"] | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     normalization_snapshot_id: str = Field(min_length=1)
     mature_months: int = Field(ge=0)
     training_record_count: int = Field(ge=0)
@@ -610,10 +660,22 @@ class RawScoreModelSnapshot(ResearchContract):
         if not legacy_decoding:
             if self.label_watermark_at is None:
                 raise ValueError("raw-score label watermark date is required")
-            if self.label_watermark_at.strftime("%Y-%m") != self.label_watermark_month:
+            if (
+                self.label_watermark_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != self.label_watermark_month
+            ):
                 raise ValueError("raw-score label watermark date does not match its month")
             if not self.training_cohorts or not self.training_records:
                 raise ValueError("raw-score training provenance is required")
+            training_cohorts_by_id = {cohort.cohort_id: cohort for cohort in self.training_cohorts}
+            history_cohorts_by_id = {
+                cohort.cohort_id: cohort for cohort in self.calibration_history_cohorts
+            }
+            if any(
+                training_cohorts_by_id[cohort_id] != history_cohorts_by_id[cohort_id]
+                for cohort_id in training_cohorts_by_id.keys() & history_cohorts_by_id.keys()
+            ):
+                raise ValueError("raw-score frozen cohort identity was reused with new membership")
             security_month_keys = [
                 (record.month, record.security_id) for record in self.training_records
             ]
@@ -683,35 +745,121 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score training records must use the frozen model version")
             if any(
-                record.selection_cutoff_at.strftime("%Y-%m") != record.month
+                record.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != record.month
                 for record in self.training_records
             ):
                 raise ValueError("raw-score training record cutoff does not match its month")
             if any(
-                record.evaluation_entry_at <= record.selection_cutoff_at
+                record.terminal_label and record.evaluation_entry_at is None
+                for record in self.training_records
+            ):
+                raise ValueError("positive raw-score label requires an evaluation entry")
+            if any(
+                record.evaluation_entry_at is not None
+                and record.evaluation_entry_at <= record.selection_cutoff_at
                 for record in self.training_records
             ):
                 raise ValueError("raw-score evaluation entry must follow the selection cutoff")
-            if any(record.evaluation_entry_at.weekday() >= 5 for record in self.training_records):
-                raise ValueError("raw-score evaluation entry must be a synthetic trading day")
             if any(
-                _raw_score_label_available_at(record.evaluation_entry_at)
-                > record.label_available_at
+                record.evaluation_entry_at is not None
+                and record.market_calendar_version is None
+                and record.evaluation_entry_at.astimezone(UTC).weekday() >= 5
                 for record in self.training_records
             ):
-                raise ValueError("raw-score training record label maturity is incomplete")
+                raise ValueError("raw-score evaluation entry must be a synthetic trading day")
+            required_evidence_fields = (
+                "raw_score_frozen_at",
+                "raw_score_training_watermark_at",
+                "raw_success_score",
+                "entry_window_ends_at",
+                "unified_maturity_at",
+            )
+            record_evidence = tuple(
+                tuple(getattr(record, field_name) for field_name in required_evidence_fields)
+                for record in self.training_records
+            )
+            has_calibration_evidence = any(
+                value is not None for values in record_evidence for value in values
+            )
+            if has_calibration_evidence != (
+                self.calibration_evidence_version
+                in {"frozen-oos-calibration-v1", "frozen-oos-calibration-v2"}
+            ):
+                raise ValueError("raw-score calibration evidence version is incomplete")
+            if has_calibration_evidence and any(
+                value is None for values in record_evidence for value in values
+            ):
+                raise ValueError("raw-score calibration evidence is incomplete")
+            if self.calibration_evidence_version != "frozen-oos-calibration-v2" and any(
+                record.historical_calibrated_probability is not None
+                for record in self.training_records
+            ):
+                raise ValueError("raw-score calibration probability version is incomplete")
+            if self.calibration_evidence_version == "frozen-oos-calibration-v2" and any(
+                record.historical_calibrated_probability is None
+                and record.historical_calibration_failure is None
+                for record in self.training_records
+            ):
+                raise ValueError("calibration probability failure must be classified")
+            if has_calibration_evidence:
+                for record in self.training_records:
+                    assert record.raw_score_frozen_at is not None
+                    assert record.raw_score_training_watermark_at is not None
+                    assert record.raw_success_score is not None
+                    assert record.entry_window_ends_at is not None
+                    assert record.unified_maturity_at is not None
+                    assert record.market_calendar_version is not None
+                    if (
+                        record.raw_score_frozen_at != record.selection_cutoff_at
+                        or record.raw_score_training_watermark_at > record.raw_score_frozen_at
+                        or not record.raw_success_score.is_finite()
+                        or (
+                            record.historical_calibrated_probability is not None
+                            and not (
+                                Decimal("0")
+                                < record.historical_calibrated_probability
+                                < Decimal("1")
+                            )
+                        )
+                        or not _raw_score_entry_window_is_valid(record)
+                    ):
+                        raise ValueError(
+                            "raw-score calibration evidence has invalid clocks or label"
+                        )
+                    maturity_anchor = record.evaluation_entry_at or record.entry_window_ends_at
+                    if record.unified_maturity_at != raw_score_maturity_at(
+                        maturity_anchor, record.market_calendar_version
+                    ):
+                        raise ValueError(
+                            "raw-score unified maturity does not match the entry horizon"
+                        )
+                    if record.label_available_at < record.unified_maturity_at:
+                        raise ValueError("raw-score label maturity is incomplete")
+            for record in self.training_records:
+                maturity_anchor = (
+                    record.evaluation_entry_at
+                    or record.entry_window_ends_at
+                    or _raw_score_evaluation_entry_at(record.selection_cutoff_at)
+                    + timedelta(days=1)
+                )
+                if record.label_available_at < _raw_score_label_available_at(
+                    maturity_anchor, record.market_calendar_version
+                ):
+                    raise ValueError("raw-score label maturity is incomplete")
             if any(
-                self.label_watermark_at is None
-                or record.label_available_at > self.label_watermark_at
+                record.label_available_at > self.label_watermark_at
                 for record in self.training_records
             ):
                 raise ValueError(
                     "raw-score training record exceeds the label availability watermark"
                 )
-            if max(record.label_available_at for record in self.training_records) != (
+            if max(record.label_available_at for record in self.training_records) > (
                 self.label_watermark_at
             ):
-                raise ValueError("raw-score label watermark must match the latest training record")
+                raise ValueError("raw-score training record exceeds the label watermark")
+        if self.calibration_history_records or self.calibration_history_cohorts:
+            self._validate_calibration_history()
         if self.interaction_terms:
             raise ValueError("raw-score model snapshot must not contain interaction terms")
         if set(self.coefficients) != set(RAW_SCORE_INPUT_IDS):
@@ -751,6 +899,87 @@ class RawScoreModelSnapshot(ResearchContract):
             ):
                 raise ValueError("raw-score mature window must use the expanding policy")
         return self
+
+    def _validate_calibration_history(self) -> None:
+        if not self.calibration_history_records or not self.calibration_history_cohorts:
+            raise ValueError("raw-score calibration history requires records and cohorts")
+        cohorts = {cohort.cohort_id: cohort for cohort in self.calibration_history_cohorts}
+        if len(cohorts) != len(self.calibration_history_cohorts):
+            raise ValueError("raw-score calibration history cohorts must be unique")
+        cohort_months = {cohort.month for cohort in self.calibration_history_cohorts}
+        if len(cohort_months) != len(self.calibration_history_cohorts):
+            raise ValueError("raw-score calibration history must have one frozen cohort per month")
+        records_by_cohort: dict[str, list[RawScoreTrainingRecord]] = {}
+        identities: set[tuple[str, str, str]] = set()
+        security_month_identities: set[tuple[str, str]] = set()
+        for record in self.calibration_history_records:
+            identity = (record.month, record.security_id, record.research_id)
+            security_month_identity = (record.month, record.security_id)
+            cohort = cohorts.get(record.cohort_id)
+            if identity in identities:
+                raise ValueError("raw-score calibration history records must be unique")
+            if security_month_identity in security_month_identities:
+                raise ValueError("raw-score calibration history security-months must be unique")
+            identities.add(identity)
+            security_month_identities.add(security_month_identity)
+            if (
+                cohort is None
+                or record.month != cohort.month
+                or cohort.completed_research_ids.get(record.security_id) != record.research_id
+            ):
+                raise ValueError("raw-score calibration history must bind to frozen cohorts")
+            if (
+                record.selection_cutoff_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+                != record.month
+            ):
+                raise ValueError(
+                    "raw-score calibration history prediction cutoff does not match its month"
+                )
+            if record.source_model_version != self.model_version:
+                raise ValueError("raw-score calibration history model version is inconsistent")
+            if (
+                self.label_watermark_at is None
+                or record.label_available_at > self.label_watermark_at
+            ):
+                raise ValueError("raw-score calibration history exceeds the label watermark")
+            if (
+                record.historical_calibrated_probability is None
+                and record.historical_calibration_failure is None
+            ):
+                raise ValueError("calibration probability failure must be classified")
+            if (
+                record.raw_score_frozen_at != record.selection_cutoff_at
+                or record.raw_score_training_watermark_at is None
+                or record.raw_score_training_watermark_at > record.raw_score_frozen_at
+                or record.raw_success_score is None
+                or not record.raw_success_score.is_finite()
+                or (
+                    record.historical_calibrated_probability is not None
+                    and not Decimal("0") < record.historical_calibrated_probability < Decimal("1")
+                )
+                or record.entry_window_ends_at is None
+                or record.unified_maturity_at is None
+                or record.market_calendar_version is None
+                or record.label_available_at < record.unified_maturity_at
+                or record.unified_maturity_at
+                != raw_score_maturity_at(
+                    record.evaluation_entry_at or record.entry_window_ends_at,
+                    record.market_calendar_version,
+                )
+            ):
+                raise ValueError("raw-score calibration history evidence is incomplete")
+            if not _raw_score_entry_window_is_valid(record):
+                raise ValueError("raw-score calibration history has invalid entry window or clock")
+            if record.evaluation_entry_at is None and record.terminal_label:
+                raise ValueError("invalid entry must be labeled unsuccessful")
+            records_by_cohort.setdefault(record.cohort_id, []).append(record)
+        if set(cohorts) != set(records_by_cohort):
+            raise ValueError("raw-score calibration history cohorts must contain records")
+        for cohort in self.calibration_history_cohorts:
+            if {record.security_id for record in records_by_cohort[cohort.cohort_id]} != set(
+                cohort.completed_research_ids
+            ):
+                raise ValueError("raw-score calibration history must cover frozen cohort members")
 
     @property
     def has_sufficient_training_evidence(self) -> bool:
@@ -809,15 +1038,186 @@ def _raw_score_month_end(month: str) -> datetime:
         year,
         month_number,
         monthrange(year, month_number)[1],
-        23,
+        15,
         59,
         59,
         tzinfo=UTC,
     )
 
 
-def _raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
-    """Return the first synthetic weekday session after the frozen cutoff."""
+def _raw_score_market_sessions(
+    market_calendar_version: str,
+    first_date: datetime,
+) -> tuple[datetime, ...]:
+    """Resolve the five entry-window closes from the active calendar or extended history."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        raise ValueError("MARKET_CALENDAR_VERSION_UNSUPPORTED")
+    first_session_date = first_date.astimezone(UTC).date()
+    saved_sessions = calendar.sessions
+    if saved_sessions and first_session_date < saved_sessions[0].closed_at.date():
+        terminal_sessions = calendar.terminal_sessions or saved_sessions
+        first_coverage_date = saved_sessions[0].closed_at.date()
+        last_coverage_date = saved_sessions[-1].closed_at.date()
+        saved_session_closes = tuple(session.closed_at for session in saved_sessions)
+        preceding_sessions = tuple(
+            session.closed_at
+            for session in terminal_sessions
+            if first_session_date <= session.closed_at.date() < first_coverage_date
+        )
+        if not preceding_sessions or preceding_sessions[0].date() != first_session_date:
+            raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+        following_sessions = tuple(
+            session.closed_at
+            for session in terminal_sessions
+            if session.closed_at.date() > last_coverage_date
+        )
+        window_sessions = (preceding_sessions + saved_session_closes + following_sessions)[:5]
+        if len(window_sessions) == 5:
+            return window_sessions
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    if saved_sessions and saved_sessions[0].closed_at.date() <= first_session_date <= (
+        saved_sessions[-1].closed_at.date()
+    ):
+        primary_sessions = tuple(
+            session.closed_at
+            for session in saved_sessions
+            if session.closed_at.date() >= first_session_date
+        )
+        if not primary_sessions or primary_sessions[0].date() != first_session_date:
+            raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+        if len(primary_sessions) >= 5:
+            return primary_sessions[:5]
+        terminal_following_sessions = tuple(
+            session.closed_at
+            for session in calendar.terminal_sessions or saved_sessions
+            if session.closed_at.date() > primary_sessions[-1].date()
+        )
+        window_sessions = (
+            primary_sessions + terminal_following_sessions[: 5 - len(primary_sessions)]
+        )
+        if len(window_sessions) == 5:
+            return window_sessions
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    primary_sessions = tuple(
+        session.closed_at
+        for session in calendar.terminal_sessions or saved_sessions
+        if session.closed_at.date() >= first_session_date
+    )[:5]
+    if len(primary_sessions) != 5:
+        raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
+    return primary_sessions
+
+
+def _raw_score_evaluation_entry_at(
+    selection_cutoff_at: datetime,
+    market_calendar_version: str = RAW_SCORE_MARKET_CALENDAR_VERSION,
+) -> datetime:
+    """Return the first executable open after the frozen cutoff from its calendar."""
+    return next_market_session_open_after(selection_cutoff_at, market_calendar_version)
+
+
+def raw_score_maturity_at(evaluation_entry_at: datetime, market_calendar_version: str) -> datetime:
+    """Return the synthetic terminal session close on or before the calendar horizon."""
+    return six_month_terminal_evaluation_at(evaluation_entry_at, market_calendar_version)
+
+
+def raw_score_entry_window_end(
+    evaluation_entry_at: datetime, market_calendar_version: str
+) -> datetime:
+    """Return the fifth frozen weekday session close in the versioned synthetic calendar."""
+    return _raw_score_market_sessions(market_calendar_version, evaluation_entry_at)[-1]
+
+
+def raw_score_entry_is_executable(
+    evaluation_entry_at: datetime, market_calendar_version: str
+) -> bool:
+    """Return whether a frozen entry clock falls inside its versioned market session."""
+    calendar = synthetic_market_calendar(market_calendar_version)
+    if calendar is None:
+        return False
+    session_close = market_session_close_on(
+        evaluation_entry_at.astimezone(UTC).date(),
+        market_calendar_version,
+    )
+    if session_close is None:
+        return False
+    opens_at = session_close - timedelta(hours=7)
+    return opens_at <= evaluation_entry_at <= session_close
+
+
+def _raw_score_entry_window_is_valid(record: RawScoreTrainingRecord) -> bool:
+    """Validate the frozen five-session window and any selected executable entry."""
+    if (
+        record.raw_score_frozen_at is None
+        or record.entry_window_ends_at is None
+        or record.market_calendar_version is None
+        or record.entry_window_ends_at <= record.raw_score_frozen_at
+    ):
+        return False
+    first_entry_at = _raw_score_evaluation_entry_at(
+        record.selection_cutoff_at, record.market_calendar_version
+    )
+    if record.entry_window_ends_at != raw_score_entry_window_end(
+        first_entry_at, record.market_calendar_version
+    ):
+        return False
+    if record.evaluation_entry_at is None:
+        return True
+    return bool(
+        record.raw_score_frozen_at <= record.evaluation_entry_at <= record.entry_window_ends_at
+        and record.evaluation_entry_at >= first_entry_at
+        and raw_score_entry_is_executable(
+            record.evaluation_entry_at, record.market_calendar_version
+        )
+    )
+
+
+def _raw_score_label_available_at(
+    evaluation_entry_at: datetime,
+    market_calendar_version: str | None,
+) -> datetime:
+    """Preserve the legacy horizon clock when no frozen calendar version exists."""
+    if market_calendar_version is None:
+        candidate = _raw_score_add_months(evaluation_entry_at, RAW_SCORE_LABEL_HORIZON_MONTHS)
+        while candidate.weekday() >= 5:
+            candidate -= timedelta(days=1)
+        return candidate
+    return raw_score_maturity_at(evaluation_entry_at, market_calendar_version)
+
+
+def _raw_score_mature_training_months(
+    cutoff_at: datetime,
+    market_calendar_version: str | None,
+) -> tuple[str, ...]:
+    """Return fixed-inception months mature under the frozen calendar or legacy clock."""
+    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    mature_months: list[str] = []
+    for month in _training_month_sequence(start_year, start_month, 1200):
+        selection_cutoff_at = _raw_score_month_end(month)
+        if market_calendar_version is None:
+            evaluation_entry_at = _legacy_raw_score_evaluation_entry_at(selection_cutoff_at)
+            label_available_at = _raw_score_label_available_at(
+                evaluation_entry_at, market_calendar_version
+            )
+        else:
+            evaluation_entry_at = _raw_score_evaluation_entry_at(
+                selection_cutoff_at, market_calendar_version
+            )
+            entry_window_ends_at = raw_score_entry_window_end(
+                evaluation_entry_at, market_calendar_version
+            )
+            label_available_at = _raw_score_label_available_at(
+                entry_window_ends_at, market_calendar_version
+            )
+        if label_available_at > cutoff_at:
+            break
+        mature_months.append(month)
+    return tuple(mature_months)
+
+
+def _legacy_raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
+    """Preserve the pre-calendar weekday entry convention for legacy records."""
     candidate = selection_cutoff_at.replace(
         hour=16,
         minute=0,
@@ -829,39 +1229,22 @@ def _raw_score_evaluation_entry_at(selection_cutoff_at: datetime) -> datetime:
     return candidate
 
 
-def _raw_score_label_available_at(evaluation_entry_at: datetime) -> datetime:
-    """Apply the six-month horizon and roll a weekend target back to Friday."""
-    candidate = _raw_score_add_months(evaluation_entry_at, RAW_SCORE_LABEL_HORIZON_MONTHS)
-    while candidate.weekday() >= 5:
-        candidate -= timedelta(days=1)
-    return candidate
-
-
-def _raw_score_mature_training_months(cutoff_at: datetime) -> tuple[str, ...]:
-    """Return every fixed-inception month whose terminal label is mature by the cutoff."""
-    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
-    mature_months: list[str] = []
-    for month in _training_month_sequence(start_year, start_month, 1200):
-        selection_cutoff_at = _raw_score_month_end(month)
-        evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        if _raw_score_label_available_at(evaluation_entry_at) > cutoff_at:
-            break
-        mature_months.append(month)
-    return tuple(mature_months)
-
-
 def _frozen_raw_score_training_records(
     training_months: tuple[str, ...],
+    *,
+    cohort_id_prefix: str = "synthetic-training-cohort",
 ) -> tuple[tuple[RawScoreTrainingCohort, ...], tuple[RawScoreTrainingRecord, ...]]:
     cohorts: list[RawScoreTrainingCohort] = []
     records: list[RawScoreTrainingRecord] = []
     record_index = 0
     for month_index, month in enumerate(training_months):
-        record_count = 9 if month_index < 20 else 8
+        record_count = 9 if month_index < 20 or month_index >= 36 else 8
         selection_cutoff_at = _raw_score_month_end(month)
         evaluation_entry_at = _raw_score_evaluation_entry_at(selection_cutoff_at)
-        label_available_at = _raw_score_label_available_at(evaluation_entry_at)
-        cohort_id = f"synthetic-training-cohort-{month}"
+        entry_window_ends_at = raw_score_entry_window_end(
+            evaluation_entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION
+        )
+        cohort_id = f"{cohort_id_prefix}-{month}"
         member_security_ids = tuple(
             f"synthetic-training-security-{month_index * 10 + member_index:04}"
             for member_index in range(10)
@@ -880,7 +1263,14 @@ def _frozen_raw_score_training_records(
                 research_definition_version=RESEARCH_DEFINITION_VERSION,
             )
         )
-        for security_id, research_id in completed_research_ids.items():
+        for member_index, (security_id, research_id) in enumerate(completed_research_ids.items()):
+            entry_is_valid = record_index % 25 != 0
+            terminal_label = member_index >= record_count // 2 and entry_is_valid
+            maturity_anchor = evaluation_entry_at if entry_is_valid else entry_window_ends_at
+            raw_success_score = Decimal(member_index) / Decimal("10")
+            unified_maturity_at = raw_score_maturity_at(
+                maturity_anchor, RAW_SCORE_MARKET_CALENDAR_VERSION
+            )
             records.append(
                 RawScoreTrainingRecord(
                     month=month,
@@ -888,9 +1278,18 @@ def _frozen_raw_score_training_records(
                     security_id=security_id,
                     research_id=research_id,
                     selection_cutoff_at=selection_cutoff_at,
-                    evaluation_entry_at=evaluation_entry_at,
-                    terminal_label=record_index % 2 == 0,
-                    label_available_at=label_available_at,
+                    raw_score_frozen_at=selection_cutoff_at,
+                    raw_score_training_watermark_at=selection_cutoff_at - timedelta(days=1),
+                    raw_success_score=raw_success_score,
+                    historical_calibrated_probability=(
+                        Decimal("0.1") + raw_success_score * Decimal("0.8")
+                    ),
+                    entry_window_ends_at=entry_window_ends_at,
+                    evaluation_entry_at=evaluation_entry_at if entry_is_valid else None,
+                    unified_maturity_at=unified_maturity_at,
+                    market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+                    terminal_label=terminal_label,
+                    label_available_at=unified_maturity_at,
                     source_model_version=RAW_SCORE_MODEL_VERSION,
                 )
             )
@@ -901,9 +1300,27 @@ def _frozen_raw_score_training_records(
 def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
     """Return the deterministic D0 model artifact without claiming live training."""
     start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    calibration_history_start_year, calibration_history_start_month = (
+        int(part) for part in RAW_SCORE_CALIBRATION_HISTORY_START_MONTH.split("-")
+    )
+    calibration_history_months = _training_month_sequence(
+        calibration_history_start_year, calibration_history_start_month, 111
+    )
     training_months = _training_month_sequence(start_year, start_month, 60)
+    training_month_set = set(training_months)
     training_cohorts, training_records = _frozen_raw_score_training_records(training_months)
-    label_watermark_at = max(record.label_available_at for record in training_records)
+    history_only_months = tuple(
+        month for month in calibration_history_months if month not in training_month_set
+    )
+    history_only_cohorts, history_only_records = _frozen_raw_score_training_records(
+        history_only_months,
+        cohort_id_prefix="synthetic-calibration-history-cohort",
+    )
+    calibration_history_cohorts = (*history_only_cohorts, *training_cohorts)
+    calibration_history_records = (*history_only_records, *training_records)
+    label_watermark_at = max(
+        record.label_available_at for record in (*training_records, *calibration_history_records)
+    )
     return RawScoreModelSnapshot(
         algorithm="ELASTIC_NET_LOGISTIC",
         model_version=RAW_SCORE_MODEL_VERSION,
@@ -915,15 +1332,20 @@ def frozen_raw_score_model_snapshot() -> RawScoreModelSnapshot:
         training_window_start_month=RAW_SCORE_TRAINING_START_MONTH,
         training_window_end_month="2041-11",
         training_months=training_months,
-        label_watermark_month=label_watermark_at.strftime("%Y-%m"),
+        label_watermark_month=label_watermark_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+            "%Y-%m"
+        ),
         label_watermark_at=label_watermark_at,
         training_cohorts=training_cohorts,
         training_records=training_records,
+        calibration_history_cohorts=calibration_history_cohorts,
+        calibration_history_records=calibration_history_records,
+        calibration_evidence_version="frozen-oos-calibration-v2",
         normalization_snapshot_id="synthetic-normalization-v1",
         mature_months=60,
-        training_record_count=500,
-        positive_record_count=250,
-        negative_record_count=250,
+        training_record_count=len(training_records),
+        positive_record_count=sum(record.terminal_label for record in training_records),
+        negative_record_count=sum(not record.terminal_label for record in training_records),
         intercept=RAW_SCORE_INTERCEPT,
         coefficients=dict(RAW_SCORE_COEFFICIENTS),
         transformations={
@@ -1669,7 +2091,15 @@ class ResearchCommand(ResearchContract):
             or self.raw_score_model.label_watermark_at > self.cutoff_at
         ):
             raise ValueError("raw-score training window must not cross research cutoff")
-        mature_months = _raw_score_mature_training_months(self.cutoff_at)
+        market_calendar_version = (
+            RAW_SCORE_MARKET_CALENDAR_VERSION
+            if self.raw_score_model.calibration_evidence_version is not None
+            else None
+        )
+        mature_months = _raw_score_mature_training_months(
+            self.cutoff_at,
+            market_calendar_version,
+        )
         expected_training_months = (
             mature_months[-120:] if len(mature_months) >= 120 else mature_months
         )

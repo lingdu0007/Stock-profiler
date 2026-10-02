@@ -23,6 +23,11 @@ from stock_profiler.foundation.decision_versions import (
 from stock_profiler.foundation.decision_versions import (
     DecisionCaseVersionBundle as DecisionCaseVersionBundle,
 )
+from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    CandidateReleaseCommand,
+    CandidateReleaseOutcome,
+    exclude_candidate_members,
+)
 from stock_profiler.modules.candidate_selection.selection import SelectionCommand, SelectionOutcome
 from stock_profiler.modules.candidate_selection.universe import UniverseCommand, UniverseOutcome
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
@@ -99,6 +104,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "universe.1.0.0",
         "selection.1.0.0",
         "research.1.0.0",
+        "candidate-release.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -122,6 +128,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("universe.1.0.0", "universe.1.0.0"),
         ("selection.1.0.0", "selection.1.0.0"),
         ("research.1.0.0", "research.1.0.0"),
+        ("candidate-release.1.0.0", "candidate-release.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -207,6 +214,9 @@ class ExternalResult(FrozenContract):
     key_reasons: tuple[str, ...]
     universe: UniverseOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
+    candidate_release: CandidateReleaseOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     correction_evidence: CorrectionEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -274,6 +284,7 @@ StagePhase = Literal[
     "ISSUER_CONCENTRATION",
     "DRAWDOWN_PROTECTION",
     "LIQUIDITY_PROTECTION",
+    "CANDIDATE_RELEASE",
     "PORTFOLIO_STRESS",
     "EXECUTION_PLAN",
     "ADJUDICATION_LIFECYCLE",
@@ -350,6 +361,15 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "RESEARCH": frozenset({"SUCCEEDED", "FAILED", "REJECTED"}),
     "RAW_SCORE": frozenset({"SUCCEEDED", "FAILED"}),
     "RISK_VETO": frozenset({"SUCCEEDED", "REJECTED", "FAILED"}),
+    "CANDIDATE_RELEASE": frozenset(
+        {
+            "SUCCEEDED",
+            "REJECTED",
+            "ABSTAINED",
+            "FAILED",
+            "UNKNOWN",
+        }
+    ),
 }
 
 
@@ -381,6 +401,7 @@ class StageResult(FrozenContract):
     status: StageStatus
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None
     raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -396,6 +417,29 @@ class StageResult(FrozenContract):
             self.phase != "RAW_SCORE" or self.status != "SUCCEEDED"
         ):
             raise ValueError("raw score payloads require a successful RAW_SCORE stage")
+        if self.availability_failure is not None and (
+            self.phase != "PUBLICATION" or self.status != "FAILED"
+        ):
+            raise ValueError("availability failures belong to failed publication stages")
+        return self
+
+
+class ReportPublication(FrozenContract):
+    """Persist the report commit clock and its final publication disposition."""
+
+    status: Literal["PUBLISHED", "FAILED"]
+    committed_at: str
+    published_at: str | None = None
+    failure_recorded_at: str | None = None
+    failure_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_publication_state(self) -> ReportPublication:
+        if self.status == "PUBLISHED":
+            if self.published_at is None or self.failure_recorded_at is not None:
+                raise ValueError("published reports require only a publication timestamp")
+        elif self.failure_recorded_at is None or self.failure_reason is None:
+            raise ValueError("failed report publication requires its recorded failure")
         return self
 
 
@@ -564,6 +608,9 @@ class FormalReport(FrozenContract):
     monitoring_publication: MonitoringPublication | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    report_publication: ReportPublication | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     knowledge_cutoff: str
     evidence_clock: EvidenceClock
     version_bundle: DecisionCaseVersionBundle
@@ -638,6 +685,59 @@ class FormalReport(FrozenContract):
             }
         )
 
+    def with_candidate_publication_failure(
+        self,
+        failure_stage: StageResult,
+        *,
+        committed_at: str,
+        failure_recorded_at: str,
+    ) -> FormalReport:
+        """Expose a persisted candidate report as a closed publication failure."""
+        candidate_release = self.result.candidate_release
+        if candidate_release is None or failure_stage.phase != "PUBLICATION":
+            return self
+        reason = failure_stage.reasons[0]
+        failed_members = exclude_candidate_members(candidate_release.members, (reason,))
+        failed_release = candidate_release.model_copy(
+            update={
+                "disposition": "FAILED",
+                "availability_failure": failure_stage.availability_failure,
+                "members": failed_members,
+                "population": candidate_release.population.model_copy(
+                    update={
+                        "valid_monthly": False,
+                        "recommendation_coverage_denominator": False,
+                        "recommendation_coverage_pass": False,
+                        "availability_failure": failure_stage.availability_failure,
+                    }
+                ),
+                "reasons": tuple(dict.fromkeys((*candidate_release.reasons, reason))),
+            }
+        )
+        failed_result = self.result.model_copy(
+            update={
+                "candidate_release": failed_release,
+                "outcome_code": "CANDIDATE_RELEASE_FAILED",
+                "summary": "Synthetic calibrated candidate publication failed.",
+                "key_reasons": (reason,),
+            }
+        )
+        return self.model_copy(
+            update={
+                "result": failed_result,
+                "stage_results": (
+                    *(stage for stage in self.stage_results if stage.phase != "PUBLICATION"),
+                    failure_stage,
+                ),
+                "report_publication": ReportPublication(
+                    status="FAILED",
+                    committed_at=committed_at,
+                    failure_recorded_at=failure_recorded_at,
+                    failure_reason=reason,
+                ),
+            }
+        )
+
     @model_validator(mode="before")
     @classmethod
     def project_legacy_stage_results(cls, value: Any) -> Any:
@@ -678,7 +778,7 @@ class DecisionCaseExecution(FrozenContract):
     business_result_status: BusinessResultStatus | None
     business_lifecycle: BusinessLifecycle | None
     business_commit_status: BusinessCommitStatus
-    publication_status: Literal["PUBLISHED", "CLOSED"]
+    publication_status: Literal["PUBLISHED", "FAILED", "CLOSED"]
     report: FormalReport | None
     stage_results: tuple[StageResult, ...]
 
@@ -807,6 +907,9 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    candidate_release: CandidateReleaseCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     research: ResearchCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
     access_scope: ResultAccessScope | None = Field(
@@ -874,6 +977,9 @@ class FrozenDecisionCase(FrozenContract):
         universe_governed = self.version_bundle.case_contract_version == "universe.1.0.0"
         selection_governed = self.version_bundle.case_contract_version == "selection.1.0.0"
         research_governed = self.version_bundle.case_contract_version == "research.1.0.0"
+        candidate_release_governed = (
+            self.version_bundle.case_contract_version == "candidate-release.1.0.0"
+        )
         if selection_governed != (self.selection is not None):
             raise ValueError("selection requires its own frozen contract")
         if self.selection is not None and self.selection.cutoff_at != datetime.fromisoformat(
@@ -882,6 +988,17 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("selection and frozen cutoff must agree")
         if research_governed != (self.research is not None):
             raise ValueError("research requires its own frozen contract")
+        if candidate_release_governed != (self.candidate_release is not None):
+            raise ValueError("candidate release requires its own frozen contract")
+        if self.candidate_release is not None and (
+            self.candidate_release.knowledge_cutoff != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.candidate_release.published_at
+            != datetime.fromisoformat(self.report_generated_at)
+            or self.input.get("candidate_release") != self.candidate_release.model_dump(mode="json")
+        ):
+            raise ValueError(
+                "candidate release and frozen cutoff, publication, and input must agree"
+            )
         if self.research is not None:
             research_input = self.input.get("research")
             research_input_matches = research_input == self.research.model_dump(mode="json")
@@ -953,6 +1070,7 @@ class FrozenDecisionCase(FrozenContract):
             or universe_governed
             or selection_governed
             or research_governed
+            or candidate_release_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -982,6 +1100,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.universe,
                     self.selection,
                     self.research,
+                    self.candidate_release,
                 )
             )
             > 1
@@ -1011,6 +1130,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.candidate_release is not None
             or (self.expected_external_result.research is not None and not research_governed)
         ):
             raise ValueError("host decisions are never framework output")
@@ -1188,6 +1308,20 @@ class FrozenDecisionCase(FrozenContract):
                         ZoneInfo("Asia/Shanghai")
                     ).strftime("%Y-%m"),
                     "contract": "selection",
+                },
+            )
+        if self.candidate_release is not None:
+            assert self.access_scope is not None
+            return _stable_id(
+                "business-object",
+                {
+                    "owner": self.access_scope.user_id,
+                    "accounts": sorted(self.access_scope.account_ids),
+                    "visibility": self.access_scope.visibility,
+                    "month": self.candidate_release.knowledge_cutoff.astimezone(
+                        ZoneInfo("Asia/Shanghai")
+                    ).strftime("%Y-%m"),
+                    "contract": "candidate-release",
                 },
             )
         if self.universe is not None:
@@ -1562,6 +1696,11 @@ class _SyntheticOutcomeDefinition:
 
 
 _SYNTHETIC_OUTCOMES: dict[str, _SyntheticOutcomeDefinition] = {
+    "CANDIDATE_RELEASE_REQUESTED": _SyntheticOutcomeDefinition(
+        "BUSINESS_DECISION",
+        "SUCCEEDED",
+        GateResult(gate_id="CANDIDATE_RELEASE_REQUESTED", status="PASSED"),
+    ),
     "SYNTHETIC_REVIEW_COMPLETE": _SyntheticOutcomeDefinition(
         "BUSINESS_DECISION",
         "SUCCEEDED",
@@ -1738,6 +1877,9 @@ def synthetic_outcome_code_from_input(
         return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    candidate_release = input_without_scenario.pop("candidate_release", None)
+    if candidate_release is not None and not isinstance(candidate_release, dict):
+        return None
     account = input_without_scenario.get("account")
     if (
         isinstance(account, dict)

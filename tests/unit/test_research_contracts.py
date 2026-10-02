@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from calendar import monthrange
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Context, Decimal, localcontext
 from hashlib import sha256
 from typing import Literal, cast
 
 import pytest
 
+from stock_profiler.modules.decision_cases import service as decision_case_service
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_IDS,
+    RAW_SCORE_MARKET_CALENDAR_VERSION,
+    RAW_SCORE_TRAINING_START_MONTH,
     RESEARCH_ANNOUNCEMENT_TOOL_VERSION,
     RESEARCH_EVIDENCE_CONTRACT_VERSION,
     RESEARCH_LEGACY_DEFINITION_VERSION,
@@ -19,6 +23,8 @@ from stock_profiler.modules.research.contracts import (
     FrozenDualTargetScreening,
     RawScoreCalculationError,
     RawScoreFeatureTransform,
+    RawScoreModelSnapshot,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDataManifest,
     ResearchDataManifestEntry,
@@ -35,6 +41,10 @@ from stock_profiler.modules.research.contracts import (
     RiskGate,
     RiskMemberVeto,
     RiskVetoDraft,
+    _frozen_raw_score_training_records,
+    _raw_score_evaluation_entry_at,
+    _raw_score_label_available_at,
+    _training_month_sequence,
     calculate_structured_signals,
     decode_historical_research_command,
     decode_historical_research_draft,
@@ -45,6 +55,9 @@ from stock_profiler.modules.research.contracts import (
     freeze_raw_score,
     frozen_raw_score_model_snapshot,
     handoff_fingerprint,
+    raw_score_entry_is_executable,
+    raw_score_entry_window_end,
+    raw_score_maturity_at,
     research_draft_payload,
     research_member_handoff_payload,
     research_outcome_payload,
@@ -58,6 +71,742 @@ from stock_profiler.modules.research.service import (
     prepare_research_risk_plan,
     validate_research_draft,
 )
+
+
+def _set_training_cohort_definition_version(payload: dict[str, object], version: str) -> None:
+    raw_score_model = cast(dict[str, object], payload["raw_score_model"])
+    training_cohorts = cast(list[dict[str, object]], raw_score_model["training_cohorts"])
+    calibration_history_cohorts = cast(
+        list[dict[str, object]], raw_score_model["calibration_history_cohorts"]
+    )
+    training_cohort_ids = {cohort["cohort_id"] for cohort in training_cohorts}
+    for cohort in (*training_cohorts, *calibration_history_cohorts):
+        if cohort["cohort_id"] in training_cohort_ids:
+            cohort["research_definition_version"] = version
+
+
+def _mature_source_record(*, probability: Decimal = Decimal("0.42")) -> RawScoreTrainingRecord:
+    frozen_at = datetime(2040, 1, 31, 7, tzinfo=UTC)
+    return RawScoreTrainingRecord(
+        month="2040-01",
+        cohort_id="synthetic-cohort",
+        security_id="SYNTH-ALPHA",
+        research_id="synthetic-research-alpha",
+        selection_cutoff_at=frozen_at,
+        raw_score_frozen_at=frozen_at,
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        raw_success_score=Decimal("0.4"),
+        historical_calibrated_probability=probability,
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
+        evaluation_entry_at=datetime(2040, 2, 4, 7, tzinfo=UTC),
+        unified_maturity_at=raw_score_maturity_at(
+            datetime(2040, 2, 4, 7, tzinfo=UTC), RAW_SCORE_MARKET_CALENDAR_VERSION
+        ),
+        terminal_label=True,
+        label_available_at=raw_score_maturity_at(
+            datetime(2040, 2, 4, 7, tzinfo=UTC), RAW_SCORE_MARKET_CALENDAR_VERSION
+        ),
+        source_model_version="synthetic-model-v1",
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+    )
+
+
+def _legacy_entry_and_maturity_at(cutoff_at: datetime) -> tuple[datetime, datetime]:
+    entry_at = cutoff_at.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    while entry_at.weekday() >= 5:
+        entry_at += timedelta(days=1)
+    month_index = entry_at.year * 12 + entry_at.month - 1 + 6
+    maturity_year, maturity_month_zero = divmod(month_index, 12)
+    maturity_at = entry_at.replace(
+        year=maturity_year,
+        month=maturity_month_zero + 1,
+        day=min(entry_at.day, monthrange(maturity_year, maturity_month_zero + 1)[1]),
+    )
+    while maturity_at.weekday() >= 5:
+        maturity_at -= timedelta(days=1)
+    return entry_at, maturity_at
+
+
+def test_weekend_six_month_horizon_matures_at_the_preceding_session_close() -> None:
+    entry_at = datetime(2041, 12, 6, 1, tzinfo=UTC)
+
+    assert raw_score_maturity_at(entry_at, RAW_SCORE_MARKET_CALENDAR_VERSION) == datetime(
+        2042, 6, 5, 15, tzinfo=UTC
+    )
+
+
+def test_maturity_uses_calendar_date_from_normalized_instant() -> None:
+    utc_value = datetime.fromisoformat("2042-06-04T08:30:00+00:00")
+    same_instant_other_offset = datetime.fromisoformat("2042-06-03T22:30:00-10:00")
+
+    assert utc_value == same_instant_other_offset
+    assert raw_score_maturity_at(
+        utc_value, RAW_SCORE_MARKET_CALENDAR_VERSION
+    ) == raw_score_maturity_at(same_instant_other_offset, RAW_SCORE_MARKET_CALENDAR_VERSION)
+
+
+def test_legacy_maturity_fallback_preserves_the_entry_clock() -> None:
+    entry_at = datetime(2042, 1, 1, 8, tzinfo=UTC)
+
+    assert _raw_score_label_available_at(entry_at, None) == datetime(2042, 7, 1, 8, tzinfo=UTC)
+
+
+def test_historical_snapshot_replays_labels_at_the_original_intraday_maturity_time() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+        cutoff = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+        entry_at, maturity_at = _legacy_entry_and_maturity_at(cutoff)
+        record["evaluation_entry_at"] = entry_at.isoformat().replace("+00:00", "Z")
+        record["label_available_at"] = maturity_at.isoformat().replace("+00:00", "Z")
+    record = payload["training_records"][0]
+    record["evaluation_entry_at"] = "2043-01-01T08:00:00Z"
+    record["label_available_at"] = "2043-07-01T08:00:00Z"
+    payload["label_watermark_at"] = max(
+        row["label_available_at"] for row in payload["training_records"]
+    )
+    payload["label_watermark_month"] = payload["label_watermark_at"][:7]
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.training_records[0].evaluation_entry_at == datetime(2043, 1, 1, 8, tzinfo=UTC)
+    assert snapshot.training_records[0].label_available_at == datetime(2043, 7, 1, 8, tzinfo=UTC)
+
+
+def test_pre_calibration_snapshot_requires_entries_for_positive_labels() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+    successful_record = next(
+        record for record in payload["training_records"] if record["terminal_label"]
+    )
+    successful_record["evaluation_entry_at"] = None
+
+    with pytest.raises(ValueError, match="positive raw-score label requires an evaluation entry"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_historical_research_command_replays_its_pre_calendar_maturity_window() -> None:
+    command_payload = _command().model_dump(mode="json")
+    cutoff_at = datetime.fromisoformat("2042-10-31T15:30:00+00:00")
+    start_year, start_month = (int(part) for part in RAW_SCORE_TRAINING_START_MONTH.split("-"))
+    training_months = _training_month_sequence(start_year, start_month, 64)
+    cohorts, training_records = _frozen_raw_score_training_records(
+        training_months,
+        cohort_id_prefix="synthetic-pre-calendar-training-cohort",
+    )
+    records_payload: list[dict[str, object]] = []
+    for source_record in training_records:
+        record = source_record.model_dump(mode="json")
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+        maturity_anchor = source_record.evaluation_entry_at or (
+            _raw_score_evaluation_entry_at(source_record.selection_cutoff_at) + timedelta(days=1)
+        )
+        record["label_available_at"] = (
+            _raw_score_label_available_at(maturity_anchor, None).isoformat().replace("+00:00", "Z")
+        )
+        records_payload.append(record)
+    watermark_at = max(str(record["label_available_at"]) for record in records_payload)
+    raw_score_payload = command_payload["raw_score_model"]
+    assert isinstance(raw_score_payload, dict)
+    raw_score_payload.pop("calibration_evidence_version")
+    raw_score_payload.update(
+        {
+            "training_window_month_count": len(training_months),
+            "training_window_end_month": training_months[-1],
+            "training_months": list(training_months),
+            "label_watermark_month": datetime.fromisoformat(watermark_at.replace("Z", "+00:00"))
+            .astimezone(timezone(timedelta(hours=8)))
+            .strftime("%Y-%m"),
+            "label_watermark_at": watermark_at,
+            "training_cohorts": [cohort.model_dump(mode="json") for cohort in cohorts],
+            "training_records": records_payload,
+            "mature_months": len(training_months),
+            "training_record_count": len(records_payload),
+            "positive_record_count": sum(
+                bool(record["terminal_label"]) for record in records_payload
+            ),
+            "negative_record_count": sum(
+                not bool(record["terminal_label"]) for record in records_payload
+            ),
+        }
+    )
+    command_payload["raw_score_model"] = RawScoreModelSnapshot.model_validate(
+        raw_score_payload
+    ).model_dump(mode="json")
+    command_payload["cutoff_at"] = cutoff_at.isoformat()
+    command_payload["knowledge_cutoff"] = cutoff_at.isoformat()
+    members = command_payload["members"]
+    assert isinstance(members, list)
+    for member in members:
+        assert isinstance(member, dict)
+        member["knowledge_cutoff"] = cutoff_at.isoformat()
+        for evidence in member["evidence"]:
+            assert isinstance(evidence, dict)
+            evidence["knowledge_cutoff"] = cutoff_at.isoformat()
+        manifest = member["data_manifest"]
+        assert isinstance(manifest, dict)
+        for entry in manifest["entries"]:
+            assert isinstance(entry, dict)
+            entry["knowledge_cutoff"] = cutoff_at.isoformat()
+    command_payload["selection_fingerprint"] = selection_binding_sha256(
+        str(command_payload["selection_object_id"]),
+        str(command_payload["selection_event_id"]),
+        cutoff_at,
+        FrozenDualTargetScreening.model_validate(command_payload["screening"]),
+    )
+
+    replayed = ResearchCommand.model_validate(command_payload)
+
+    assert replayed.raw_score_model.training_months[-1] == "2042-03"
+
+
+def test_mature_source_identity_cannot_be_rewritten_by_a_later_snapshot() -> None:
+    original = _mature_source_record()
+    identity = (original.month, original.security_id, original.research_id)
+    retained: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+
+    decision_case_service._retain_immutable_source_row(retained, identity, original)
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._retain_immutable_source_row(
+            retained,
+            identity,
+            original.model_copy(update={"raw_success_score": Decimal("0.5")}),
+        )
+
+    assert retained[identity] is original
+
+
+def test_candidate_prediction_requires_its_original_probability_in_the_mature_label() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=Decimal("0.50"),
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
+
+
+def test_candidate_prediction_source_cannot_rewrite_its_score_freeze_clock() -> None:
+    source = _mature_source_record()
+    assert source.raw_score_frozen_at is not None
+    assert source.raw_score_training_watermark_at is not None
+    assert source.entry_window_ends_at is not None
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=source.raw_score_frozen_at,
+        raw_score_training_watermark_at=source.raw_score_training_watermark_at,
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=source.entry_window_ends_at,
+        entry_sessions=(
+            (datetime(2040, 2, 4, 7, tzinfo=UTC), datetime(2040, 2, 4, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+    late_score_clock = source.model_copy(
+        update={"raw_score_frozen_at": source.raw_score_frozen_at + timedelta(hours=12)}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, late_score_clock
+        )
+    late_training_watermark = source.model_copy(
+        update={
+            "raw_score_training_watermark_at": (source.raw_score_frozen_at + timedelta(hours=12))
+        }
+    )
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, late_training_watermark
+        )
+
+
+def test_overdue_candidate_outcome_gap_fails_calibration() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    identity = (source.month, source.security_id, source.research_id)
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=datetime(2040, 2, 5, 7, tzinfo=UTC),
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._matured_candidate_prediction_ids(
+            {identity: prediction},
+            {},
+            source.label_available_at,
+        )
+
+
+def test_entry_invalid_label_matures_from_the_frozen_candidate_window_end() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.unified_maturity_at is not None
+    frozen_window_end = datetime(2040, 2, 6, 8, tzinfo=UTC)
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=frozen_window_end,
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+        ),
+        matures_by=raw_score_maturity_at(frozen_window_end, RAW_SCORE_MARKET_CALENDAR_VERSION),
+    )
+    early_invalid_label = source.model_copy(
+        update={
+            "evaluation_entry_at": None,
+            "entry_window_ends_at": frozen_window_end,
+            "unified_maturity_at": source.unified_maturity_at,
+        }
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, early_invalid_label
+        )
+
+
+def test_historical_invalid_entry_uses_fifth_frozen_weekday_session() -> None:
+    _, records = _frozen_raw_score_training_records(("2040-01",))
+    invalid_entry = next(record for record in records if record.evaluation_entry_at is None)
+    assert invalid_entry.entry_window_ends_at is not None
+    assert invalid_entry.unified_maturity_at is not None
+
+    expected_entry = _raw_score_evaluation_entry_at(invalid_entry.selection_cutoff_at)
+    expected_date = expected_entry
+    while expected_date.weekday() >= 5:
+        expected_date += timedelta(days=1)
+    for _ in range(4):
+        expected_date += timedelta(days=1)
+        while expected_date.weekday() >= 5:
+            expected_date += timedelta(days=1)
+
+    assert invalid_entry.entry_window_ends_at == raw_score_entry_window_end(
+        expected_entry, RAW_SCORE_MARKET_CALENDAR_VERSION
+    )
+    assert invalid_entry.entry_window_ends_at.date() == expected_date.date()
+    assert invalid_entry.unified_maturity_at == raw_score_maturity_at(
+        expected_date, RAW_SCORE_MARKET_CALENDAR_VERSION
+    )
+
+
+def test_frozen_training_uses_next_session_within_covered_history() -> None:
+    snapshot = frozen_raw_score_model_snapshot()
+    first_month_records = tuple(
+        record for record in snapshot.calibration_history_records if record.month == "2032-09"
+    )
+    expected_entry = datetime(2032, 10, 1, 8, tzinfo=UTC)
+
+    assert first_month_records
+    assert all(
+        record.evaluation_entry_at in {None, expected_entry} for record in first_month_records
+    )
+    assert any(record.evaluation_entry_at == expected_entry for record in first_month_records)
+    assert all(
+        record.entry_window_ends_at == datetime(2032, 10, 7, 15, tzinfo=UTC)
+        for record in first_month_records
+    )
+
+
+def test_raw_score_entry_fails_before_frozen_calendar_coverage() -> None:
+    with pytest.raises(ValueError, match="MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE"):
+        _raw_score_evaluation_entry_at(
+            datetime(2031, 12, 31, 23, 59, 59, tzinfo=UTC),
+            RAW_SCORE_MARKET_CALENDAR_VERSION,
+        )
+
+
+def test_prediction_window_uses_the_active_calendar_sessions_when_available() -> None:
+    selection_cutoff = datetime(2042, 6, 3, 16, tzinfo=UTC)
+    market_calendar_version = "synthetic-market-calendar-v1"
+    first_session_open = _raw_score_evaluation_entry_at(selection_cutoff, market_calendar_version)
+
+    assert first_session_open == datetime(2042, 6, 4, 8, tzinfo=UTC)
+    assert raw_score_entry_window_end(first_session_open, market_calendar_version) == datetime(
+        2042, 6, 10, 15, tzinfo=UTC
+    )
+
+
+def test_entry_window_switches_to_saved_sessions_when_crossing_into_coverage() -> None:
+    market_calendar_version = "synthetic-market-calendar-v1"
+    entry_at = datetime(2042, 5, 19, 8, tzinfo=UTC)
+
+    window_end = raw_score_entry_window_end(entry_at, market_calendar_version)
+
+    assert window_end == datetime(2042, 5, 25, 15, tzinfo=UTC)
+    assert raw_score_entry_is_executable(window_end, market_calendar_version)
+
+
+def test_entry_executability_normalizes_equivalent_timezone_instants() -> None:
+    entry_utc = datetime(2037, 1, 1, 8, tzinfo=UTC)
+    equivalent_entry = datetime.fromisoformat("2036-12-31T22:00:00-10:00")
+
+    assert equivalent_entry == entry_utc
+    assert raw_score_entry_is_executable(entry_utc, RAW_SCORE_MARKET_CALENDAR_VERSION)
+    assert raw_score_entry_is_executable(equivalent_entry, RAW_SCORE_MARKET_CALENDAR_VERSION)
+
+
+def test_raw_score_snapshot_accepts_saved_calendar_weekend_entries() -> None:
+    original = frozen_raw_score_model_snapshot()
+    training_months = _training_month_sequence(2037, 6, 60)
+    month_mapping = dict(zip(original.training_months, training_months, strict=True))
+    market_calendar_version = RAW_SCORE_MARKET_CALENDAR_VERSION
+    updated_records: list[dict[str, object]] = []
+    label_times: list[datetime] = []
+    for record in original.training_records:
+        month = month_mapping[record.month]
+        year, month_number = (int(part) for part in month.split("-"))
+        cutoff_at = (
+            datetime(2042, 5, 22, 15, tzinfo=UTC)
+            if month == "2042-05"
+            else datetime(
+                year,
+                month_number,
+                monthrange(year, month_number)[1],
+                15,
+                59,
+                59,
+                tzinfo=UTC,
+            )
+        )
+        entry_at = _raw_score_evaluation_entry_at(cutoff_at, market_calendar_version)
+        entry_window_ends_at = raw_score_entry_window_end(entry_at, market_calendar_version)
+        outcome_entry_at = entry_at if record.evaluation_entry_at is not None else None
+        maturity_anchor = outcome_entry_at or entry_window_ends_at
+        maturity_at = raw_score_maturity_at(maturity_anchor, market_calendar_version)
+        label_times.append(maturity_at)
+        updated_records.append(
+            record.model_copy(
+                update={
+                    "month": month,
+                    "cohort_id": f"synthetic-calendar-shift-training-cohort-{month}",
+                    "selection_cutoff_at": cutoff_at,
+                    "raw_score_frozen_at": cutoff_at,
+                    "raw_score_training_watermark_at": cutoff_at - timedelta(days=1),
+                    "evaluation_entry_at": outcome_entry_at,
+                    "entry_window_ends_at": entry_window_ends_at,
+                    "unified_maturity_at": maturity_at,
+                    "label_available_at": maturity_at,
+                }
+            ).model_dump(mode="python")
+        )
+    updated_cohorts = tuple(
+        cohort.model_copy(
+            update={
+                "month": month_mapping[cohort.month],
+                "cohort_id": (
+                    f"synthetic-calendar-shift-training-cohort-{month_mapping[cohort.month]}"
+                ),
+            }
+        ).model_dump(mode="python")
+        for cohort in original.training_cohorts
+    )
+    label_watermark_at = max(label_times)
+    payload = original.model_dump(mode="python")
+    payload.update(
+        {
+            "training_window_id": "synthetic-window-shifted-for-saved-calendar-entry",
+            "training_window_start_month": training_months[0],
+            "training_window_end_month": training_months[-1],
+            "training_months": training_months,
+            "label_watermark_month": label_watermark_at.astimezone(
+                timezone(timedelta(hours=8))
+            ).strftime("%Y-%m"),
+            "label_watermark_at": label_watermark_at,
+            "training_cohorts": updated_cohorts,
+            "training_records": updated_records,
+        }
+    )
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+    saved_weekend_entries = tuple(
+        record.evaluation_entry_at
+        for record in snapshot.training_records
+        if record.month == "2042-05" and record.evaluation_entry_at is not None
+    )
+
+    assert saved_weekend_entries
+    assert all(entry.weekday() >= 5 for entry in saved_weekend_entries)
+    assert all(
+        raw_score_entry_is_executable(entry, market_calendar_version)
+        for entry in saved_weekend_entries
+    )
+
+
+def test_missing_session_inside_saved_calendar_coverage_is_not_executable() -> None:
+    missing_session_entry = datetime(2042, 5, 23, 10, tzinfo=UTC)
+
+    assert not raw_score_entry_is_executable(
+        missing_session_entry,
+        "synthetic-market-calendar-v1",
+    )
+
+
+def test_entry_window_preserves_saved_sessions_at_calendar_coverage_edge() -> None:
+    cutoff = datetime(2042, 6, 12, 16, tzinfo=UTC)
+    market_calendar_version = "synthetic-market-calendar-v1"
+    first_session_open = _raw_score_evaluation_entry_at(cutoff, market_calendar_version)
+
+    assert first_session_open == datetime(2042, 6, 15, 8, tzinfo=UTC)
+    assert raw_score_entry_window_end(first_session_open, market_calendar_version) == datetime(
+        2042, 6, 19, 15, tzinfo=UTC
+    )
+
+
+def test_entry_window_can_begin_later_on_the_cutoff_date() -> None:
+    cutoff = datetime(2046, 7, 2, 0, tzinfo=UTC)
+
+    assert _raw_score_evaluation_entry_at(cutoff, "synthetic-calendar-v1") == datetime(
+        2046, 7, 2, 1, tzinfo=UTC
+    )
+
+
+def test_raw_score_snapshot_rejects_self_consistent_but_short_invalid_entry_window() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is None
+    )
+    short_window_end = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+    short_window_end = short_window_end.replace(hour=16) + timedelta(days=1)
+    while short_window_end.weekday() >= 5:
+        short_window_end += timedelta(days=1)
+    maturity = raw_score_maturity_at(short_window_end, RAW_SCORE_MARKET_CALENDAR_VERSION)
+    record["entry_window_ends_at"] = short_window_end.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_delayed_valid_entry_keeps_the_original_candidate_window_end() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    original_entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+    delayed_entry = original_entry + timedelta(days=1)
+    while delayed_entry.weekday() >= 5:
+        delayed_entry += timedelta(days=1)
+    delayed_maturity = raw_score_maturity_at(delayed_entry, record["market_calendar_version"])
+    record["evaluation_entry_at"] = delayed_entry.isoformat()
+    record["unified_maturity_at"] = delayed_maturity.isoformat()
+    record["label_available_at"] = delayed_maturity.isoformat()
+
+    validated = ResearchCommand.model_validate(payload)
+    delayed_record = next(
+        item
+        for item in validated.raw_score_model.training_records
+        if item.research_id == record["research_id"]
+    )
+
+    assert delayed_record.evaluation_entry_at == delayed_entry
+    assert delayed_record.entry_window_ends_at == datetime.fromisoformat(
+        record["entry_window_ends_at"].replace("Z", "+00:00")
+    )
+    assert delayed_record.evaluation_entry_at < delayed_record.entry_window_ends_at
+
+
+def test_fifth_session_close_is_a_valid_frozen_entry() -> None:
+    payload = _command().model_dump(mode="json")
+    raw_score = payload["raw_score_model"]
+    assert isinstance(raw_score, dict)
+    record = next(
+        item for item in raw_score["training_records"] if item["evaluation_entry_at"] is not None
+    )
+    fifth_close = datetime.fromisoformat(record["entry_window_ends_at"].replace("Z", "+00:00"))
+    maturity = raw_score_maturity_at(fifth_close, record["market_calendar_version"])
+    record["evaluation_entry_at"] = fifth_close.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+    watermark = max(
+        datetime.fromisoformat(item["label_available_at"].replace("Z", "+00:00"))
+        for item in raw_score["training_records"]
+    )
+    watermark = max(
+        watermark,
+        max(
+            datetime.fromisoformat(item["label_available_at"].replace("Z", "+00:00"))
+            for item in raw_score["calibration_history_records"]
+        ),
+    )
+    raw_score["label_watermark_at"] = watermark.isoformat()
+    raw_score["label_watermark_month"] = watermark.strftime("%Y-%m")
+
+    validated = ResearchCommand.model_validate(payload)
+
+    assert (
+        next(
+            item
+            for item in validated.raw_score_model.training_records
+            if item.security_id == record["security_id"]
+        ).evaluation_entry_at
+        == fifth_close
+    )
+
+
+def test_entry_inside_cutoff_session_precedes_the_frozen_five_session_window() -> None:
+    payload = _command().model_dump(mode="json")
+    raw_score = payload["raw_score_model"]
+    assert isinstance(raw_score, dict)
+    record = next(
+        item
+        for item in raw_score["training_records"]
+        if item["month"] == "2037-01" and item["evaluation_entry_at"] is not None
+    )
+    cutoff = datetime(2037, 1, 30, 9, tzinfo=UTC)
+    market_calendar_version = record["market_calendar_version"]
+    first_window_open = _raw_score_evaluation_entry_at(cutoff, market_calendar_version)
+    assert first_window_open == datetime(2037, 2, 2, 8, tzinfo=UTC)
+    early_entry = datetime(2037, 1, 30, 10, tzinfo=UTC)
+    window_end = raw_score_entry_window_end(first_window_open, market_calendar_version)
+    maturity = raw_score_maturity_at(early_entry, market_calendar_version)
+    record["selection_cutoff_at"] = cutoff.isoformat()
+    record["raw_score_frozen_at"] = cutoff.isoformat()
+    record["raw_score_training_watermark_at"] = (cutoff - timedelta(days=1)).isoformat()
+    record["evaluation_entry_at"] = early_entry.isoformat()
+    record["entry_window_ends_at"] = window_end.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_off_session_entry_cannot_create_a_positive_mature_label() -> None:
+    payload = _command().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["raw_score_model"]["training_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    original_entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+    off_session_entry = original_entry.replace(hour=0)
+    maturity = raw_score_maturity_at(off_session_entry, record["market_calendar_version"])
+    record["evaluation_entry_at"] = off_session_entry.isoformat()
+    record["unified_maturity_at"] = maturity.isoformat()
+    record["label_available_at"] = maturity.isoformat()
+
+    with pytest.raises(ValueError, match="invalid clocks or label"):
+        ResearchCommand.model_validate(payload)
+
+
+def test_candidate_outcome_entry_must_fall_inside_the_frozen_window() -> None:
+    source = _mature_source_record()
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.entry_window_ends_at is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=source.entry_window_ends_at,
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+    out_of_window_entry = source.model_copy(
+        update={"evaluation_entry_at": datetime(2040, 2, 5, 8, tzinfo=UTC)}
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(
+            prediction, out_of_window_entry
+        )
+
+
+def test_candidate_outcome_entry_cannot_fall_between_frozen_market_sessions() -> None:
+    source = _mature_source_record().model_copy(
+        update={"evaluation_entry_at": datetime(2040, 2, 2, 7, tzinfo=UTC)}
+    )
+    assert source.raw_success_score is not None
+    assert source.historical_calibrated_probability is not None
+    assert source.entry_window_ends_at is not None
+    assert source.unified_maturity_at is not None
+    prediction = decision_case_service._FrozenCandidatePrediction(
+        raw_success_score=source.raw_success_score,
+        calibrated_probability=source.historical_calibrated_probability,
+        raw_score_frozen_at=datetime(2040, 1, 31, 7, tzinfo=UTC),
+        raw_score_training_watermark_at=datetime(2040, 1, 30, 7, tzinfo=UTC),
+        market_calendar_version=RAW_SCORE_MARKET_CALENDAR_VERSION,
+        entry_window_ends_at=source.entry_window_ends_at,
+        entry_sessions=(
+            (datetime(2040, 2, 1, 7, tzinfo=UTC), datetime(2040, 2, 1, 8, tzinfo=UTC)),
+            (datetime(2040, 2, 5, 6, tzinfo=UTC), datetime(2040, 2, 5, 7, tzinfo=UTC)),
+        ),
+        matures_by=source.unified_maturity_at,
+    )
+
+    with pytest.raises(decision_case_service.CandidateCalibrationProvenanceInvalid):
+        decision_case_service._validate_frozen_candidate_prediction_source(prediction, source)
 
 
 def _member_input(index: int, cutoff: datetime) -> ResearchMemberInput:
@@ -203,13 +952,20 @@ def test_raw_score_is_a_structured_uncalibrated_z20_with_no_text_input() -> None
     assert raw_score.training_window_start_month == "2036-12"
     assert raw_score.training_window_end_month == "2041-11"
     assert raw_score.label_watermark_month == "2042-06"
-    assert len(command.raw_score_model.training_records) == 500
+    assert len(command.raw_score_model.training_records) == 524
     assert all(
-        record.selection_cutoff_at < record.evaluation_entry_at
+        record.evaluation_entry_at is None
+        or record.selection_cutoff_at < record.evaluation_entry_at
         for record in command.raw_score_model.training_records
     )
+    assert any(
+        record.evaluation_entry_at is None for record in command.raw_score_model.training_records
+    )
     assert (
-        max(record.label_available_at for record in command.raw_score_model.training_records)
+        max(
+            record.label_available_at
+            for record in command.raw_score_model.calibration_history_records
+        )
         == command.raw_score_model.label_watermark_at
     )
     assert raw_score.normalization_snapshot_id == "synthetic-normalization-v1"
@@ -298,6 +1054,15 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
     snapshot = frozen_raw_score_model_snapshot()
 
     assert len(snapshot.training_months) == 60
+    calibration_history_months = tuple(
+        sorted({record.month for record in snapshot.calibration_history_records})
+    )
+    assert len(calibration_history_months) == 111
+    assert calibration_history_months[:24] == _training_month_sequence(2032, 9, 24)
+    assert calibration_history_months[-24:] == _training_month_sequence(2039, 12, 24)
+    assert len(snapshot.calibration_history_records) >= 500
+    assert any(record.terminal_label for record in snapshot.calibration_history_records)
+    assert any(not record.terminal_label for record in snapshot.calibration_history_records)
     assert snapshot.training_months[0] == snapshot.training_window_start_month
     assert snapshot.training_months[-1] == snapshot.training_window_end_month
     assert snapshot.label_watermark_month == "2042-06"
@@ -325,6 +1090,152 @@ def test_raw_score_snapshot_freezes_temporal_window_and_penalty_policy() -> None
     )
     with pytest.raises(ValueError, match="research cutoff"):
         ResearchCommand.model_validate(payload)
+
+
+def test_raw_score_calibration_history_rejects_success_without_a_valid_entry() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    invalid_entry_record = next(
+        record
+        for record in payload["calibration_history_records"]
+        if record["evaluation_entry_at"] is None
+    )
+    invalid_entry_record["terminal_label"] = True
+
+    with pytest.raises(ValueError, match="invalid entry must be labeled unsuccessful"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+@pytest.mark.parametrize("invalid_entry", ["midnight", "window_end"])
+def test_raw_score_calibration_history_rejects_non_executable_entry(
+    invalid_entry: str,
+) -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    record = next(
+        item
+        for item in payload["calibration_history_records"]
+        if item["evaluation_entry_at"] is not None
+    )
+    if invalid_entry == "midnight":
+        entry = datetime.fromisoformat(record["evaluation_entry_at"].replace("Z", "+00:00"))
+        invalid_entry_at = entry.replace(hour=0, minute=0, second=0)
+        record["evaluation_entry_at"] = invalid_entry_at.isoformat()
+        record["unified_maturity_at"] = raw_score_maturity_at(
+            invalid_entry_at, record["market_calendar_version"]
+        ).isoformat()
+    else:
+        window_end = datetime.fromisoformat(record["entry_window_ends_at"].replace("Z", "+00:00"))
+        invalid_window_end = window_end.replace(hour=0, minute=0, second=0)
+        record["evaluation_entry_at"] = None
+        record["terminal_label"] = False
+        record["entry_window_ends_at"] = invalid_window_end.isoformat()
+        record["unified_maturity_at"] = raw_score_maturity_at(
+            invalid_window_end, record["market_calendar_version"]
+        ).isoformat()
+    record["label_available_at"] = record["unified_maturity_at"]
+
+    with pytest.raises(ValueError, match="invalid entry window or clock"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_raw_score_calibration_history_binds_prediction_timestamp_to_month() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    record = payload["calibration_history_records"][0]
+    old_cutoff = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+    wrong_cutoff = old_cutoff + timedelta(days=31)
+    record["selection_cutoff_at"] = wrong_cutoff.isoformat()
+    record["raw_score_frozen_at"] = wrong_cutoff.isoformat()
+
+    with pytest.raises(ValueError, match="prediction cutoff does not match its month"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_raw_score_snapshots_use_shanghai_month_for_prediction_cutoffs() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+
+    for field_name in ("training_records", "calibration_history_records"):
+        record = payload[field_name][0]
+        year, month = (int(part) for part in record["month"].split("-"))
+        shanghai_cutoff = datetime(
+            year,
+            month,
+            1,
+            0,
+            30,
+            tzinfo=timezone(timedelta(hours=8)),
+        )
+        record["selection_cutoff_at"] = shanghai_cutoff.isoformat()
+        record["raw_score_frozen_at"] = shanghai_cutoff.isoformat()
+        record["raw_score_training_watermark_at"] = (
+            shanghai_cutoff.astimezone(UTC) - timedelta(days=1)
+        ).isoformat()
+        calendar_version = record["market_calendar_version"]
+        evaluation_entry_at = _raw_score_evaluation_entry_at(
+            shanghai_cutoff,
+            calendar_version,
+        )
+        entry_window_ends_at = raw_score_entry_window_end(
+            evaluation_entry_at,
+            calendar_version,
+        )
+        maturity_at = raw_score_maturity_at(evaluation_entry_at, calendar_version)
+        record["evaluation_entry_at"] = evaluation_entry_at.isoformat()
+        record["entry_window_ends_at"] = entry_window_ends_at.isoformat()
+        record["unified_maturity_at"] = maturity_at.isoformat()
+        record["label_available_at"] = maturity_at.isoformat()
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert all(
+        record.selection_cutoff_at.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m")
+        == record.month
+        for record in (
+            snapshot.training_records[0],
+            snapshot.calibration_history_records[0],
+        )
+    )
+
+
+def test_raw_score_calibration_history_allows_one_cohort_per_month() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    cohort = payload["calibration_history_cohorts"][0]
+    original_cohort_id = cohort["cohort_id"]
+    duplicate_cohort = {
+        **cohort,
+        "cohort_id": f"{original_cohort_id}-duplicate",
+        "completed_research_ids": {
+            security_id: f"{research_id}-duplicate"
+            for security_id, research_id in cohort["completed_research_ids"].items()
+        },
+    }
+    payload["calibration_history_cohorts"].append(duplicate_cohort)
+    payload["calibration_history_records"].extend(
+        {
+            **record,
+            "cohort_id": duplicate_cohort["cohort_id"],
+            "research_id": f"{record['research_id']}-duplicate",
+        }
+        for record in payload["calibration_history_records"]
+        if record["cohort_id"] == original_cohort_id
+    )
+
+    with pytest.raises(ValueError, match="one frozen cohort per month"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_raw_score_calibration_history_allows_missing_months_from_unavailable_cohorts() -> None:
+    payload = frozen_raw_score_model_snapshot().model_dump(mode="json")
+    removed_cohort = payload["calibration_history_cohorts"].pop(50)
+    payload["calibration_history_records"] = [
+        record
+        for record in payload["calibration_history_records"]
+        if record["cohort_id"] != removed_cohort["cohort_id"]
+    ]
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    months = tuple(sorted({record.month for record in snapshot.calibration_history_records}))
+    assert removed_cohort["month"] not in months
+    assert len(months) == len(snapshot.calibration_history_cohorts)
 
 
 def test_raw_score_snapshot_binds_mature_label_evidence() -> None:
@@ -388,10 +1299,7 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
         historical_cutoff,
         screening,
     )
-    raw_score_model = cast(dict[str, object], payload["raw_score_model"])
-    training_cohorts = cast(list[dict[str, object]], raw_score_model["training_cohorts"])
-    for cohort in training_cohorts:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
 
     decoded = decode_historical_research_command(payload)
 
@@ -402,8 +1310,7 @@ def test_historical_research_command_preserves_its_original_mature_window() -> N
 
 def test_historical_research_command_recovers_missing_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -424,8 +1331,7 @@ def test_historical_research_command_recovers_missing_audit_provenance() -> None
 
 def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for member in payload["members"]:
         member["structured_facts"].pop("money_flow", None)
 
@@ -437,8 +1343,7 @@ def test_historical_research_command_accepts_the_pre_money_flow_fact_shape() -> 
 
 def test_historical_handoff_fingerprint_preserves_the_original_command_payload() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -502,6 +1407,8 @@ def test_legacy_research_command_decodes_the_original_input_shape() -> None:
     payload["raw_score_model"].pop("label_watermark_at", None)
     payload["raw_score_model"].pop("training_cohorts", None)
     payload["raw_score_model"].pop("training_records", None)
+    payload["raw_score_model"].pop("calibration_history_cohorts", None)
+    payload["raw_score_model"].pop("calibration_history_records", None)
 
     decoded = decode_legacy_research_command(payload)
 
@@ -582,8 +1489,7 @@ def test_legacy_research_command_restores_missing_percentiles_for_the_full_unive
 
 def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_LEGACY_DEFINITION_VERSION)
     for field_name in (
         "fit_diagnostics",
         "code_sha256",
@@ -604,17 +1510,169 @@ def test_legacy_research_command_recovers_missing_audit_provenance() -> None:
 
 def test_legacy_research_command_preserves_existing_training_provenance() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_LEGACY_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_LEGACY_DEFINITION_VERSION)
 
     decoded = decode_legacy_research_command(payload)
 
     assert len(decoded.raw_score_model.training_cohorts) == 60
-    assert len(decoded.raw_score_model.training_records) == 500
+    assert len(decoded.raw_score_model.training_records) == 524
     assert (
         decoded.raw_score_model.training_cohorts[0].research_definition_version
         == RESEARCH_LEGACY_DEFINITION_VERSION
     )
+
+
+def test_pre_calibration_research_snapshot_remains_replayable() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    payload.pop("calibration_history_cohorts")
+    payload.pop("calibration_history_records")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+        cutoff = datetime.fromisoformat(record["selection_cutoff_at"].replace("Z", "+00:00"))
+        entry_at, maturity_at = _legacy_entry_and_maturity_at(cutoff)
+        record["evaluation_entry_at"] = entry_at.isoformat().replace("+00:00", "Z")
+        record["label_available_at"] = maturity_at.isoformat().replace("+00:00", "Z")
+    payload["label_watermark_at"] = max(
+        record["label_available_at"] for record in payload["training_records"]
+    )
+    payload["label_watermark_month"] = payload["label_watermark_at"][:7]
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert len(snapshot.training_records) == 524
+    assert snapshot.training_records[0].raw_success_score is None
+    assert snapshot.model_dump(mode="json") == payload
+
+
+def test_missing_candidate_calibration_fields_preserve_legacy_serialization() -> None:
+    source = _mature_source_record()
+    legacy_payload = source.model_dump(mode="json")
+    for field_name in (
+        "raw_score_frozen_at",
+        "raw_score_training_watermark_at",
+        "raw_success_score",
+        "historical_calibrated_probability",
+        "entry_window_ends_at",
+        "unified_maturity_at",
+        "market_calendar_version",
+    ):
+        legacy_payload.pop(field_name)
+    legacy_record = RawScoreTrainingRecord.model_validate(legacy_payload)
+
+    assert legacy_record.model_dump(mode="json") == legacy_payload
+
+
+def test_v2_calibration_snapshot_can_preserve_a_member_without_frozen_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["training_records"][0]["historical_calibrated_probability"] = None
+    payload["training_records"][0]["historical_calibration_failure"] = "CALIBRATION"
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_evidence_version == "frozen-oos-calibration-v2"
+    assert snapshot.training_records[0].historical_calibrated_probability is None
+    assert all(
+        record.historical_calibrated_probability is not None
+        for record in snapshot.training_records[1:]
+    )
+
+
+def test_training_and_calibration_history_reuse_the_same_monthly_frozen_cohorts() -> None:
+    snapshot = _command().raw_score_model
+
+    training_cohorts = {cohort.month: cohort for cohort in snapshot.training_cohorts}
+    history_cohorts = {cohort.month: cohort for cohort in snapshot.calibration_history_cohorts}
+    shared_months = training_cohorts.keys() & history_cohorts.keys()
+
+    assert shared_months
+    assert all(training_cohorts[month] == history_cohorts[month] for month in shared_months)
+
+
+def test_calibration_history_rejects_reused_training_cohort_identity() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    training_cohort = payload["training_cohorts"][0]
+    history_cohort = next(
+        cohort
+        for cohort in payload["calibration_history_cohorts"]
+        if cohort["month"] == training_cohort["month"]
+    )
+    assert isinstance(training_cohort, dict)
+    assert isinstance(history_cohort, dict)
+    history_cohort["member_security_ids"][-1] = "synthetic-alternate-uncompleted-member"
+
+    with pytest.raises(ValueError, match="frozen cohort identity was reused with new membership"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_calibration_history_preserves_a_classified_missing_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    record = payload["calibration_history_records"][0]
+    record["historical_calibrated_probability"] = None
+    record["historical_calibration_failure"] = "CALIBRATION"
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_history_records[0].historical_calibrated_probability is None
+    assert snapshot.calibration_history_records[0].historical_calibration_failure == "CALIBRATION"
+
+
+def test_calibration_history_requires_a_classification_for_missing_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["calibration_history_records"][0]["historical_calibrated_probability"] = None
+
+    with pytest.raises(ValueError, match="calibration probability failure must be classified"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_v1_calibration_snapshot_remains_replayable_without_oos_probability() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["calibration_evidence_version"] = "frozen-oos-calibration-v1"
+    for record in payload["training_records"]:
+        record.pop("historical_calibrated_probability")
+
+    snapshot = RawScoreModelSnapshot.model_validate(payload)
+
+    assert snapshot.calibration_evidence_version == "frozen-oos-calibration-v1"
+    assert snapshot.training_records[0].historical_calibrated_probability is None
+
+
+def test_snapshot_without_calibration_metadata_still_enforces_mature_label_clock() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload.pop("calibration_evidence_version")
+    for record in payload["training_records"]:
+        for field_name in (
+            "raw_score_frozen_at",
+            "raw_score_training_watermark_at",
+            "raw_success_score",
+            "historical_calibrated_probability",
+            "entry_window_ends_at",
+            "unified_maturity_at",
+            "market_calendar_version",
+        ):
+            record.pop(field_name)
+    record = payload["training_records"][0]
+    record["evaluation_entry_at"] = "2043-01-01T08:00:00Z"
+
+    with pytest.raises(ValueError, match="label maturity is incomplete"):
+        RawScoreModelSnapshot.model_validate(payload)
+
+
+def test_current_raw_score_snapshot_rejects_partial_calibration_evidence() -> None:
+    payload = _command().raw_score_model.model_dump(mode="json")
+    payload["training_records"][0].pop("raw_success_score")
+
+    with pytest.raises(ValueError, match="raw-score calibration evidence is incomplete"):
+        RawScoreModelSnapshot.model_validate(payload)
 
 
 def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
@@ -627,14 +1685,13 @@ def test_legacy_research_command_decodes_pre_cohort_training_records() -> None:
 
     decoded = decode_legacy_research_command(payload)
 
-    assert len(decoded.raw_score_model.training_records) == 500
+    assert len(decoded.raw_score_model.training_records) == 524
     assert decoded.raw_score_model.training_records[0].cohort_id.startswith(
         "legacy-training-cohort-"
     )
-    assert (
-        decoded.raw_score_model.training_records[0].evaluation_entry_at
-        > decoded.raw_score_model.training_records[0].selection_cutoff_at
-    )
+    evaluation_entry_at = decoded.raw_score_model.training_records[0].evaluation_entry_at
+    assert evaluation_entry_at is not None
+    assert evaluation_entry_at > decoded.raw_score_model.training_records[0].selection_cutoff_at
 
 
 def test_legacy_risk_plan_preserves_the_original_raw_score_identity() -> None:
@@ -1026,7 +2083,14 @@ def test_research_draft_requires_catalysts_falsification_conditions_and_unknowns
 
 def test_raw_score_training_rejects_mixed_research_definition_versions() -> None:
     payload = _command().model_dump(mode="json")
-    payload["raw_score_model"]["training_cohorts"][0]["research_definition_version"] = "2.0.0"
+    cohort_id = payload["raw_score_model"]["training_cohorts"][0]["cohort_id"]
+    for cohorts in (
+        payload["raw_score_model"]["training_cohorts"],
+        payload["raw_score_model"]["calibration_history_cohorts"],
+    ):
+        for cohort in cohorts:
+            if cohort["cohort_id"] == cohort_id:
+                cohort["research_definition_version"] = "2.0.0"
 
     with pytest.raises(ValueError, match="same research Definition"):
         ResearchCommand.model_validate(payload)
@@ -1034,8 +2098,7 @@ def test_raw_score_training_rejects_mixed_research_definition_versions() -> None
 
 def test_raw_score_training_definition_matches_the_executing_research_definition() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = "2.0.0"
+    _set_training_cohort_definition_version(payload, "2.0.0")
 
     with pytest.raises(ValueError, match="match the executing research Definition"):
         ResearchCommand.model_validate(payload)
@@ -1103,8 +2166,7 @@ def test_historical_current_draft_decodes_without_erasing_current_evidence_contr
 
 def test_current_research_command_does_not_accept_the_prior_definition_version() -> None:
     payload = _command().model_dump(mode="json")
-    for cohort in payload["raw_score_model"]["training_cohorts"]:
-        cohort["research_definition_version"] = RESEARCH_PRIOR_DEFINITION_VERSION
+    _set_training_cohort_definition_version(payload, RESEARCH_PRIOR_DEFINITION_VERSION)
 
     with pytest.raises(ValueError, match="match the executing research Definition"):
         ResearchCommand.model_validate(payload)

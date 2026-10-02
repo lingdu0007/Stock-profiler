@@ -431,6 +431,256 @@ export interface components {
             /** Substitute Basis Digest */
             substitute_basis_digest: string;
         };
+        /** CalibratedMember */
+        CalibratedMember: {
+            /** Calibrated Probability */
+            calibrated_probability: string | null;
+            /** Candidate */
+            candidate: boolean;
+            /** Data Complete */
+            data_complete: boolean;
+            /**
+             * Evidence Clocks
+             * @default []
+             */
+            evidence_clocks: components["schemas"]["CandidateEvidenceClock"][];
+            /** Evidence Freshness */
+            evidence_freshness: string;
+            /**
+             * Market State Qualification Status
+             * @enum {string}
+             */
+            market_state_qualification_status: "VALID" | "AT_RISK" | "NOT_QUALIFIED";
+            /** Market State Qualified */
+            market_state_qualified: boolean;
+            /** Principal Risks */
+            principal_risks: string[];
+            /** Raw Success Score */
+            raw_success_score: string;
+            /** Reasons */
+            reasons: string[];
+            /** Research Id */
+            research_id: string;
+            /** Risk Gates */
+            risk_gates: components["schemas"]["CandidateRiskGate"][];
+            /** Risk Reasons */
+            risk_reasons: string[];
+            /**
+             * Risk Status
+             * @enum {string}
+             */
+            risk_status: "ACCEPTED" | "REJECTED" | "FAILED";
+            /** Security Id */
+            security_id: string;
+            /** Thesis */
+            thesis: string;
+            /** Valid Market Dates */
+            valid_market_dates: string[];
+        };
+        /**
+         * CalibrationDiagnostics
+         * @description Frozen goodness-of-fit diagnostics over one explicitly named score cohort.
+         */
+        CalibrationDiagnostics: {
+            /** Brier Score */
+            brier_score: string;
+            /** Calibration Intercept */
+            calibration_intercept: string | null;
+            /** Calibration Slope */
+            calibration_slope: string | null;
+            /** Log Loss */
+            log_loss: string;
+            /**
+             * Recalibration Fit Status
+             * @enum {string}
+             */
+            recalibration_fit_status: "AVAILABLE" | "CALCULATION_FAILED";
+            /** Reliability Curve */
+            reliability_curve: components["schemas"]["CalibrationReliabilityBin"][];
+        };
+        /** CalibrationReliabilityBin */
+        CalibrationReliabilityBin: {
+            /** Lower Probability */
+            lower_probability: string;
+            /** Mean Predicted Probability */
+            mean_predicted_probability: string;
+            /** Observed Success Rate */
+            observed_success_rate: string;
+            /** Sample Count */
+            sample_count: number;
+            /** Upper Probability */
+            upper_probability: string;
+        };
+        /** CalibrationSnapshot */
+        CalibrationSnapshot: {
+            calibrator_selection: components["schemas"]["CalibratorSelectionSnapshot"];
+            /** Calibrator Selection Window Months */
+            calibrator_selection_window_months: string[];
+            /**
+             * Calibrator Version
+             * @constant
+             */
+            calibrator_version: "monotone-firth-logistic-v1";
+            /** Intercept */
+            intercept: string;
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
+            /** Negative Record Count */
+            negative_record_count: number;
+            out_of_sample_diagnostics: components["schemas"]["CalibrationDiagnostics"];
+            /** Positive Record Count */
+            positive_record_count: number;
+            /** Recent Diagnostic Months */
+            recent_diagnostic_months: string[];
+            /** Recent Diagnostic Sample Count */
+            recent_diagnostic_sample_count: number;
+            /**
+             * Recent Diagnostic Status
+             * @enum {string}
+             */
+            recent_diagnostic_status: "AVAILABLE" | "INSUFFICIENT_DATA" | "CALCULATION_FAILED";
+            recent_diagnostics: components["schemas"]["CalibrationDiagnostics"] | null;
+            /** Slope */
+            slope: string;
+            /** Training Record Count */
+            training_record_count: number;
+            /** Training Window Months */
+            training_window_months: string[];
+            /**
+             * Unavailable Probability Count
+             * @default 0
+             */
+            unavailable_probability_count: number;
+        };
+        /**
+         * CalibratorSelectionSnapshot
+         * @description Persist the preregistered v1 family decision and its independent OOS evidence.
+         */
+        CalibratorSelectionSnapshot: {
+            diagnostics: components["schemas"]["CalibrationDiagnostics"];
+            /**
+             * Label Watermark At
+             * Format: date-time
+             */
+            label_watermark_at: string;
+            /**
+             * Policy
+             * @constant
+             */
+            policy: "PRE_REGISTERED_V1_SINGLE_FAMILY";
+            /** Record Count */
+            record_count: number;
+            /**
+             * Selected Calibrator Version
+             * @constant
+             */
+            selected_calibrator_version: "monotone-firth-logistic-v1";
+            /** Window Months */
+            window_months: string[];
+        };
+        /**
+         * CandidateEvidenceClock
+         * @description Source and validation clocks for one persisted research evidence item.
+         */
+        CandidateEvidenceClock: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Source Published At */
+            source_published_at?: string | null;
+            /** Validated At */
+            validated_at?: string | null;
+        };
+        /** CandidatePopulation */
+        CandidatePopulation: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
+            /** Recommendation Coverage Denominator */
+            recommendation_coverage_denominator: boolean;
+            /** Recommendation Coverage Pass */
+            recommendation_coverage_pass: boolean;
+            /** Valid Monthly */
+            valid_monthly: boolean;
+        };
+        /** CandidateReleaseOutcome */
+        CandidateReleaseOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
+            /** Batch Id */
+            batch_id: string;
+            calibration: components["schemas"]["CalibrationSnapshot"] | null;
+            /** Capability Version */
+            capability_version: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "CANDIDATES" | "VALID_NO_CANDIDATES" | "RECOMMENDATION_ABSTAINED" | "FAILED" | "BLOCKED";
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /**
+             * Market State
+             * @enum {string}
+             */
+            market_state: "BULL" | "BEAR" | "SIDEWAYS";
+            /** Members */
+            members: components["schemas"]["CalibratedMember"][];
+            population: components["schemas"]["CandidatePopulation"];
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            qualification?: components["schemas"]["MarketStateQualification"] | null;
+            /**
+             * Qualification Scope
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /** Reasons */
+            reasons: string[];
+            /** Research Event Id */
+            research_event_id: string;
+            /** Research Object Id */
+            research_object_id: string;
+            /** Valid Market Dates */
+            valid_market_dates: string[];
+        };
+        /**
+         * CandidateRiskGate
+         * @description One frozen independent-risk gate carried into a candidate explanation.
+         */
+        CandidateRiskGate: {
+            /** Gate Id */
+            gate_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED";
+        };
         /** CapabilityVersion */
         CapabilityVersion: {
             implementation: components["schemas"]["DecisionCaseVersionBundle"];
@@ -1189,6 +1439,7 @@ export interface components {
          * @description The user-visible result expected from this original synthetic fixture.
          */
         ExternalResult: {
+            candidate_release?: components["schemas"]["CandidateReleaseOutcome"] | null;
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
             drawdown?: components["schemas"]["DrawdownOutcome"] | null;
@@ -1290,6 +1541,7 @@ export interface components {
             monitoring_publication?: components["schemas"]["MonitoringPublication"] | null;
             /** Qualification Scope */
             qualification_scope: string;
+            report_publication?: components["schemas"]["ReportPublication"] | null;
             /** Report Version Id */
             report_version_id: string;
             result: components["schemas"]["ExternalResult"];
@@ -1503,6 +1755,46 @@ export interface components {
             six_month_obligations?: string | null;
             /** Uncovered Obligation Gap */
             uncovered_obligation_gap?: string | null;
+        };
+        /**
+         * MarketStateQualification
+         * @description Snapshot of one persisted qualification decision for one market state.
+         */
+        MarketStateQualification: {
+            /** Capability Version */
+            capability_version: string;
+            /** Current Status Recorded At */
+            current_status_recorded_at?: string | null;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /**
+             * Market State
+             * @enum {string}
+             */
+            market_state: "BULL" | "BEAR" | "SIDEWAYS";
+            /** Qualification Id */
+            qualification_id: string;
+            /**
+             * Qualification Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "NOT_OBTAINED" | "VALID" | "AT_RISK" | "SUSPENDED" | "REVOKED" | "EXPIRED";
+            /**
+             * Valid Through
+             * Format: date-time
+             */
+            valid_through: string;
         };
         /** MaximumFundingLeg */
         MaximumFundingLeg: {
@@ -2173,6 +2465,8 @@ export interface components {
              * @enum {string}
              */
             kind: "QUALIFICATION_PASS" | "DIAGNOSTIC_ALERT" | "INSUFFICIENT_EVIDENCE" | "REQUIRED_PREMISE_UNVERIFIABLE" | "ORIGINAL_BASIS_INVALID" | "RESTORATION_DECISION" | "ORIGINAL_BASIS_RESTORED" | "REQUALIFICATION_PASS" | "HISTORICAL_OOS_PASS" | "LOCKED_FORWARD_PASS" | "FORMAL_CHECK" | "FORMAL_NODE_NOT_EXECUTED" | "DIAGNOSTIC_CLEAR" | "DIAGNOSTIC_RECURRENT" | "DIAGNOSTIC_INSUFFICIENT" | "DIAGNOSTIC_UNAVAILABLE" | "ALERT_CLOSURE" | "ALERT_PROVEN_ERRONEOUS" | "ALERT_TRANSFERRED" | "ALERT_ARCHIVED" | "CERTIFIED_BASIS_SUBSTITUTION" | "STATE_ACTIVITY_RESTORED" | "REQUALIFICATION_APPLICATION_REGISTERED" | "ALERT_REPLAY_RECORDED";
+            /** Market Calendar Version */
+            market_calendar_version?: string | null;
             /** Maturity Sufficient */
             maturity_sufficient?: boolean | null;
             /** Requalification Application Id */
@@ -2535,6 +2829,25 @@ export interface components {
              */
             registered_at: string;
             scope: components["schemas"]["QualificationScope"];
+        };
+        /**
+         * ReportPublication
+         * @description Persist the report commit clock and its final publication disposition.
+         */
+        ReportPublication: {
+            /** Committed At */
+            committed_at: string;
+            /** Failure Reason */
+            failure_reason?: string | null;
+            /** Failure Recorded At */
+            failure_recorded_at?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PUBLISHED" | "FAILED";
         };
         /** RequalificationApplication */
         RequalificationApplication: {
@@ -3241,13 +3554,15 @@ export interface components {
          * @description A phase-specific outcome; lifecycle states have no global terminal meaning.
          */
         StageResult: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
             /** Gate Results */
             gate_results: components["schemas"]["GateResult"][];
             /**
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

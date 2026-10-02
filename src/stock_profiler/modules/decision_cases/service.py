@@ -4,15 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import Decimal
 from threading import Lock
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from stock_profiler.foundation.decision_versions import CURRENT_M_AGENT_RELEASE
+from stock_profiler.modules.candidate_selection.calibrated_candidates import (
+    CalibrationRecord,
+    CandidateEvidenceClock,
+    CandidateReleaseCommand,
+    CandidateReleaseOutcome,
+    MarketStateQualification,
+    MarketStateQualificationStatus,
+    candidate_release_availability_failure,
+    candidate_release_blocked_by_business_prerequisite,
+    finalize_candidate_release_publication,
+    freeze_candidate_release,
+)
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
 from stock_profiler.modules.decision_cases.domain import (
@@ -31,6 +46,7 @@ from stock_profiler.modules.decision_cases.domain import (
     GateResult,
     NotificationAttempt,
     NotificationAttemptStatus,
+    ResultAccessScope,
     StageResult,
     business_lifecycle_from_stage,
     business_outcome_result,
@@ -46,6 +62,7 @@ from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correc
 from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping,
+    CandidateAvailabilityFailureFact,
     DecisionEventCommitError,
     DecisionEventCommitUncertainError,
     DecisionLedger,
@@ -54,6 +71,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkRunTransition,
     FrozenFramework,
     MappedDurableRunMissingError,
+    ResearchAvailabilityFailureFact,
     ResearchMemberRunResult,
     Transaction,
 )
@@ -68,16 +86,37 @@ from stock_profiler.modules.portfolio.service import adjudicate as adjudicate_po
 from stock_profiler.modules.portfolio.stress import assess_stress
 from stock_profiler.modules.position_management.concentration import assess_concentration
 from stock_profiler.modules.position_management.service import reconcile as reconcile_position
+from stock_profiler.modules.qualification.contracts import GovernanceOutcome, QualificationRecord
 from stock_profiler.modules.qualification.governance import adjudicate, validate_new_request
+from stock_profiler.modules.qualification.service import (
+    current_qualification,
+    qualification_is_current,
+)
 from stock_profiler.modules.research.contracts import (
     RAW_SCORE_FEATURE_DATA_TYPES,
+    RESEARCH_DEFINITION_ID,
+    RESEARCH_LEGACY_ROUTING_POLICY_VERSION,
+    RESEARCH_MODEL_ADAPTER_ID,
+    RESEARCH_OUTPUT_CONTRACT_ID,
+    RESEARCH_ROUTING_POLICY_VERSION,
+    RISK_DEFINITION_ID,
+    RISK_DEFINITION_VERSION,
+    RISK_LEGACY_DEFINITION_VERSION,
+    RISK_LEGACY_OUTPUT_CONTRACT_VERSION,
+    RISK_MODEL_ADAPTER_ID,
+    RISK_OUTPUT_CONTRACT_ID,
+    RISK_OUTPUT_CONTRACT_VERSION,
     RawScore,
     RawScoreCalculationError,
+    RawScoreModelSnapshot,
+    RawScoreTrainingCohort,
+    RawScoreTrainingRecord,
     ResearchCommand,
     ResearchDraft,
     ResearchDraftMember,
     ResearchFrameworkOutput,
     ResearchMemberInput,
+    ResearchOutcome,
     ResearchRiskPlan,
     ResearchToolEvidence,
     RiskVetoDraft,
@@ -86,6 +125,8 @@ from stock_profiler.modules.research.contracts import (
     decode_historical_research_framework_output,
     decode_legacy_research_draft,
     decode_legacy_research_framework_output,
+    raw_score_maturity_at,
+    research_contract_mode_for_versions,
     research_draft_payload,
     research_evidence_payload,
     research_member_handoff_payload,
@@ -97,6 +138,67 @@ from stock_profiler.modules.research.service import (
     prepare_research_risk_plan,
     validate_research_draft,
 )
+
+
+class CandidateQualificationVersionMismatch(ValueError):
+    """Persist an availability failure when the saved qualification version is stale."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_QUALIFICATION_VERSION_MISMATCH")
+
+
+class CandidateQualificationHistoryAmbiguous(ValueError):
+    """Reject conflicting terminal revisions instead of selecting by timestamp order."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_QUALIFICATION_HISTORY_AMBIGUOUS")
+
+
+class CandidateCalibrationProvenanceInvalid(ValueError):
+    """Persist a calibration availability failure when frozen source lineage is invalid."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_CALIBRATION_LINEAGE_INVALID")
+
+
+class CandidateCalibrationVersionMismatch(ValueError):
+    """Fail visibly when calibration labels use a different raw-score model version."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_CALIBRATION_MODEL_VERSION_MISMATCH")
+
+
+class CandidateResearchVersionMismatch(ValueError):
+    """Persist an availability failure when an upstream handoff version is incompatible."""
+
+    def __init__(self) -> None:
+        super().__init__("CANDIDATE_RESEARCH_VERSION_MISMATCH")
+
+
+@dataclass(frozen=True)
+class _FrozenCandidatePrediction:
+    raw_success_score: Decimal
+    calibrated_probability: Decimal
+    raw_score_frozen_at: datetime
+    raw_score_training_watermark_at: datetime
+    market_calendar_version: str
+    entry_window_ends_at: datetime
+    entry_sessions: tuple[tuple[datetime, datetime], ...]
+    matures_by: datetime
+
+
+class CandidateResearchHandoffUnavailable(ValueError):
+    """Preserve an unavailable upstream research result in its candidate batch."""
+
+    def __init__(self, disposition: str):
+        self.disposition = disposition
+        self.reason = (
+            "RESEARCH_PREREQUISITE_BLOCKED"
+            if disposition == "BLOCKED"
+            else "CANDIDATE_RESEARCH_HANDOFF_UNAVAILABLE"
+        )
+        super().__init__(self.reason)
+
 
 _FRAMEWORK_EXECUTION_LOCKS: dict[str, Lock] = {}
 _FRAMEWORK_EXECUTION_LOCKS_GUARD = Lock()
@@ -393,6 +495,1488 @@ def _validate_research_selection_event(
         or source_terminal_percentiles != command.screening.terminal_percentiles
     ):
         raise ValueError("RESEARCH_SELECTION_PERCENTILE_MISMATCH")
+
+
+def _validate_candidate_release_source(
+    case: FrozenDecisionCase,
+    source_event: DecisionEventFact | None,
+) -> str:
+    """Require every candidate input to match one committed research and risk result."""
+    command = case.candidate_release
+    assert command is not None
+    if source_event is None:
+        raise CandidateResearchHandoffUnavailable("MISSING")
+    if (
+        source_event.decision_event_id != command.research_event_id
+        or source_event.business_object_id != command.research_object_id
+        or source_event.corrects_event_id is not None
+        or source_event.validation_status != "PASSED"
+        or source_event.case.access_scope is None
+        or case.access_scope is None
+        or not source_event.case.access_scope.same_scope_as(case.access_scope)
+        or datetime.fromisoformat(source_event.case.knowledge_cutoff)
+        != datetime.fromisoformat(case.knowledge_cutoff)
+        or source_event.result.research is None
+    ):
+        raise ValueError("CANDIDATE_RESEARCH_EVENT_INVALID")
+    research = source_event.result.research
+    if research.disposition in {"DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"}:
+        raise CandidateResearchHandoffUnavailable(research.disposition)
+    risk = research.risk_veto
+    raw_scores = research.raw_scores
+    if research.disposition not in {"FROZEN", "REJECTED"}:
+        raise ValueError("CANDIDATE_RESEARCH_HANDOFF_INCOMPLETE")
+    if risk is None or raw_scores is None:
+        raise CandidateResearchHandoffUnavailable("INCOMPLETE")
+    if not _candidate_research_versions_are_compatible(source_event.case, research):
+        raise CandidateResearchVersionMismatch()
+    model_versions = {score.model_version for score in raw_scores}
+    if len(model_versions) != 1:
+        raise CandidateCalibrationVersionMismatch()
+    members = {member.security_id: member for member in research.members}
+    source_member_inputs = (
+        {member.security_id: member for member in source_event.case.research.members}
+        if source_event.case.research is not None
+        else {}
+    )
+    scores = {score.security_id: score for score in raw_scores}
+    vetoes = {veto.security_id: veto for veto in risk.member_vetoes}
+    source_knowledge_cutoff = datetime.fromisoformat(
+        source_event.case.knowledge_cutoff.replace("Z", "+00:00")
+    )
+    if (
+        len(members) != len(research.members)
+        or len(scores) != len(raw_scores)
+        or set(members) != set(scores)
+        or set(members) != set(vetoes)
+        or set(members) != {member.security_id for member in command.candidates}
+        or len(command.candidates) != 10
+    ):
+        raise ValueError("CANDIDATE_RESEARCH_COHORT_MISMATCH")
+    for candidate in command.candidates:
+        member = members[candidate.security_id]
+        score = scores[candidate.security_id]
+        veto = vetoes[candidate.security_id]
+        if candidate.research_id != member.research_id:
+            raise ValueError("CANDIDATE_RESEARCH_ID_MISMATCH")
+        if candidate.raw_success_score != score.z20:
+            raise ValueError("CANDIDATE_RAW_SCORE_MISMATCH")
+        if (
+            candidate.risk_status != veto.disposition
+            or tuple((gate.gate_id, gate.status) for gate in candidate.risk_gates)
+            != tuple((gate.gate_id, gate.status) for gate in veto.gates)
+            or candidate.risk_reasons != veto.reasons
+        ):
+            raise ValueError("CANDIDATE_RISK_VETO_MISMATCH")
+        if candidate.thesis != member.thesis or candidate.principal_risks != (member.bear_case,):
+            raise ValueError("CANDIDATE_THESIS_OR_RISK_MISMATCH")
+        expected_freshness = (
+            "FRESH_AT_KNOWLEDGE_CUTOFF"
+            if member.knowledge_cutoff == source_knowledge_cutoff
+            else "STALE_AT_KNOWLEDGE_CUTOFF"
+        )
+        if candidate.evidence_freshness != expected_freshness:
+            raise ValueError("CANDIDATE_EVIDENCE_FRESHNESS_MISMATCH")
+        source_member_input = source_member_inputs.get(candidate.security_id)
+        expected_evidence_clocks = (
+            tuple(
+                CandidateEvidenceClock(
+                    evidence_id=evidence.evidence_id,
+                    effective_at=evidence.effective_at,
+                    source_published_at=evidence.source_published_at,
+                    acquired_at=evidence.acquired_at,
+                    validated_at=evidence.validated_at,
+                    knowledge_cutoff=evidence.knowledge_cutoff,
+                )
+                for evidence in source_member_input.evidence
+            )
+            if source_member_input is not None
+            else ()
+        )
+        if candidate.evidence_clocks != expected_evidence_clocks:
+            raise ValueError("CANDIDATE_EVIDENCE_CLOCKS_MISMATCH")
+    return next(iter(model_versions))
+
+
+def _candidate_research_versions_are_compatible(
+    source_case: FrozenDecisionCase,
+    research: ResearchOutcome,
+) -> bool:
+    """Accept only supported, internally consistent research and risk handoff versions."""
+    handoff = research.handoff
+    source_bundle = source_case.version_bundle
+    try:
+        mode = research_contract_mode_for_versions(
+            handoff.research_definition_version,
+            handoff.research_output_contract_version,
+        )
+    except ValueError:
+        return False
+    legacy = mode == "legacy"
+    historical = mode == "historical"
+    expected_risk_definition_version = (
+        RISK_LEGACY_DEFINITION_VERSION if legacy or historical else RISK_DEFINITION_VERSION
+    )
+    expected_risk_output_contract_version = (
+        RISK_LEGACY_OUTPUT_CONTRACT_VERSION
+        if legacy or historical
+        else RISK_OUTPUT_CONTRACT_VERSION
+    )
+    expected_routing_policy_version = (
+        RESEARCH_LEGACY_ROUTING_POLICY_VERSION if legacy else RESEARCH_ROUTING_POLICY_VERSION
+    )
+    return (
+        handoff.research_definition_id == RESEARCH_DEFINITION_ID
+        and source_bundle.agent_definition_id == handoff.research_definition_id
+        and source_bundle.agent_definition_version == handoff.research_definition_version
+        and handoff.research_model_adapter_id == RESEARCH_MODEL_ADAPTER_ID
+        and source_bundle.model_adapter_id == handoff.research_model_adapter_id
+        and handoff.research_routing_policy_version == expected_routing_policy_version
+        and source_bundle.routing_policy_version == handoff.research_routing_policy_version
+        and handoff.research_output_contract_id == RESEARCH_OUTPUT_CONTRACT_ID
+        and source_bundle.output_contract_version == handoff.research_output_contract_version
+        and handoff.risk_definition_id == RISK_DEFINITION_ID
+        and handoff.risk_definition_version == expected_risk_definition_version
+        and handoff.risk_model_adapter_id == RISK_MODEL_ADAPTER_ID
+        and handoff.risk_output_contract_id == RISK_OUTPUT_CONTRACT_ID
+        and handoff.risk_output_contract_version == expected_risk_output_contract_version
+        and research.risk_veto is not None
+        and research.risk_veto.definition_id == handoff.risk_definition_id
+        and research.risk_veto.definition_version == handoff.risk_definition_version
+    )
+
+
+def _validate_candidate_calibration_sources(
+    command: CandidateReleaseCommand,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    access_scope: ResultAccessScope,
+    candidate_model_version: str,
+) -> tuple[bool, tuple[CalibrationRecord, ...], int, bool]:
+    """Bind calibration rows to the complete frozen out-of-sample research snapshot."""
+    if any(
+        record.raw_score_model_version != candidate_model_version
+        for record in command.training_records
+    ):
+        raise CandidateCalibrationVersionMismatch()
+
+    candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    candidate_release_events = ledger.candidate_release_history(connection, access_scope)
+    prior_calibration_snapshots = tuple(
+        event
+        for event in candidate_release_events
+        if _prior_calibration_snapshot_matches(event, command)
+    )
+    prior_candidate_prediction_snapshots = tuple(
+        event
+        for event in candidate_release_events
+        if _prior_candidate_prediction_snapshot_matches(event, command)
+    )
+    if prior_calibration_snapshots and len(command.training_window_months) != 60:
+        raise CandidateCalibrationProvenanceInvalid()
+    research_events = tuple(
+        sorted(
+            (
+                event
+                for event in ledger.research_event_history(connection, access_scope)
+                if event.corrects_event_id is None
+                and (
+                    datetime.fromisoformat(event.committed_at) <= candidate_cutoff
+                    or (
+                        event.decision_event_id == command.research_event_id
+                        and datetime.fromisoformat(event.case.knowledge_cutoff) == candidate_cutoff
+                    )
+                )
+                and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+                and event.case.research is not None
+            ),
+            key=lambda event: event.decision_event_id,
+        )
+    )
+    unavailable_candidate_probability_identities = _unavailable_candidate_probability_identities(
+        candidate_release_events,
+        candidate_cutoff,
+        research_events,
+        ledger.candidate_availability_failure_history(connection, access_scope),
+    )
+    unavailable_research_probability_identities = _unavailable_research_probability_identities(
+        research_events,
+        candidate_cutoff,
+        ledger.research_availability_failure_history(connection, access_scope),
+    )
+    historical_events = tuple(
+        event
+        for event in research_events
+        if event.validation_status == "PASSED" and event.result.research is not None
+    )
+    historical_events_by_id = {event.decision_event_id: event for event in historical_events}
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    mature_source_event_ids: dict[tuple[str, str, str], str] = {}
+    unavailable_probability_identities: set[tuple[str, str, str]] = set()
+    all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    frozen_cohorts_by_id: dict[str, RawScoreTrainingCohort] = {}
+    cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    cutoff_mature_source_event_ids: dict[tuple[str, str, str], str] = {}
+    cutoff_mature_source_event_ids_by_identity: dict[tuple[str, str, str], set[str]] = {}
+    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
+    cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
+    frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
+    cutoff_incomplete_source_months: set[str] = set()
+    for event in prior_calibration_snapshots:
+        prior_command = event.case.candidate_release
+        prior_outcome = event.result.candidate_release
+        if prior_command is None or prior_outcome is None:
+            continue
+        if not _same_calibrator_selection_evidence(prior_command, command):
+            raise CandidateCalibrationProvenanceInvalid()
+        for record in prior_command.training_records:
+            if (
+                record.label_available_at <= candidate_cutoff
+                and record.unified_maturity_at <= candidate_cutoff
+            ):
+                _retain_frozen_calibration_record(cutoff_frozen_training_rows, record)
+            if (
+                record.label_available_at > command.label_watermark_at
+                or record.unified_maturity_at > command.label_watermark_at
+            ):
+                continue
+            _retain_frozen_calibration_record(frozen_training_rows, record)
+    for event in prior_candidate_prediction_snapshots:
+        prior_command = event.case.candidate_release
+        if prior_command is None:
+            continue
+        research_event = historical_events_by_id.get(prior_command.research_event_id)
+        predictions = _frozen_candidate_prediction_rows_from_events(event, research_event)
+        for identity, prediction in predictions.items():
+            previous_prediction = frozen_candidate_predictions.setdefault(identity, prediction)
+            if previous_prediction != prediction:
+                raise CandidateCalibrationProvenanceInvalid()
+    for event in historical_events:
+        source_case_research = event.case.research
+        if source_case_research is None:
+            continue
+        model = source_case_research.raw_score_model
+        source_records = _candidate_calibration_source_records(model, candidate_model_version)
+        if not source_records:
+            continue
+        for cohort in (*model.training_cohorts, *model.calibration_history_cohorts):
+            _retain_immutable_cohort(frozen_cohorts_by_id, cohort)
+        for source_record in source_records:
+            if source_record.unified_maturity_at is None:
+                raise CandidateCalibrationProvenanceInvalid()
+            identity = (
+                source_record.month,
+                source_record.security_id,
+                source_record.research_id,
+            )
+            _retain_immutable_source_row(all_source_rows, identity, source_record)
+            if source_record.historical_calibrated_probability is None:
+                unavailable_probability_identities.add(identity)
+            if (
+                source_record.label_available_at <= candidate_cutoff
+                and source_record.unified_maturity_at <= candidate_cutoff
+            ):
+                if source_record.historical_calibrated_probability is not None:
+                    _retain_immutable_source_row(cutoff_mature_source_rows, identity, source_record)
+                    cutoff_mature_source_event_ids.setdefault(identity, event.decision_event_id)
+                    cutoff_mature_source_event_ids_by_identity.setdefault(identity, set()).add(
+                        event.decision_event_id
+                    )
+            else:
+                cutoff_incomplete_source_months.add(source_record.month)
+            if (
+                source_record.historical_calibrated_probability is not None
+                and source_record.label_available_at <= command.label_watermark_at
+                and source_record.unified_maturity_at <= command.label_watermark_at
+            ):
+                _retain_immutable_source_row(mature_source_rows, identity, source_record)
+                mature_source_event_ids.setdefault(identity, event.decision_event_id)
+    unavailable_probability_identities.difference_update(frozen_training_rows)
+    unavailable_probability_identities.difference_update(cutoff_frozen_training_rows)
+    unavailable_probability_identities.update(unavailable_candidate_probability_identities)
+    for identity in unavailable_probability_identities:
+        mature_source_rows.pop(identity, None)
+        mature_source_event_ids.pop(identity, None)
+        cutoff_mature_source_rows.pop(identity, None)
+        cutoff_mature_source_event_ids.pop(identity, None)
+        cutoff_mature_source_event_ids_by_identity.pop(identity, None)
+    for identity, record in cutoff_frozen_training_rows.items():
+        cutoff_mature_source_event_ids_by_identity.setdefault(identity, set()).add(
+            record.source_research_event_id
+        )
+    cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
+        frozen_candidate_predictions,
+        cutoff_mature_source_rows,
+        candidate_cutoff,
+    )
+    globally_mature_months = _fully_matured_calibration_months(
+        set(cutoff_mature_source_rows),
+        set(cutoff_frozen_training_rows),
+        cutoff_matured_candidate_prediction_ids,
+        set(frozen_candidate_predictions),
+        cutoff_incomplete_source_months,
+    )
+    _validate_calibration_training_window(
+        command.training_window_months,
+        globally_mature_months,
+        selection_window_months=command.calibrator_selection_window_months,
+        recent_diagnostic_window_months=command.recent_diagnostic_window_months,
+        initial_calibration=not prior_calibration_snapshots,
+    )
+    recent_diagnostic_months = set(_recent_calibration_month_window(globally_mature_months))
+    if command.recent_diagnostic_window_months != tuple(sorted(recent_diagnostic_months)):
+        raise CandidateCalibrationProvenanceInvalid()
+    recent_diagnostic_records_by_identity = _recent_calibration_diagnostic_records(
+        cutoff_mature_source_rows,
+        cutoff_mature_source_event_ids,
+        cutoff_frozen_training_rows,
+        recent_diagnostic_months,
+        unavailable_probability_identities,
+    )
+    production_records = (
+        *command.calibrator_selection_records,
+        *command.training_records,
+    )
+    records_by_event = _calibration_records_by_source_event(production_records)
+    for records in records_by_event.values():
+        for record in records:
+            identity = (record.month, record.security_id, record.research_id)
+            if identity in unavailable_probability_identities:
+                raise CandidateCalibrationProvenanceInvalid()
+    authoritative_diagnostic_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in recent_diagnostic_records_by_identity.values()
+    }
+    recent_diagnostic_integrity_valid = True
+    submitted_diagnostic_identities: set[tuple[str, str, str]] = set()
+    for record in command.recent_diagnostic_records:
+        identity = (record.month, record.security_id, record.research_id)
+        if (
+            record.unified_maturity_at <= command.knowledge_cutoff
+            and record.label_available_at <= command.knowledge_cutoff
+        ):
+            if (
+                identity in submitted_diagnostic_identities
+                or identity not in authoritative_diagnostic_records
+                or not _matches_authoritative_diagnostic_record(
+                    record,
+                    authoritative_diagnostic_records[identity],
+                    cutoff_mature_source_event_ids_by_identity.get(identity, set()),
+                )
+            ):
+                recent_diagnostic_integrity_valid = False
+            submitted_diagnostic_identities.add(identity)
+
+    for event_id, records in records_by_event.items():
+        source_event = ledger.get_decision_event(event_id, connection)
+        if source_event is not None:
+            _validate_calibration_source_event_availability(
+                source_event,
+                candidate_cutoff,
+                current_research_event_id=command.research_event_id,
+            )
+        if (
+            source_event is None
+            or source_event.decision_event_id != event_id
+            or source_event.corrects_event_id is not None
+            or source_event.validation_status != "PASSED"
+            or datetime.fromisoformat(source_event.case.knowledge_cutoff) > candidate_cutoff
+            or source_event.case.access_scope is None
+            or not source_event.case.access_scope.same_scope_as(access_scope)
+            or source_event.result.research is None
+            or source_event.case.research is None
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        research = source_event.result.research
+        raw_scores = research.raw_scores
+        if (
+            research.disposition not in {"FROZEN", "REJECTED"}
+            or raw_scores is None
+            or not raw_scores
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        source_model = source_event.case.research.raw_score_model
+        snapshot_records = _raw_score_calibration_source_records(source_model)
+        records_by_identity = {
+            (record.month, record.security_id, record.research_id): record for record in records
+        }
+        if len(records_by_identity) != len(records):
+            raise CandidateCalibrationProvenanceInvalid()
+        submitted_months = {record.month for record in records}
+        snapshot_by_identity = _calibration_source_rows_by_identity(
+            snapshot_records, submitted_months
+        )
+        frozen_by_identity = {
+            identity: record
+            for identity, record in frozen_training_rows.items()
+            if record.source_research_event_id == event_id
+        }
+        expected_source_rows = snapshot_by_identity
+        expected_identities = set(expected_source_rows) | {
+            identity for identity in frozen_by_identity if identity[0] in submitted_months
+        }
+        if not set(records_by_identity).issubset(expected_identities):
+            raise CandidateCalibrationProvenanceInvalid()
+        for identity, record in records_by_identity.items():
+            frozen_record = frozen_by_identity.get(identity)
+            if frozen_record is not None:
+                if not _same_frozen_calibration_record(record, frozen_record):
+                    raise CandidateCalibrationProvenanceInvalid()
+                continue
+            source_record = expected_source_rows[identity]
+            if (
+                source_record.raw_score_frozen_at != record.raw_score_frozen_at
+                or source_record.raw_score_training_watermark_at
+                != record.raw_score_training_watermark_at
+                or source_record.raw_success_score != record.raw_success_score
+                or source_record.historical_calibrated_probability
+                != record.out_of_sample_probability
+                or source_record.source_model_version != record.raw_score_model_version
+                or source_record.market_calendar_version != record.market_calendar_version
+                or source_record.terminal_label != record.terminal_success
+                or source_record.evaluation_entry_at != record.entry_at
+                or source_record.entry_window_ends_at != record.entry_window_ends_at
+                or source_record.unified_maturity_at != record.unified_maturity_at
+                or source_record.label_available_at != record.label_available_at
+                or source_record.raw_score_frozen_at is None
+                or source_record.raw_score_training_watermark_at is None
+                or source_record.raw_success_score is None
+                or source_record.entry_window_ends_at is None
+                or source_record.unified_maturity_at is None
+                or source_record.raw_score_frozen_at > candidate_cutoff
+                or source_record.raw_score_training_watermark_at > source_record.raw_score_frozen_at
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
+            if datetime.fromisoformat(source_event.committed_at) < record.label_available_at:
+                raise CandidateCalibrationProvenanceInvalid()
+        if not all(
+            record.unified_maturity_at <= command.label_watermark_at
+            and record.label_available_at <= command.label_watermark_at
+            for record in records
+            if record.month
+            in set(command.calibrator_selection_window_months) | set(command.training_window_months)
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+        if not all(
+            record.unified_maturity_at <= command.knowledge_cutoff
+            and record.label_available_at <= command.knowledge_cutoff
+            for record in records
+            if record.month in set(command.recent_diagnostic_window_months)
+        ):
+            raise CandidateCalibrationProvenanceInvalid()
+    if len(command.training_window_months) >= 60:
+        _validate_cutoff_complete_calibration_population(
+            command.training_window_months,
+            cutoff_mature_source_rows,
+            cutoff_frozen_training_rows,
+            cutoff_matured_candidate_prediction_ids,
+            {
+                (record.month, record.security_id, record.research_id)
+                for record in command.training_records
+            },
+        )
+        for record in command.training_records:
+            latest_source_record = mature_source_rows.get(
+                (record.month, record.security_id, record.research_id)
+            )
+            frozen_record = frozen_training_rows.get(
+                (record.month, record.security_id, record.research_id)
+            )
+            if latest_source_record is None and frozen_record is None:
+                raise CandidateCalibrationProvenanceInvalid()
+            if frozen_record is not None and not _same_frozen_calibration_record(
+                record, frozen_record
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
+            if latest_source_record is not None and (
+                latest_source_record.raw_success_score != record.raw_success_score
+                or latest_source_record.historical_calibrated_probability
+                != record.out_of_sample_probability
+                or latest_source_record.terminal_label != record.terminal_success
+                or latest_source_record.raw_score_frozen_at != record.raw_score_frozen_at
+                or latest_source_record.unified_maturity_at != record.unified_maturity_at
+                or latest_source_record.label_available_at != record.label_available_at
+            ):
+                raise CandidateCalibrationProvenanceInvalid()
+    if command.calibrator_selection_window_months:
+        _validate_cutoff_complete_calibration_population(
+            command.calibrator_selection_window_months,
+            cutoff_mature_source_rows,
+            cutoff_frozen_training_rows,
+            cutoff_matured_candidate_prediction_ids,
+            {
+                (record.month, record.security_id, record.research_id)
+                for record in command.calibrator_selection_records
+            },
+        )
+    unavailable_probability_count = _unavailable_calibration_probability_count(
+        all_source_rows,
+        unavailable_candidate_probability_identities,
+        frozen_cohorts_by_id,
+        candidate_cutoff,
+        unavailable_research_probability_identities,
+        set(frozen_candidate_predictions),
+    )
+    return (
+        not prior_calibration_snapshots,
+        tuple(
+            recent_diagnostic_records_by_identity[identity]
+            for identity in sorted(recent_diagnostic_records_by_identity)
+        ),
+        unavailable_probability_count,
+        recent_diagnostic_integrity_valid,
+    )
+
+
+def _prior_calibration_snapshot_matches(
+    event: DecisionEventFact,
+    command: CandidateReleaseCommand,
+) -> bool:
+    """Include prior fits only within the same frozen candidate and raw-score versions."""
+    release = event.result.candidate_release
+    prior_command = event.case.candidate_release
+    if release is None or release.calibration is None or prior_command is None:
+        return False
+    current_model_versions = _calibration_source_model_versions(command)
+    prior_model_versions = _calibration_source_model_versions(prior_command)
+    return bool(
+        release.calibration.calibrator_version == command.calibrator_version
+        and prior_command.capability_version == command.capability_version
+        and current_model_versions
+        and prior_model_versions == current_model_versions
+        and datetime.fromisoformat(event.committed_at)
+        <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+        and datetime.fromisoformat(event.case.knowledge_cutoff)
+        <= datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    )
+
+
+def _prior_candidate_prediction_snapshot_matches(
+    event: DecisionEventFact,
+    command: CandidateReleaseCommand,
+) -> bool:
+    """Retain prediction lineage across capability changes for the same raw-score model."""
+    release = event.result.candidate_release
+    prior_command = event.case.candidate_release
+    if (
+        release is None
+        or release.calibration is None
+        or prior_command is None
+        or event.corrects_event_id is not None
+        or event.validation_status != "PASSED"
+    ):
+        return False
+    current_model_versions = _calibration_source_model_versions(command)
+    prior_model_versions = _calibration_source_model_versions(prior_command)
+    candidate_cutoff = datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+    return bool(
+        current_model_versions
+        and prior_model_versions == current_model_versions
+        and datetime.fromisoformat(event.committed_at) <= candidate_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= candidate_cutoff
+    )
+
+
+def _validate_calibration_source_event_availability(
+    event: DecisionEventFact,
+    candidate_cutoff: datetime,
+    *,
+    current_research_event_id: str,
+) -> None:
+    """Reject historical source events committed after this frozen cutoff.
+
+    The current release's research event can carry its immutable model
+    snapshot even though the batch itself is committed after its knowledge
+    cutoff.  Historical source events must already have existed at the
+    candidate cutoff.
+    """
+    event_cutoff = datetime.fromisoformat(event.case.knowledge_cutoff)
+    if (
+        event.decision_event_id != current_research_event_id or event_cutoff != candidate_cutoff
+    ) and datetime.fromisoformat(event.committed_at) > candidate_cutoff:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _same_calibrator_selection_evidence(
+    left: CandidateReleaseCommand,
+    right: CandidateReleaseCommand,
+) -> bool:
+    """Preserve selected family, watermark months, members, and frozen diagnostics."""
+    if left.calibrator_version != right.calibrator_version:
+        return False
+    if left.calibrator_selection_window_months != right.calibrator_selection_window_months:
+        return False
+    left_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in left.calibrator_selection_records
+    }
+    right_records = {
+        (record.month, record.security_id, record.research_id): record
+        for record in right.calibrator_selection_records
+    }
+    return bool(
+        len(left_records) == len(left.calibrator_selection_records)
+        and len(right_records) == len(right.calibrator_selection_records)
+        and left_records.keys() == right_records.keys()
+        and all(
+            _same_frozen_calibration_record(left_records[identity], right_records[identity])
+            for identity in left_records
+        )
+    )
+
+
+def _calibration_source_model_versions(command: CandidateReleaseCommand) -> frozenset[str]:
+    """Return model versions used by the selection and production fitting cohorts."""
+    return frozenset(
+        record.raw_score_model_version
+        for record in (
+            *command.calibrator_selection_records,
+            *command.training_records,
+        )
+    )
+
+
+def _unavailable_calibration_probability_count(
+    all_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    unavailable_candidate_probability_identities: set[tuple[str, str, str]],
+    frozen_cohorts: dict[str, RawScoreTrainingCohort],
+    candidate_cutoff: datetime,
+    unavailable_research_probability_identities: set[tuple[str, str, str]] | None = None,
+    frozen_candidate_prediction_identities: set[tuple[str, str, str]] | None = None,
+) -> int:
+    """Count source and frozen-cohort members missing probabilities by stock-month."""
+    available_probability_security_months = {
+        identity[:2]
+        for identity, record in all_source_rows.items()
+        if record.historical_calibrated_probability is not None
+        and record.raw_score_frozen_at is not None
+        and record.raw_score_frozen_at <= candidate_cutoff
+    }
+    available_probability_security_months.update(
+        identity[:2] for identity in (frozen_candidate_prediction_identities or set())
+    )
+    unavailable_security_months = {
+        identity[:2]
+        for identity, record in all_source_rows.items()
+        if record.historical_calibrated_probability is None
+        and record.unified_maturity_at is not None
+        and record.unified_maturity_at <= candidate_cutoff
+        and record.label_available_at <= candidate_cutoff
+    }
+    unavailable_security_months.update(
+        identity[:2] for identity in unavailable_candidate_probability_identities
+    )
+    unavailable_security_months.update(
+        {
+            identity[:2]
+            for identity in (unavailable_research_probability_identities or set())
+            if identity[:2] not in available_probability_security_months
+        }
+    )
+    unavailable_security_months.update(
+        (cohort.month, security_id)
+        for cohort in frozen_cohorts.values()
+        for security_id in set(cohort.member_security_ids) - set(cohort.completed_research_ids)
+    )
+    return len(unavailable_security_months)
+
+
+def _unavailable_research_probability_identities(
+    research_events: tuple[DecisionEventFact, ...],
+    knowledge_cutoff: datetime,
+    stage_failures: tuple[ResearchAvailabilityFailureFact, ...] = (),
+) -> set[tuple[str, str, str]]:
+    """Collect unavailable rosters from committed failures and uncommitted failed stages."""
+    unavailable: set[tuple[str, str, str]] = set()
+    successfully_committed_research_runs = {
+        event.framework_run_id
+        for event in research_events
+        if event.corrects_event_id is None
+        and event.validation_status == "PASSED"
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= knowledge_cutoff
+        and event.case.research is not None
+        and event.result.research is not None
+    }
+    for event in research_events:
+        command = event.case.research
+        if (
+            command is None
+            or event.corrects_event_id is not None
+            or event.validation_status != "PASSED"
+            or event.result.research is not None
+            or datetime.fromisoformat(event.committed_at) > knowledge_cutoff
+            or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
+            or not any(
+                stage.phase in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
+                and stage.status == "FAILED"
+                for stage in event.stage_results
+            )
+        ):
+            continue
+        month = _candidate_prediction_month(datetime.fromisoformat(event.case.knowledge_cutoff))
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in command.members
+        )
+    for failure in stage_failures:
+        command = failure.case.research
+        if (
+            command is None
+            or failure.framework_run_id in successfully_committed_research_runs
+            or datetime.fromisoformat(failure.case.knowledge_cutoff) > knowledge_cutoff
+            or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
+            or failure.stage_result.phase
+            not in {"RESEARCH", "RAW_SCORE", "RISK_VETO", "BUSINESS_COMMIT"}
+            or failure.stage_result.status != "FAILED"
+        ):
+            continue
+        month = _candidate_prediction_month(datetime.fromisoformat(failure.case.knowledge_cutoff))
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in command.members
+        )
+    return unavailable
+
+
+def _unavailable_candidate_probability_identities(
+    candidate_release_events: tuple[DecisionEventFact, ...],
+    knowledge_cutoff: datetime,
+    research_events: tuple[DecisionEventFact, ...] = (),
+    candidate_availability_failures: tuple[CandidateAvailabilityFailureFact, ...] = (),
+) -> set[tuple[str, str, str]]:
+    """Use validated candidate outcomes or their exact committed research source."""
+    unavailable: set[tuple[str, str, str]] = set()
+    research_events_by_id = {
+        event.decision_event_id: event
+        for event in research_events
+        if event.validation_status == "PASSED"
+        and event.corrects_event_id is None
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
+        and event.result.research is not None
+    }
+    committed_candidate_events_without_outcomes = {
+        event.framework_run_id
+        for event in candidate_release_events
+        if event.validation_status == "PASSED"
+        and event.corrects_event_id is None
+        and datetime.fromisoformat(event.committed_at) <= knowledge_cutoff
+        and datetime.fromisoformat(event.case.knowledge_cutoff) <= knowledge_cutoff
+        and event.case.candidate_release is not None
+        and event.result.candidate_release is None
+    }
+    for event in candidate_release_events:
+        if (
+            event.validation_status != "PASSED"
+            or event.corrects_event_id is not None
+            or datetime.fromisoformat(event.committed_at) > knowledge_cutoff
+            or datetime.fromisoformat(event.case.knowledge_cutoff) > knowledge_cutoff
+        ):
+            continue
+        command = event.case.candidate_release
+        outcome = event.result.candidate_release
+        if command is None or outcome is None:
+            continue
+        month = _candidate_prediction_month(command.knowledge_cutoff)
+        if outcome.members:
+            unavailable.update(
+                (month, member.security_id, member.research_id)
+                for member in outcome.members
+                if member.calibrated_probability is None
+            )
+        elif (
+            outcome.calibration is None
+            and outcome.disposition in {"FAILED", "BLOCKED"}
+            and (source_event := research_events_by_id.get(command.research_event_id)) is not None
+        ):
+            source_command = source_event.case.research
+            source_research = source_event.result.research
+            source_scope = source_event.case.access_scope
+            release_scope = event.case.access_scope
+            scopes_match = (
+                source_scope is None
+                and release_scope is None
+                or source_scope is not None
+                and release_scope is not None
+                and source_scope.same_scope_as(release_scope)
+            )
+            if (
+                source_event.business_object_id == command.research_object_id
+                and source_command is not None
+                and source_research is not None
+                and source_research.disposition in {"FROZEN", "REJECTED"}
+                and source_research.raw_scores is not None
+                and source_research.risk_veto is not None
+                and scopes_match
+                and datetime.fromisoformat(source_event.case.knowledge_cutoff)
+                == datetime.fromisoformat(event.case.knowledge_cutoff)
+                and command.knowledge_cutoff == datetime.fromisoformat(event.case.knowledge_cutoff)
+            ):
+                unavailable.update(
+                    (month, member.security_id, member.research_id)
+                    for member in source_command.members
+                )
+    for failure in candidate_availability_failures:
+        case = failure.case
+        command = case.candidate_release
+        stage = failure.stage_result
+        if (
+            command is None
+            or datetime.fromisoformat(case.knowledge_cutoff) > knowledge_cutoff
+            or datetime.fromisoformat(failure.recorded_at) > knowledge_cutoff
+            or (
+                failure.committed_at is not None
+                and datetime.fromisoformat(failure.committed_at) <= knowledge_cutoff
+                and failure.framework_run_id not in committed_candidate_events_without_outcomes
+            )
+            or stage.phase
+            not in {
+                "FRAMEWORK_RUN",
+                "HOST_VALIDATION",
+                "BUSINESS_COMMIT",
+                "CANDIDATE_RELEASE",
+            }
+            or stage.status not in {"FAILED", "CANCELLED"}
+        ):
+            continue
+        source_event = research_events_by_id.get(command.research_event_id)
+        if source_event is None or source_event.business_object_id != command.research_object_id:
+            continue
+        source_command = source_event.case.research
+        source_research = source_event.result.research
+        source_scope = source_event.case.access_scope
+        candidate_scope = case.access_scope
+        scopes_match = (
+            source_scope is None
+            and candidate_scope is None
+            or source_scope is not None
+            and candidate_scope is not None
+            and source_scope.same_scope_as(candidate_scope)
+        )
+        if (
+            source_command is None
+            or source_research is None
+            or source_research.disposition not in {"FROZEN", "REJECTED"}
+            or source_research.raw_scores is None
+            or source_research.risk_veto is None
+            or not scopes_match
+            or datetime.fromisoformat(source_event.case.knowledge_cutoff)
+            != datetime.fromisoformat(case.knowledge_cutoff)
+            or datetime.fromisoformat(command.knowledge_cutoff.isoformat())
+            != datetime.fromisoformat(case.knowledge_cutoff)
+        ):
+            continue
+        month = _candidate_prediction_month(command.knowledge_cutoff)
+        unavailable.update(
+            (month, member.security_id, member.research_id) for member in source_command.members
+        )
+    return unavailable
+
+
+def _validate_calibration_training_window(
+    training_window_months: tuple[str, ...],
+    authoritative_mature_months: tuple[str, ...],
+    *,
+    selection_window_months: tuple[str, ...] = (),
+    recent_diagnostic_window_months: tuple[str, ...] = (),
+    initial_calibration: bool = False,
+) -> None:
+    """Bind a fitting window between frozen selection and diagnostic cohorts."""
+    if len(training_window_months) < 60:
+        return
+    if (
+        selection_window_months
+        and selection_window_months != authoritative_mature_months[: len(selection_window_months)]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    if recent_diagnostic_window_months and recent_diagnostic_window_months != tuple(
+        sorted(authoritative_mature_months)[-24:]
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    if set(selection_window_months) & set(recent_diagnostic_window_months) or set(
+        training_window_months
+    ) & set(recent_diagnostic_window_months):
+        raise CandidateCalibrationProvenanceInvalid()
+    fitting_months = tuple(
+        month
+        for month in authoritative_mature_months
+        if (not selection_window_months or month > selection_window_months[-1])
+        and month not in set(recent_diagnostic_window_months)
+    )
+    if len(fitting_months) < len(training_window_months):
+        raise CandidateCalibrationProvenanceInvalid()
+    expected_window = (
+        fitting_months[: len(training_window_months)]
+        if initial_calibration
+        else fitting_months[-len(training_window_months) :]
+    )
+    if training_window_months != expected_window:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _fully_matured_calibration_months(
+    mature_source_identities: set[tuple[str, str, str]],
+    mature_frozen_calibration_identities: set[tuple[str, str, str]],
+    mature_candidate_prediction_ids: set[tuple[str, str, str]],
+    all_candidate_prediction_ids: set[tuple[str, str, str]],
+    incomplete_source_months: set[str],
+) -> tuple[str, ...]:
+    """Count a month only after every frozen prediction and source label has matured."""
+    mature_months = {
+        identity[0]
+        for identity in (
+            mature_source_identities
+            | mature_frozen_calibration_identities
+            | mature_candidate_prediction_ids
+        )
+    }
+    pending_prediction_months = {
+        identity[0] for identity in all_candidate_prediction_ids - mature_candidate_prediction_ids
+    }
+    return tuple(sorted(mature_months - incomplete_source_months - pending_prediction_months))
+
+
+def _calibration_source_rows_by_identity(
+    records: Iterable[RawScoreTrainingRecord],
+    months: set[str],
+    excluded_identities: set[tuple[str, str, str]] | None = None,
+) -> dict[tuple[str, str, str], RawScoreTrainingRecord]:
+    """Include only matured-probability evidence eligible for calibration."""
+    excluded = excluded_identities or set()
+    return {
+        (record.month, record.security_id, record.research_id): record
+        for record in records
+        if record.month in months
+        and record.historical_calibrated_probability is not None
+        and (record.month, record.security_id, record.research_id) not in excluded
+    }
+
+
+def _calibration_records_by_source_event(
+    records: Iterable[CalibrationRecord],
+) -> dict[str, list[CalibrationRecord]]:
+    """Partition identical frozen rows by their source event."""
+    grouped: dict[str, list[CalibrationRecord]] = {}
+    rows_by_identity: dict[tuple[str, str, str], CalibrationRecord] = {}
+    for record in records:
+        identity = (record.month, record.security_id, record.research_id)
+        previous = rows_by_identity.get(identity)
+        if previous is not None:
+            if previous != record:
+                raise CandidateCalibrationProvenanceInvalid()
+            continue
+        rows_by_identity[identity] = record
+        grouped.setdefault(record.source_research_event_id, []).append(record)
+    return grouped
+
+
+def _recent_calibration_diagnostic_records(
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    mature_source_event_ids: dict[tuple[str, str, str], str],
+    frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord],
+    recent_months: set[str],
+    unavailable_probability_identities: set[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], CalibrationRecord]:
+    """Preserve committed attribution before adding newly observed source diagnostics."""
+    records = {
+        identity: record
+        for identity, record in frozen_training_rows.items()
+        if identity[0] in recent_months
+    }
+    for identity, source in mature_source_rows.items():
+        if (
+            identity[0] in recent_months
+            and identity not in unavailable_probability_identities
+            and identity not in records
+        ):
+            records[identity] = _calibration_record_from_raw_score(
+                source, mature_source_event_ids[identity]
+            )
+    return records
+
+
+def _recent_calibration_month_window(
+    authoritative_mature_months: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Select diagnostics from the latest mature months known at the candidate cutoff."""
+    return tuple(sorted(authoritative_mature_months)[-24:])
+
+
+def _calibration_record_from_raw_score(
+    source: RawScoreTrainingRecord,
+    source_research_event_id: str,
+) -> CalibrationRecord:
+    """Project one immutable raw-score outcome into the calibration evidence shape."""
+    if (
+        source.raw_score_frozen_at is None
+        or source.raw_score_training_watermark_at is None
+        or source.raw_success_score is None
+        or source.historical_calibrated_probability is None
+        or source.entry_window_ends_at is None
+        or source.unified_maturity_at is None
+        or source.market_calendar_version is None
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return CalibrationRecord(
+        record_id=(f"recent-diagnostic-{source.month}-{source.security_id}-{source.research_id}"),
+        month=source.month,
+        source_research_event_id=source_research_event_id,
+        security_id=source.security_id,
+        research_id=source.research_id,
+        raw_score_model_version=source.source_model_version,
+        raw_score_frozen_at=source.raw_score_frozen_at,
+        raw_score_training_watermark_at=source.raw_score_training_watermark_at,
+        raw_success_score=source.raw_success_score,
+        out_of_sample_probability=source.historical_calibrated_probability,
+        terminal_success=source.terminal_label,
+        entry_at=source.evaluation_entry_at,
+        entry_window_ends_at=source.entry_window_ends_at,
+        unified_maturity_at=source.unified_maturity_at,
+        label_available_at=source.label_available_at,
+        market_calendar_version=source.market_calendar_version,
+    )
+
+
+def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
+    """Compare immutable sample content while allowing record IDs to be regenerated."""
+    return left.model_copy(update={"record_id": right.record_id}) == right
+
+
+def _matches_authoritative_diagnostic_record(
+    submitted: CalibrationRecord,
+    authoritative: CalibrationRecord,
+    source_event_ids: set[str],
+) -> bool:
+    """Allow an equivalent committed snapshot while validating its event attribution."""
+    if submitted.source_research_event_id not in source_event_ids:
+        return False
+    return (
+        submitted.model_copy(
+            update={
+                "record_id": authoritative.record_id,
+                "source_research_event_id": authoritative.source_research_event_id,
+            }
+        )
+        == authoritative
+    )
+
+
+def _frozen_candidate_prediction_rows_from_events(
+    candidate_event: DecisionEventFact,
+    research_event: DecisionEventFact | None,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Resolve a prior release's separate source event before replaying its predictions."""
+    command = candidate_event.case.candidate_release
+    outcome = candidate_event.result.candidate_release
+    if command is None or outcome is None or research_event is None:
+        raise CandidateCalibrationProvenanceInvalid()
+    if (
+        research_event.decision_event_id != command.research_event_id
+        or research_event.business_object_id != command.research_object_id
+        or datetime.fromisoformat(research_event.case.knowledge_cutoff)
+        != datetime.fromisoformat(candidate_event.case.knowledge_cutoff)
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return _frozen_candidate_prediction_rows_from_source(
+        command,
+        outcome,
+        research_event.case.research,
+        research_event.result.research,
+    )
+
+
+def _frozen_candidate_prediction_rows_from_source(
+    command: CandidateReleaseCommand,
+    outcome: CandidateReleaseOutcome,
+    research_command: ResearchCommand | None,
+    research_outcome: ResearchOutcome | None,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Freeze probabilities against the separate research event's score clocks."""
+    if (
+        research_command is None
+        or research_outcome is None
+        or research_outcome.raw_scores is None
+        or not research_outcome.raw_scores
+        or research_command.raw_score_model.label_watermark_at is None
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    raw_score_training_watermark_at = research_command.raw_score_model.label_watermark_at
+    if (
+        any(
+            raw_score.label_watermark_at != raw_score_training_watermark_at
+            for raw_score in research_outcome.raw_scores
+        )
+        or raw_score_training_watermark_at > command.knowledge_cutoff
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    return _frozen_candidate_prediction_rows(
+        command,
+        outcome,
+        raw_score_frozen_at=command.knowledge_cutoff,
+        raw_score_training_watermark_at=raw_score_training_watermark_at,
+    )
+
+
+def _frozen_candidate_prediction_rows(
+    command: CandidateReleaseCommand,
+    outcome: CandidateReleaseOutcome,
+    *,
+    raw_score_frozen_at: datetime,
+    raw_score_training_watermark_at: datetime,
+) -> dict[tuple[str, str, str], _FrozenCandidatePrediction]:
+    """Retain every frozen member probability, regardless of later gate disposition."""
+    if outcome.calibration is None:
+        return {}
+    if (
+        raw_score_frozen_at != command.knowledge_cutoff
+        or raw_score_training_watermark_at > raw_score_frozen_at
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    if not outcome.valid_market_dates:
+        raise CandidateCalibrationProvenanceInvalid()
+    sessions_by_date = {session.market_date: session for session in command.market_sessions}
+    window_sessions = tuple(
+        sessions_by_date.get(market_date) for market_date in outcome.valid_market_dates
+    )
+    if any(session is None for session in window_sessions):
+        raise CandidateCalibrationProvenanceInvalid()
+    final_window_session = window_sessions[-1]
+    assert final_window_session is not None
+    prediction_month = _candidate_prediction_month(command.knowledge_cutoff)
+    try:
+        matures_by = raw_score_maturity_at(
+            final_window_session.closes_at, command.market_calendar_version
+        )
+    except ValueError as error:
+        raise CandidateCalibrationProvenanceInvalid() from error
+    predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
+    for member in outcome.members:
+        if member.calibrated_probability is None:
+            continue
+        identity = (prediction_month, member.security_id, member.research_id)
+        if identity in predictions:
+            raise CandidateCalibrationProvenanceInvalid()
+        predictions[identity] = _FrozenCandidatePrediction(
+            raw_success_score=member.raw_success_score,
+            calibrated_probability=member.calibrated_probability,
+            raw_score_frozen_at=raw_score_frozen_at,
+            raw_score_training_watermark_at=raw_score_training_watermark_at,
+            market_calendar_version=command.market_calendar_version,
+            entry_window_ends_at=final_window_session.closes_at,
+            entry_sessions=tuple(
+                (session.opens_at, session.closes_at)
+                for session in window_sessions
+                if session is not None
+            ),
+            matures_by=matures_by,
+        )
+    return predictions
+
+
+def _candidate_prediction_month(knowledge_cutoff: datetime) -> str:
+    """Bind equivalent cutoff instants to the contract's Shanghai calendar month."""
+    return knowledge_cutoff.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+
+
+def _validate_frozen_candidate_prediction_source(
+    prediction: _FrozenCandidatePrediction,
+    source: RawScoreTrainingRecord,
+) -> None:
+    """Bind eventual outcome evidence to the previously frozen score and probability."""
+    if (
+        source.raw_success_score != prediction.raw_success_score
+        or source.historical_calibrated_probability != prediction.calibrated_probability
+        or source.raw_score_frozen_at != prediction.raw_score_frozen_at
+        or source.raw_score_training_watermark_at != prediction.raw_score_training_watermark_at
+        or source.entry_window_ends_at != prediction.entry_window_ends_at
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    if source.evaluation_entry_at is not None and not any(
+        opens_at <= source.evaluation_entry_at <= closes_at
+        for opens_at, closes_at in prediction.entry_sessions
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    maturity_anchor = source.evaluation_entry_at or prediction.entry_window_ends_at
+    if (
+        source.market_calendar_version is None
+        or source.unified_maturity_at is None
+        or source.market_calendar_version != prediction.market_calendar_version
+        or source.unified_maturity_at
+        != raw_score_maturity_at(maturity_anchor, source.market_calendar_version)
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _matured_candidate_prediction_ids(
+    predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction],
+    mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    label_watermark_at: datetime,
+) -> set[tuple[str, str, str]]:
+    """Require source outcome evidence for every prediction mature by this watermark."""
+    matured: set[tuple[str, str, str]] = set()
+    for identity, prediction in predictions.items():
+        source_record = mature_source_rows.get(identity)
+        if source_record is None:
+            if prediction.matures_by <= label_watermark_at:
+                raise CandidateCalibrationProvenanceInvalid()
+            continue
+        _validate_frozen_candidate_prediction_source(prediction, source_record)
+        matured.add(identity)
+    return matured
+
+
+def _retain_frozen_calibration_record(
+    rows: dict[tuple[str, str, str], CalibrationRecord], record: CalibrationRecord
+) -> None:
+    """Preserve previously published cohort evidence without allowing identity rewrites."""
+    identity = (record.month, record.security_id, record.research_id)
+    previous = rows.setdefault(identity, record)
+    if not _same_frozen_calibration_record(previous, record):
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _expected_calibration_identities(
+    months: tuple[str, ...],
+    mature_source_identities: Iterable[tuple[str, str, str]],
+    frozen_training_identities: Iterable[tuple[str, str, str]],
+    frozen_candidate_prediction_ids: set[tuple[str, str, str]] | None = None,
+) -> set[tuple[str, str, str]]:
+    """Union mature source labels with identities already frozen by prior calibration."""
+    expected = {
+        identity
+        for identity in (*mature_source_identities, *frozen_training_identities)
+        if identity[0] in months
+    }
+    expected.update(
+        identity for identity in frozen_candidate_prediction_ids or () if identity[0] in months
+    )
+    return expected
+
+
+def _validate_cutoff_complete_calibration_population(
+    months: tuple[str, ...],
+    cutoff_mature_source_identities: Iterable[tuple[str, str, str]],
+    cutoff_frozen_training_identities: Iterable[tuple[str, str, str]],
+    cutoff_matured_candidate_prediction_ids: set[tuple[str, str, str]],
+    submitted_identities: set[tuple[str, str, str]],
+) -> None:
+    """Reject a calibration cohort that omits any row mature at the knowledge cutoff."""
+    expected_identities = _expected_calibration_identities(
+        months,
+        cutoff_mature_source_identities,
+        cutoff_frozen_training_identities,
+        cutoff_matured_candidate_prediction_ids,
+    )
+    if submitted_identities != expected_identities:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _retain_immutable_source_row(
+    rows: dict[tuple[str, str, str], RawScoreTrainingRecord],
+    identity: tuple[str, str, str],
+    record: RawScoreTrainingRecord,
+) -> None:
+    """Keep the first persisted identity and reject any later rewrite of its evidence."""
+    if any(
+        previous_identity[:2] == identity[:2] and previous_identity != identity
+        for previous_identity in rows
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    previous = rows.setdefault(identity, record)
+    if previous != record:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _retain_immutable_cohort(
+    cohorts: dict[str, RawScoreTrainingCohort],
+    cohort: RawScoreTrainingCohort,
+) -> None:
+    """Keep frozen cohort membership stable across all historical research events."""
+    if any(
+        previous.month == cohort.month and previous.cohort_id != cohort.cohort_id
+        for previous in cohorts.values()
+    ):
+        raise CandidateCalibrationProvenanceInvalid()
+    previous = cohorts.setdefault(cohort.cohort_id, cohort)
+    if previous != cohort:
+        raise CandidateCalibrationProvenanceInvalid()
+
+
+def _raw_score_calibration_source_records(
+    model: RawScoreModelSnapshot,
+) -> tuple[RawScoreTrainingRecord, ...]:
+    """Merge both frozen raw-score sources while rejecting rewritten identities."""
+    rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
+    for record in (*model.training_records, *model.calibration_history_records):
+        identity = (record.month, record.security_id, record.research_id)
+        _retain_immutable_source_row(rows, identity, record)
+    return tuple(rows[identity] for identity in sorted(rows))
+
+
+def _candidate_calibration_source_records(
+    model: RawScoreModelSnapshot,
+    candidate_model_version: str,
+) -> tuple[RawScoreTrainingRecord, ...]:
+    """Return only source rows produced under the candidate's frozen score model."""
+    if (
+        model.model_version != candidate_model_version
+        or model.calibration_evidence_version != "frozen-oos-calibration-v2"
+    ):
+        return ()
+    return _raw_score_calibration_source_records(model)
+
+
+def _validate_candidate_qualification_snapshots(
+    case: FrozenDecisionCase,
+    history: tuple[GovernanceOutcome, ...],
+    observed_at: datetime,
+) -> tuple[MarketStateQualification, ...]:
+    """Bind market-state qualifications to saved, scope-matched governance facts."""
+    command = case.candidate_release
+    scope = case.access_scope
+    assert command is not None and scope is not None
+    if len({item.market_state for item in command.qualifications}) != len(command.qualifications):
+        raise ValueError("CANDIDATE_MARKET_STATE_QUALIFICATION_DUPLICATE")
+    records = tuple(
+        outcome.qualification
+        for outcome in history
+        if outcome.qualification is not None and outcome.qualification.recorded_at <= observed_at
+    )
+    resolved: list[MarketStateQualification] = []
+    for snapshot in command.qualifications:
+        record = next(
+            (item for item in records if item.decision_id == snapshot.qualification_id), None
+        )
+        if record is None:
+            raise ValueError("CANDIDATE_QUALIFICATION_NOT_IN_LEDGER")
+        visible_history = tuple(
+            outcome
+            for outcome in history
+            if outcome.qualification is not None
+            and outcome.qualification.recorded_at <= observed_at
+        )
+        try:
+            latest = current_qualification(visible_history, record.scope, record.version)
+        except ValueError as error:
+            raise CandidateQualificationHistoryAmbiguous() from error
+        knowledge_cutoff = datetime.fromisoformat(case.knowledge_cutoff)
+        cutoff_history = tuple(
+            outcome
+            for outcome in history
+            if outcome.qualification is not None
+            and outcome.qualification.recorded_at <= knowledge_cutoff
+        )
+        try:
+            qualification_at_cutoff = current_qualification(
+                cutoff_history, record.scope, record.version
+            )
+        except ValueError as error:
+            raise CandidateQualificationHistoryAmbiguous() from error
+        basis = record.formal_passing_evidence or record.authorization_evidence
+        if latest is None:
+            raise CandidateQualificationHistoryAmbiguous()
+        if qualification_at_cutoff is None:
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if (
+            record.version.version_id != snapshot.capability_version
+            or record.version.version_id != command.capability_version
+            or record.version.implementation != case.version_bundle
+            or record.version.implementation.m_agent_release_commit
+            != CURRENT_M_AGENT_RELEASE.m_agent_release_commit
+            or latest.version != record.version
+        ):
+            raise CandidateQualificationVersionMismatch()
+        if snapshot.market_calendar_version != command.market_calendar_version or (
+            basis is not None and basis.market_calendar_version != command.market_calendar_version
+        ):
+            raise CandidateQualificationVersionMismatch()
+        if (
+            record.status != snapshot.status
+            or record.recorded_at != snapshot.recorded_at
+            or record.scope.market_state != snapshot.market_state
+            or record.scope.user_id != scope.user_id
+            or set(record.scope.account_ids) != set(scope.account_ids)
+            or record.scope.purpose != command.purpose
+            or record.scope.target != "SIX_MONTH_TERMINAL_20_PERCENT"
+            or record.scope.evidence_level != "D0"
+        ):
+            raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+        if basis is None:
+            if (
+                record.status != "NOT_OBTAINED"
+                or record.authorization_id is not None
+                or record.authorization_evidence is not None
+                or record.cause != "INSUFFICIENT_EVIDENCE"
+                or record.evidence.kind != "INSUFFICIENT_EVIDENCE"
+                or record.formal_evidence is not None
+                or record.formal_passing_evidence is not None
+                or qualification_at_cutoff.decision_id != record.decision_id
+                or qualification_at_cutoff.status != "NOT_OBTAINED"
+                or snapshot.status != "NOT_OBTAINED"
+                or snapshot.valid_through != record.recorded_at
+            ):
+                raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if basis.expires_at != snapshot.valid_through:
+            raise ValueError("CANDIDATE_QUALIFICATION_SNAPSHOT_MISMATCH")
+        if (
+            record.scope.capability != "candidate-release"
+            or record.scope.source != "SYNTHETIC_D0"
+            or record.scope.account_type != "SYNTHETIC"
+            or record.scope.board != "SYNTHETIC"
+            or record.scope.holding_age_domain is not None
+            or record.scope.renewal_ordinal is not None
+            or record.scope.probability_grid is not None
+            or record.scope.portfolio_scope is not None
+        ):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        cutoff_basis = (
+            qualification_at_cutoff.formal_passing_evidence
+            or qualification_at_cutoff.authorization_evidence
+        )
+        latest_basis = latest.formal_passing_evidence or latest.authorization_evidence
+        if (
+            cutoff_basis is not None
+            and cutoff_basis.market_calendar_version != command.market_calendar_version
+        ) or (
+            latest_basis is not None
+            and latest_basis.market_calendar_version != command.market_calendar_version
+        ):
+            raise CandidateQualificationVersionMismatch()
+        if cutoff_basis is None or latest_basis is None:
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if qualification_at_cutoff.status not in {
+            "VALID",
+            "AT_RISK",
+        } or not qualification_is_current(qualification_at_cutoff, knowledge_cutoff):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        if record.recorded_at > datetime.fromisoformat(case.knowledge_cutoff):
+            resolved.append(snapshot.model_copy(update={"status": "NOT_OBTAINED"}))
+            continue
+        current_basis = latest.formal_passing_evidence or latest.authorization_evidence
+        current_status: MarketStateQualificationStatus = latest.status
+        if current_status in {"VALID", "AT_RISK"} and not qualification_is_current(
+            latest, observed_at
+        ):
+            current_status = "EXPIRED"
+        resolved.append(
+            snapshot.model_copy(
+                update={
+                    "qualification_id": latest.decision_id,
+                    "status": current_status,
+                    "current_status_recorded_at": latest.recorded_at,
+                    "valid_through": (
+                        current_basis.expires_at
+                        if current_basis is not None
+                        else snapshot.valid_through
+                    ),
+                }
+            )
+        )
+    return tuple(resolved)
 
 
 def _research_data_gate_results(
@@ -834,7 +2418,7 @@ def correct_default_frozen_decision_case(
             correction_event_id = correction_case.correction_event_id(
                 original_event.decision_event_id
             )
-            correction_result = original_event.result.model_copy(
+            correction_result = original_report.result.model_copy(
                 update={
                     "outcome_code": "SYNTHETIC_CORRECTION_RECORDED",
                     "summary": (
@@ -937,7 +2521,10 @@ def _run_frozen_decision_case(
             ledger.get_business_object_mapping(existing_business_object_id, connection) is not None
         )
         if (
-            case.monitoring is not None or case.universe is not None or case.selection is not None
+            case.monitoring is not None
+            or case.universe is not None
+            or case.selection is not None
+            or case.candidate_release is not None
         ) and has_existing_mapping:
             mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
             if mapping is not None and mapping.case is not None:
@@ -1357,6 +2944,20 @@ def _commit_framework_result(
     framework: FrameworkRunResult,
 ) -> DecisionEventFact | DecisionCaseExecution:
     """Validate one terminal framework result and append its host business fact."""
+    qualification_observed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+    committed_at: str | None = None
+    candidate_qualifications: tuple[MarketStateQualification, ...] | None = None
+    candidate_version_failure: str | None = None
+    candidate_data_failure: str | None = None
+    candidate_calibration_failure: str | None = None
+    candidate_research_failure: CandidateResearchHandoffUnavailable | None = None
+    candidate_research_source_validated = False
+    candidate_model_version: str | None = None
+    candidate_initial_calibration = True
+    candidate_unavailable_probability_count = 0
+    candidate_recent_diagnostic_records: tuple[CalibrationRecord, ...] = ()
+    candidate_recent_diagnostic_integrity_valid = True
+
     framework_stage_results = _framework_stage_results(execution_case, framework)
     durable_transition_count = (
         len(framework.transitions) if framework.transitions_durably_recorded else 0
@@ -1378,6 +2979,59 @@ def _commit_framework_result(
             framework_stage_results,
             durable_transition_count,
         )
+    if execution_case.candidate_release is not None:
+        try:
+            if execution_case.access_scope is None:
+                raise ValueError("CANDIDATE_ACCESS_SCOPE_MISSING")
+            candidate_qualifications = _validate_candidate_qualification_snapshots(
+                execution_case,
+                ledger.governance_history(connection, execution_case.access_scope),
+                qualification_observed_at,
+            )
+        except CandidateQualificationVersionMismatch:
+            candidate_version_failure = "CANDIDATE_QUALIFICATION_VERSION_MISMATCH"
+            candidate_qualifications = ()
+        except ValueError as error:
+            candidate_data_failure = str(error)
+            candidate_qualifications = ()
+        try:
+            candidate_model_version = _validate_candidate_release_source(
+                execution_case,
+                ledger.get_original_decision_event(
+                    execution_case.candidate_release.research_object_id,
+                    connection,
+                ),
+            )
+            candidate_research_source_validated = True
+        except (CandidateCalibrationVersionMismatch, CandidateResearchVersionMismatch) as error:
+            candidate_version_failure = str(error)
+        except CandidateResearchHandoffUnavailable as error:
+            candidate_research_failure = error
+        except ValueError as error:
+            candidate_data_failure = str(error)
+        if (
+            candidate_research_failure is None
+            and candidate_version_failure is None
+            and candidate_data_failure is None
+        ):
+            try:
+                assert execution_case.access_scope is not None
+                (
+                    candidate_initial_calibration,
+                    candidate_recent_diagnostic_records,
+                    candidate_unavailable_probability_count,
+                    candidate_recent_diagnostic_integrity_valid,
+                ) = _validate_candidate_calibration_sources(
+                    execution_case.candidate_release,
+                    ledger,
+                    connection,
+                    execution_case.access_scope,
+                    candidate_model_version=candidate_model_version or "",
+                )
+            except CandidateCalibrationVersionMismatch as error:
+                candidate_version_failure = str(error)
+            except CandidateCalibrationProvenanceInvalid as error:
+                candidate_calibration_failure = str(error)
     framework_result = framework_stage_results[-1]
     if framework.run_id != execution_case.framework_run_id:
         return _unpublished_execution(
@@ -1405,6 +3059,7 @@ def _commit_framework_result(
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
     execution_plan_result: StageResult | None = None
+    candidate_release_result: StageResult | None = None
     if framework.output is None:
         validation_result = _failed_host_validation("OUTPUT_CONTRACT_MISSING")
         business_result: StageResult | None = None
@@ -1822,6 +3477,154 @@ def _commit_framework_result(
                     result = execution_case.expected_external_result.model_copy(
                         update={"selection": selection}
                     )
+            if business_result is not None and execution_case.candidate_release is not None:
+                publication_time = datetime.fromisoformat(
+                    ledger.observed_at().replace("Z", "+00:00")
+                )
+                successful_prerequisite = business_result.status == "SUCCEEDED"
+                assert candidate_qualifications is not None
+                publication_command = execution_case.candidate_release.model_copy(
+                    update={"qualifications": candidate_qualifications}
+                )
+                if not successful_prerequisite:
+                    candidate_release = candidate_release_blocked_by_business_prerequisite(
+                        publication_command,
+                        published_at=publication_time,
+                        reason="BUSINESS_PREREQUISITE_NOT_SUCCEEDED",
+                        include_member_details=candidate_research_source_validated,
+                    )
+                elif candidate_version_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        publication_command,
+                        published_at=publication_time,
+                        reason=candidate_version_failure,
+                        availability_failure=(
+                            "CALIBRATION"
+                            if candidate_version_failure.startswith("CANDIDATE_CALIBRATION_")
+                            else "DATA"
+                        ),
+                        include_member_details=candidate_research_source_validated,
+                    )
+                elif candidate_data_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        publication_command,
+                        published_at=publication_time,
+                        reason=candidate_data_failure,
+                        availability_failure="DATA",
+                        include_member_details=candidate_research_source_validated,
+                    )
+                elif candidate_research_failure is not None:
+                    if candidate_research_failure.disposition == "BLOCKED":
+                        candidate_release = candidate_release_blocked_by_business_prerequisite(
+                            publication_command,
+                            published_at=publication_time,
+                            reason=candidate_research_failure.reason,
+                            include_member_details=candidate_research_source_validated,
+                        )
+                    else:
+                        candidate_release = candidate_release_availability_failure(
+                            publication_command,
+                            published_at=publication_time,
+                            reason=candidate_research_failure.reason,
+                            availability_failure=(
+                                "SYSTEM"
+                                if candidate_research_failure.disposition == "SYSTEM_FAILED"
+                                else "DATA"
+                            ),
+                            include_member_details=candidate_research_source_validated,
+                        )
+                elif candidate_calibration_failure is not None:
+                    candidate_release = candidate_release_availability_failure(
+                        publication_command,
+                        published_at=publication_time,
+                        reason=candidate_calibration_failure,
+                        availability_failure="CALIBRATION",
+                        include_member_details=candidate_research_source_validated,
+                    )
+                else:
+                    candidate_release = freeze_candidate_release(
+                        publication_command,
+                        published_at=publication_time,
+                        initial_calibration=candidate_initial_calibration,
+                        recent_diagnostic_records=candidate_recent_diagnostic_records,
+                        unavailable_probability_count=(candidate_unavailable_probability_count),
+                        recent_diagnostic_integrity_valid=(
+                            candidate_recent_diagnostic_integrity_valid
+                        ),
+                    )
+                committed_at = ledger.observed_at()
+                if (
+                    successful_prerequisite
+                    and candidate_version_failure is None
+                    and candidate_data_failure is None
+                    and candidate_calibration_failure is None
+                    and candidate_research_failure is None
+                ):
+                    assert execution_case.access_scope is not None
+                    final_publication_time = datetime.fromisoformat(
+                        committed_at.replace("Z", "+00:00")
+                    )
+                    try:
+                        final_qualifications = _validate_candidate_qualification_snapshots(
+                            execution_case,
+                            ledger.governance_history(connection, execution_case.access_scope),
+                            final_publication_time,
+                        )
+                    except CandidateQualificationVersionMismatch as error:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": ()}
+                        )
+                        candidate_release = candidate_release_availability_failure(
+                            publication_command,
+                            published_at=final_publication_time,
+                            reason=str(error),
+                            availability_failure="DATA",
+                        )
+                    except ValueError as error:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": ()}
+                        )
+                        candidate_release = candidate_release_availability_failure(
+                            publication_command,
+                            published_at=final_publication_time,
+                            reason=str(error),
+                            availability_failure="DATA",
+                        )
+                    else:
+                        publication_command = publication_command.model_copy(
+                            update={"qualifications": final_qualifications}
+                        )
+                candidate_release = finalize_candidate_release_publication(
+                    publication_command,
+                    candidate_release,
+                    published_at=datetime.fromisoformat(committed_at.replace("Z", "+00:00")),
+                )
+                result_updates: dict[str, object] = {"candidate_release": candidate_release}
+                if successful_prerequisite:
+                    result_updates.update(
+                        {
+                            "outcome_code": f"CANDIDATE_RELEASE_{candidate_release.disposition}",
+                            "summary": "Synthetic calibrated candidate release.",
+                            "key_reasons": candidate_release.reasons
+                            or ("CANDIDATE_RELEASE_FROZEN",),
+                        }
+                    )
+                result = result.model_copy(update=result_updates)
+                candidate_status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"] = (
+                    "REJECTED"
+                    if not successful_prerequisite
+                    else _candidate_release_stage_status(candidate_release.disposition)
+                )
+                candidate_release_result = _candidate_release_stage_result(
+                    candidate_status,
+                    candidate_release.reasons,
+                )
+                if successful_prerequisite:
+                    business_result = _candidate_release_stage_result(
+                        candidate_status,
+                        candidate_release.reasons,
+                        phase="BUSINESS_DECISION",
+                    )
     ledger.record_stage_result(
         connection,
         case=execution_case,
@@ -1893,6 +3696,13 @@ def _commit_framework_result(
             stage_result=execution_plan_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if candidate_release_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=candidate_release_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     framework_stage_results_before_commit = framework_stage_results[durable_transition_count:]
     current_stage_results_before_commit = (
         *framework_stage_results_before_commit,
@@ -1906,6 +3716,7 @@ def _commit_framework_result(
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
         *((execution_plan_result,) if execution_plan_result is not None else ()),
+        *((candidate_release_result,) if candidate_release_result is not None else ()),
     )
     stage_results_before_commit = ledger.get_stage_results(
         execution_case.business_object_id,
@@ -1929,6 +3740,69 @@ def _commit_framework_result(
             stage_results=stage_results_before_commit,
         )
     assert framework.output is not None
+    commit_observed_at = ledger.observed_at()
+    if execution_case.candidate_release is not None:
+        assert result.candidate_release is not None
+        commit_time = datetime.fromisoformat(commit_observed_at.replace("Z", "+00:00"))
+        commit_candidate_release = finalize_candidate_release_publication(
+            publication_command,
+            result.candidate_release,
+            published_at=commit_time,
+        )
+        if commit_candidate_release != result.candidate_release:
+            release_content_changed = (
+                commit_candidate_release.model_copy(
+                    update={"published_at": result.candidate_release.published_at}
+                )
+                != result.candidate_release
+            )
+            result = result.model_copy(
+                update={
+                    "candidate_release": commit_candidate_release,
+                    **(
+                        {
+                            "outcome_code": (
+                                f"CANDIDATE_RELEASE_{commit_candidate_release.disposition}"
+                            ),
+                            "summary": "Synthetic calibrated candidate release.",
+                            "key_reasons": commit_candidate_release.reasons,
+                        }
+                        if release_content_changed
+                        else {}
+                    ),
+                }
+            )
+            if release_content_changed:
+                commit_candidate_status = _candidate_release_stage_status(
+                    commit_candidate_release.disposition
+                )
+                candidate_release_result = _candidate_release_stage_result(
+                    commit_candidate_status,
+                    commit_candidate_release.reasons,
+                )
+                business_result = _candidate_release_stage_result(
+                    commit_candidate_status,
+                    commit_candidate_release.reasons,
+                    phase="BUSINESS_DECISION",
+                )
+                for stage_result in (business_result, candidate_release_result):
+                    ledger.record_stage_result(
+                        connection,
+                        case=execution_case,
+                        stage_result=stage_result,
+                        framework_run_id=execution_case.framework_run_id,
+                        allow_repeated_occurrence=True,
+                    )
+                stage_results_before_commit = ledger.get_stage_results(
+                    execution_case.business_object_id,
+                    connection,
+                )
+                current_stage_results_before_commit = (
+                    *current_stage_results_before_commit,
+                    business_result,
+                    candidate_release_result,
+                )
+    committed_at = commit_observed_at
     stage_results = (
         *stage_results_before_commit,
         StageResult(
@@ -1938,7 +3812,6 @@ def _commit_framework_result(
             reasons=(),
         ),
     )
-    committed_at = ledger.observed_at()
     attempted_fact = ledger.build_event_fact(
         case=execution_case,
         framework_run_id=framework.run_id,
@@ -2491,7 +4364,179 @@ def _publish_report_or_record_failure(
         )
         return None, error
     assert report is not None
-    _record_fact_stage_result(ledger, connection, fact, report.stage_results[-1])
+    candidate_command = fact.case.candidate_release
+    candidate_outcome = fact.result.candidate_release
+    if (
+        candidate_command is not None
+        and candidate_outcome is not None
+        and fact.corrects_event_id is None
+        and candidate_outcome.disposition
+        in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+    ):
+        confirmed_at = datetime.fromisoformat(ledger.observed_at().replace("Z", "+00:00"))
+        assert fact.case.access_scope is not None
+        governance_history = ledger.governance_history(connection, fact.case.access_scope)
+        diagnostic_alert_ids = _post_commit_diagnostic_alert_ids(
+            fact, candidate_command, governance_history
+        )
+        qualification_history_for_validation = (
+            tuple(
+                outcome
+                for outcome in governance_history
+                if outcome.qualification is None
+                or outcome.qualification.decision_id not in diagnostic_alert_ids
+            )
+            if diagnostic_alert_ids
+            else governance_history
+        )
+        try:
+            current_qualifications = _validate_candidate_qualification_snapshots(
+                fact.case,
+                qualification_history_for_validation,
+                confirmed_at,
+            )
+        except CandidateQualificationVersionMismatch:
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+                availability_failure="DATA",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError(
+                "candidate qualification version changed before publication"
+            )
+        except (ValueError, CandidateQualificationHistoryAmbiguous):
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+                availability_failure="DATA",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError(
+                "candidate qualification changed before publication"
+            )
+        confirmed_outcome = finalize_candidate_release_publication(
+            candidate_command.model_copy(update={"qualifications": current_qualifications}),
+            candidate_outcome,
+            published_at=confirmed_at,
+        )
+        if (
+            candidate_outcome.disposition
+            in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+            and confirmed_outcome.disposition == "FAILED"
+            and "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
+        ):
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "PUBLICATION_AFTER_CANDIDATE_WINDOW",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError("candidate publication window expired")
+        outcome_without_qualification_change = confirmed_outcome.model_copy(
+            update={
+                "published_at": candidate_outcome.published_at,
+                "qualification": candidate_outcome.qualification,
+            }
+        )
+        if outcome_without_qualification_change != candidate_outcome:
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION",
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError(
+                "candidate qualification changed before publication"
+            )
+    publication_recorded_at = _record_fact_stage_result(
+        ledger,
+        connection,
+        fact,
+        report.stage_results[-1],
+    )
+    if (
+        publication_recorded_at is not None
+        and candidate_command is not None
+        and candidate_outcome is not None
+        and fact.corrects_event_id is None
+        and candidate_outcome.disposition
+        in {"CANDIDATES", "VALID_NO_CANDIDATES", "RECOMMENDATION_ABSTAINED"}
+    ):
+        recorded_time = datetime.fromisoformat(publication_recorded_at.replace("Z", "+00:00"))
+        assert fact.case.access_scope is not None
+        current_governance_history = ledger.governance_history(
+            connection,
+            fact.case.access_scope,
+        )
+        diagnostic_alert_ids = _post_commit_diagnostic_alert_ids(
+            fact,
+            candidate_command,
+            current_governance_history,
+        )
+        qualification_history_for_validation = (
+            tuple(
+                outcome
+                for outcome in current_governance_history
+                if outcome.qualification is None
+                or outcome.qualification.decision_id not in diagnostic_alert_ids
+            )
+            if diagnostic_alert_ids
+            else current_governance_history
+        )
+        publication_failure_reason: str | None = None
+        publication_failure_availability: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None
+        try:
+            current_qualifications = _validate_candidate_qualification_snapshots(
+                fact.case,
+                qualification_history_for_validation,
+                recorded_time,
+            )
+        except CandidateQualificationVersionMismatch:
+            publication_failure_reason = "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+            publication_failure_availability = "DATA"
+        except (ValueError, CandidateQualificationHistoryAmbiguous):
+            publication_failure_reason = "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+            publication_failure_availability = "DATA"
+        if publication_failure_reason is None:
+            confirmed_outcome = finalize_candidate_release_publication(
+                candidate_command.model_copy(update={"qualifications": current_qualifications}),
+                candidate_outcome,
+                published_at=recorded_time,
+            )
+            outcome_without_publication_clock = confirmed_outcome.model_copy(
+                update={
+                    "published_at": candidate_outcome.published_at,
+                    "qualification": candidate_outcome.qualification,
+                }
+            )
+            if outcome_without_publication_clock != candidate_outcome:
+                publication_failure_reason = (
+                    "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+                    if "PUBLICATION_AFTER_CANDIDATE_WINDOW" in confirmed_outcome.reasons
+                    else "CANDIDATE_QUALIFICATION_CHANGED_BEFORE_PUBLICATION"
+                )
+        if publication_failure_reason is not None:
+            failed_report = _record_candidate_publication_failure(
+                ledger,
+                connection,
+                fact,
+                publication_failure_reason,
+                availability_failure=publication_failure_availability,
+            )
+            if failed_report is not None:
+                return failed_report, None
+            return None, DecisionEventCommitError("candidate publication eligibility changed")
     confirmed_report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
     assert confirmed_report is not None
     return confirmed_report, None
@@ -2502,6 +4547,8 @@ def _record_publication_failure(
     connection: Transaction,
     fact: DecisionEventFact,
     reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None,
 ) -> None:
     """Discard unconfirmed output and retain the corresponding closed gate."""
     ledger.discard_unconfirmed_publication(connection)
@@ -2510,12 +4557,179 @@ def _record_publication_failure(
         ledger,
         connection,
         fact,
-        _publication_failure_stage(reason),
+        _publication_failure_stage(reason, availability_failure=availability_failure),
         allow_repeated_occurrence=True,
     )
 
 
-def _publication_failure_stage(reason: str) -> StageResult:
+def _record_candidate_publication_failure(
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    fact: DecisionEventFact,
+    reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None,
+) -> FormalReport | None:
+    """Expose the persisted candidate result only for recognized closed gate failures."""
+    _record_publication_failure(
+        ledger,
+        connection,
+        fact,
+        reason,
+        availability_failure=availability_failure,
+    )
+    report = ledger.get_formal_report_for_event(fact.decision_event_id, connection)
+    if report is None or report.report_publication is None:
+        return None
+    return report if report.report_publication.status == "FAILED" else None
+
+
+def _post_commit_diagnostic_alert_ids(
+    fact: DecisionEventFact,
+    command: CandidateReleaseCommand,
+    history: tuple[GovernanceOutcome, ...],
+) -> tuple[str, ...]:
+    """Find the complete post-commit diagnostic chain for the batch's active market state."""
+    if not command.qualifications or fact.case.access_scope is None:
+        return ()
+    records = tuple(
+        outcome.qualification for outcome in history if outcome.qualification is not None
+    )
+    committed_at = datetime.fromisoformat(fact.committed_at)
+    candidate_outcome = fact.result.candidate_release
+    if candidate_outcome is None or candidate_outcome.qualification is None:
+        return ()
+    frozen = candidate_outcome.qualification
+    if (
+        frozen.market_state != candidate_outcome.market_state
+        or frozen.market_state != command.market_state
+        or frozen.status not in {"VALID", "AT_RISK"}
+    ):
+        return ()
+    frozen_record = next(
+        (record for record in records if record.decision_id == frozen.qualification_id), None
+    )
+    if frozen_record is None:
+        return ()
+    chain: list[QualificationRecord] = []
+    predecessor = frozen_record
+    while True:
+        successors = tuple(
+            record for record in records if record.previous_decision_id == predecessor.decision_id
+        )
+        if not successors:
+            break
+        if len(successors) != 1:
+            return ()
+        successor = successors[0]
+        if (
+            successor.recorded_at <= committed_at
+            or successor.scope != frozen_record.scope
+            or successor.version != frozen_record.version
+            or successor.authorization_id != frozen_record.authorization_id
+            or successor.authorization_terminated_at != frozen_record.authorization_terminated_at
+            or successor.formal_evidence != frozen_record.formal_evidence
+            or successor.formal_passing_evidence != frozen_record.formal_passing_evidence
+            or successor.authorization_evidence != frozen_record.authorization_evidence
+            or successor.restrictions != frozen_record.restrictions
+            or successor.restoration_evidence != frozen_record.restoration_evidence
+            or successor.state_activity_evidence != frozen_record.state_activity_evidence
+        ):
+            return ()
+        added_alerts = successor.alerts[len(predecessor.alerts) :]
+        added_closures = successor.alert_closures[len(predecessor.alert_closures) :]
+        if (
+            successor.alerts[: len(predecessor.alerts)] != predecessor.alerts
+            or successor.alert_closures[: len(predecessor.alert_closures)]
+            != predecessor.alert_closures
+            or any(
+                alert.kind != "DIAGNOSTIC_ALERT" or alert.available_at <= committed_at
+                for alert in added_alerts
+            )
+            or any(closure.evidence.available_at <= committed_at for closure in added_closures)
+        ):
+            return ()
+        if successor.status == "AT_RISK" and successor.cause == "DIAGNOSTIC_ALERT":
+            if not (added_alerts or added_closures) or not successor.outstanding_alerts:
+                return ()
+        elif successor.status == "VALID" and successor.cause == "ALERT_CLOSED":
+            resolved_alert_ids = {
+                closure.alert_evidence_id
+                for closure in successor.alert_closures
+                if closure.terminates_alert
+            }
+            if (
+                not added_closures
+                or not predecessor.outstanding_alerts
+                or not {alert.evidence_id for alert in predecessor.outstanding_alerts}.issubset(
+                    resolved_alert_ids
+                )
+                or successor.outstanding_alerts
+            ):
+                return ()
+        else:
+            return ()
+        chain.append(successor)
+        predecessor = successor
+    if not chain:
+        return ()
+    try:
+        current = current_qualification(history, predecessor.scope, predecessor.version)
+    except ValueError:
+        return ()
+    if current is not None and current.decision_id == predecessor.decision_id:
+        return tuple(record.decision_id for record in chain)
+    return ()
+
+
+_CANDIDATE_RELEASE_STAGE_STATUSES: dict[
+    str, Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"]
+] = {
+    "FAILED": "FAILED",
+    "BLOCKED": "REJECTED",
+    "RECOMMENDATION_ABSTAINED": "ABSTAINED",
+    "CANDIDATES": "SUCCEEDED",
+    "VALID_NO_CANDIDATES": "SUCCEEDED",
+}
+
+
+def _candidate_release_stage_status(
+    disposition: str,
+) -> Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"]:
+    return _CANDIDATE_RELEASE_STAGE_STATUSES[disposition]
+
+
+def _candidate_release_stage_result(
+    status: Literal["FAILED", "REJECTED", "ABSTAINED", "SUCCEEDED"],
+    reasons: tuple[str, ...],
+    *,
+    phase: Literal["CANDIDATE_RELEASE", "BUSINESS_DECISION"] = "CANDIDATE_RELEASE",
+) -> StageResult:
+    gate_status: Literal["FAILED", "PASSED"] = (
+        "FAILED" if status in {"FAILED", "REJECTED"} else "PASSED"
+    )
+    return StageResult(
+        phase=phase,
+        status=status,
+        gate_results=(
+            GateResult(
+                gate_id=(
+                    "CANDIDATE_RELEASE_OUTCOME"
+                    if phase == "BUSINESS_DECISION"
+                    else "CALIBRATED_CANDIDATE_RELEASE"
+                ),
+                status=gate_status,
+            ),
+        ),
+        reasons=reasons,
+    )
+
+
+def _publication_failure_stage(
+    reason: str,
+    *,
+    availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None,
+) -> StageResult:
     """Keep an acknowledged failure distinct from an unresolved report write."""
     if reason == "PUBLICATION_COMMIT_UNCERTAIN":
         return StageResult(
@@ -2535,6 +4749,7 @@ def _publication_failure_stage(reason: str) -> StageResult:
             GateResult(gate_id="FORMAL_REPORT_SAVED", status="FAILED"),
         ),
         reasons=(reason,),
+        availability_failure=availability_failure,
     )
 
 
@@ -2545,19 +4760,24 @@ def _record_fact_stage_result(
     stage_result: StageResult,
     *,
     allow_repeated_occurrence: bool = False,
-) -> None:
-    """Append event-owned evidence with the current controlled observation time."""
-    ledger.record_stage_result(
+    recorded_at: str | None = None,
+) -> str | None:
+    """Append event evidence with its selected controlled observation timestamp."""
+    return ledger.record_stage_result(
         connection,
         case=fact.case,
         stage_result=stage_result,
         decision_event_id=fact.decision_event_id,
         framework_run_id=fact.framework_run_id,
         allow_repeated_occurrence=allow_repeated_occurrence,
+        recorded_at=recorded_at,
     )
 
 
 def _published_execution(report: FormalReport) -> DecisionCaseExecution:
+    publication_status: Literal["PUBLISHED", "FAILED"] = (
+        report.report_publication.status if report.report_publication is not None else "PUBLISHED"
+    )
     return DecisionCaseExecution(
         business_object_id=report.business_object_id,
         framework_run_id=report.framework_run_id,
@@ -2567,7 +4787,7 @@ def _published_execution(report: FormalReport) -> DecisionCaseExecution:
         business_result_status=_business_result_status_from_stages(report.stage_results),
         business_lifecycle=_business_lifecycle_from_stages(report.stage_results),
         business_commit_status="COMMITTED",
-        publication_status="PUBLISHED",
+        publication_status=publication_status,
         report=report,
         stage_results=report.stage_results,
     )

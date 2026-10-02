@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import correctionFixture from "../../tests/fixtures/synthetic/frozen_correction_evidence.json";
 import portfolioFixture from "../../tests/fixtures/synthetic/portfolio_authorization.json";
 import { App } from "./App";
+import type { FormalReport } from "./api/client";
 import { syntheticReport as report } from "./test-support/synthetic-report";
 
 describe("App", () => {
@@ -43,6 +44,254 @@ describe("App", () => {
     expect((fetchMock.mock.calls[0]?.[0] as Request).url).toContain(
       `/api/v1/reports/${report.report_version_id}`
     );
+  });
+
+  it("renders candidate evidence and records a failed publication without presenting it as published", async () => {
+    const candidateReport: FormalReport = {
+      ...report,
+      report_publication: {
+        status: "PUBLISHED",
+        committed_at: "2046-07-01T09:00:00Z",
+        published_at: "2046-07-01T09:01:00Z"
+      },
+      result: {
+        ...report.result,
+        outcome_code: "CANDIDATE_RELEASE_CANDIDATES",
+        candidate_release: {
+          batch_id: "synthetic-candidate-batch-001",
+          disposition: "CANDIDATES",
+          knowledge_cutoff: "2046-07-01T08:00:00Z",
+          published_at: "2046-07-01T09:00:00Z",
+          qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY",
+          capability_version: "candidate-v1",
+          research_object_id: "synthetic-research-object-001",
+          research_event_id: "synthetic-research-event-001",
+          market_calendar_version: "synthetic-calendar-v1",
+          market_state: "BULL",
+          qualification: {
+            market_state: "BULL",
+            status: "AT_RISK",
+            qualification_id: "synthetic-candidate-qualification-at-risk",
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY",
+            capability_version: "candidate-v1",
+            market_calendar_version: "synthetic-calendar-v1",
+            recorded_at: "2046-06-30T08:00:00Z",
+            current_status_recorded_at: "2046-07-01T08:30:00Z",
+            valid_through: "2046-12-31T08:00:00Z"
+          },
+          calibration: {
+            calibrator_version: "monotone-firth-logistic-v1",
+            calibrator_selection: {
+              diagnostics: {
+                log_loss: "0.48",
+                brier_score: "0.15",
+                reliability_curve: [
+                  {
+                    lower_probability: "0.8",
+                    upper_probability: "0.9",
+                    sample_count: 80,
+                    mean_predicted_probability: "0.85",
+                    observed_success_rate: "0.82"
+                  }
+                ],
+                recalibration_fit_status: "AVAILABLE",
+                calibration_intercept: "-0.03",
+                calibration_slope: "0.95"
+              },
+              label_watermark_at: "2041-01-01T08:00:00Z",
+              policy: "PRE_REGISTERED_V1_SINGLE_FAMILY",
+              record_count: 240,
+              selected_calibrator_version: "monotone-firth-logistic-v1",
+              window_months: Array.from({ length: 24 }, (_, index) => {
+                const year = 2039 + Math.floor(index / 12);
+                const month = (index % 12) + 1;
+                return `${year}-${String(month).padStart(2, "0")}`;
+              })
+            },
+            calibrator_selection_window_months: Array.from({ length: 24 }, (_, index) => {
+              const year = 2039 + Math.floor(index / 12);
+              const month = (index % 12) + 1;
+              return `${year}-${String(month).padStart(2, "0")}`;
+            }),
+            intercept: "-1.2",
+            slope: "2.7",
+            training_window_months: ["2041-01", "2045-12"],
+            label_watermark_at: "2046-07-01T08:00:00Z",
+            training_record_count: 600,
+            positive_record_count: 300,
+            negative_record_count: 300,
+            unavailable_probability_count: 0,
+            out_of_sample_diagnostics: {
+              log_loss: "0.42",
+              brier_score: "0.13",
+              reliability_curve: [
+                {
+                  lower_probability: "0.8",
+                  upper_probability: "0.9",
+                  sample_count: 80,
+                  mean_predicted_probability: "0.85",
+                  observed_success_rate: "0.82"
+                }
+              ],
+              recalibration_fit_status: "AVAILABLE",
+              calibration_intercept: "-0.02",
+              calibration_slope: "0.97"
+            },
+            recent_diagnostic_months: Array.from({ length: 24 }, (_, index) => {
+              const year = 2044 + Math.floor(index / 12);
+              const month = (index % 12) + 1;
+              return `${year}-${String(month).padStart(2, "0")}`;
+            }),
+            recent_diagnostic_sample_count: 240,
+            recent_diagnostic_status: "AVAILABLE",
+            recent_diagnostics: {
+              log_loss: "0.44",
+              brier_score: "0.14",
+              reliability_curve: [
+                {
+                  lower_probability: "0.8",
+                  upper_probability: "0.9",
+                  sample_count: 80,
+                  mean_predicted_probability: "0.85",
+                  observed_success_rate: "0.82"
+                }
+              ],
+              recalibration_fit_status: "AVAILABLE",
+              calibration_intercept: "0.01",
+              calibration_slope: "0.94"
+            }
+          },
+          members: [
+            {
+              security_id: "SYNTH-ALPHA",
+              research_id: "synthetic-research-alpha",
+              raw_success_score: "0.95",
+              calibrated_probability: "0.87",
+              candidate: true,
+              risk_status: "ACCEPTED",
+              risk_gates: [{ gate_id: "RISK_REVIEW", status: "PASSED" }],
+              risk_reasons: ["INDEPENDENT_RISK_ACCEPTED"],
+              market_state_qualified: true,
+              market_state_qualification_status: "AT_RISK",
+              data_complete: true,
+              thesis: "Original synthetic investment thesis.",
+              principal_risks: ["Original synthetic risk."],
+              evidence_freshness: "FRESH_AT_CUTOFF",
+              evidence_clocks: [
+                {
+                  evidence_id: "financial-statements-evidence-00",
+                  effective_at: "2046-06-01T08:00:00Z",
+                  source_published_at: "2046-06-01T08:00:00Z",
+                  acquired_at: "2046-06-28T08:00:00Z",
+                  validated_at: "2046-06-29T08:00:00Z",
+                  knowledge_cutoff: "2046-07-01T08:00:00Z"
+                }
+              ],
+              valid_market_dates: [
+                "2046-07-02",
+                "2046-07-03",
+                "2046-07-04",
+                "2046-07-05",
+                "2046-07-06"
+              ],
+              reasons: ["MARKET_STATE_QUALIFICATION_AT_RISK"]
+            }
+          ],
+          population: {
+            valid_monthly: true,
+            recommendation_coverage_denominator: true,
+            recommendation_coverage_pass: true,
+            availability_failure: null
+          },
+          valid_market_dates: [
+            "2046-07-02",
+            "2046-07-03",
+            "2046-07-04",
+            "2046-07-05",
+            "2046-07-06"
+          ],
+          reasons: [],
+          availability_failure: null,
+          actionable: false
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(candidateReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<App />);
+
+    const release = await screen.findByRole("region", { name: "Candidate batch release" });
+    expect(release).toHaveTextContent("CANDIDATES");
+    expect(release).toHaveTextContent("2046-07-02 through 2046-07-06");
+    expect(release).toHaveTextContent("2046-07-01T09:01:00Z");
+    expect(release).toHaveTextContent("Unavailable probabilities");
+    expect(release).not.toHaveTextContent("2046-07-01T09:00:00Z");
+    expect(release).toHaveTextContent("0.87");
+    expect(release).toHaveTextContent(
+      "Probability of net total return ≥20% at the six-calendar-month endpoint"
+    );
+    expect(release).toHaveTextContent("Independent risk status");
+    expect(release).toHaveTextContent("RISK_REVIEW: PASSED");
+    expect(release).toHaveTextContent("INDEPENDENT_RISK_ACCEPTED");
+    expect(release).toHaveTextContent("synthetic-candidate-qualification-at-risk");
+    expect(release).toHaveTextContent("AT_RISK");
+    expect(release).toHaveTextContent("financial-statements-evidence-00");
+    expect(release).toHaveTextContent("2046-06-01T08:00:00Z");
+    expect(release).toHaveTextContent("At risk");
+    expect(release).toHaveTextContent("Original synthetic investment thesis.");
+    expect(release).not.toHaveTextContent("account route");
+    expect(release).not.toHaveTextContent("position quantity");
+
+    const failedReport: FormalReport = {
+      ...candidateReport,
+      report_publication: {
+        status: "FAILED",
+        committed_at: "2046-07-01T09:00:00Z",
+        failure_recorded_at: "2046-07-08T09:00:00Z",
+        failure_reason: "PUBLICATION_AFTER_CANDIDATE_WINDOW"
+      },
+      result: {
+        ...candidateReport.result,
+        outcome_code: "CANDIDATE_RELEASE_FAILED",
+        candidate_release: {
+          ...candidateReport.result.candidate_release!,
+          disposition: "FAILED",
+          members: candidateReport.result.candidate_release!.members.map((member) => ({
+            ...member,
+            candidate: false
+          }))
+        }
+      },
+      stage_results: [
+        ...candidateReport.stage_results.filter((stage) => stage.phase !== "PUBLICATION"),
+        {
+          phase: "PUBLICATION",
+          status: "FAILED",
+          gate_results: [{ gate_id: "FORMAL_REPORT_SAVED", status: "FAILED" }],
+          reasons: ["PUBLICATION_AFTER_CANDIDATE_WINDOW"]
+        }
+      ]
+    };
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(failedReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      })
+    );
+    view.unmount();
+    render(<App />);
+
+    const failedRelease = await screen.findByRole("region", { name: "Candidate batch release" });
+    expect(failedRelease).toHaveTextContent("Not published");
+    expect(failedRelease).toHaveTextContent("2046-07-08T09:00:00Z");
+    expect(failedRelease).toHaveTextContent("PUBLICATION_AFTER_CANDIDATE_WINDOW");
   });
 
   it("renders the research rejection projection and its durable stages", async () => {
@@ -88,6 +337,7 @@ describe("App", () => {
               training_record_count: 500,
               positive_record_count: 250,
               negative_record_count: 250,
+              unavailable_probability_count: 0,
               intercept: "-0.4",
               structured_inputs: {},
               transformed_inputs: {},

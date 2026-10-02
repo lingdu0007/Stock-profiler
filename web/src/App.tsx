@@ -26,6 +26,8 @@ import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 import { UniverseEvidence } from "./UniverseEvidence";
 import { SelectionEvidence } from "./SelectionEvidence";
+import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
+import { ReportRecord as Record } from "./ReportRecord";
 
 function createQueryClient() {
   return new QueryClient({
@@ -177,6 +179,12 @@ function FormalReportView({ report }: { report: FormalReport }) {
       {report.result.monitoring && <MonitoringEvidence report={report} />}
       {report.result.universe && <UniverseEvidence universe={report.result.universe} />}
       {report.result.selection && <SelectionEvidence selection={report.result.selection} />}
+      {report.result.candidate_release && (
+        <CandidateReleaseEvidence
+          release={report.result.candidate_release}
+          publication={report.report_publication}
+        />
+      )}
 
       <section className="report-section" aria-label="Decision stages">
         <h2>Decision stages</h2>
@@ -1023,15 +1031,6 @@ function formatCashObligation(
     `latest ${obligation.latest_usable_at}`,
     `account ${obligation.target_account_id}`
   ].join(" | ");
-}
-
-function Record({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="record-row">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
 }
 
 function SignInPage() {

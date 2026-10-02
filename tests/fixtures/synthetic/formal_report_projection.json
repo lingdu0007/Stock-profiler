@@ -46,59 +46,110 @@
             {
                 "phase": "FRAMEWORK_RUN",
                 "status": "CREATED",
-                "gate_results": [{"gate_id": "RUN_CREATED", "status": "PASSED"}],
-                "reasons": ["FRAMEWORK_RUN_CREATED"]
+                "gate_results": [
+                    {
+                        "gate_id": "RUN_CREATED",
+                        "status": "PASSED"
+                    }
+                ],
+                "reasons": [
+                    "FRAMEWORK_RUN_CREATED"
+                ],
+                "availability_failure": null
             },
             {
                 "phase": "FRAMEWORK_RUN",
                 "status": "RUNNING",
-                "gate_results": [{"gate_id": "RUN_ACTIVE", "status": "PASSED"}],
-                "reasons": ["FRAMEWORK_RUN_STARTED"]
+                "gate_results": [
+                    {
+                        "gate_id": "RUN_ACTIVE",
+                        "status": "PASSED"
+                    }
+                ],
+                "reasons": [
+                    "FRAMEWORK_RUN_STARTED"
+                ],
+                "availability_failure": null
             },
             {
                 "phase": "FRAMEWORK_RUN",
                 "status": "SUCCEEDED",
                 "gate_results": [
-                    {"gate_id": "RUN_TERMINAL", "status": "PASSED"},
-                    {"gate_id": "FRAMEWORK_EXECUTION", "status": "PASSED"}
+                    {
+                        "gate_id": "RUN_TERMINAL",
+                        "status": "PASSED"
+                    },
+                    {
+                        "gate_id": "FRAMEWORK_EXECUTION",
+                        "status": "PASSED"
+                    }
                 ],
-                "reasons": ["FRAMEWORK_RUN_SUCCEEDED"]
+                "reasons": [
+                    "FRAMEWORK_RUN_SUCCEEDED"
+                ],
+                "availability_failure": null
             },
             {
                 "phase": "HOST_VALIDATION",
                 "status": "SUCCEEDED",
                 "gate_results": [
-                    {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
-                    {"gate_id": "FROZEN_RESULT_MATCH", "status": "PASSED"}
+                    {
+                        "gate_id": "OUTPUT_CONTRACT",
+                        "status": "PASSED"
+                    },
+                    {
+                        "gate_id": "FROZEN_RESULT_MATCH",
+                        "status": "PASSED"
+                    }
                 ],
                 "reasons": [
                     "All required fictional evidence records are present.",
                     "The output is D0 synthetic evidence and is not a recommendation."
-                ]
+                ],
+                "availability_failure": null
             },
             {
                 "phase": "BUSINESS_DECISION",
                 "status": "SUCCEEDED",
                 "gate_results": [
-                    {"gate_id": "OUTPUT_CONTRACT", "status": "PASSED"},
-                    {"gate_id": "DECISION_ACCEPTED", "status": "PASSED"}
+                    {
+                        "gate_id": "OUTPUT_CONTRACT",
+                        "status": "PASSED"
+                    },
+                    {
+                        "gate_id": "DECISION_ACCEPTED",
+                        "status": "PASSED"
+                    }
                 ],
                 "reasons": [
                     "All required fictional evidence records are present.",
                     "The output is D0 synthetic evidence and is not a recommendation."
-                ]
+                ],
+                "availability_failure": null
             },
             {
                 "phase": "BUSINESS_COMMIT",
                 "status": "SUCCEEDED",
-                "gate_results": [{"gate_id": "HOST_RESULT_SAVED", "status": "PASSED"}],
-                "reasons": []
+                "gate_results": [
+                    {
+                        "gate_id": "HOST_RESULT_SAVED",
+                        "status": "PASSED"
+                    }
+                ],
+                "reasons": [],
+                "availability_failure": null
             },
             {
                 "phase": "PUBLICATION",
                 "status": "SUCCEEDED",
-                "gate_results": [{"gate_id": "EVENT_COMMITTED", "status": "PASSED"}],
-                "reasons": []
+                "gate_results": [
+                    {
+                        "gate_id": "EVENT_COMMITTED",
+                        "status": "PASSED"
+                    }
+                ],
+                "reasons": [],
+                "availability_failure": null
             }
         ],
         "corrects_event_id": null
