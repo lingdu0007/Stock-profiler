@@ -3507,6 +3507,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
     ("risk_scenario", "candidate_scenario"),
     [
         ("ACCEPT", "NORMAL"),
+        ("ACCEPT", "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT"),
         ("REJECT", "NORMAL"),
         ("ACCEPT", "CALIBRATION_FAILURE"),
         ("ACCEPT", "CALIBRATION_SOURCE_MISSING"),
@@ -3571,6 +3572,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     risk_scenario: Literal["ACCEPT", "REJECT"],
     candidate_scenario: Literal[
         "NORMAL",
+        "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT",
         "CALIBRATION_FAILURE",
         "CALIBRATION_SOURCE_MISSING",
         "CALIBRATION_MODEL_MISMATCH",
@@ -5025,10 +5027,32 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     assert "training_records" not in visible_candidate_release
     assert "recent_diagnostic_records" not in visible_candidate_release
 
+    if candidate_scenario == "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT":
+        research_event_history = DecisionLedger.research_event_history
+
+        def include_duplicate_research_snapshot(
+            ledger: DecisionLedger, connection: Any, access_scope: ResultAccessScope
+        ) -> tuple[DecisionEventFact, ...]:
+            events = research_event_history(ledger, connection, access_scope)
+            original_event = next(
+                event
+                for event in events
+                if event.decision_event_id == research_execution.decision_event_id
+            )
+            earlier_duplicate = original_event.model_copy(update={"decision_event_id": "0"})
+            return (*events, earlier_duplicate)
+
+        monkeypatch.setattr(
+            DecisionLedger,
+            "research_event_history",
+            include_duplicate_research_snapshot,
+        )
+
     execution = run_frozen_decision_case(migrated_settings, candidate_case.model_dump(mode="json"))
 
     expected_disposition = {
         "NORMAL": "RECOMMENDATION_ABSTAINED",
+        "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT": "RECOMMENDATION_ABSTAINED",
         "CALIBRATION_FAILURE": "FAILED",
         "CALIBRATION_SOURCE_MISSING": "FAILED",
         "CALIBRATION_MODEL_MISMATCH": "FAILED",
@@ -5253,6 +5277,10 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         assert saved_candidate_release.calibration.recent_diagnostic_status == "CALCULATION_FAILED"
         assert saved_candidate_release.calibration.recent_diagnostics is None
         return
+    if candidate_scenario == "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT":
+        assert saved_candidate_release.calibration is not None
+        assert saved_candidate_release.calibration.recent_diagnostic_status == "AVAILABLE"
+        assert saved_candidate_release.calibration.recent_diagnostics is not None
     if candidate_scenario == "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK":
         assert saved_candidate_release.availability_failure == "DATA"
         return

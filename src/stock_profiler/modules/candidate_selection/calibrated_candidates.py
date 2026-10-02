@@ -1079,7 +1079,10 @@ def _calibration_diagnostics(
             for record, logit in zip(records, logits, strict=True)
         )
         try:
-            diagnostic_intercept, diagnostic_slope = _firth_logistic(recalibration_records)
+            diagnostic_intercept, diagnostic_slope = _firth_logistic(
+                recalibration_records,
+                nonnegative_slope=False,
+            )
         except (ArithmeticError, ValueError):
             diagnostic_intercept = None
             diagnostic_slope = None
@@ -1102,8 +1105,12 @@ def _calibration_diagnostics(
     )
 
 
-def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, float]:
-    """Fit two-parameter Firth logistic regression with a nonnegative slope."""
+def _firth_logistic(
+    records: tuple[CalibrationRecord, ...],
+    *,
+    nonnegative_slope: bool = True,
+) -> tuple[float, float]:
+    """Fit two-parameter Firth logistic regression with an optional slope boundary."""
     scores = tuple(float(record.raw_success_score) for record in records)
     labels = tuple(float(record.terminal_success) for record in records)
     if not all(math.isfinite(score) for score in scores) or len(set(scores)) < 2:
@@ -1138,7 +1145,7 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
         score0, score1, i00, inv00, inv01, inv11, objective = state(intercept, slope)
         delta_a = inv00 * score0 + inv01 * score1
         delta_b = inv01 * score0 + inv11 * score1
-        if slope == 0 and delta_b <= 0:
+        if nonnegative_slope and slope == 0 and delta_b <= 0:
             # At the nonnegative-slope boundary, a negative score direction
             # must not influence the intercept update through the inverse
             # information's off-diagonal term.
@@ -1147,7 +1154,11 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
         scale = 1.0
         while scale >= 1e-8:
             next_a = intercept + scale * delta_a
-            next_b = max(0.0, slope + scale * delta_b)
+            next_b = (
+                max(0.0, slope + scale * delta_b)
+                if nonnegative_slope
+                else slope + scale * delta_b
+            )
             try:
                 next_objective = state(next_a, next_b).objective
             except ValueError:
@@ -1165,7 +1176,11 @@ def _firth_logistic(records: tuple[CalibrationRecord, ...]) -> tuple[float, floa
             break
     else:
         raise ValueError("CALIBRATION_FIT_DID_NOT_CONVERGE")
-    if not math.isfinite(intercept) or not math.isfinite(slope) or slope < 0:
+    if (
+        not math.isfinite(intercept)
+        or not math.isfinite(slope)
+        or (nonnegative_slope and slope < 0)
+    ):
         raise ValueError("CALIBRATION_FIT_FAILED")
     return intercept, slope
 

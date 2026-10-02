@@ -712,6 +712,7 @@ def _validate_candidate_calibration_sources(
     frozen_cohorts_by_id: dict[str, RawScoreTrainingCohort] = {}
     cutoff_mature_source_rows: dict[tuple[str, str, str], RawScoreTrainingRecord] = {}
     cutoff_mature_source_event_ids: dict[tuple[str, str, str], str] = {}
+    cutoff_mature_source_event_ids_by_identity: dict[tuple[str, str, str], set[str]] = {}
     frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     cutoff_frozen_training_rows: dict[tuple[str, str, str], CalibrationRecord] = {}
     frozen_candidate_predictions: dict[tuple[str, str, str], _FrozenCandidatePrediction] = {}
@@ -770,6 +771,9 @@ def _validate_candidate_calibration_sources(
                 if source_record.historical_calibrated_probability is not None:
                     _retain_immutable_source_row(cutoff_mature_source_rows, identity, source_record)
                     cutoff_mature_source_event_ids.setdefault(identity, event.decision_event_id)
+                    cutoff_mature_source_event_ids_by_identity.setdefault(identity, set()).add(
+                        event.decision_event_id
+                    )
             else:
                 cutoff_incomplete_source_months.add(source_record.month)
             if (
@@ -787,6 +791,11 @@ def _validate_candidate_calibration_sources(
         mature_source_event_ids.pop(identity, None)
         cutoff_mature_source_rows.pop(identity, None)
         cutoff_mature_source_event_ids.pop(identity, None)
+        cutoff_mature_source_event_ids_by_identity.pop(identity, None)
+    for identity, record in cutoff_frozen_training_rows.items():
+        cutoff_mature_source_event_ids_by_identity.setdefault(identity, set()).add(
+            record.source_research_event_id
+        )
     cutoff_matured_candidate_prediction_ids = _matured_candidate_prediction_ids(
         frozen_candidate_predictions,
         cutoff_mature_source_rows,
@@ -841,8 +850,10 @@ def _validate_candidate_calibration_sources(
             if (
                 identity in submitted_diagnostic_identities
                 or identity not in authoritative_diagnostic_records
-                or not _same_frozen_calibration_record(
-                    authoritative_diagnostic_records[identity], record
+                or not _matches_authoritative_diagnostic_record(
+                    record,
+                    authoritative_diagnostic_records[identity],
+                    cutoff_mature_source_event_ids_by_identity.get(identity, set()),
                 )
             ):
                 recent_diagnostic_integrity_valid = False
@@ -1493,6 +1504,22 @@ def _calibration_record_from_raw_score(
 def _same_frozen_calibration_record(left: CalibrationRecord, right: CalibrationRecord) -> bool:
     """Compare immutable sample content while allowing record IDs to be regenerated."""
     return left.model_copy(update={"record_id": right.record_id}) == right
+
+
+def _matches_authoritative_diagnostic_record(
+    submitted: CalibrationRecord,
+    authoritative: CalibrationRecord,
+    source_event_ids: set[str],
+) -> bool:
+    """Allow an equivalent committed snapshot while validating its event attribution."""
+    if submitted.source_research_event_id not in source_event_ids:
+        return False
+    return submitted.model_copy(
+        update={
+            "record_id": authoritative.record_id,
+            "source_research_event_id": authoritative.source_research_event_id,
+        }
+    ) == authoritative
 
 
 def _frozen_candidate_prediction_rows_from_events(

@@ -655,6 +655,45 @@ def test_calibration_diagnostics_use_constant_logit_fallback() -> None:
     assert diagnostics.calibration_intercept is not None
 
 
+def test_calibration_diagnostics_report_negative_slope_for_inverted_predictions() -> None:
+    original = command()
+    records = tuple(
+        record.model_copy(
+            update={"terminal_success": record.raw_success_score < Decimal("0.5")}
+        )
+        for record in original.training_records
+    )
+    probabilities = tuple(
+        candidate_module._sigmoid(2.0 * float(record.raw_success_score) - 1.0)
+        for record in records
+    )
+
+    diagnostics = candidate_module._calibration_diagnostics(records, probabilities)
+
+    assert diagnostics.recalibration_fit_status == "AVAILABLE"
+    assert diagnostics.calibration_slope is not None
+    assert diagnostics.calibration_slope < Decimal("0")
+
+
+def test_duplicate_authoritative_research_snapshot_preserves_diagnostic_row_identity() -> None:
+    record = command().recent_diagnostic_records[0]
+    authoritative = record.model_copy(update={"source_research_event_id": "research-event-a"})
+    duplicate_snapshot = record.model_copy(
+        update={"source_research_event_id": "research-event-b"}
+    )
+
+    assert decision_case_service._matches_authoritative_diagnostic_record(
+        duplicate_snapshot,
+        authoritative,
+        {"research-event-a", "research-event-b"},
+    )
+    assert not decision_case_service._matches_authoritative_diagnostic_record(
+        duplicate_snapshot,
+        authoritative,
+        {"research-event-a"},
+    )
+
+
 @pytest.mark.parametrize(
     ("invalid_case", "expected_error"),
     (
