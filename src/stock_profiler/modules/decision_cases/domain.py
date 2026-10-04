@@ -31,6 +31,7 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 from stock_profiler.modules.candidate_selection.selection import SelectionCommand, SelectionOutcome
 from stock_profiler.modules.candidate_selection.universe import UniverseCommand, UniverseOutcome
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_case_payload
+from stock_profiler.modules.delivery.candidate_reminder_contracts import CandidateReminderRecord
 from stock_profiler.modules.delivery.monitoring_contracts import (
     MonitoringCommand,
     MonitoringOutcome,
@@ -402,6 +403,9 @@ class StageResult(FrozenContract):
     gate_results: tuple[GateResult, ...]
     reasons: tuple[str, ...]
     availability_failure: Literal["DATA", "SYSTEM", "CALIBRATION"] | None = None
+    candidate_reminder: CandidateReminderRecord | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     raw_score_payloads: tuple[dict[str, object], ...] | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -413,6 +417,8 @@ class StageResult(FrozenContract):
         """Keep lifecycle states in the phase that owns their meaning."""
         if self.status not in _STAGE_STATUS_BY_PHASE[self.phase]:
             raise ValueError(f"{self.phase} cannot record status {self.status}")
+        if self.candidate_reminder is not None and self.phase != "NOTIFICATION":
+            raise ValueError("candidate reminders belong to notification stages")
         if self.raw_score_payloads is not None and (
             self.phase != "RAW_SCORE" or self.status != "SUCCEEDED"
         ):

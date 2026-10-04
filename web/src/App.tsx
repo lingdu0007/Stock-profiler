@@ -17,6 +17,7 @@ import {
   completePasskeyAuthentication,
   completePasskeyRegistration,
   fetchFormalReport,
+  fetchCandidateWorkspace,
   fetchVersionBundle,
   type FormalReport,
   type VersionBundle
@@ -26,6 +27,7 @@ import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 import { UniverseEvidence } from "./UniverseEvidence";
 import { SelectionEvidence } from "./SelectionEvidence";
+import { CandidatePage, CandidateReleaseStatus } from "./CandidatePage";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
 import { ReportRecord as Record } from "./ReportRecord";
 
@@ -58,6 +60,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </NavLink>
         <NavLink to="/monitoring/inbox">Inbox</NavLink>
         <NavLink to="/monitoring/archive">Archive</NavLink>
+        <NavLink to="/candidates">Candidates</NavLink>
       </nav>
       {children}
     </main>
@@ -71,6 +74,16 @@ function ReportPage() {
     queryFn: () => fetchFormalReport(reportVersionId ?? ""),
     enabled: Boolean(reportVersionId)
   });
+  const candidateQuery = useQuery({
+    queryKey: ["candidate-workspace"],
+    queryFn: fetchCandidateWorkspace,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000,
+    enabled: Boolean(reportQuery.data?.result.candidate_release)
+  });
+  const candidateRelease = candidateQuery.data?.releases?.find(
+    (release) => release.report_version_id === reportVersionId
+  );
 
   if (reportQuery.error instanceof ApiResponseError && reportQuery.error.status === 401) {
     const next = encodeURIComponent(`/reports/${reportVersionId}`);
@@ -81,6 +94,15 @@ function ReportPage() {
     <Shell>
       {reportQuery.isPending && <p aria-live="polite">Loading report</p>}
       {reportQuery.isError && <p aria-live="polite">Report unavailable</p>}
+      {reportQuery.data?.result.candidate_release && (
+        <section className="report-section" aria-label="Current candidate eligibility">
+          <h2>Current candidate eligibility</h2>
+          <CandidateReleaseStatus release={candidateQuery.isError ? undefined : candidateRelease} />
+          <NavLink to={`/candidates/releases/${reportVersionId}`}>
+            Read candidate release status
+          </NavLink>
+        </section>
+      )}
       {reportQuery.data && <FormalReportView report={reportQuery.data} />}
     </Shell>
   );
@@ -1124,7 +1146,12 @@ function enrollmentGrantFromFragment(): string | null {
 }
 
 function safeReturnPath(value: string | null): string {
-  return value?.startsWith("/reports/") || value?.startsWith("/monitoring") ? value : "/monitoring";
+  return value?.startsWith("/reports/") ||
+    value?.startsWith("/monitoring") ||
+    value === "/candidates" ||
+    value?.startsWith("/candidates/")
+    ? value
+    : "/monitoring";
 }
 
 export function App() {
@@ -1140,6 +1167,14 @@ export function App() {
             element={
               <Shell>
                 <MonitoringPage />
+              </Shell>
+            }
+          />
+          <Route
+            path="/candidates/*"
+            element={
+              <Shell>
+                <CandidatePage />
               </Shell>
             }
           />

@@ -912,6 +912,50 @@
         "title": "CalibratorSelectionSnapshot",
         "type": "object"
       },
+      "CandidateDetailView": {
+        "additionalProperties": false,
+        "properties": {
+          "detail_id": {
+            "title": "Detail Id",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "member": {
+            "$ref": "#/components/schemas/CalibratedMember"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "NOT_CANDIDATE",
+            "enum": [
+              "CURRENT",
+              "NOT_CANDIDATE",
+              "WAITING_MARKET",
+              "EXPIRED",
+              "SUPERSEDED",
+              "INVALIDATED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Status Reasons",
+            "type": "array"
+          }
+        },
+        "required": ["detail_id", "report_version_id", "event_id", "member"],
+        "title": "CandidateDetailView",
+        "type": "object"
+      },
       "CandidateEvidenceClock": {
         "additionalProperties": false,
         "description": "Source and validation clocks for one persisted research evidence item.",
@@ -1153,6 +1197,367 @@
         "title": "CandidateReleaseOutcome",
         "type": "object"
       },
+      "CandidateReleaseView": {
+        "additionalProperties": false,
+        "properties": {
+          "business_object_id": {
+            "title": "Business Object Id",
+            "type": "string"
+          },
+          "committed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Committed At"
+          },
+          "corrects_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Report Id"
+          },
+          "current_qualification_status": {
+            "default": "UNAVAILABLE",
+            "enum": [
+              "UNAVAILABLE",
+              "NOT_OBTAINED",
+              "VALID",
+              "AT_RISK",
+              "SUSPENDED",
+              "REVOKED",
+              "EXPIRED"
+            ],
+            "title": "Current Qualification Status",
+            "type": "string"
+          },
+          "detail_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detail Ids",
+            "type": "array"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "final_reminder_before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Reminder Before"
+          },
+          "frozen_pool_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Pool Count"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "plan_month": {
+            "title": "Plan Month",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "release": {
+            "$ref": "#/components/schemas/CandidateReleaseOutcome"
+          },
+          "reminders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateReminderRecord"
+            },
+            "title": "Reminders",
+            "type": "array"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "research_completed_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Completed Count"
+          },
+          "status": {
+            "enum": ["CURRENT", "RESULT", "WAITING_MARKET", "EXPIRED", "SUPERSEDED", "INVALIDATED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_evidence_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Status Evidence Ids",
+            "type": "array"
+          },
+          "status_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Status Reasons",
+            "type": "array"
+          },
+          "superseded_by_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Report Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_through": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Through"
+          },
+          "withdrawal_evidence_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Withdrawal Evidence Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "report_version_id",
+          "event_id",
+          "business_object_id",
+          "plan_month",
+          "knowledge_cutoff",
+          "generated_at",
+          "committed_at",
+          "published_at",
+          "valid_from",
+          "valid_through",
+          "final_reminder_before",
+          "status",
+          "status_reasons",
+          "corrects_report_id",
+          "superseded_by_report_id",
+          "detail_ids",
+          "release"
+        ],
+        "title": "CandidateReleaseView",
+        "type": "object"
+      },
+      "CandidateReminderBody": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "minimum": 0.0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "entry_path": {
+            "title": "Entry Path",
+            "type": "string"
+          },
+          "result_type": {
+            "title": "Result Type",
+            "type": "string"
+          },
+          "window_ends_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Ends At"
+          }
+        },
+        "required": ["result_type", "candidate_count", "entry_path"],
+        "title": "CandidateReminderBody",
+        "type": "object"
+      },
+      "CandidateReminderChannel": {
+        "additionalProperties": false,
+        "properties": {
+          "result": {
+            "enum": ["ACCEPTED", "REJECTED", "UNKNOWN", "TIMEOUT"],
+            "title": "Result",
+            "type": "string"
+          },
+          "role": {
+            "enum": ["PRIMARY", "PERSISTENT"],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": ["role", "result"],
+        "title": "CandidateReminderChannel",
+        "type": "object"
+      },
+      "CandidateReminderRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "body": {
+            "$ref": "#/components/schemas/CandidateReminderBody"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateReminderChannel"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "default": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "deferred_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Until"
+          },
+          "intent_id": {
+            "title": "Intent Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["INITIAL", "PLAN_READY", "FINAL", "CORRECTION"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path_completed": {
+            "title": "Path Completed",
+            "type": "boolean"
+          },
+          "plan_month": {
+            "title": "Plan Month",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "request_digest": {
+            "title": "Request Digest",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "status": {
+            "enum": ["ATTEMPTED", "DEFERRED", "DISABLED"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent_id",
+          "attempt_id",
+          "report_version_id",
+          "plan_month",
+          "kind",
+          "request_digest",
+          "recorded_at",
+          "body",
+          "channels",
+          "status",
+          "path_completed"
+        ],
+        "title": "CandidateReminderRecord",
+        "type": "object"
+      },
       "CandidateRiskGate": {
         "additionalProperties": false,
         "description": "One frozen independent-risk gate carried into a candidate explanation.",
@@ -1170,6 +1575,43 @@
         },
         "required": ["gate_id", "status"],
         "title": "CandidateRiskGate",
+        "type": "object"
+      },
+      "CandidateWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "current_report_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Current Report Ids",
+            "type": "array"
+          },
+          "details": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateDetailView"
+            },
+            "title": "Details",
+            "type": "array"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "releases": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateReleaseView"
+            },
+            "title": "Releases",
+            "type": "array"
+          }
+        },
+        "required": ["observed_at"],
+        "title": "CandidateWorkspace",
         "type": "object"
       },
       "CapabilityVersion": {
@@ -8699,6 +9141,16 @@
             ],
             "title": "Availability Failure"
           },
+          "candidate_reminder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateReminderRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "gate_results": {
             "items": {
               "$ref": "#/components/schemas/GateResult"
@@ -10337,6 +10789,52 @@
           }
         },
         "summary": "Refresh Session"
+      }
+    },
+    "/api/v1/candidates": {
+      "get": {
+        "operationId": "candidate_workspace_api_v1_candidates_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Candidate Workspace"
       }
     },
     "/api/v1/diagnostics/safety-capabilities": {

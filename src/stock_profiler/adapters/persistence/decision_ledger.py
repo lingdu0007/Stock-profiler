@@ -483,6 +483,22 @@ class DecisionLedger:
             and report.result.monitoring is not None
         )
 
+    def candidate_report_ids(self, connection: Connection) -> tuple[str, ...]:
+        """Inventory only; the delivery boundary authorizes each saved report."""
+        return tuple(
+            report_id
+            for report_id in connection.execute(
+                select(FORMAL_REPORTS.c.report_version_id)
+                .join(
+                    DECISION_EVENTS,
+                    FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+                )
+                .order_by(DECISION_EVENTS.c.event_sequence)
+            ).scalars()
+            if (report := self.get_formal_report(report_id, connection)) is not None
+            and report.result.candidate_release is not None
+        )
+
     def concentration_history(
         self,
         connection: Connection,

@@ -1,0 +1,157 @@
+{
+  "synthetic": true,
+  "generator_version": "candidate-workspace-view-v1",
+  "seed": 1818,
+  "workspace": {
+    "observed_at": "2042-07-01T08:00:00Z",
+    "releases": [
+      {
+        "report_version_id": "synthetic-candidate-report",
+        "event_id": "synthetic-candidate-event",
+        "business_object_id": "synthetic-candidate-business",
+        "plan_month": "2042-07",
+        "knowledge_cutoff": "2042-06-30T16:00:00Z",
+        "generated_at": "2042-07-01T01:00:00Z",
+        "committed_at": "2042-07-01T01:00:01Z",
+        "published_at": "2042-07-01T01:00:02Z",
+        "valid_from": "2042-07-01T08:00:00Z",
+        "valid_through": "2042-07-07T15:00:00Z",
+        "final_reminder_before": "2042-07-07T08:00:00Z",
+        "status": "CURRENT",
+        "status_reasons": ["SYNTHETIC_CANDIDATE"],
+        "corrects_report_id": null,
+        "superseded_by_report_id": null,
+        "detail_ids": ["synthetic-candidate-detail"],
+        "release": {
+          "batch_id": "synthetic-candidate-batch",
+          "disposition": "CANDIDATES",
+          "knowledge_cutoff": "2042-06-30T16:00:00Z",
+          "published_at": "2042-07-01T01:00:02Z",
+          "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+          "capability_version": "synthetic-candidate-v1",
+          "research_object_id": "synthetic-research-business",
+          "research_event_id": "synthetic-research-event",
+          "market_calendar_version": "synthetic-market-calendar-v2",
+          "market_state": "BULL",
+          "qualification": {
+            "market_state": "BULL",
+            "status": "VALID",
+            "qualification_id": "synthetic-workspace-qualification",
+            "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "capability_version": "synthetic-candidate-v1",
+            "market_calendar_version": "synthetic-market-calendar-v2",
+            "recorded_at": "2042-06-30T15:00:00Z",
+            "current_status_recorded_at": null,
+            "valid_through": "2042-08-01T15:00:00Z"
+          },
+          "calibration": null,
+          "members": [
+            {
+              "security_id": "SYNTH-CANDIDATE",
+              "research_id": "synthetic-research-workspace",
+              "raw_success_score": "2.7",
+              "calibrated_probability": "0.85",
+              "candidate": true,
+              "risk_status": "ACCEPTED",
+              "risk_gates": [
+                {
+                  "gate_id": "INDEPENDENT_RISK",
+                  "status": "PASSED"
+                }
+              ],
+              "risk_reasons": ["SYNTHETIC_ACCEPTED"],
+              "market_state_qualified": true,
+              "market_state_qualification_status": "VALID",
+              "data_complete": true,
+              "thesis": "Invented synthetic research thesis.",
+              "principal_risks": ["Invented synthetic risk."],
+              "evidence_freshness": "AT_CUTOFF",
+              "evidence_clocks": [
+                {
+                  "evidence_id": "synthetic-evidence-workspace",
+                  "effective_at": null,
+                  "source_published_at": "2042-06-30T06:00:00Z",
+                  "acquired_at": "2042-06-30T07:00:00Z",
+                  "validated_at": "2042-06-30T08:00:00Z",
+                  "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                }
+              ],
+              "valid_market_dates": [
+                "2042-07-01",
+                "2042-07-02",
+                "2042-07-03",
+                "2042-07-04",
+                "2042-07-07"
+              ],
+              "reasons": ["SYNTHETIC_CANDIDATE"]
+            }
+          ],
+          "population": {
+            "valid_monthly": true,
+            "recommendation_coverage_denominator": true,
+            "recommendation_coverage_pass": true,
+            "availability_failure": null
+          },
+          "valid_market_dates": [
+            "2042-07-01",
+            "2042-07-02",
+            "2042-07-03",
+            "2042-07-04",
+            "2042-07-07"
+          ],
+          "reasons": ["SYNTHETIC_CANDIDATE"],
+          "availability_failure": null,
+          "actionable": false
+        },
+        "current_qualification_status": "VALID"
+      }
+    ],
+    "current_report_ids": ["synthetic-candidate-report"],
+    "details": [
+      {
+        "detail_id": "synthetic-candidate-detail",
+        "report_version_id": "synthetic-candidate-report",
+        "event_id": "synthetic-candidate-event",
+        "member": {
+          "security_id": "SYNTH-CANDIDATE",
+          "research_id": "synthetic-research-workspace",
+          "raw_success_score": "2.7",
+          "calibrated_probability": "0.85",
+          "candidate": true,
+          "risk_status": "ACCEPTED",
+          "risk_gates": [
+            {
+              "gate_id": "INDEPENDENT_RISK",
+              "status": "PASSED"
+            }
+          ],
+          "risk_reasons": ["SYNTHETIC_ACCEPTED"],
+          "market_state_qualified": true,
+          "market_state_qualification_status": "VALID",
+          "data_complete": true,
+          "thesis": "Invented synthetic research thesis.",
+          "principal_risks": ["Invented synthetic risk."],
+          "evidence_freshness": "AT_CUTOFF",
+          "evidence_clocks": [
+            {
+              "evidence_id": "synthetic-evidence-workspace",
+              "effective_at": null,
+              "source_published_at": "2042-06-30T06:00:00Z",
+              "acquired_at": "2042-06-30T07:00:00Z",
+              "validated_at": "2042-06-30T08:00:00Z",
+              "knowledge_cutoff": "2042-06-30T16:00:00Z"
+            }
+          ],
+          "valid_market_dates": [
+            "2042-07-01",
+            "2042-07-02",
+            "2042-07-03",
+            "2042-07-04",
+            "2042-07-07"
+          ],
+          "reasons": ["SYNTHETIC_CANDIDATE"]
+        }
+      }
+    ]
+  }
+}

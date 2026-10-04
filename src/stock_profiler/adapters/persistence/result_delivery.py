@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from hashlib import sha256
 
 from pydantic import ValidationError
@@ -15,13 +16,23 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS as USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock
-from stock_profiler.modules.decision_cases.domain import FormalReport
+from stock_profiler.modules.decision_cases.domain import FormalReport, StageResult
 from stock_profiler.modules.decision_cases.monitoring_confirmation import confirmation_permitted
 from stock_profiler.modules.delivery.access import (
     SINGLE_USER_ID,
     AccessAuditFact,
     AccessPrincipal,
     read_denial,
+)
+from stock_profiler.modules.delivery.candidate_notifications import prepare_candidate_reminder
+from stock_profiler.modules.delivery.candidate_reminder_contracts import (
+    CandidateReminderRecord,
+    CandidateReminderRequest,
+)
+from stock_profiler.modules.delivery.candidate_workspace import (
+    CandidateWorkspace,
+    CandidateWorkspaceSource,
+    project_candidate_workspace,
 )
 from stock_profiler.modules.delivery.monitoring_workspace import (
     MonitoringWorkspace,
@@ -66,6 +77,183 @@ class ResultDelivery:
                 ).scalars()
             )
             return project_workspace(reports, facts)
+
+    def candidate_workspace(self, principal: AccessPrincipal | None) -> CandidateWorkspace | None:
+        with self._engine.begin() as connection:
+            reason = read_denial(principal, principal.account_ids if principal is not None else ())
+            if reason is not None:
+                self._deny(connection, "candidates", principal, reason, "REPORT_READ")
+                return None
+            return project_candidate_workspace(
+                self._candidate_sources(connection, principal),
+                datetime.fromisoformat(self._ledger.observed_at()),
+            )
+
+    def _candidate_sources(
+        self, connection: Connection, principal: AccessPrincipal | None
+    ) -> tuple[CandidateWorkspaceSource, ...]:
+        sources = []
+        for identity in self._ledger.candidate_report_ids(connection):
+            report = self._read_report(connection, identity, principal)
+            if report is None or report.result.candidate_release is None:
+                continue
+            event = self._ledger.get_decision_event(report.event_id, connection)
+            if event is None or event.case.access_scope is None:
+                continue
+            correction = self._ledger.get_correction_event(
+                report.result.candidate_release.research_event_id, connection
+            )
+            research = self._ledger.get_decision_event(
+                report.result.candidate_release.research_event_id, connection
+            )
+            research_report = (
+                self._ledger.get_formal_report_for_event(research.decision_event_id, connection)
+                if research is not None
+                else None
+            )
+            frozen_research = research.case.research if research is not None else None
+            research_outcome = research_report.result.research if research_report else None
+            reminders = tuple(
+                stage.candidate_reminder
+                for stage in self._ledger.get_stage_results(report.business_object_id, connection)
+                if stage.candidate_reminder is not None
+                and stage.candidate_reminder.report_version_id == report.report_version_id
+            )
+            sources.append(
+                CandidateWorkspaceSource(
+                    report=report,
+                    case=event.case,
+                    qualification_history=self._ledger.governance_history(
+                        connection, event.case.access_scope
+                    ),
+                    research_correction_event_id=correction.decision_event_id
+                    if correction
+                    else None,
+                    research_correction_committed_at=datetime.fromisoformat(correction.committed_at)
+                    if correction
+                    else None,
+                    reminders=reminders,
+                    frozen_pool_count=len(frozen_research.screening.selected_member_ids)
+                    if frozen_research is not None
+                    else None,
+                    research_completed_count=len(research_outcome.members)
+                    if research_outcome is not None
+                    else None,
+                )
+            )
+        return tuple(sources)
+
+    def candidate_reminder_history(
+        self,
+        report_id: str,
+        principal: AccessPrincipal | None,
+    ) -> tuple[CandidateReminderRecord, ...]:
+        with self._engine.begin() as connection:
+            report = self._read_report(connection, report_id, principal)
+            if report is None or report.result.candidate_release is None:
+                return ()
+            return tuple(
+                stage.candidate_reminder
+                for stage in self._ledger.get_stage_results(report.business_object_id, connection)
+                if stage.candidate_reminder is not None
+                and stage.candidate_reminder.report_version_id == report_id
+            )
+
+    def candidate_reminder(
+        self,
+        report_id: str,
+        principal: AccessPrincipal | None,
+        request: CandidateReminderRequest,
+    ) -> CandidateReminderRecord | None:
+        """Host-only D0 routing observation; no HTTP callback or external provider."""
+        with self._ledger.serialize_case_execution() as connection:
+            try:
+                request = CandidateReminderRequest.model_validate(request.model_dump(mode="python"))
+            except ValidationError:
+                self._deny(
+                    connection, report_id, principal, "INVALID_CANDIDATE_REMINDER", "NOTIFICATION"
+                )
+                return None
+            report = self._read_report(connection, report_id, principal)
+            if report is None or report.result.candidate_release is None:
+                return None
+            event = self._ledger.get_decision_event(report.event_id, connection)
+            if (
+                event is None
+                or event.case.access_scope is None
+                or not report.synthetic
+                or report.qualification_scope != "D0_SYNTHETIC_CONTRACT_ONLY"
+            ):
+                return None
+            sources = self._candidate_sources(connection, principal)
+            history = self._candidate_budget_history(connection, event.case.access_scope.user_id)
+            now = datetime.fromisoformat(self._ledger.observed_at())
+            workspace = project_candidate_workspace(tuple(sources), now)
+            view = next(
+                (item for item in workspace.releases if item.report_version_id == report_id), None
+            )
+            if (
+                view is None
+                or report.report_publication is None
+                or report.report_publication.status != "PUBLISHED"
+            ):
+                self._deny(
+                    connection,
+                    report_id,
+                    principal,
+                    "CANDIDATE_PUBLICATION_REQUIRED",
+                    "NOTIFICATION",
+                )
+                return None
+            reminder = prepare_candidate_reminder(
+                view,
+                request,
+                now,
+                event.case.access_scope.user_id,
+                tuple(history),
+            )
+            if reminder is None:
+                self._deny(
+                    connection,
+                    report_id,
+                    principal,
+                    "CANDIDATE_REMINDER_INELIGIBLE",
+                    "NOTIFICATION",
+                )
+                return None
+            self._ledger.record_stage_result(
+                connection,
+                case=event.case,
+                framework_run_id=event.framework_run_id,
+                decision_event_id=event.decision_event_id,
+                stage_event_id=reminder.attempt_id,
+                stage_result=StageResult(
+                    phase="NOTIFICATION",
+                    status="SUCCEEDED" if reminder.path_completed else "FAILED",
+                    gate_results=(),
+                    reasons=(reminder.status,),
+                    candidate_reminder=reminder,
+                ),
+                recorded_at=reminder.recorded_at.isoformat(),
+            )
+            return reminder
+
+    def _candidate_budget_history(
+        self, connection: Connection, owner_id: str
+    ) -> tuple[CandidateReminderRecord, ...]:
+        """Owner-level budget inspection, never exposed as an account read capability."""
+        history: dict[str, CandidateReminderRecord] = {}
+        for identity in self._ledger.candidate_report_ids(connection):
+            report = self._ledger.get_formal_report(identity, connection)
+            assert report is not None
+            scope = report.access_scope
+            if scope is None or scope.user_id != owner_id or scope.visibility != "USER":
+                continue
+            for stage in self._ledger.get_stage_results(report.business_object_id, connection):
+                reminder = stage.candidate_reminder
+                if reminder is not None:
+                    history[reminder.attempt_id] = reminder
+        return tuple(history.values())
 
     def _read_report(
         self,
@@ -123,6 +311,9 @@ class ResultDelivery:
                 return None
             report = self._read_report(connection, report_id, principal, "USER_FACT")
             if report is None or principal is None:
+                return None
+            if report.result.candidate_release is not None and request.kind != "VIEWED":
+                self._deny(connection, report_id, principal, "CANDIDATE_READ_ONLY", "USER_FACT")
                 return None
             fact_id = (
                 "user-fact-"
