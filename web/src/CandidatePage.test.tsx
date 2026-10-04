@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { focusManager } from "@tanstack/react-query";
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import { App } from "./App";
 
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
   vi.unstubAllGlobals();
   window.history.pushState({}, "", "/");
 });
@@ -217,4 +219,29 @@ it("counts publication failure separately from research abstention despite accep
   render(<App />);
   expect((await screen.findByText("Failed count")).nextElementSibling).toHaveTextContent("1");
   expect(screen.getByText("Abstained count").nextElementSibling).toHaveTextContent("0");
+});
+
+it("withdraws cached current eligibility when a subsequent permission check fails", async () => {
+  const fixture = await import("../../tests/fixtures/synthetic/candidate_workspace.json");
+  const workspace = structuredClone(fixture.default.workspace) as CandidateWorkspace;
+  let reads = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(async () => {
+      reads += 1;
+      return new Response(reads === 1 ? JSON.stringify(workspace) : "{}", {
+        status: reads === 1 ? 200 : 403,
+        headers: { "Content-Type": "application/json" }
+      });
+    })
+  );
+  window.history.pushState({}, "", "/candidates/releases/synthetic-candidate-report");
+  render(<App />);
+  expect(await screen.findByText("CURRENT · CANDIDATES")).toBeVisible();
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+  expect(await screen.findByText("Candidate results unavailable")).toBeVisible();
+  expect(screen.queryByText("CURRENT · CANDIDATES")).not.toBeInTheDocument();
+  expect(screen.queryByText("synthetic-candidate-release-v1")).not.toBeInTheDocument();
+  focusManager.setFocused(undefined);
 });

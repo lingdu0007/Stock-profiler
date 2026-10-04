@@ -97,7 +97,7 @@ function ReportPage() {
       {reportQuery.data?.result.candidate_release && (
         <section className="report-section" aria-label="Current candidate eligibility">
           <h2>Current candidate eligibility</h2>
-          <CandidateReleaseStatus release={candidateRelease} />
+          <CandidateReleaseStatus release={candidateQuery.isError ? undefined : candidateRelease} />
           <NavLink to={`/candidates/releases/${reportVersionId}`}>
             Read candidate release status
           </NavLink>

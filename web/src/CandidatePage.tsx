@@ -194,10 +194,13 @@ export function CandidatePage() {
   const parts = location.pathname.split("/");
   const releaseId = parts[2] === "releases" ? parts[3] : undefined;
   const detailId = parts[2] === "details" ? parts[3] : undefined;
-  const data = query.data && {
-    ...query.data,
-    releases: query.data.releases.map((item) => observedRelease(item, now))
-  };
+  const data =
+    !query.isError && query.data
+      ? {
+          ...query.data,
+          releases: query.data.releases.map((item) => observedRelease(item, now))
+        }
+      : undefined;
   const detail = data?.details.find((item) => item.detail_id === detailId);
   const release = data?.releases.find(
     (item) => item.report_version_id === (releaseId ?? detail?.report_version_id)
