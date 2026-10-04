@@ -56,6 +56,11 @@ it("opens an original detail without redirecting a superseded report", async () 
   render(<App />);
   expect(await screen.findByText(/Historical result/)).toBeVisible();
   expect(await screen.findByText("Invented synthetic research thesis.")).toBeVisible();
+  expect(screen.queryByText("Raw success score")).not.toBeInTheDocument();
+  expect(screen.getByText("Capability version")).toBeVisible();
+  expect(screen.getByText("Market state")).toBeVisible();
+  expect(screen.getByText("Qualification scope")).toBeVisible();
+  expect(screen.getByText(/do not guarantee investment returns/)).toBeVisible();
   expect(screen.getByRole("link", { name: "Read replacement release" })).toHaveAttribute(
     "href",
     "/candidates/releases/synthetic-candidate-replacement"

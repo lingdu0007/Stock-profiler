@@ -78,6 +78,10 @@ function ReleaseHeader({ release }: { release: Release }) {
           label="Research completed"
           value={String(release.research_completed_count ?? "Unavailable")}
         />
+        <Record label="Market state" value={release.release.market_state} />
+        <Record label="Qualification scope" value={release.release.qualification_scope} />
+        <Record label="Capability version" value={release.release.capability_version} />
+        <Record label="Calendar version" value={release.release.market_calendar_version} />
         <Record label="Candidate count" value={String(candidates)} />
         <Record label="Rejected count" value={String(rejected)} />
         <Record label="Abstained count" value={String(abstained)} />
@@ -222,7 +226,10 @@ export function CandidatePage() {
                   Security status: {detail.member.candidate ? release.status : detail.status} ·{" "}
                   {detail.status_reasons?.join(", ")}
                 </p>
-                <CandidateMemberEvidence member={detail.member} />
+                <CandidateMemberEvidence member={detail.member} includeRawScore={false} />
+                <p>
+                  Calibrated probabilities are estimates and do not guarantee investment returns.
+                </p>
               </>
             ) : (
               <>

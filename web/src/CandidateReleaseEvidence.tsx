@@ -187,16 +187,18 @@ export function CandidateReleaseEvidence({
 }
 
 export function CandidateMemberEvidence({
-  member
+  member,
+  includeRawScore = true
 }: {
   member: CandidateRelease["members"][number];
+  includeRawScore?: boolean;
 }) {
   return (
     <article className="portfolio-subsection">
       <h3>{member.security_id}</h3>
       <dl className="record-list">
         <Record label="Decision" value={member.candidate ? "Candidate buy" : "Not a candidate"} />
-        <Record label="Raw success score" value={member.raw_success_score} />
+        {includeRawScore && <Record label="Raw success score" value={member.raw_success_score} />}
         <Record
           label="Probability of net total return ≥20% at the six-calendar-month endpoint"
           value={member.calibrated_probability ?? "Unavailable"}
