@@ -188,3 +188,28 @@ it("withdraws current presentation at the saved absolute expiry without navigati
   expect(await screen.findByText("CURRENT · CANDIDATES")).toBeVisible();
   expect(await screen.findByText("EXPIRED · CANDIDATES")).toBeVisible();
 });
+
+it("counts publication failure separately from research abstention despite accepted risk", async () => {
+  const fixture = await import("../../tests/fixtures/synthetic/candidate_workspace.json");
+  const workspace = structuredClone(fixture.default.workspace) as CandidateWorkspace;
+  const release = workspace.releases[0];
+  release.status = "RESULT";
+  release.frozen_pool_count = 1;
+  release.release.disposition = "FAILED";
+  release.release.reasons = ["PUBLICATION_AFTER_CANDIDATE_WINDOW"];
+  release.release.members[0].candidate = false;
+  release.release.members[0].risk_status = "ACCEPTED";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(workspace), {
+          headers: { "Content-Type": "application/json" }
+        })
+    )
+  );
+  window.history.pushState({}, "", "/candidates/releases/synthetic-candidate-report");
+  render(<App />);
+  expect((await screen.findByText("Failed count")).nextElementSibling).toHaveTextContent("1");
+  expect(screen.getByText("Abstained count").nextElementSibling).toHaveTextContent("0");
+});

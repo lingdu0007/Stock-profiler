@@ -56,9 +56,15 @@ function ReleaseHeader({ release }: { release: Release }) {
   const rejected = members.filter(
     (member) => !member.candidate && member.risk_status === "REJECTED"
   ).length;
-  const failed = members.filter(
-    (member) => !member.candidate && member.risk_status === "FAILED"
-  ).length;
+  const batchFailed = release.release.disposition === "FAILED";
+  const failed = batchFailed
+    ? release.frozen_pool_count !== null && release.frozen_pool_count !== undefined
+      ? release.frozen_pool_count - candidates - rejected
+      : members.length
+        ? members.length - candidates - rejected
+        : null
+    : members.filter((member) => !member.candidate && member.risk_status === "FAILED").length;
+  const abstained = batchFailed ? 0 : members.length - candidates - rejected - (failed ?? 0);
   return (
     <>
       <h2>Candidate release · {release.plan_month}</h2>
@@ -74,11 +80,8 @@ function ReleaseHeader({ release }: { release: Release }) {
         />
         <Record label="Candidate count" value={String(candidates)} />
         <Record label="Rejected count" value={String(rejected)} />
-        <Record
-          label="Abstained count"
-          value={String(members.length - candidates - rejected - failed)}
-        />
-        <Record label="Failed count" value={String(failed)} />
+        <Record label="Abstained count" value={String(abstained)} />
+        <Record label="Failed count" value={String(failed ?? "Unavailable")} />
         <Record label="Batch result reasons" value={release.release.reasons.join(", ") || "None"} />
         <Record label="Knowledge cutoff" value={absoluteTime(release.knowledge_cutoff)} />
         <Record label="Generated" value={absoluteTime(release.generated_at)} />

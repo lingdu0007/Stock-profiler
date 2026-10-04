@@ -30,6 +30,7 @@ class CandidateWorkspaceSource:
     case: FrozenDecisionCase
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     research_correction_event_id: str | None = None
+    research_correction_committed_at: datetime | None = None
     reminders: tuple[CandidateReminderRecord, ...] = ()
     frozen_pool_count: int | None = None
     research_completed_count: int | None = None
@@ -162,15 +163,30 @@ def project_candidate_workspace(
                 status = "CURRENT"
         # Keep the original invalidating fact separate from the clock-dependent display state.
         withdrawal_ids: tuple[str, ...] = ()
-        if successor is not None:
+        withdrawal_at = min(observed_at, valid_through) if valid_through else observed_at
+        withdrawal_reasons, withdrawal_qualification_ids, _ = _check_qualification(
+            source, withdrawal_at
+        )
+        if (
+            successor is not None
+            and datetime.fromisoformat(
+                successor.report_publication.committed_at
+                if successor.report_publication is not None
+                else successor.generated_at
+            )
+            <= withdrawal_at
+        ):
             withdrawal_ids = (successor.event_id,)
         elif release.disposition == "CANDIDATES":
-            if source.research_correction_event_id is not None:
+            if source.research_correction_event_id is not None and (
+                source.research_correction_committed_at is None
+                or source.research_correction_committed_at <= withdrawal_at
+            ):
                 withdrawal_ids = (source.research_correction_event_id,)
-            elif qualification_reasons:
-                withdrawal_ids = qualification_ids
-            elif status in {"INVALIDATED", "EXPIRED"}:
-                withdrawal_ids = evidence_ids
+            elif withdrawal_reasons:
+                withdrawal_ids = withdrawal_qualification_ids or (report.event_id,)
+            elif status in {"INVALIDATED", "EXPIRED", "SUPERSEDED"}:
+                withdrawal_ids = (report.event_id,)
         member_details = tuple(
             CandidateDetailView(
                 detail_id=candidate_detail_id(report.report_version_id, member.research_id),

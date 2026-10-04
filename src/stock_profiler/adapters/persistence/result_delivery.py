@@ -129,6 +129,9 @@ class ResultDelivery:
                     research_correction_event_id=correction.decision_event_id
                     if correction
                     else None,
+                    research_correction_committed_at=datetime.fromisoformat(correction.committed_at)
+                    if correction
+                    else None,
                     reminders=reminders,
                     frozen_pool_count=len(frozen_research.screening.selected_member_ids)
                     if frozen_research is not None

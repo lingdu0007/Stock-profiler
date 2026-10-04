@@ -284,3 +284,21 @@ def test_withdrawal_evidence_is_retained_after_natural_expiry(settings: Settings
         == after.withdrawal_evidence_ids
         == ("synthetic-research-withdrawal",)
     )
+
+
+def test_window_expiry_anchor_does_not_change_when_qualification_expires_later(
+    settings: Settings,
+) -> None:
+    source = qualified_source(settings)
+    expired = project_candidate_workspace(
+        (source,), datetime.fromisoformat("2042-07-08T09:00:00+00:00")
+    ).releases[0]
+    later = project_candidate_workspace(
+        (source,), datetime.fromisoformat("2042-08-02T09:00:00+00:00")
+    ).releases[0]
+    assert expired.status == later.status == "EXPIRED"
+    assert (
+        expired.withdrawal_evidence_ids
+        == later.withdrawal_evidence_ids
+        == (source.report.event_id,)
+    )
