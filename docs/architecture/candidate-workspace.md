@@ -33,6 +33,12 @@ user-fact boundary rejects candidate acknowledgement, confirmation and execution
 declarations. No candidate UI control creates a choice, capacity reservation,
 account route, personal quantity or order capability.
 
+The browser rechecks eligibility on candidate-view navigation and window focus,
+and refreshes an open view every minute. A local absolute-expiry guard withdraws
+current presentation at the saved deadline even while a response is pending.
+Population and research counts come from the original committed research facts;
+unavailable provenance remains explicit rather than reconstructing a population.
+
 ## Synthetic reminder observations
 
 `ResultDelivery.candidate_reminder` is a host-only, credential-free D0 routing
@@ -47,7 +53,9 @@ Each user and original plan month has at most one initial intent and one final
 expiry intent. B1 rejects plan-ready reminders because it has no personal plan.
 Final reminders require remaining candidates and occur before the fifth session
 starts. A material withdrawal can create one correction intent bound to the
-original report and invalidating evidence. Ordinary reminders respect quiet
+original report and invalidating evidence. That identity survives natural expiry,
+so expiry neither adds another withdrawal intent nor blocks an unsuccessful
+withdrawal retry. Ordinary reminders respect quiet
 periods and the user's ordinary-reminder preference. Deferred or unsuccessful
 attempts explicitly reference their predecessor and reuse the original intent
 and body; retries cannot extend the market window.

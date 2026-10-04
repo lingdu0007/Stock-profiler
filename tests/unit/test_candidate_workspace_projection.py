@@ -265,3 +265,22 @@ def test_expiry_retains_original_window_anchor_across_same_value_review(settings
     assert second.status == "EXPIRED"
     assert second.status_evidence_ids == first.status_evidence_ids
     assert second.valid_through == first.valid_through
+
+
+def test_withdrawal_evidence_is_retained_after_natural_expiry(settings: Settings) -> None:
+    from dataclasses import replace
+
+    source = qualified_source(settings)
+    source = replace(source, research_correction_event_id="synthetic-research-withdrawal")
+    before = project_candidate_workspace(
+        (source,), datetime.fromisoformat("2042-07-02T09:00:00+00:00")
+    ).releases[0]
+    after = project_candidate_workspace(
+        (source,), datetime.fromisoformat("2042-07-08T09:00:00+00:00")
+    ).releases[0]
+    assert before.status == "INVALIDATED" and after.status == "EXPIRED"
+    assert (
+        before.withdrawal_evidence_ids
+        == after.withdrawal_evidence_ids
+        == ("synthetic-research-withdrawal",)
+    )

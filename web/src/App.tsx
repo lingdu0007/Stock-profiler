@@ -77,6 +77,8 @@ function ReportPage() {
   const candidateQuery = useQuery({
     queryKey: ["candidate-workspace"],
     queryFn: fetchCandidateWorkspace,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000,
     enabled: Boolean(reportQuery.data?.result.candidate_release)
   });
   const candidateRelease = candidateQuery.data?.releases?.find(

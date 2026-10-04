@@ -103,6 +103,16 @@ class ResultDelivery:
             correction = self._ledger.get_correction_event(
                 report.result.candidate_release.research_event_id, connection
             )
+            research = self._ledger.get_decision_event(
+                report.result.candidate_release.research_event_id, connection
+            )
+            research_report = (
+                self._ledger.get_formal_report_for_event(research.decision_event_id, connection)
+                if research is not None
+                else None
+            )
+            frozen_research = research.case.research if research is not None else None
+            research_outcome = research_report.result.research if research_report else None
             reminders = tuple(
                 stage.candidate_reminder
                 for stage in self._ledger.get_stage_results(report.business_object_id, connection)
@@ -120,6 +130,12 @@ class ResultDelivery:
                     if correction
                     else None,
                     reminders=reminders,
+                    frozen_pool_count=len(frozen_research.screening.selected_member_ids)
+                    if frozen_research is not None
+                    else None,
+                    research_completed_count=len(research_outcome.members)
+                    if research_outcome is not None
+                    else None,
                 )
             )
         return tuple(sources)

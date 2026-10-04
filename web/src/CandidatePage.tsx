@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate, useLocation } from "react-router";
 
@@ -22,12 +23,63 @@ function absoluteTime(value: string | null | undefined): string {
     : "Unavailable";
 }
 
+function observedRelease(release: Release, now: number): Release {
+  return ["CURRENT", "WAITING_MARKET"].includes(release.status) &&
+    release.valid_through &&
+    now > Date.parse(release.valid_through)
+    ? { ...release, status: "EXPIRED", status_reasons: ["CANDIDATE_WINDOW_ENDED"] }
+    : release;
+}
+
+function useExpiryClock(releases: Release[]) {
+  const [now, setNow] = useState(() => Date.now());
+  const nextExpiry = Math.min(
+    ...releases
+      .filter((item) => ["CURRENT", "WAITING_MARKET"].includes(item.status) && item.valid_through)
+      .map((item) => Date.parse(item.valid_through!) + 1)
+      .filter((deadline) => deadline > now)
+  );
+  useEffect(() => {
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(0, nextExpiry - Date.now()), 2147483647)
+    );
+    return () => clearTimeout(timer);
+  }, [nextExpiry, now]);
+  return now;
+}
+
 function ReleaseHeader({ release }: { release: Release }) {
+  const members = release.release.members;
+  const candidates = members.filter((member) => member.candidate).length;
+  const rejected = members.filter(
+    (member) => !member.candidate && member.risk_status === "REJECTED"
+  ).length;
+  const failed = members.filter(
+    (member) => !member.candidate && member.risk_status === "FAILED"
+  ).length;
   return (
     <>
       <h2>Candidate release · {release.plan_month}</h2>
       <CandidateReleaseStatus release={release} />
       <dl className="record-list">
+        <Record
+          label="Frozen pool count"
+          value={String(release.frozen_pool_count ?? "Unavailable")}
+        />
+        <Record
+          label="Research completed"
+          value={String(release.research_completed_count ?? "Unavailable")}
+        />
+        <Record label="Candidate count" value={String(candidates)} />
+        <Record label="Rejected count" value={String(rejected)} />
+        <Record
+          label="Abstained count"
+          value={String(members.length - candidates - rejected - failed)}
+        />
+        <Record label="Failed count" value={String(failed)} />
+        <Record label="Batch result reasons" value={release.release.reasons.join(", ") || "None"} />
         <Record label="Knowledge cutoff" value={absoluteTime(release.knowledge_cutoff)} />
         <Record label="Generated" value={absoluteTime(release.generated_at)} />
         <Record label="Committed" value={absoluteTime(release.committed_at)} />
@@ -98,6 +150,8 @@ function ReleaseHeader({ release }: { release: Release }) {
 }
 
 export function CandidateReleaseStatus({ release }: { release?: Release }) {
+  const now = useExpiryClock(release ? [release] : []);
+  if (release) release = observedRelease(release, now);
   if (!release)
     return (
       <p role="status">
@@ -120,14 +174,23 @@ export function CandidateReleaseStatus({ release }: { release?: Release }) {
 
 export function CandidatePage() {
   const location = useLocation();
-  const query = useQuery({ queryKey: ["candidate-workspace"], queryFn: fetchCandidateWorkspace });
+  const query = useQuery({
+    queryKey: ["candidate-workspace", location.pathname],
+    queryFn: fetchCandidateWorkspace,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000
+  });
+  const now = useExpiryClock(query.data?.releases ?? []);
   if (query.error instanceof ApiResponseError && query.error.status === 401) {
     return <Navigate replace to={`/sign-in?next=${encodeURIComponent(location.pathname)}`} />;
   }
   const parts = location.pathname.split("/");
   const releaseId = parts[2] === "releases" ? parts[3] : undefined;
   const detailId = parts[2] === "details" ? parts[3] : undefined;
-  const data = query.data;
+  const data = query.data && {
+    ...query.data,
+    releases: query.data.releases.map((item) => observedRelease(item, now))
+  };
   const detail = data?.details.find((item) => item.detail_id === detailId);
   const release = data?.releases.find(
     (item) => item.report_version_id === (releaseId ?? detail?.report_version_id)
@@ -153,7 +216,8 @@ export function CandidatePage() {
             {detail ? (
               <>
                 <p>
-                  Security status: {detail.status} · {detail.status_reasons?.join(", ")}
+                  Security status: {detail.member.candidate ? release.status : detail.status} ·{" "}
+                  {detail.status_reasons?.join(", ")}
                 </p>
                 <CandidateMemberEvidence member={detail.member} />
               </>

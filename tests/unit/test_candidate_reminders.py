@@ -160,3 +160,53 @@ def test_explanatory_revision_of_empty_result_does_not_create_withdrawal_alert()
         )
         is None
     )
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_withdrawal_identity_and_retry_survive_natural_expiry(failed: bool) -> None:
+    release = release_view()
+    now = datetime.fromisoformat("2042-07-02T08:00:00+00:00")
+    initial = prepare_candidate_reminder(release, request("INITIAL"), now, "synthetic-scope", ())
+    assert initial is not None and release.valid_through is not None
+    withdrawn = release.model_copy(
+        update={
+            "status": "INVALIDATED",
+            "status_reasons": ("AUTHORIZATION_REVOKED",),
+            "status_evidence_ids": ("synthetic-revocation",),
+            "withdrawal_evidence_ids": ("synthetic-revocation",),
+        }
+    )
+    correction_request = request("CORRECTION").model_copy(
+        update={
+            "primary_result": "TIMEOUT" if failed else "ACCEPTED",
+            "fallback_result": "REJECTED" if failed else "ACCEPTED",
+        }
+    )
+    correction = prepare_candidate_reminder(
+        withdrawn, correction_request, now, "synthetic-scope", (initial,)
+    )
+    assert correction is not None
+    expired = withdrawn.model_copy(
+        update={
+            "status": "EXPIRED",
+            "status_reasons": ("CANDIDATE_WINDOW_ENDED",),
+            "status_evidence_ids": (release.event_id,),
+        }
+    )
+    later = release.valid_through + timedelta(seconds=1)
+    assert (
+        prepare_candidate_reminder(
+            expired, correction_request, later, "synthetic-scope", (initial, correction)
+        )
+        == correction
+    )
+    if failed:
+        retry = prepare_candidate_reminder(
+            expired,
+            request("CORRECTION").model_copy(update={"retry_of": correction.attempt_id}),
+            later,
+            "synthetic-scope",
+            (initial, correction),
+        )
+        assert retry is not None and retry.intent_id == correction.intent_id
+        assert retry.body == correction.body

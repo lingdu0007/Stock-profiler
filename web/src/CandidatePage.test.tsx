@@ -118,3 +118,73 @@ it("marks a legacy report deep link with its current withdrawal state", async ()
     "/candidates/releases/synthetic-candidate-report"
   );
 });
+
+it("rechecks withdrawal when navigating from a release to its security detail", async () => {
+  const { fireEvent } = await import("@testing-library/react");
+  const fixture = await import("../../tests/fixtures/synthetic/candidate_workspace.json");
+  const workspace = structuredClone(fixture.default.workspace) as CandidateWorkspace;
+  let reads = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(async () => {
+      reads += 1;
+      const result = structuredClone(workspace);
+      if (reads > 1) {
+        result.releases[0].status = "INVALIDATED";
+        result.releases[0].status_reasons = ["AUTHORIZATION_REVOKED"];
+      }
+      return new Response(JSON.stringify(result), {
+        headers: { "Content-Type": "application/json" }
+      });
+    })
+  );
+  window.history.pushState({}, "", "/candidates/releases/synthetic-candidate-report");
+  render(<App />);
+  fireEvent.click(await screen.findByRole("link", { name: "SYNTH-CANDIDATE" }));
+  expect(await screen.findByText(/Historical result. This release cannot/)).toBeVisible();
+  expect(reads).toBe(2);
+});
+
+it("shows frozen population and every result count with reason entrances", async () => {
+  const fixture = await import("../../tests/fixtures/synthetic/candidate_workspace.json");
+  const workspace = structuredClone(fixture.default.workspace) as CandidateWorkspace;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(workspace), {
+          headers: { "Content-Type": "application/json" }
+        })
+    )
+  );
+  window.history.pushState({}, "", "/candidates/releases/synthetic-candidate-report");
+  render(<App />);
+  expect(await screen.findByText("Frozen pool count")).toBeVisible();
+  for (const label of [
+    "Research completed",
+    "Candidate count",
+    "Rejected count",
+    "Abstained count",
+    "Failed count"
+  ])
+    expect(screen.getByText(label)).toBeVisible();
+});
+
+it("withdraws current presentation at the saved absolute expiry without navigation", async () => {
+  const fixture = await import("../../tests/fixtures/synthetic/candidate_workspace.json");
+  const workspace = structuredClone(fixture.default.workspace) as CandidateWorkspace;
+  workspace.releases[0].valid_through = new Date(Date.now() + 500).toISOString();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(workspace), {
+          headers: { "Content-Type": "application/json" }
+        })
+    )
+  );
+  window.history.pushState({}, "", "/candidates/releases/synthetic-candidate-report");
+  render(<App />);
+  expect(await screen.findByText("CURRENT · CANDIDATES")).toBeVisible();
+  expect(await screen.findByText("EXPIRED · CANDIDATES")).toBeVisible();
+});

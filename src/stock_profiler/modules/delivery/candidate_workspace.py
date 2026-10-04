@@ -31,6 +31,8 @@ class CandidateWorkspaceSource:
     qualification_history: tuple[GovernanceOutcome, ...] = ()
     research_correction_event_id: str | None = None
     reminders: tuple[CandidateReminderRecord, ...] = ()
+    frozen_pool_count: int | None = None
+    research_completed_count: int | None = None
 
 
 CandidateCurrentQualificationStatus = Literal[
@@ -57,6 +59,9 @@ class CandidateReleaseView(CandidateDeliveryContract):
     status: Literal["CURRENT", "RESULT", "WAITING_MARKET", "EXPIRED", "SUPERSEDED", "INVALIDATED"]
     status_reasons: tuple[str, ...]
     status_evidence_ids: tuple[str, ...] = ()
+    withdrawal_evidence_ids: tuple[str, ...] = ()
+    frozen_pool_count: int | None = None
+    research_completed_count: int | None = None
     current_qualification_status: CandidateCurrentQualificationStatus = "UNAVAILABLE"
     corrects_report_id: str | None
     superseded_by_report_id: str | None
@@ -155,6 +160,17 @@ def project_candidate_workspace(
                 status = "WAITING_MARKET"
             else:
                 status = "CURRENT"
+        # Keep the original invalidating fact separate from the clock-dependent display state.
+        withdrawal_ids: tuple[str, ...] = ()
+        if successor is not None:
+            withdrawal_ids = (successor.event_id,)
+        elif release.disposition == "CANDIDATES":
+            if source.research_correction_event_id is not None:
+                withdrawal_ids = (source.research_correction_event_id,)
+            elif qualification_reasons:
+                withdrawal_ids = qualification_ids
+            elif status in {"INVALIDATED", "EXPIRED"}:
+                withdrawal_ids = evidence_ids
         member_details = tuple(
             CandidateDetailView(
                 detail_id=candidate_detail_id(report.report_version_id, member.research_id),
@@ -186,6 +202,9 @@ def project_candidate_workspace(
                 status=status,
                 status_reasons=reasons,
                 status_evidence_ids=evidence_ids,
+                withdrawal_evidence_ids=withdrawal_ids,
+                frozen_pool_count=source.frozen_pool_count,
+                research_completed_count=source.research_completed_count,
                 current_qualification_status=qualification_status,
                 corrects_report_id=predecessor.report_version_id if predecessor else None,
                 superseded_by_report_id=successor.report_version_id if successor else None,

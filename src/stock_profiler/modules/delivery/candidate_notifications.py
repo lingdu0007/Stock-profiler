@@ -55,8 +55,8 @@ def prepare_candidate_reminder(
         return None
     digest = sha256(request.model_dump_json().encode()).hexdigest()
     material_identity = (
-        f"{release.report_version_id}\n{release.superseded_by_report_id}\n{release.status}\n"
-        f"{release.status_reasons}\n{release.status_evidence_ids}"
+        f"{release.report_version_id}\n"
+        f"{release.withdrawal_evidence_ids or release.status_evidence_ids or (release.event_id,)}"
         if request.kind == "CORRECTION"
         else ""
     )

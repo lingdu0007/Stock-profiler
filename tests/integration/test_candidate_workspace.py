@@ -169,6 +169,8 @@ def test_candidate_detail_identity_and_current_qualification_are_independent(
     release = workspace["releases"][0]
     assert release["status"] in {"CURRENT", "WAITING_MARKET"}
     assert len(workspace["details"]) == 10
+    assert release["frozen_pool_count"] == 10
+    assert release["research_completed_count"] == 10
     assert len(set(release["detail_ids"])) == 10
     assert all(item["event_id"] == release["event_id"] for item in workspace["details"])
     frozen_cutoff = release["knowledge_cutoff"]

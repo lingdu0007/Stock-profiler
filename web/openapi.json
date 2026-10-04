@@ -1263,6 +1263,17 @@
             ],
             "title": "Final Reminder Before"
           },
+          "frozen_pool_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Pool Count"
+          },
           "generated_at": {
             "title": "Generated At",
             "type": "string"
@@ -1300,6 +1311,17 @@
           "report_version_id": {
             "title": "Report Version Id",
             "type": "string"
+          },
+          "research_completed_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Completed Count"
           },
           "status": {
             "enum": ["CURRENT", "RESULT", "WAITING_MARKET", "EXPIRED", "SUPERSEDED", "INVALIDATED"],
@@ -1355,6 +1377,14 @@
               }
             ],
             "title": "Valid Through"
+          },
+          "withdrawal_evidence_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Withdrawal Evidence Ids",
+            "type": "array"
           }
         },
         "required": [

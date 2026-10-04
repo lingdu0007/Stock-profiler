@@ -726,6 +726,8 @@ export interface components {
             event_id: string;
             /** Final Reminder Before */
             final_reminder_before: string | null;
+            /** Frozen Pool Count */
+            frozen_pool_count?: number | null;
             /** Generated At */
             generated_at: string;
             /** Knowledge Cutoff */
@@ -742,6 +744,8 @@ export interface components {
             reminders: components["schemas"]["CandidateReminderRecord"][];
             /** Report Version Id */
             report_version_id: string;
+            /** Research Completed Count */
+            research_completed_count?: number | null;
             /**
              * Status
              * @enum {string}
@@ -760,6 +764,11 @@ export interface components {
             valid_from: string | null;
             /** Valid Through */
             valid_through: string | null;
+            /**
+             * Withdrawal Evidence Ids
+             * @default []
+             */
+            withdrawal_evidence_ids: string[];
         };
         /** CandidateReminderBody */
         CandidateReminderBody: {
