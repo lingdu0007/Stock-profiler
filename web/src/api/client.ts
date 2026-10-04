@@ -20,6 +20,14 @@ const client = createClient<paths>({
 export type FormalReport = components["schemas"]["FormalReport"];
 export type VersionBundle = components["schemas"]["VersionDiagnosticDto"];
 export type MonitoringWorkspace = components["schemas"]["MonitoringWorkspace"];
+export type CandidateWorkspace = components["schemas"]["CandidateWorkspace"];
+
+export async function fetchCandidateWorkspace(): Promise<CandidateWorkspace> {
+  const { data, response } = await client.GET("/api/v1/candidates");
+  if (!data) throw new ApiResponseError(response.status);
+  return data;
+}
+
 export type UserFactRequest = components["schemas"]["UserFactRequest"];
 
 export async function fetchMonitoringWorkspace(): Promise<MonitoringWorkspace> {

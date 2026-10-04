@@ -178,69 +178,71 @@ export function CandidateReleaseEvidence({
           <p>No security decisions were published.</p>
         ) : (
           release.members.map((member) => (
-            <article className="portfolio-subsection" key={member.security_id}>
-              <h3>{member.security_id}</h3>
-              <dl className="record-list">
-                <Record
-                  label="Decision"
-                  value={member.candidate ? "Candidate buy" : "Not a candidate"}
-                />
-                <Record label="Raw success score" value={member.raw_success_score} />
-                <Record
-                  label="Probability of net total return ≥20% at the six-calendar-month endpoint"
-                  value={member.calibrated_probability ?? "Unavailable"}
-                />
-                <Record label="Independent risk status" value={member.risk_status} />
-                <Record
-                  label="Independent risk gates"
-                  value={member.risk_gates
-                    .map((gate) => `${gate.gate_id}: ${gate.status}`)
-                    .join(", ")}
-                />
-                <Record label="Independent risk reasons" value={member.risk_reasons.join(", ")} />
-                <Record
-                  label="Market-state qualification"
-                  value={
-                    member.market_state_qualification_status === "AT_RISK"
-                      ? "At risk"
-                      : member.market_state_qualification_status === "VALID"
-                        ? "Valid"
-                        : "Not qualified"
-                  }
-                />
-                <Record label="Data" value={member.data_complete ? "Complete" : "Incomplete"} />
-                <Record label="Evidence freshness" value={member.evidence_freshness} />
-                <Record
-                  label="Evidence clocks"
-                  value={
-                    member.evidence_clocks.length === 0
-                      ? "Unavailable"
-                      : member.evidence_clocks
-                          .map(
-                            (clock) =>
-                              `${clock.evidence_id}: published ${clock.source_published_at ?? "unknown"}, acquired ${clock.acquired_at ?? "unknown"}, validated ${clock.validated_at ?? "unknown"}, cutoff ${clock.knowledge_cutoff}`
-                          )
-                          .join("; ")
-                  }
-                />
-                <Record
-                  label="Validity window"
-                  value={member.valid_market_dates.map(String).join(", ")}
-                />
-                <Record label="Reasons" value={member.reasons.join(", ")} />
-              </dl>
-              <p>{member.thesis}</p>
-              <h4>Principal risks</h4>
-              <ul>
-                {member.principal_risks.map((risk) => (
-                  <li key={risk}>{risk}</li>
-                ))}
-              </ul>
-            </article>
+            <CandidateMemberEvidence key={member.research_id} member={member} />
           ))
         )}
       </div>
     </section>
+  );
+}
+
+export function CandidateMemberEvidence({
+  member
+}: {
+  member: CandidateRelease["members"][number];
+}) {
+  return (
+    <article className="portfolio-subsection">
+      <h3>{member.security_id}</h3>
+      <dl className="record-list">
+        <Record label="Decision" value={member.candidate ? "Candidate buy" : "Not a candidate"} />
+        <Record label="Raw success score" value={member.raw_success_score} />
+        <Record
+          label="Probability of net total return ≥20% at the six-calendar-month endpoint"
+          value={member.calibrated_probability ?? "Unavailable"}
+        />
+        <Record label="Independent risk status" value={member.risk_status} />
+        <Record
+          label="Independent risk gates"
+          value={member.risk_gates.map((gate) => `${gate.gate_id}: ${gate.status}`).join(", ")}
+        />
+        <Record label="Independent risk reasons" value={member.risk_reasons.join(", ")} />
+        <Record
+          label="Market-state qualification"
+          value={
+            member.market_state_qualification_status === "AT_RISK"
+              ? "At risk"
+              : member.market_state_qualification_status === "VALID"
+                ? "Valid"
+                : "Not qualified"
+          }
+        />
+        <Record label="Data" value={member.data_complete ? "Complete" : "Incomplete"} />
+        <Record label="Evidence freshness" value={member.evidence_freshness} />
+        <Record
+          label="Evidence clocks"
+          value={
+            member.evidence_clocks.length === 0
+              ? "Unavailable"
+              : member.evidence_clocks
+                  .map(
+                    (clock) =>
+                      `${clock.evidence_id}: published ${clock.source_published_at ?? "unknown"}, acquired ${clock.acquired_at ?? "unknown"}, validated ${clock.validated_at ?? "unknown"}, cutoff ${clock.knowledge_cutoff}`
+                  )
+                  .join("; ")
+          }
+        />
+        <Record label="Validity window" value={member.valid_market_dates.map(String).join(", ")} />
+        <Record label="Reasons" value={member.reasons.join(", ")} />
+      </dl>
+      <p>{member.thesis}</p>
+      <h4>Principal risks</h4>
+      <ul>
+        {member.principal_risks.map((risk) => (
+          <li key={risk}>{risk}</li>
+        ))}
+      </ul>
+    </article>
   );
 }
 

@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Candidate Workspace */
+        get: operations["candidate_workspace_api_v1_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/diagnostics/safety-capabilities": {
         parameters: {
             query?: never;
@@ -581,6 +598,27 @@ export interface components {
             /** Window Months */
             window_months: string[];
         };
+        /** CandidateDetailView */
+        CandidateDetailView: {
+            /** Detail Id */
+            detail_id: string;
+            /** Event Id */
+            event_id: string;
+            member: components["schemas"]["CalibratedMember"];
+            /** Report Version Id */
+            report_version_id: string;
+            /**
+             * Status
+             * @default NOT_CANDIDATE
+             * @enum {string}
+             */
+            status: "CURRENT" | "NOT_CANDIDATE" | "WAITING_MARKET" | "EXPIRED" | "SUPERSEDED" | "INVALIDATED";
+            /**
+             * Status Reasons
+             * @default []
+             */
+            status_reasons: string[];
+        };
         /**
          * CandidateEvidenceClock
          * @description Source and validation clocks for one persisted research evidence item.
@@ -668,6 +706,128 @@ export interface components {
             /** Valid Market Dates */
             valid_market_dates: string[];
         };
+        /** CandidateReleaseView */
+        CandidateReleaseView: {
+            /** Business Object Id */
+            business_object_id: string;
+            /** Committed At */
+            committed_at: string | null;
+            /** Corrects Report Id */
+            corrects_report_id: string | null;
+            /**
+             * Current Qualification Status
+             * @default UNAVAILABLE
+             * @enum {string}
+             */
+            current_qualification_status: "UNAVAILABLE" | "NOT_OBTAINED" | "VALID" | "AT_RISK" | "SUSPENDED" | "REVOKED" | "EXPIRED";
+            /** Detail Ids */
+            detail_ids: string[];
+            /** Event Id */
+            event_id: string;
+            /** Final Reminder Before */
+            final_reminder_before: string | null;
+            /** Generated At */
+            generated_at: string;
+            /** Knowledge Cutoff */
+            knowledge_cutoff: string;
+            /** Plan Month */
+            plan_month: string;
+            /** Published At */
+            published_at: string | null;
+            release: components["schemas"]["CandidateReleaseOutcome"];
+            /**
+             * Reminders
+             * @default []
+             */
+            reminders: components["schemas"]["CandidateReminderRecord"][];
+            /** Report Version Id */
+            report_version_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "CURRENT" | "RESULT" | "WAITING_MARKET" | "EXPIRED" | "SUPERSEDED" | "INVALIDATED";
+            /**
+             * Status Evidence Ids
+             * @default []
+             */
+            status_evidence_ids: string[];
+            /** Status Reasons */
+            status_reasons: string[];
+            /** Superseded By Report Id */
+            superseded_by_report_id: string | null;
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid Through */
+            valid_through: string | null;
+        };
+        /** CandidateReminderBody */
+        CandidateReminderBody: {
+            /** Candidate Count */
+            candidate_count: number;
+            /** Entry Path */
+            entry_path: string;
+            /** Result Type */
+            result_type: string;
+            /** Window Ends At */
+            window_ends_at?: string | null;
+        };
+        /** CandidateReminderChannel */
+        CandidateReminderChannel: {
+            /**
+             * Result
+             * @enum {string}
+             */
+            result: "ACCEPTED" | "REJECTED" | "UNKNOWN" | "TIMEOUT";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "PRIMARY" | "PERSISTENT";
+        };
+        /** CandidateReminderRecord */
+        CandidateReminderRecord: {
+            /** Attempt Id */
+            attempt_id: string;
+            body: components["schemas"]["CandidateReminderBody"];
+            /** Channels */
+            channels: components["schemas"]["CandidateReminderChannel"][];
+            /**
+             * Contract Version
+             * @default 1.0.0
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Deferred Until */
+            deferred_until?: string | null;
+            /** Intent Id */
+            intent_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "INITIAL" | "PLAN_READY" | "FINAL" | "CORRECTION";
+            /** Path Completed */
+            path_completed: boolean;
+            /** Plan Month */
+            plan_month: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Report Version Id */
+            report_version_id: string;
+            /** Request Digest */
+            request_digest: string;
+            /** Retry Of */
+            retry_of?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ATTEMPTED" | "DEFERRED" | "DISABLED";
+        };
         /**
          * CandidateRiskGate
          * @description One frozen independent-risk gate carried into a candidate explanation.
@@ -680,6 +840,29 @@ export interface components {
              * @enum {string}
              */
             status: "PASSED" | "FAILED";
+        };
+        /** CandidateWorkspace */
+        CandidateWorkspace: {
+            /**
+             * Current Report Ids
+             * @default []
+             */
+            current_report_ids: string[];
+            /**
+             * Details
+             * @default []
+             */
+            details: components["schemas"]["CandidateDetailView"][];
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /**
+             * Releases
+             * @default []
+             */
+            releases: components["schemas"]["CandidateReleaseView"][];
         };
         /** CapabilityVersion */
         CapabilityVersion: {
@@ -3556,6 +3739,7 @@ export interface components {
         StageResult: {
             /** Availability Failure */
             availability_failure?: ("DATA" | "SYSTEM" | "CALIBRATION") | null;
+            candidate_reminder?: components["schemas"]["CandidateReminderRecord"] | null;
             /** Gate Results */
             gate_results: components["schemas"]["GateResult"][];
             /**
@@ -4311,6 +4495,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
+        };
+    };
+    candidate_workspace_api_v1_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateWorkspace"];
+                };
             };
             /** @description Unprocessable Entity */
             422: {
