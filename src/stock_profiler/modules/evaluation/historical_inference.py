@@ -188,7 +188,13 @@ def summarize_history(
             undefined_resamples=undefined[key],
         )
     availability = (
-        Fraction(sum(row.disposition in {"FROZEN", "ABSTAINED"} for row in rows), len(rows))
+        Fraction(
+            sum(
+                row.disposition in {"FROZEN", "ABSTAINED"} and row.availability_failure is None
+                for row in rows
+            ),
+            len(rows),
+        )
         if rows
         else None
     )

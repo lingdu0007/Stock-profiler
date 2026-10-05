@@ -137,6 +137,7 @@ export function HistoricalSelectionEvidence({ evidence }: { evidence: Evidence }
               {month.plan_month} · {month.disposition}
             </h3>
             <dl className="record-list">
+              <Record label="Availability failure" value={value(month.availability_failure)} />
               <Record label="Selection-visible state" value={value(month.regime)} />
               <Record label="Maturity" value={value(month.matures_at)} />
               <Record label="Batch passed" value={value(month.batch_pass)} />

@@ -149,6 +149,65 @@ class SelectionOutcome(UniverseContract):
     actionable: Literal[False] = False
 
 
+class SelectionConstraints:
+    """One constraint scan for primary rankings and repeated baseline permutations."""
+
+    def __init__(self, command: SelectionCommand) -> None:
+        self.command = command
+        self.conflicts: dict[frozenset[str], bool] = {}
+        self.capitalization = {
+            row.security_id: index * 3 // len(self.command.rows)
+            for index, row in enumerate(
+                sorted(
+                    self.command.rows, key=lambda row: (row.float_capitalization, row.security_id)
+                )
+            )
+        }
+        self.rows = {row.security_id: row for row in self.command.rows}
+
+    def correlated(self, left: str, right: str) -> bool:
+        pair = frozenset((left, right))
+        if pair not in self.conflicts:
+            self.conflicts[pair] = _correlation_exceeds(
+                self.rows[left].adjusted_returns,
+                self.rows[right].adjusted_returns,
+                self.command.policy,
+            )
+        return self.conflicts[pair]
+
+    def scan(self, order: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[SelectionScan, ...]]:
+        policy = self.command.policy
+        rows = self.rows
+        capitalization = self.capitalization
+        members: list[str] = []
+        scan: list[SelectionScan] = []
+        for security in order:
+            row = rows[security]
+            group = capitalization[row.security_id]
+            reasons: list[str] = []
+            if sum(rows[key].industry == row.industry for key in members) >= policy.industry_limit:
+                reasons.append("INDUSTRY_LIMIT")
+            if sum(capitalization[key] == group for key in members) >= policy.capitalization_limit:
+                reasons.append("CAPITALIZATION_LIMIT")
+            conflicts = tuple(key for key in members if self.correlated(row.security_id, key))
+            if conflicts:
+                reasons.append("CORRELATION_LIMIT")
+            if not reasons:
+                members.append(row.security_id)
+            scan.append(
+                SelectionScan(
+                    security_id=row.security_id,
+                    capitalization_group=group,
+                    included=not reasons,
+                    reasons=tuple(reasons),
+                    correlated_with=conflicts,
+                )
+            )
+            if len(members) == policy.cohort_size:
+                break
+        return (tuple(members) if len(members) == policy.cohort_size else (), tuple(scan))
+
+
 def freeze_selection(
     command: SelectionCommand,
     source: UniverseCommand | None,
@@ -393,43 +452,9 @@ def freeze_selection(
             )
             for index, security_id in enumerate(sorted(scores, key=lambda key: (-scores[key], key)))
         )
-        capitalization = {
-            row.security_id: index * 3 // len(command.rows)
-            for index, row in enumerate(
-                sorted(command.rows, key=lambda row: (row.float_capitalization, row.security_id))
-            )
-        }
-        rows = {row.security_id: row for row in command.rows}
-        members: list[str] = []
-        scan: list[SelectionScan] = []
-        for ranked in ranking:
-            row = rows[ranked.security_id]
-            group = capitalization[row.security_id]
-            reasons: list[str] = []
-            if sum(rows[key].industry == row.industry for key in members) >= policy.industry_limit:
-                reasons.append("INDUSTRY_LIMIT")
-            if sum(capitalization[key] == group for key in members) >= policy.capitalization_limit:
-                reasons.append("CAPITALIZATION_LIMIT")
-            conflicts = tuple(
-                key
-                for key in members
-                if _correlation_exceeds(row.adjusted_returns, rows[key].adjusted_returns, policy)
-            )
-            if conflicts:
-                reasons.append("CORRELATION_LIMIT")
-            if not reasons:
-                members.append(row.security_id)
-            scan.append(
-                SelectionScan(
-                    security_id=row.security_id,
-                    capitalization_group=group,
-                    included=not reasons,
-                    reasons=tuple(reasons),
-                    correlated_with=conflicts,
-                )
-            )
-            if len(members) == policy.cohort_size:
-                break
+        members, scan = SelectionConstraints(command).scan(
+            tuple(ranked.security_id for ranked in ranking)
+        )
         formed = len(members) == policy.cohort_size
         return SelectionOutcome(
             disposition="FROZEN" if formed else "ABSTAINED",

@@ -2086,6 +2086,8 @@ export interface components {
         };
         /** HistoricalMonthResult */
         HistoricalMonthResult: {
+            /** Availability Failure */
+            availability_failure?: ("DATA" | "SYSTEM") | null;
             /**
              * Baselines
              * @default {}

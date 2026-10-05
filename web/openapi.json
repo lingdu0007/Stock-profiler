@@ -4788,6 +4788,18 @@
       "HistoricalMonthResult": {
         "additionalProperties": false,
         "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "enum": ["DATA", "SYSTEM"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
           "baselines": {
             "additionalProperties": {
               "$ref": "#/components/schemas/BaselineResult"

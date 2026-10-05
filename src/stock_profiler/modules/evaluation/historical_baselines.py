@@ -1,14 +1,15 @@
 """Selection-visible market context and reproducible constrained paired baselines."""
 
 from datetime import datetime
-from decimal import Decimal
 from fractions import Fraction
 from hashlib import sha256
-from itertools import combinations
 from random import Random
 from typing import Literal
 
-from stock_profiler.modules.candidate_selection.selection import ScreeningRow, SelectionCommand
+from stock_profiler.modules.candidate_selection.selection import (
+    SelectionCommand,
+    SelectionConstraints,
+)
 from stock_profiler.modules.evaluation.cohort_metrics import (
     cohort_metrics,
     cohort_nav,
@@ -67,18 +68,14 @@ def _factor_order(
         for session in historical_sessions(calendar)
         if session.closed_at <= command.cutoff_at
     )
-    values: dict[str, tuple[Fraction | None, ...]] = {}
+    values: dict[str, tuple[Fraction | None, ...]] = {
+        row.security_id: (None,) * 4 for row in command.rows
+    }
+    seen: set[str] = set()
     for row in factors.rows:
-        if (
-            row.security_id in values
-            or len(history) < 252
-            or row.momentum_start_at != history[-252]
-            or row.momentum_end_at != history[-21]
-            or row.return_dates != history[-120:]
-            or len(row.daily_returns) != 120
-            or any(not value.is_finite() or value < -1 for value in row.daily_returns)
-        ):
-            raise ValueError("HISTORICAL_FACTOR_WINDOW_INCOMPLETE")
+        if row.security_id in seen or row.security_id not in values:
+            raise ValueError("HISTORICAL_FACTOR_UNIVERSE_INCOMPLETE")
+        seen.add(row.security_id)
         scalar_values = (
             row.net_income_ttm,
             row.total_capitalization,
@@ -102,18 +99,26 @@ def _factor_order(
         )
         momentum = (
             Fraction(end_price) / Fraction(start_price) - 1
-            if start_price is not None and end_price is not None and min(start_price, end_price) > 0
+            if start_price is not None
+            and end_price is not None
+            and min(start_price, end_price) > 0
+            and len(history) >= 252
+            and row.momentum_start_at == history[-252]
+            and row.momentum_end_at == history[-21]
             else None
         )
-        returns = tuple(Fraction(item) for item in row.daily_returns)
-        mean = sum(returns, Fraction(0)) / 120
-        variance = sum(((item - mean) ** 2 for item in returns), Fraction(0)) / 119
-        values[row.security_id] = (value, quality, momentum, -variance)
-    if (
-        set(values) != {row.security_id for row in command.rows}
-        or factors.effective_at != history[-1]
-    ):
-        raise ValueError("HISTORICAL_FACTOR_UNIVERSE_INCOMPLETE")
+        volatility = None
+        if (
+            len(row.daily_returns) == 120
+            and row.return_dates == history[-120:]
+            and all(value.is_finite() and value >= -1 for value in row.daily_returns)
+        ):
+            returns = tuple(Fraction(item) for item in row.daily_returns)
+            mean = sum(returns, Fraction(0)) / 120
+            volatility = -sum(((item - mean) ** 2 for item in returns), Fraction(0)) / 119
+        values[row.security_id] = (value, quality, momentum, volatility)
+    if not history or factors.effective_at != history[-1]:
+        raise ValueError("HISTORICAL_FACTOR_WINDOW_INCOMPLETE")
     scores: dict[str, Fraction] = {}
     for security, inputs in values.items():
         score = Fraction(0)
@@ -128,44 +133,6 @@ def _factor_order(
     return tuple(sorted(scores, key=lambda security: (-scores[security], security)))
 
 
-def _constrained_members(
-    order: tuple[str, ...], command: SelectionCommand, conflicts: set[frozenset[str]]
-) -> tuple[str, ...]:
-    rows = {row.security_id: row for row in command.rows}
-    groups = {
-        row.security_id: index * 3 // len(rows)
-        for index, row in enumerate(
-            sorted(command.rows, key=lambda row: (row.float_capitalization, row.security_id))
-        )
-    }
-    members: list[str] = []
-    for security in order:
-        row = rows[security]
-        if (
-            sum(rows[key].industry == row.industry for key in members)
-            >= command.policy.industry_limit
-            or sum(groups[key] == groups[security] for key in members)
-            >= command.policy.capitalization_limit
-        ):
-            continue
-        if any(frozenset((security, key)) in conflicts for key in members):
-            continue
-        members.append(security)
-        if len(members) == command.policy.cohort_size:
-            return tuple(members)
-    return ()
-
-
-def _correlated(left: ScreeningRow, right: ScreeningRow, maximum: Decimal) -> bool:
-    x = tuple(Fraction(value) for value in left.adjusted_returns)
-    y = tuple(Fraction(value) for value in right.adjusted_returns)
-    n = len(x)
-    covariance = n * sum(a * b for a, b in zip(x, y, strict=True)) - sum(x) * sum(y)
-    variance_x = n * sum(a * a for a in x) - sum(x) ** 2
-    variance_y = n * sum(b * b for b in y) - sum(y) ** 2
-    return covariance > 0 and covariance**2 > Fraction(maximum) ** 2 * variance_x * variance_y
-
-
 def paired_baselines(
     month: HistoricalMonthInput,
     command: SelectionCommand,
@@ -176,11 +143,7 @@ def paired_baselines(
     cutoff: datetime,
 ) -> dict[str, BaselineResult]:
     factor_order = _factor_order(month, command, policy.market_calendar_version)
-    conflicts = {
-        frozenset((left.security_id, right.security_id))
-        for left, right in combinations(command.rows, 2)
-        if _correlated(left, right, command.policy.maximum_correlation)
-    }
+    constraints = SelectionConstraints(command)
     by_security = {member.security_id: member for member in members}
     if set(by_security) != {row.security_id for row in command.rows}:
         raise ValueError("HISTORICAL_BASELINE_OUTCOMES_INCOMPLETE")
@@ -217,7 +180,7 @@ def paired_baselines(
         return cache[canonical]
 
     def aggregate(orders: tuple[tuple[str, ...], ...]) -> BaselineResult:
-        selected = tuple(_constrained_members(order, command, conflicts) for order in orders)
+        selected = tuple(constraints.scan(order)[0] for order in orders)
         outcomes = tuple(metrics(keys) for keys in selected)
         rates = tuple(
             decimal_fraction(

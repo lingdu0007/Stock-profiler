@@ -181,7 +181,9 @@ def assess_historical_selection(
         passed_batches=sum(row.batch_pass is True for row in results),
         drawdown_evaluable=sum(row.drawdown_pass is not None for row in results),
         availability_failures=sum(
-            row.disposition in {"DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"} for row in results
+            row.disposition in {"DATA_FAILED", "SYSTEM_FAILED", "BLOCKED"}
+            or row.availability_failure is not None
+            for row in results
         ),
         due_missing=sum(
             bool(row.reasons)
@@ -326,11 +328,14 @@ def resolve_month(
             update={"regime": market_regime(month_input, selection.cutoff_at, calendar.version_id)}
         )
     except ValueError as error:
-        result = result.model_copy(update={"reasons": (str(error),)})
+        result = result.model_copy(
+            update={"reasons": (str(error),), "availability_failure": "SYSTEM"}
+        )
     if month_input.future_index is not None:
         future = month_input.future_index
         if (
             month_input.index is None
+            or not month_input.index.prices
             or future.starting_at != month_input.index.prices[-1].closed_at
             or future.starting_total_return_price != month_input.index.prices[-1].total_return_price
             or future.effective_at != maturity
@@ -346,6 +351,8 @@ def resolve_month(
                 )
             }
         )
+    if month_input.factors is None or month_input.factors.available_at > selection.cutoff_at:
+        result = result.model_copy(update={"availability_failure": "SYSTEM"})
     observations = {row.security_id: row for row in month_input.observations}
     if len(observations) != len(month_input.observations):
         raise ValueError("HISTORICAL_OUTCOME_MEMBERSHIP_DUPLICATED")
@@ -489,5 +496,13 @@ def resolve_month(
             command.cutoff_at,
         )
     except ValueError as error:
-        return result.model_copy(update={"reasons": (str(error),)})
+        return result.model_copy(
+            update={
+                "reasons": (*result.reasons, str(error)),
+                "availability_failure": "SYSTEM"
+                if str(error).startswith("HISTORICAL_FACTOR")
+                or str(error) == "HISTORICAL_SELECTION_VISIBLE_FACTOR_SOURCE_REQUIRED"
+                else result.availability_failure,
+            }
+        )
     return result.model_copy(update={"baselines": baselines})

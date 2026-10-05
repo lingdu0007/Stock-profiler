@@ -666,7 +666,8 @@
             "future_index_return": null,
             "batch_pass": true,
             "drawdown_pass": true,
-            "reasons": []
+            "reasons": [],
+            "availability_failure": null
           }
         ],
         "cutoff_at": "2043-03-01T00:00:00Z",

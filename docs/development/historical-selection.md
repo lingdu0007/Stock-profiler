@@ -56,7 +56,8 @@ reuse their exact wealth calculation.
 low-volatility percentiles, with deterministic security-ID ties. The host checks
 selection-visible publication/acquisition/validation clocks, complete universe
 coverage, saved trading dates, momentum endpoints and return windows. Invalid or
-missing scalar values contribute zero; a missing required source is unresolved.
+missing individual factor values contribute zero; a missing monthly source is
+a saved system availability failure, preserving independently valid primary outcomes.
 The baseline then applies the same constrained scan and standard wealth rules.
 
 ## Inference and saved reports

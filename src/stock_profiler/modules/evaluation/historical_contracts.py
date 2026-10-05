@@ -1,7 +1,7 @@
 """Parameterized preregistration and saved non-actionable historical evidence."""
 
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -77,14 +77,14 @@ class FutureIndexEvidence(OutcomeEvidence):
 
 class FactorRow(EvaluationContract):
     security_id: str
-    net_income_ttm: Decimal | None
-    total_capitalization: Decimal | None
-    average_equity: Decimal | None
-    momentum_start_price: Decimal | None
-    momentum_end_price: Decimal | None
-    momentum_start_at: AwareDatetime
-    momentum_end_at: AwareDatetime
-    daily_returns: tuple[Decimal, ...]
+    net_income_ttm: Decimal | None = Field(allow_inf_nan=True)
+    total_capitalization: Decimal | None = Field(allow_inf_nan=True)
+    average_equity: Decimal | None = Field(allow_inf_nan=True)
+    momentum_start_price: Decimal | None = Field(allow_inf_nan=True)
+    momentum_end_price: Decimal | None = Field(allow_inf_nan=True)
+    momentum_start_at: AwareDatetime | None
+    momentum_end_at: AwareDatetime | None
+    daily_returns: tuple[Annotated[Decimal, Field(allow_inf_nan=True)], ...]
     return_dates: tuple[AwareDatetime, ...]
 
 
@@ -154,6 +154,7 @@ class HistoricalMonthResult(EvaluationContract):
     members: tuple[str, ...] = ()
     regime: Literal["BULL", "BEAR", "SIDEWAYS"] | None = None
     baselines: dict[str, BaselineResult] = {}
+    availability_failure: Literal["DATA", "SYSTEM"] | None = None
     positive_count: int | None = None
     target_count: int | None = None
     positive_rate: Decimal | None = None

@@ -619,3 +619,73 @@ def test_linked_versions_retain_months_and_keep_previous_reports_scoped(
         )
         is None
     )
+
+
+def test_single_missing_volatility_factor_scores_zero_without_losing_month(
+    migrated_settings: Settings,
+) -> None:
+    payload = with_selection_context(
+        migrated_settings,
+        with_standard_evidence(migrated_settings, registered_selection_case(migrated_settings)),
+    )
+    month = payload["historical_selection"]["months"][0]
+    month["factors"]["rows"][0].update(daily_returns=[], return_dates=[])
+    run = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert run.report is not None and run.report.result.historical_selection is not None
+    assert set(run.report.result.historical_selection.months[0].baselines) == {
+        "UNIVERSE",
+        "RANDOM",
+        "FOUR_FACTOR",
+    }
+
+
+def test_whole_month_factor_source_failure_is_explicit_availability_failure(
+    migrated_settings: Settings,
+) -> None:
+    payload = with_selection_context(
+        migrated_settings,
+        with_standard_evidence(migrated_settings, registered_selection_case(migrated_settings)),
+    )
+    payload["historical_selection"]["months"][0]["factors"] = None
+    run = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert run.report is not None and run.report.result.historical_selection is not None
+    evidence = run.report.result.historical_selection
+    assert evidence.months[0].batch_pass is True
+    assert evidence.counts is not None and evidence.counts.availability_failures == 1
+    assert evidence.inference is not None
+    assert evidence.inference.gates["availability"].estimate == 0
+
+
+def test_empty_index_with_retrospective_evidence_has_controlled_rejection(
+    migrated_settings: Settings,
+) -> None:
+    import pytest
+
+    from stock_profiler.modules.evaluation.historical_contracts import HistoricalSelectionCommand
+
+    payload = with_selection_context(
+        migrated_settings,
+        with_standard_evidence(migrated_settings, registered_selection_case(migrated_settings)),
+    )
+    month = payload["historical_selection"]["months"][0]
+    index = month["index"]
+    month["future_index"] = {
+        **{key: value for key, value in index.items() if key != "prices"},
+        "evidence_id": "fictional-retrospective-index",
+        "starting_at": index["prices"][-1]["closed_at"],
+        "starting_total_return_price": index["prices"][-1]["total_return_price"],
+        "terminal_total_return_price": "1200",
+    }
+    index["prices"] = []
+    payload["historical_selection"] = HistoricalSelectionCommand.model_validate(
+        payload["historical_selection"]
+    ).model_dump(mode="json")
+    payload["input"]["historical_selection"] = payload["historical_selection"]
+    with pytest.raises(ValueError, match="HISTORICAL_EX_POST_INDEX_EVIDENCE_INVALID"):
+        run_frozen_decision_case(
+            migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+        )
