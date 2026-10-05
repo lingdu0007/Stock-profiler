@@ -154,7 +154,14 @@ export function HistoricalSelectionEvidence({ evidence }: { evidence: Evidence }
                 <dl className="record-list">
                   <Record label="Positive member rate" value={value(metrics.positive_rate)} />
                   <Record label="Target member rate" value={value(metrics.target_rate)} />
+                  <Record label="Positive member count" value={value(metrics.counts?.positive)} />
+                  <Record label="Target member count" value={value(metrics.counts?.target)} />
+                  <Record
+                    label="Member slot denominator"
+                    value={value(metrics.counts?.member_slots)}
+                  />
                   <Record label="Batch pass rate" value={value(metrics.batch_pass_rate)} />
+                  <Record label="Passed trials" value={value(metrics.counts?.passed_trials)} />
                   <Record label="Trial count" value={value(metrics.trial_count)} />
                   <Record label="Failed trials" value={value(metrics.failed_trials)} />
                   <Record label="Membership digest" value={metrics.membership_digest} />

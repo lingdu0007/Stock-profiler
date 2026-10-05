@@ -19,6 +19,7 @@ from stock_profiler.modules.evaluation.cohort_metrics import (
 )
 from stock_profiler.modules.evaluation.contracts import EvaluationMember
 from stock_profiler.modules.evaluation.historical_contracts import (
+    BaselineCounts,
     BaselineResult,
     HistoricalMonthInput,
     HistoricalRegistration,
@@ -160,6 +161,11 @@ def paired_baselines(
         trial_count=1,
         failed_trials=0,
         membership_digest=sha256("\n".join(sorted(by_security)).encode()).hexdigest(),
+        counts=BaselineCounts(
+            positive=sum(value > 0 for value in returns),
+            target=sum(value >= Fraction(policy.terminal_target) for value in returns),
+            member_slots=len(returns),
+        ),
     )
     cache: dict[tuple[str, ...], tuple[Fraction, Fraction, Fraction, Fraction]] = {}
 
@@ -199,6 +205,18 @@ def paired_baselines(
                 "\n".join(",".join(keys) for keys in selected).encode()
             ).hexdigest(),
             members=selected[0] if len(selected) == 1 else (),
+            counts=BaselineCounts(
+                positive=int(
+                    sum((values[0] for values in outcomes), Fraction(0))
+                    * policy.selection_policy.cohort_size
+                ),
+                target=int(
+                    sum((values[1] for values in outcomes), Fraction(0))
+                    * policy.selection_policy.cohort_size
+                ),
+                member_slots=len(selected) * policy.selection_policy.cohort_size,
+                passed_trials=int(sum((values[2] for values in outcomes), Fraction(0))),
+            ),
         )
 
     seed = int(sha256(f"{policy.version_id}:{selection_event_id}".encode()).hexdigest(), 16)

@@ -483,6 +483,42 @@
         "title": "AuthoritativeLedgerEntry",
         "type": "object"
       },
+      "BaselineCounts": {
+        "additionalProperties": false,
+        "description": "Exact success counts; failed constrained trials retain their member slots.",
+        "properties": {
+          "member_slots": {
+            "exclusiveMinimum": 0.0,
+            "title": "Member Slots",
+            "type": "integer"
+          },
+          "passed_trials": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed Trials"
+          },
+          "positive": {
+            "minimum": 0.0,
+            "title": "Positive",
+            "type": "integer"
+          },
+          "target": {
+            "minimum": 0.0,
+            "title": "Target",
+            "type": "integer"
+          }
+        },
+        "required": ["positive", "target", "member_slots"],
+        "title": "BaselineCounts",
+        "type": "object"
+      },
       "BaselineResult": {
         "additionalProperties": false,
         "properties": {
@@ -497,6 +533,16 @@
               }
             ],
             "title": "Batch Pass Rate"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BaselineCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "drawdown_pass_rate": {
             "anyOf": [

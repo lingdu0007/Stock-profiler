@@ -74,6 +74,10 @@ claim is made from overlapping or repeated cohorts.
 Overall pass and drawdown gates, same-month positive/target increments against
 all baselines, batch increments against formed-cohort baselines and state-specific
 pass/drawdown gates are conjunctive. Increment gates use a strict positive bound.
+Saved baseline success counts and their exact slot/trial denominators determine
+paired increments; display decimals never enter gate arithmetic. Missing exact
+counts leave inference unresolved. Bounds are compared as exact rational values
+before display rounding.
 Insufficient mature samples produce insufficient or exploratory evidence.
 Insufficient state watermarks or unresolved due evidence produce an indeterminate
 formal result, rather than a performance failure.

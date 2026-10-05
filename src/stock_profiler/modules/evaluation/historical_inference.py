@@ -41,18 +41,29 @@ def _rate(
 def _increment(
     rows: tuple[HistoricalMonthResult, ...], baseline: str, field: str
 ) -> Fraction | None:
-    return _mean(
-        tuple(
-            Fraction(getattr(row, field))
-            - Fraction(
-                getattr(
-                    row.baselines[baseline], field if field != "batch_pass" else "batch_pass_rate"
-                )
+    values: list[Fraction] = []
+    for row in rows:
+        if getattr(row, field) is None:
+            continue
+        paired = row.baselines.get(baseline)
+        if paired is None or paired.counts is None:
+            return None
+        if field == "batch_pass":
+            if paired.counts.passed_trials is None or paired.trial_count <= 0:
+                return None
+            primary = Fraction(bool(row.batch_pass))
+            comparison = Fraction(paired.counts.passed_trials, paired.trial_count)
+        else:
+            count = row.positive_count if field == "positive_rate" else row.target_count
+            if count is None:
+                return None
+            primary = Fraction(count, len(row.members)) if row.members else Fraction(0)
+            comparison = Fraction(
+                paired.counts.positive if field == "positive_rate" else paired.counts.target,
+                paired.counts.member_slots,
             )
-            for row in rows
-            if getattr(row, field) is not None and baseline in row.baselines
-        )
-    )
+        values.append(primary - comparison)
+    return _mean(tuple(values))
 
 
 def _watermark(
@@ -164,9 +175,7 @@ def summarize_history(
     for key, (metric, floor, strict) in metrics.items():
         bounds = {
             label: (
-                decimal_fraction(
-                    sorted(values)[int(Fraction(1 - policy.confidence) * (len(values) - 1))]
-                )
+                sorted(values)[int((1 - Fraction(policy.confidence)) * (len(values) - 1))]
                 if values and not undefined[key][label]
                 else None
             )
@@ -180,11 +189,16 @@ def summarize_history(
         estimate = metric(rows)
         gates[key] = HistoricalGate(
             estimate=decimal_fraction(estimate) if estimate is not None else None,
-            lower_bound=lower,
+            lower_bound=decimal_fraction(lower) if lower is not None else None,
             threshold=floor,
             strict=strict,
-            passed=(lower > floor if strict else lower >= floor) if lower is not None else None,
-            block_bounds=bounds,
+            passed=(lower > Fraction(floor) if strict else lower >= Fraction(floor))
+            if lower is not None
+            else None,
+            block_bounds={
+                label: decimal_fraction(value) if value is not None else None
+                for label, value in bounds.items()
+            },
             undefined_resamples=undefined[key],
         )
     availability = (
@@ -358,7 +372,7 @@ def _two_way_diagnostics(
             )
         for key, values in samples.items():
             if values:
-                bound = sorted(values)[int(Fraction(1 - policy.confidence) * (len(values) - 1))]
+                bound = sorted(values)[int((1 - Fraction(policy.confidence)) * (len(values) - 1))]
                 prior_bound = worst[key]
                 worst[key] = min(prior_bound, bound) if prior_bound is not None else bound
     return {

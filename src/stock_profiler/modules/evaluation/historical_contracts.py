@@ -134,6 +134,21 @@ class HistoricalSelectionCommand(EvaluationContract):
         return self
 
 
+class BaselineCounts(EvaluationContract):
+    """Exact success counts; failed constrained trials retain their member slots."""
+
+    positive: int = Field(ge=0, strict=True)
+    target: int = Field(ge=0, strict=True)
+    member_slots: int = Field(gt=0, strict=True)
+    passed_trials: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "BaselineCounts":
+        if self.target > self.positive or self.positive > self.member_slots:
+            raise ValueError("baseline successes exceed their exact denominator")
+        return self
+
+
 class BaselineResult(EvaluationContract):
     positive_rate: Decimal
     target_rate: Decimal
@@ -143,6 +158,7 @@ class BaselineResult(EvaluationContract):
     failed_trials: int
     membership_digest: str
     members: tuple[str, ...] = ()
+    counts: BaselineCounts | None = None
 
 
 class HistoricalMonthResult(EvaluationContract):

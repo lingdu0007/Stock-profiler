@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from stock_profiler.modules.evaluation.historical_contracts import (
+    BaselineCounts,
     BaselineResult,
     HistoricalMonthResult,
     HistoricalRegistration,
@@ -69,6 +70,7 @@ def history(count: int) -> tuple[HistoricalMonthResult, ...]:
             trial_count=37,
             failed_trials=0,
             membership_digest="0" * 64,
+            counts=BaselineCounts(positive=37, target=0, member_slots=148, passed_trials=0),
         )
         rows.append(
             HistoricalMonthResult(
@@ -136,7 +138,14 @@ def test_zero_paired_increment_fails_the_strict_gate() -> None:
         row.model_copy(
             update={
                 "baselines": {
-                    key: value.model_copy(update={"positive_rate": Decimal(1)})
+                    key: value.model_copy(
+                        update={
+                            "positive_rate": Decimal(1),
+                            "counts": BaselineCounts(
+                                positive=148, target=0, member_slots=148, passed_trials=0
+                            ),
+                        }
+                    )
                     for key, value in row.baselines.items()
                 }
             }
@@ -165,3 +174,51 @@ def test_calendar_gaps_are_sampled_jointly_and_worst_block_bound_is_used() -> No
     assert all(
         len(gate.block_bounds) == 3 for key, gate in result.gates.items() if key != "availability"
     )
+
+
+def test_nonterminating_baseline_ratio_cannot_create_positive_increment() -> None:
+    from fractions import Fraction
+
+    from stock_profiler.modules.evaluation.cohort_metrics import decimal_fraction
+
+    rows = []
+    for offset, row in enumerate(history(180)):
+        count = (3, 3, 4)[offset % 3]
+        universe = row.baselines["UNIVERSE"].model_copy(
+            update={
+                "positive_rate": Decimal(1) if count == 3 else decimal_fraction(Fraction(5, 6)),
+                "target_rate": decimal_fraction(Fraction(5, 6)),
+                "counts": BaselineCounts(positive=6 if count == 3 else 5, target=5, member_slots=6),
+            }
+        )
+        rows.append(
+            row.model_copy(
+                update={
+                    "target_count": count,
+                    "target_rate": Decimal(count) / 4,
+                    "baselines": {**row.baselines, "UNIVERSE": universe},
+                }
+            )
+        )
+    result = summarize_history(tuple(rows), policy(), seed=20)
+    gate = result.gates["increment:UNIVERSE:target_rate"]
+    assert gate.estimate == 0
+    assert gate.lower_bound == 0
+    assert gate.passed is False
+    assert result.disposition == "FAILED"
+
+
+def test_missing_exact_baseline_counts_remain_indeterminate() -> None:
+    rows = list(history(180))
+    row = rows[90]
+    rows[90] = row.model_copy(
+        update={
+            "baselines": {
+                **row.baselines,
+                "UNIVERSE": row.baselines["UNIVERSE"].model_copy(update={"counts": None}),
+            }
+        }
+    )
+    result = summarize_history(tuple(rows), policy(), seed=20)
+    assert result.gates["increment:UNIVERSE:positive_rate"].passed is None
+    assert result.disposition == "INDETERMINATE"

@@ -424,10 +424,25 @@ export interface components {
             /** Security Id */
             security_id: string | null;
         };
+        /**
+         * BaselineCounts
+         * @description Exact success counts; failed constrained trials retain their member slots.
+         */
+        BaselineCounts: {
+            /** Member Slots */
+            member_slots: number;
+            /** Passed Trials */
+            passed_trials?: number | null;
+            /** Positive */
+            positive: number;
+            /** Target */
+            target: number;
+        };
         /** BaselineResult */
         BaselineResult: {
             /** Batch Pass Rate */
             batch_pass_rate: string | null;
+            counts?: components["schemas"]["BaselineCounts"] | null;
             /** Drawdown Pass Rate */
             drawdown_pass_rate: string | null;
             /** Failed Trials */

@@ -429,7 +429,19 @@ def test_paired_baselines_and_market_state_are_host_computed_at_selection_cutoff
     assert set(month["baselines"]) == {"UNIVERSE", "RANDOM", "FOUR_FACTOR"}
     assert month["baselines"]["UNIVERSE"]["positive_rate"] == str(decimal_fraction(Fraction(5, 12)))
     assert month["baselines"]["UNIVERSE"]["batch_pass_rate"] is None
+    assert month["baselines"]["UNIVERSE"]["counts"] == {
+        "positive": 5,
+        "target": 3,
+        "member_slots": 12,
+        "passed_trials": None,
+    }
     assert month["baselines"]["RANDOM"]["trial_count"] == 37
+    random = month["baselines"]["RANDOM"]
+    assert random["counts"]["member_slots"] == 37 * 6
+    assert (
+        str(decimal_fraction(Fraction(random["counts"]["passed_trials"], random["trial_count"])))
+        == random["batch_pass_rate"]
+    )
     assert month["baselines"]["FOUR_FACTOR"]["members"] != month["members"]
 
 
