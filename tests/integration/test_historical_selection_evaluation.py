@@ -689,3 +689,10 @@ def test_empty_index_with_retrospective_evidence_has_controlled_rejection(
         run_frozen_decision_case(
             migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
         )
+
+    from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
+
+    audits = ResultDelivery.from_settings(migrated_settings).audit_history()
+    assert len(audits) == 1
+    assert audits[0].surface == "HOST"
+    assert audits[0].outcome == "DENIED"

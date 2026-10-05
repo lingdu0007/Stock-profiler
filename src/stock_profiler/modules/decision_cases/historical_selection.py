@@ -38,6 +38,10 @@ from stock_profiler.modules.portfolio.market_calendar import (
 )
 
 
+class InvalidHistoricalSelectionRequest(ValueError):
+    """A rejected historical command requiring an audit outside the rolled-back transaction."""
+
+
 def registered_months(start: str, end: str) -> tuple[str, ...]:
     year, month = map(int, start.split("-"))
     stop_year, stop_month = map(int, end.split("-"))

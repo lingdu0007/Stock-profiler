@@ -59,7 +59,10 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
-from stock_profiler.modules.decision_cases.historical_selection import assess_historical_selection
+from stock_profiler.modules.decision_cases.historical_selection import (
+    InvalidHistoricalSelectionRequest,
+    assess_historical_selection,
+)
 from stock_profiler.modules.decision_cases.monitoring import assess_monitoring
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping,
@@ -3480,18 +3483,21 @@ def _commit_framework_result(
                         update={"selection": selection}
                     )
             if business_result is not None and execution_case.historical_selection is not None:
-                if business_result.status != "SUCCEEDED":
-                    raise ValueError("HISTORICAL_EVALUATION_PREREQUISITE_FAILED")
-                result = result.model_copy(
-                    update={
-                        "historical_selection": assess_historical_selection(
-                            execution_case, ledger, connection
-                        ),
-                        "outcome_code": "HISTORICAL_SELECTION_RECORDED",
-                        "summary": "Saved synthetic historical selection evidence.",
-                        "key_reasons": ("HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY",),
-                    }
-                )
+                try:
+                    if business_result.status != "SUCCEEDED":
+                        raise ValueError("HISTORICAL_EVALUATION_PREREQUISITE_FAILED")
+                    result = result.model_copy(
+                        update={
+                            "historical_selection": assess_historical_selection(
+                                execution_case, ledger, connection
+                            ),
+                            "outcome_code": "HISTORICAL_SELECTION_RECORDED",
+                            "summary": "Saved synthetic historical selection evidence.",
+                            "key_reasons": ("HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY",),
+                        }
+                    )
+                except ValueError as error:
+                    raise InvalidHistoricalSelectionRequest(str(error)) from error
             if business_result is not None and execution_case.standard_outcomes is not None:
                 if business_result.status != "SUCCEEDED":
                     raise ValueError("STANDARD_OUTCOME_PREREQUISITE_FAILED")
