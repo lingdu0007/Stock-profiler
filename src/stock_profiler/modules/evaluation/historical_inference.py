@@ -43,7 +43,7 @@ def _increment(
 ) -> Fraction | None:
     values: list[Fraction] = []
     for row in rows:
-        if getattr(row, field) is None:
+        if row.batch_pass is None or getattr(row, field) is None:
             continue
         paired = row.baselines.get(baseline)
         if paired is None or paired.counts is None:

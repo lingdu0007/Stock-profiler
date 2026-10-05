@@ -222,3 +222,23 @@ def test_missing_exact_baseline_counts_remain_indeterminate() -> None:
     result = summarize_history(tuple(rows), policy(), seed=20)
     assert result.gates["increment:UNIVERSE:positive_rate"].passed is None
     assert result.disposition == "INDETERMINATE"
+
+
+def test_immature_abstention_stays_in_calendar_without_invalidating_mature_increments() -> None:
+    rows = (
+        *history(180),
+        HistoricalMonthResult(
+            plan_month="2048-01",
+            disposition="ABSTAINED",
+            positive_count=0,
+            target_count=0,
+            positive_rate=Decimal(0),
+            target_rate=Decimal(0),
+            batch_pass=None,
+            drawdown_pass=None,
+        ),
+    )
+    result = summarize_history(rows, policy(), seed=20)
+    assert result.disposition == "PASSED"
+    assert result.gates["increment:UNIVERSE:positive_rate"].estimate == Decimal("0.75")
+    assert all(sample["calendar_months"] == 181 for sample in result.resampling.values())
