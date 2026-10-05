@@ -55,7 +55,7 @@ def _increment(
             comparison = Fraction(paired.counts.passed_trials, paired.trial_count)
         else:
             count = row.positive_count if field == "positive_rate" else row.target_count
-            if count is None:
+            if count is None or paired.counts.member_slots == 0:
                 return None
             primary = Fraction(count, len(row.members)) if row.members else Fraction(0)
             comparison = Fraction(

@@ -52,6 +52,11 @@ constraints. An unformed trial contributes zero and is never redrawn. Pairwise
 correlation conflicts are computed once per month; identical formed memberships
 reuse their exact wealth calculation.
 
+A valid empty universe remains an abstained month. Its opportunity rates and
+paired opportunity increments are undefined, with an exact zero member
+denominator. Constrained trials still retain their registered slot denominators
+and count as failed trials; the empty universe alone is not an availability failure.
+
 `FOUR_FACTOR` orders equal-weight cross-sectional value, quality, momentum and
 low-volatility percentiles, with deterministic security-ID ties. The host checks
 selection-visible publication/acquisition/validation clocks, complete universe

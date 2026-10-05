@@ -150,12 +150,16 @@ def paired_baselines(
         raise ValueError("HISTORICAL_BASELINE_OUTCOMES_INCOMPLETE")
     returns = tuple(exact_member_return(member, policy.standard_quantity) for member in members)
     universe = BaselineResult(
-        positive_rate=decimal_fraction(Fraction(sum(value > 0 for value in returns), len(returns))),
+        positive_rate=decimal_fraction(Fraction(sum(value > 0 for value in returns), len(returns)))
+        if returns
+        else None,
         target_rate=decimal_fraction(
             Fraction(
                 sum(value >= Fraction(policy.terminal_target) for value in returns), len(returns)
             )
-        ),
+        )
+        if returns
+        else None,
         batch_pass_rate=None,
         drawdown_pass_rate=None,
         trial_count=1,

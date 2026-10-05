@@ -139,7 +139,7 @@ class BaselineCounts(EvaluationContract):
 
     positive: int = Field(ge=0, strict=True)
     target: int = Field(ge=0, strict=True)
-    member_slots: int = Field(gt=0, strict=True)
+    member_slots: int = Field(ge=0, strict=True)
     passed_trials: int | None = Field(default=None, ge=0, strict=True)
 
     @model_validator(mode="after")
@@ -150,8 +150,8 @@ class BaselineCounts(EvaluationContract):
 
 
 class BaselineResult(EvaluationContract):
-    positive_rate: Decimal
-    target_rate: Decimal
+    positive_rate: Decimal | None
+    target_rate: Decimal | None
     batch_pass_rate: Decimal | None
     drawdown_pass_rate: Decimal | None
     trial_count: int

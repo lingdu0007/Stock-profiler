@@ -488,7 +488,7 @@
         "description": "Exact success counts; failed constrained trials retain their member slots.",
         "properties": {
           "member_slots": {
-            "exclusiveMinimum": 0.0,
+            "minimum": 0.0,
             "title": "Member Slots",
             "type": "integer"
           },
@@ -573,14 +573,28 @@
             "type": "string"
           },
           "positive_rate": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Positive Rate",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Positive Rate"
           },
           "target_rate": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Target Rate",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Rate"
           },
           "trial_count": {
             "title": "Trial Count",

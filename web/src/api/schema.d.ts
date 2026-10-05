@@ -455,9 +455,9 @@ export interface components {
             /** Membership Digest */
             membership_digest: string;
             /** Positive Rate */
-            positive_rate: string;
+            positive_rate: string | null;
             /** Target Rate */
-            target_rate: string;
+            target_rate: string | null;
             /** Trial Count */
             trial_count: number;
         };

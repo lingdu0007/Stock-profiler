@@ -708,3 +708,47 @@ def test_empty_index_with_retrospective_evidence_has_controlled_rejection(
     assert len(audits) == 1
     assert audits[0].surface == "HOST"
     assert audits[0].outcome == "DENIED"
+
+
+def test_empty_universe_preserves_abstention_and_undefined_opportunity_rates(
+    migrated_settings: Settings,
+) -> None:
+    payload = with_selection_context(
+        migrated_settings, registered_selection_case(migrated_settings, security_count=0)
+    )
+    payload["historical_selection"]["months"][0]["factors"]["rows"] = []
+    run = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert run.report is not None and run.report.result.historical_selection is not None
+    evidence = run.report.result.historical_selection
+    assert evidence.counts is not None
+    assert evidence.counts.mature_valid == 1
+    assert evidence.counts.passed_batches == 0
+    assert evidence.counts.drawdown_evaluable == 0
+    assert evidence.counts.availability_failures == 0
+    month = evidence.months[0]
+    assert month.disposition == "ABSTAINED"
+    assert month.batch_pass is False and month.drawdown_pass is None
+    universe = month.baselines["UNIVERSE"]
+    assert universe.positive_rate is None and universe.target_rate is None
+    assert universe.batch_pass_rate is None and universe.drawdown_pass_rate is None
+    assert universe.counts is not None and universe.counts.member_slots == 0
+    assert universe.counts.positive == universe.counts.target == 0
+    for key, trials in (("RANDOM", 37), ("FOUR_FACTOR", 1)):
+        baseline = month.baselines[key]
+        assert baseline.trial_count == baseline.failed_trials == trials
+        assert baseline.positive_rate == baseline.target_rate == 0
+        assert baseline.batch_pass_rate == baseline.drawdown_pass_rate == 0
+        assert baseline.counts is not None and baseline.counts.member_slots == trials * 6
+    assert evidence.inference is not None
+    for field in ("positive_rate", "target_rate"):
+        gate = evidence.inference.gates[f"increment:UNIVERSE:{field}"]
+        assert gate.estimate is None and gate.lower_bound is None and gate.passed is None
+    assert evidence.inference.gates["availability"].passed is True
+    assert (
+        run_frozen_decision_case(
+            migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+        ).report
+        == run.report
+    )
