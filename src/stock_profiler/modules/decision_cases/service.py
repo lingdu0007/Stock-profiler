@@ -75,6 +75,7 @@ from stock_profiler.modules.decision_cases.ports import (
     ResearchMemberRunResult,
     Transaction,
 )
+from stock_profiler.modules.decision_cases.standard_outcomes import assess_standard_outcomes
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
     PortfolioUseCommand,
@@ -3477,6 +3478,19 @@ def _commit_framework_result(
                     result = execution_case.expected_external_result.model_copy(
                         update={"selection": selection}
                     )
+            if business_result is not None and execution_case.standard_outcomes is not None:
+                if business_result.status != "SUCCEEDED":
+                    raise ValueError("STANDARD_OUTCOME_PREREQUISITE_FAILED")
+                result = result.model_copy(
+                    update={
+                        "standard_outcomes": assess_standard_outcomes(
+                            execution_case, ledger, connection
+                        ),
+                        "outcome_code": "STANDARD_OUTCOMES_RECORDED",
+                        "summary": "Saved synthetic standard outcomes and delivery facts.",
+                        "key_reasons": ("STANDARD_RESULTS_INDEPENDENT_OF_PERSONAL_EXECUTION",),
+                    }
+                )
             if business_result is not None and execution_case.candidate_release is not None:
                 publication_time = datetime.fromisoformat(
                     ledger.observed_at().replace("Z", "+00:00")

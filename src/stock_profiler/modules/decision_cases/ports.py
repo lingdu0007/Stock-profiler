@@ -180,6 +180,10 @@ class DecisionLedger(Protocol[Transaction]):
 
     def observed_at(self) -> str: ...
 
+    def standard_evaluation_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def research_event_history(
         self,
         connection: Transaction,

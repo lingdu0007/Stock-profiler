@@ -912,6 +912,143 @@
         "title": "CalibratorSelectionSnapshot",
         "type": "object"
       },
+      "CandidateBatchDelivery": {
+        "additionalProperties": false,
+        "properties": {
+          "committed_at": {
+            "format": "date-time",
+            "title": "Committed At",
+            "type": "string"
+          },
+          "corrects_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Event Id"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "expired": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expired"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "knowledge_cutoff": {
+            "format": "date-time",
+            "title": "Knowledge Cutoff",
+            "type": "string"
+          },
+          "plan_month": {
+            "title": "Plan Month",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "reminders": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateReminderRecord"
+            },
+            "title": "Reminders",
+            "type": "array"
+          },
+          "report_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Version Id"
+          },
+          "superseded_by_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Event Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_through": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Through"
+          }
+        },
+        "required": [
+          "event_id",
+          "report_version_id",
+          "plan_month",
+          "disposition",
+          "knowledge_cutoff",
+          "generated_at",
+          "committed_at",
+          "published_at",
+          "valid_from",
+          "valid_through",
+          "expired",
+          "corrects_event_id",
+          "superseded_by_event_id",
+          "reminders"
+        ],
+        "title": "CandidateBatchDelivery",
+        "type": "object"
+      },
       "CandidateDetailView": {
         "additionalProperties": false,
         "properties": {
@@ -2890,6 +3027,140 @@
         "title": "DrawdownValuation",
         "type": "object"
       },
+      "EntryEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "authority": {
+            "const": "EXCHANGE",
+            "title": "Authority",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "corrects_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Evidence Id"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySession"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Sessions",
+            "type": "array"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "authority",
+          "source_version",
+          "effective_at",
+          "published_at",
+          "acquired_at",
+          "validated_at",
+          "corrects_evidence_id",
+          "correction_reason",
+          "sessions"
+        ],
+        "title": "EntryEvidence",
+        "type": "object"
+      },
+      "EntrySession": {
+        "additionalProperties": false,
+        "properties": {
+          "buyable": {
+            "title": "Buyable",
+            "type": "boolean"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "costs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradingCosts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turnover": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Turnover",
+            "type": "string"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "enum": ["SUSPENDED", "LIMIT_UP", "NO_SELLER_LIQUIDITY", "PURCHASE_EXCLUDED"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
+          },
+          "volume": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Volume",
+            "type": "string"
+          }
+        },
+        "required": ["closed_at", "buyable", "unavailable_reason", "turnover", "volume", "costs"],
+        "title": "EntrySession",
+        "type": "object"
+      },
       "ErroneousAlertReplay": {
         "additionalProperties": false,
         "properties": {
@@ -2977,6 +3248,187 @@
         },
         "required": ["obligation_id", "basis_reference", "direction", "quantity_status"],
         "title": "EstablishedObligation",
+        "type": "object"
+      },
+      "EvaluationMember": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry At"
+          },
+          "entry_expired": {
+            "default": false,
+            "title": "Entry Expired",
+            "type": "boolean"
+          },
+          "entry_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Price"
+          },
+          "evaluation_id": {
+            "title": "Evaluation Id",
+            "type": "string"
+          },
+          "frozen_probability": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Probability"
+          },
+          "inclusion_reason": {
+            "default": "FROZEN_SELECTION_MEMBER",
+            "title": "Inclusion Reason",
+            "type": "string"
+          },
+          "matures_at": {
+            "format": "date-time",
+            "title": "Matures At",
+            "type": "string"
+          },
+          "net_total_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Total Return"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StandardObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "population": {
+            "enum": ["SELECTION", "PROBABILITY", "CANDIDATE"],
+            "title": "Population",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["PENDING", "UNAVAILABLE", "ACHIEVED", "NOT_ACHIEVED"],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_id",
+          "population",
+          "source_event_id",
+          "security_id",
+          "matures_at",
+          "state"
+        ],
+        "title": "EvaluationMember",
+        "type": "object"
+      },
+      "EvaluationRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "admission_contract": {
+            "const": "standard-evaluation.1.0.0",
+            "default": "standard-evaluation.1.0.0",
+            "title": "Admission Contract",
+            "type": "string"
+          },
+          "admission_reason": {
+            "title": "Admission Reason",
+            "type": "string"
+          },
+          "evaluation_id": {
+            "title": "Evaluation Id",
+            "type": "string"
+          },
+          "frozen_probability": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Probability"
+          },
+          "market_calendar_version": {
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "population": {
+            "enum": ["SELECTION", "PROBABILITY", "CANDIDATE"],
+            "title": "Population",
+            "type": "string"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "standard_quantity": {
+            "default": "100",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_id",
+          "population",
+          "source_event_id",
+          "security_id",
+          "frozen_probability",
+          "registered_at",
+          "admission_reason",
+          "market_calendar_version"
+        ],
+        "title": "EvaluationRegistration",
         "type": "object"
       },
       "EvidenceArtifact": {
@@ -3517,6 +3969,14 @@
               }
             ]
           },
+          "evaluation_registrations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvaluationRegistration"
+            },
+            "title": "Evaluation Registrations",
+            "type": "array"
+          },
           "execution_plan": {
             "anyOf": [
               {
@@ -3602,6 +4062,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SelectionOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "standard_outcomes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StandardOutcomeReport"
               },
               {
                 "type": "null"
@@ -5294,6 +5764,56 @@
         },
         "required": ["scope", "version"],
         "title": "PolicyBinding",
+        "type": "object"
+      },
+      "PopulationCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "achieved": {
+            "title": "Achieved",
+            "type": "integer"
+          },
+          "due": {
+            "title": "Due",
+            "type": "integer"
+          },
+          "evaluable": {
+            "title": "Evaluable",
+            "type": "integer"
+          },
+          "formal_adjudication": {
+            "enum": ["INDETERMINATE", "EVIDENCE_COMPLETE"],
+            "title": "Formal Adjudication",
+            "type": "string"
+          },
+          "immature": {
+            "title": "Immature",
+            "type": "integer"
+          },
+          "missing": {
+            "title": "Missing",
+            "type": "integer"
+          },
+          "not_achieved": {
+            "title": "Not Achieved",
+            "type": "integer"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "registered",
+          "due",
+          "evaluable",
+          "missing",
+          "immature",
+          "achieved",
+          "not_achieved",
+          "formal_adjudication"
+        ],
+        "title": "PopulationCounts",
         "type": "object"
       },
       "PortfolioAuthorization": {
@@ -9235,6 +9755,138 @@
         "title": "StageResult",
         "type": "object"
       },
+      "StandardObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntryEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "terminal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TerminalEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["security_id", "entry", "terminal"],
+        "title": "StandardObservation",
+        "type": "object"
+      },
+      "StandardOutcomeReport": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Event Id"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "default": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "delivery": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateBatchDelivery"
+            },
+            "title": "Delivery",
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "populations": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PopulationCounts"
+            },
+            "title": "Populations",
+            "type": "object"
+          },
+          "previous_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Event Id"
+          },
+          "previous_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Report Id"
+          },
+          "report_version": {
+            "minimum": 1.0,
+            "title": "Report Version",
+            "type": "integer"
+          },
+          "selection_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Event Id"
+          }
+        },
+        "required": [
+          "selection_event_id",
+          "candidate_event_id",
+          "cutoff_at",
+          "previous_event_id",
+          "members",
+          "populations",
+          "previous_report_id",
+          "report_version",
+          "delivery"
+        ],
+        "title": "StandardOutcomeReport",
+        "type": "object"
+      },
       "StressCalculationPolicy": {
         "additionalProperties": false,
         "description": "Explicit conservative gross-stress inputs, never an engine default.",
@@ -9443,6 +10095,137 @@
         },
         "required": ["allowed", "task_snapshot", "qualification_snapshot", "reasons", "checked_at"],
         "title": "TaskUsage",
+        "type": "object"
+      },
+      "TerminalEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "actions_complete_through": {
+            "format": "date-time",
+            "title": "Actions Complete Through",
+            "type": "string"
+          },
+          "authority": {
+            "const": "EXCHANGE",
+            "title": "Authority",
+            "type": "string"
+          },
+          "cash_distributions": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cash Distributions",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "corrects_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Evidence Id"
+          },
+          "costs": {
+            "$ref": "#/components/schemas/TradingCosts"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Price",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "quantity_multiplier": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Multiplier",
+            "type": "string"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "authority",
+          "source_version",
+          "effective_at",
+          "published_at",
+          "acquired_at",
+          "validated_at",
+          "corrects_evidence_id",
+          "correction_reason",
+          "price",
+          "quantity_multiplier",
+          "cash_distributions",
+          "actions_complete_through",
+          "costs"
+        ],
+        "title": "TerminalEvidence",
+        "type": "object"
+      },
+      "TradingCosts": {
+        "additionalProperties": false,
+        "properties": {
+          "commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission",
+            "type": "string"
+          },
+          "fees": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fees",
+            "type": "string"
+          },
+          "slippage": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Slippage",
+            "type": "string"
+          },
+          "taxes": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Taxes",
+            "type": "string"
+          }
+        },
+        "required": ["commission", "fees", "taxes", "slippage"],
+        "title": "TradingCosts",
         "type": "object"
       },
       "TransformedSignal": {
