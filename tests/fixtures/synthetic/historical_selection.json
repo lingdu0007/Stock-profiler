@@ -1,0 +1,790 @@
+{
+  "synthetic": true,
+  "generator_version": "fictional-historical-selection/1",
+  "seed": 2020,
+  "report": {
+    "report_version_id": "report-version-e4fe380512d3e47efea89e1c75d98045bb8decdc8cd738383d50ea452f0758d4",
+    "event_id": "decision-event-4932cb8c3eaa545daf2bde5617a8e140abbd604d2545add2adc1b01b9a914c33",
+    "business_object_id": "business-object-ba9515469cfe7a12c73485e1d2d8b6274911f838b2335ccf79d12a9bfa66e530",
+    "framework_run_id": "framework-run-7c4c9595b46d17e7c3f53f11abd42d9c0543fd30dba45280ea37e3380dce938f",
+    "case_id": "fictional-historical-evaluation",
+    "synthetic": true,
+    "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+    "generated_at": "2043-03-01T00:00:00Z",
+    "knowledge_cutoff": "2043-03-01T00:00:00Z",
+    "evidence_clock": {
+      "fact_effective_at": "2042-05-17T15:00:00Z",
+      "source_published_at": "2042-05-17T15:12:00Z",
+      "acquired_at": "2042-05-17T15:16:00Z",
+      "validated_at": "2042-05-17T15:18:00Z"
+    },
+    "version_bundle": {
+      "case_contract_version": "historical-selection.1.0.0",
+      "host_contract_version": "historical-selection.1.0.0",
+      "host_application_version": "0.1.0.dev0",
+      "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "agent_definition_id": "synthetic-frozen-decision-case",
+      "agent_definition_version": "2.0.0",
+      "model_adapter_id": "m-agent-deterministic-model-adapter",
+      "routing_policy_version": "d0-single-definition-route-v1",
+      "output_contract_version": "1.0.0",
+      "report_projection_contract_version": "historical-selection.1.0.0",
+      "m_agent_version": "0.5.1",
+      "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+      "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+      "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+    },
+    "result": {
+      "outcome_code": "HISTORICAL_SELECTION_RECORDED",
+      "summary": "Saved synthetic historical selection evidence.",
+      "key_reasons": ["HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY"],
+      "historical_selection": {
+        "disposition": "INSUFFICIENT",
+        "registration": {
+          "version_id": "fictional-historical-contract-v1",
+          "start_month": "2042-05",
+          "end_month": "2042-05",
+          "source_version_bundle": {
+            "case_contract_version": "selection.1.0.0",
+            "host_contract_version": "selection.1.0.0",
+            "host_application_version": "0.1.0.dev0",
+            "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent_definition_id": "synthetic-frozen-decision-case",
+            "agent_definition_version": "2.0.0",
+            "model_adapter_id": "m-agent-deterministic-model-adapter",
+            "routing_policy_version": "d0-single-definition-route-v1",
+            "output_contract_version": "1.0.0",
+            "report_projection_contract_version": "selection.1.0.0",
+            "m_agent_version": "0.5.1",
+            "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+            "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+            "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+          },
+          "strategy_version": "sha256:c0118f356885f59d2f049f0fdf033c990a832a207a7bf92c9e1b3bed6929b774",
+          "market_calendar_version": "synthetic-market-calendar-v1",
+          "standard_quantity": "100",
+          "selection_policy": {
+            "version_id": "synthetic-selection-policy-v1",
+            "cohort_size": 6,
+            "industry_limit": 2,
+            "capitalization_limit": 3,
+            "correlation_sessions": 8,
+            "maximum_correlation": "0.7",
+            "positive_weight": 3,
+            "terminal_weight": 2
+          },
+          "positive_members_required": 5,
+          "target_members_required": 3,
+          "terminal_target": "0.25",
+          "maximum_drawdown": "0.15",
+          "exploratory_months": 3,
+          "formal_months": 6,
+          "overall_pass_floor": "0.75",
+          "overall_drawdown_floor": "0.75",
+          "regime_pass_floor": "0.4",
+          "regime_drawdown_floor": "0.5",
+          "regime_months": 2,
+          "regime_drawdown_months": 2,
+          "regime_nonoverlapping_windows": 1,
+          "regime_periods": 1,
+          "block_lengths": [6, 9, 12],
+          "confidence": "0.95",
+          "bootstrap_repetitions": 199,
+          "random_trials": 37,
+          "minimum_availability": "0.95"
+        },
+        "registration_event_id": "decision-event-a6d9a29e20a4efc3f2ccfe5b7b7baea7c32742bbc73a13d96f62cd1b30dd8933",
+        "previous_event_id": null,
+        "previous_report_id": null,
+        "report_version": 1,
+        "inference": {
+          "disposition": "INSUFFICIENT",
+          "gates": {
+            "availability": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0.95",
+              "strict": false,
+              "passed": true,
+              "block_bounds": {},
+              "undefined_resamples": {}
+            },
+            "increment:FOUR_FACTOR:batch_pass": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:FOUR_FACTOR:positive_rate": {
+              "estimate": "0.66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+              "lower_bound": "0.66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+                "6": "0.66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+                "9": "0.66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:FOUR_FACTOR:target_rate": {
+              "estimate": "0.5",
+              "lower_bound": "0.5",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.5",
+                "6": "0.5",
+                "9": "0.5"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:RANDOM:batch_pass": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:RANDOM:positive_rate": {
+              "estimate": "0.36936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936937",
+              "lower_bound": "0.36936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936937",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.36936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936937",
+                "6": "0.36936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936937",
+                "9": "0.36936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936936937"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:RANDOM:target_rate": {
+              "estimate": "0.22072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072",
+              "lower_bound": "0.22072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.22072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072",
+                "6": "0.22072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072",
+                "9": "0.22072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072072"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:UNIVERSE:positive_rate": {
+              "estimate": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+              "lower_bound": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+                "6": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+                "9": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "increment:UNIVERSE:target_rate": {
+              "estimate": "0.25",
+              "lower_bound": "0.25",
+              "threshold": "0",
+              "strict": true,
+              "passed": true,
+              "block_bounds": {
+                "12": "0.25",
+                "6": "0.25",
+                "9": "0.25"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "overall_drawdown": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0.75",
+              "strict": false,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "overall_pass": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0.75",
+              "strict": false,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "regime:BEAR:batch_pass": {
+              "estimate": null,
+              "lower_bound": null,
+              "threshold": "0.4",
+              "strict": false,
+              "passed": null,
+              "block_bounds": {
+                "12": null,
+                "6": null,
+                "9": null
+              },
+              "undefined_resamples": {
+                "12": 199,
+                "6": 199,
+                "9": 199
+              }
+            },
+            "regime:BEAR:drawdown_pass": {
+              "estimate": null,
+              "lower_bound": null,
+              "threshold": "0.5",
+              "strict": false,
+              "passed": null,
+              "block_bounds": {
+                "12": null,
+                "6": null,
+                "9": null
+              },
+              "undefined_resamples": {
+                "12": 199,
+                "6": 199,
+                "9": 199
+              }
+            },
+            "regime:BULL:batch_pass": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0.4",
+              "strict": false,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "regime:BULL:drawdown_pass": {
+              "estimate": "1",
+              "lower_bound": "1",
+              "threshold": "0.5",
+              "strict": false,
+              "passed": true,
+              "block_bounds": {
+                "12": "1",
+                "6": "1",
+                "9": "1"
+              },
+              "undefined_resamples": {
+                "12": 0,
+                "6": 0,
+                "9": 0
+              }
+            },
+            "regime:SIDEWAYS:batch_pass": {
+              "estimate": null,
+              "lower_bound": null,
+              "threshold": "0.4",
+              "strict": false,
+              "passed": null,
+              "block_bounds": {
+                "12": null,
+                "6": null,
+                "9": null
+              },
+              "undefined_resamples": {
+                "12": 199,
+                "6": 199,
+                "9": 199
+              }
+            },
+            "regime:SIDEWAYS:drawdown_pass": {
+              "estimate": null,
+              "lower_bound": null,
+              "threshold": "0.5",
+              "strict": false,
+              "passed": null,
+              "block_bounds": {
+                "12": null,
+                "6": null,
+                "9": null
+              },
+              "undefined_resamples": {
+                "12": 199,
+                "6": 199,
+                "9": 199
+              }
+            }
+          },
+          "regimes": {
+            "BEAR": {
+              "mature_months": 0,
+              "formed_months": 0,
+              "nonoverlapping_windows": 0,
+              "periods": 0,
+              "sufficient": false
+            },
+            "BULL": {
+              "mature_months": 1,
+              "formed_months": 1,
+              "nonoverlapping_windows": 1,
+              "periods": 1,
+              "sufficient": false
+            },
+            "SIDEWAYS": {
+              "mature_months": 0,
+              "formed_months": 0,
+              "nonoverlapping_windows": 0,
+              "periods": 0,
+              "sufficient": false
+            }
+          },
+          "diagnostics": {
+            "composition_turnover": null,
+            "different_securities": 6,
+            "effective_securities": "6",
+            "ex_post_down_months": 0,
+            "ex_post_down_pass_rate": null,
+            "ex_post_flat_months": 0,
+            "ex_post_flat_pass_rate": null,
+            "ex_post_up_months": 0,
+            "ex_post_up_pass_rate": null,
+            "highest_repetition": 1,
+            "inference_unit": "complete calendar month; common moving blocks; all metrics and baselines share samples",
+            "pass_autocorrelation_lag_1": null,
+            "pass_autocorrelation_lag_12": null,
+            "pass_autocorrelation_lag_6": null,
+            "pass_autocorrelation_lag_9": null,
+            "stock_month_two_way_positive_lower_bound": "0.5",
+            "stock_month_two_way_status": "diagnostic only",
+            "stock_month_two_way_target_lower_bound": "0",
+            "top_ten_slot_share": "1"
+          },
+          "resampling": {
+            "12": {
+              "calendar_months": 1,
+              "repetitions": 199,
+              "sampling_digest": "a5c1da9cc7a466a6cb3cd97c451b039c5fd04cac3edc1287968bfd3af2ca0b11",
+              "seed_digest": "7dca3c40a501107580392a2081ef176376db09ee978870afd04a1308b36e5e27"
+            },
+            "6": {
+              "calendar_months": 1,
+              "repetitions": 199,
+              "sampling_digest": "a5c1da9cc7a466a6cb3cd97c451b039c5fd04cac3edc1287968bfd3af2ca0b11",
+              "seed_digest": "9718a6629b8f1a6f4ea7b2d902c6cd01b3c515ff8023b8f2a66ac37a1069f55a"
+            },
+            "9": {
+              "calendar_months": 1,
+              "repetitions": 199,
+              "sampling_digest": "a5c1da9cc7a466a6cb3cd97c451b039c5fd04cac3edc1287968bfd3af2ca0b11",
+              "seed_digest": "acc74527966c0df5b98017644b4fac1bc1c9370d3ca2f16e1472ce875e09141b"
+            }
+          }
+        },
+        "counts": {
+          "planned": 1,
+          "missing_months": 0,
+          "mature_valid": 1,
+          "passed_batches": 1,
+          "drawdown_evaluable": 1,
+          "availability_failures": 0,
+          "due_missing": 0,
+          "immature": 0
+        },
+        "months": [
+          {
+            "plan_month": "2042-05",
+            "disposition": "FROZEN",
+            "selection_event_id": "decision-event-2a5cd7e4eb2239021de8f1da3c782e8647e94586eec04c4756cce83bc1a2b9f6",
+            "selection_at": "2042-05-30T23:59:59+08:00",
+            "matures_at": "2042-12-05T15:00:00Z",
+            "members": [
+              "XQZ-SELECT-000",
+              "XQZ-SELECT-001",
+              "XQZ-SELECT-002",
+              "XQZ-SELECT-004",
+              "XQZ-SELECT-005",
+              "XQZ-SELECT-006"
+            ],
+            "regime": "BULL",
+            "baselines": {
+              "FOUR_FACTOR": {
+                "positive_rate": "0.16666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+                "target_rate": "0",
+                "batch_pass_rate": "0",
+                "drawdown_pass_rate": "1",
+                "trial_count": 1,
+                "failed_trials": 0,
+                "membership_digest": "5fc0bab9293e4dea8be6e3843495f83754047021507c40fbf41b8183f424c0ec",
+                "members": [
+                  "XQZ-SELECT-011",
+                  "XQZ-SELECT-010",
+                  "XQZ-SELECT-009",
+                  "XQZ-SELECT-007",
+                  "XQZ-SELECT-006",
+                  "XQZ-SELECT-005"
+                ]
+              },
+              "RANDOM": {
+                "positive_rate": "0.46396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396396",
+                "target_rate": "0.27927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927927928",
+                "batch_pass_rate": "0",
+                "drawdown_pass_rate": "1",
+                "trial_count": 37,
+                "failed_trials": 0,
+                "membership_digest": "4c7179e19d694b4630d6ec670d930dc1c96d9266e80bc39e2a85ad8226daf9d0",
+                "members": []
+              },
+              "UNIVERSE": {
+                "positive_rate": "0.41666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+                "target_rate": "0.25",
+                "batch_pass_rate": null,
+                "drawdown_pass_rate": null,
+                "trial_count": 1,
+                "failed_trials": 0,
+                "membership_digest": "6ccd24cfc96493da3d175ba9e46edd7cff2bc873285a1fa57d4db063ff89afb7",
+                "members": []
+              }
+            },
+            "positive_count": 5,
+            "target_count": 3,
+            "positive_rate": "0.83333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+            "target_rate": "0.5",
+            "maximum_drawdown": "0",
+            "nav": [
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1",
+              "1.1666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+              "1.1666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+              "1.1666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+              "1.1666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667",
+              "1.1666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666667"
+            ],
+            "member_returns": {
+              "XQZ-SELECT-000": "0.3",
+              "XQZ-SELECT-001": "0.3",
+              "XQZ-SELECT-002": "0.3",
+              "XQZ-SELECT-004": "0.1",
+              "XQZ-SELECT-005": "0.1",
+              "XQZ-SELECT-006": "-0.1"
+            },
+            "future_index_return": null,
+            "batch_pass": true,
+            "drawdown_pass": true,
+            "reasons": []
+          }
+        ],
+        "cutoff_at": "2043-03-01T00:00:00Z",
+        "actionable": false,
+        "authorization_granted": false,
+        "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY"
+      }
+    },
+    "stage_results": [
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "CREATED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_CREATED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_CREATED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "RUNNING",
+        "gate_results": [
+          {
+            "gate_id": "RUN_ACTIVE",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_STARTED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_TERMINAL",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FRAMEWORK_EXECUTION",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_SUCCEEDED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "HOST_VALIDATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FROZEN_RESULT_MATCH",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_DECISION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "DECISION_ACCEPTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_COMMIT",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "HOST_RESULT_SAVED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      },
+      {
+        "phase": "PUBLICATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "EVENT_COMMITTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      }
+    ],
+    "corrects_event_id": null,
+    "access_scope": {
+      "contract_version": "1.0.0",
+      "user_id": "stock-profiler-single-user",
+      "account_ids": ["synthetic-account-4017"],
+      "visibility": "USER"
+    }
+  }
+}

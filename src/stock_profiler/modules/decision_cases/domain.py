@@ -42,6 +42,10 @@ from stock_profiler.modules.evaluation.contracts import (
     StandardOutcomeCommand,
     StandardOutcomeReport,
 )
+from stock_profiler.modules.evaluation.historical_contracts import (
+    HistoricalSelectionCommand,
+    HistoricalSelectionReport,
+)
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
     PortfolioCommand,
@@ -112,6 +116,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "research.1.0.0",
         "candidate-release.1.0.0",
         "standard-outcomes.1.0.0",
+        "historical-selection.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -137,6 +142,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("research.1.0.0", "research.1.0.0"),
         ("candidate-release.1.0.0", "candidate-release.1.0.0"),
         ("standard-outcomes.1.0.0", "standard-outcomes.1.0.0"),
+        ("historical-selection.1.0.0", "historical-selection.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -224,6 +230,9 @@ class ExternalResult(FrozenContract):
     selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     evaluation_registrations: tuple[EvaluationRegistration, ...] = Field(
         default=(), exclude_if=lambda value: not value
+    )
+    historical_selection: HistoricalSelectionReport | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
     standard_outcomes: StandardOutcomeReport | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -926,6 +935,9 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    historical_selection: HistoricalSelectionCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     standard_outcomes: StandardOutcomeCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1002,6 +1014,19 @@ class FrozenDecisionCase(FrozenContract):
         candidate_release_governed = (
             self.version_bundle.case_contract_version == "candidate-release.1.0.0"
         )
+        historical_selection_governed = (
+            self.version_bundle.case_contract_version == "historical-selection.1.0.0"
+        )
+        if historical_selection_governed != (
+            self.historical_selection is not None
+        ) or historical_selection_governed != ("historical_selection" in self.input):
+            raise ValueError("historical selection requires its own frozen contract")
+        if self.historical_selection is not None and (
+            self.historical_selection.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("historical_selection")
+            != self.historical_selection.model_dump(mode="json")
+        ):
+            raise ValueError("historical selection must bind frozen cutoff and input")
         standard_outcomes_governed = (
             self.version_bundle.case_contract_version == "standard-outcomes.1.0.0"
         )
@@ -1105,6 +1130,7 @@ class FrozenDecisionCase(FrozenContract):
             or selection_governed
             or research_governed
             or candidate_release_governed
+            or historical_selection_governed
             or standard_outcomes_governed
         )
         if concentration_governed != (self.concentration is not None):
@@ -1137,6 +1163,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.research,
                     self.candidate_release,
                     self.standard_outcomes,
+                    self.historical_selection,
                 )
             )
             > 1
@@ -1166,6 +1193,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.historical_selection is not None
             or self.expected_external_result.standard_outcomes is not None
             or bool(self.expected_external_result.evaluation_registrations)
             or self.expected_external_result.candidate_release is not None
@@ -1916,6 +1944,7 @@ def synthetic_outcome_code_from_input(
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
     input_without_scenario.pop("standard_outcomes", None)
+    input_without_scenario.pop("historical_selection", None)
     candidate_release = input_without_scenario.pop("candidate_release", None)
     if candidate_release is not None and not isinstance(candidate_release, dict):
         return None

@@ -483,6 +483,76 @@
         "title": "AuthoritativeLedgerEntry",
         "type": "object"
       },
+      "BaselineResult": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_pass_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Pass Rate"
+          },
+          "drawdown_pass_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Pass Rate"
+          },
+          "failed_trials": {
+            "title": "Failed Trials",
+            "type": "integer"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "membership_digest": {
+            "title": "Membership Digest",
+            "type": "string"
+          },
+          "positive_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Positive Rate",
+            "type": "string"
+          },
+          "target_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Rate",
+            "type": "string"
+          },
+          "trial_count": {
+            "title": "Trial Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "positive_rate",
+          "target_rate",
+          "batch_pass_rate",
+          "drawdown_pass_rate",
+          "trial_count",
+          "failed_trials",
+          "membership_digest"
+        ],
+        "title": "BaselineResult",
+        "type": "object"
+      },
       "BasisSubstitutionCheck": {
         "additionalProperties": false,
         "properties": {
@@ -3997,6 +4067,16 @@
               }
             ]
           },
+          "historical_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalSelectionReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "key_reasons": {
             "items": {
               "type": "string"
@@ -4514,6 +4594,674 @@
         },
         "required": ["disposition", "reasons"],
         "title": "GovernanceOutcome",
+        "type": "object"
+      },
+      "HistoricalCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failures": {
+            "default": 0,
+            "title": "Availability Failures",
+            "type": "integer"
+          },
+          "drawdown_evaluable": {
+            "default": 0,
+            "title": "Drawdown Evaluable",
+            "type": "integer"
+          },
+          "due_missing": {
+            "default": 0,
+            "title": "Due Missing",
+            "type": "integer"
+          },
+          "immature": {
+            "default": 0,
+            "title": "Immature",
+            "type": "integer"
+          },
+          "mature_valid": {
+            "default": 0,
+            "title": "Mature Valid",
+            "type": "integer"
+          },
+          "missing_months": {
+            "title": "Missing Months",
+            "type": "integer"
+          },
+          "passed_batches": {
+            "default": 0,
+            "title": "Passed Batches",
+            "type": "integer"
+          },
+          "planned": {
+            "title": "Planned",
+            "type": "integer"
+          }
+        },
+        "required": ["planned", "missing_months"],
+        "title": "HistoricalCounts",
+        "type": "object"
+      },
+      "HistoricalGate": {
+        "additionalProperties": false,
+        "properties": {
+          "block_bounds": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Block Bounds",
+            "type": "object"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "lower_bound": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lower Bound"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "strict": {
+            "title": "Strict",
+            "type": "boolean"
+          },
+          "threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "undefined_resamples": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Undefined Resamples",
+            "type": "object"
+          }
+        },
+        "required": [
+          "estimate",
+          "lower_bound",
+          "threshold",
+          "strict",
+          "passed",
+          "block_bounds",
+          "undefined_resamples"
+        ],
+        "title": "HistoricalGate",
+        "type": "object"
+      },
+      "HistoricalInference": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Diagnostics",
+            "type": "object"
+          },
+          "disposition": {
+            "enum": ["INSUFFICIENT", "EXPLORATORY", "PASSED", "FAILED", "INDETERMINATE"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "gates": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HistoricalGate"
+            },
+            "title": "Gates",
+            "type": "object"
+          },
+          "regimes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RegimeWatermark"
+            },
+            "title": "Regimes",
+            "type": "object"
+          },
+          "resampling": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Resampling",
+            "type": "object"
+          }
+        },
+        "required": ["disposition", "gates", "regimes", "diagnostics", "resampling"],
+        "title": "HistoricalInference",
+        "type": "object"
+      },
+      "HistoricalMonthResult": {
+        "additionalProperties": false,
+        "properties": {
+          "baselines": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BaselineResult"
+            },
+            "default": {},
+            "title": "Baselines",
+            "type": "object"
+          },
+          "batch_pass": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Pass"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "drawdown_pass": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Pass"
+          },
+          "future_index_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Future Index Return"
+          },
+          "matures_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matures At"
+          },
+          "maximum_drawdown": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Drawdown"
+          },
+          "member_returns": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "default": {},
+            "title": "Member Returns",
+            "type": "object"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "nav": {
+            "default": [],
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Nav",
+            "type": "array"
+          },
+          "plan_month": {
+            "title": "Plan Month",
+            "type": "string"
+          },
+          "positive_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Positive Count"
+          },
+          "positive_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Positive Rate"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "enum": ["BULL", "BEAR", "SIDEWAYS"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
+          "selection_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection At"
+          },
+          "selection_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Event Id"
+          },
+          "target_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Count"
+          },
+          "target_rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Rate"
+          }
+        },
+        "required": ["plan_month", "disposition"],
+        "title": "HistoricalMonthResult",
+        "type": "object"
+      },
+      "HistoricalRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "block_lengths": {
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "title": "Block Lengths",
+            "type": "array"
+          },
+          "bootstrap_repetitions": {
+            "minimum": 99.0,
+            "title": "Bootstrap Repetitions",
+            "type": "integer"
+          },
+          "confidence": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "end_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "End Month",
+            "type": "string"
+          },
+          "exploratory_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Exploratory Months",
+            "type": "integer"
+          },
+          "formal_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Formal Months",
+            "type": "integer"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "maximum_drawdown": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Drawdown",
+            "type": "string"
+          },
+          "minimum_availability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Availability",
+            "type": "string"
+          },
+          "overall_drawdown_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Overall Drawdown Floor",
+            "type": "string"
+          },
+          "overall_pass_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Overall Pass Floor",
+            "type": "string"
+          },
+          "positive_members_required": {
+            "exclusiveMinimum": 0.0,
+            "title": "Positive Members Required",
+            "type": "integer"
+          },
+          "random_trials": {
+            "exclusiveMinimum": 0.0,
+            "title": "Random Trials",
+            "type": "integer"
+          },
+          "regime_drawdown_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Regime Drawdown Floor",
+            "type": "string"
+          },
+          "regime_drawdown_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Drawdown Months",
+            "type": "integer"
+          },
+          "regime_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Months",
+            "type": "integer"
+          },
+          "regime_nonoverlapping_windows": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "regime_pass_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Regime Pass Floor",
+            "type": "string"
+          },
+          "regime_periods": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Periods",
+            "type": "integer"
+          },
+          "selection_policy": {
+            "$ref": "#/components/schemas/SelectionPolicy"
+          },
+          "source_version_bundle": {
+            "$ref": "#/components/schemas/DecisionCaseVersionBundle"
+          },
+          "standard_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Quantity",
+            "type": "string"
+          },
+          "start_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "Start Month",
+            "type": "string"
+          },
+          "strategy_version": {
+            "minLength": 1,
+            "title": "Strategy Version",
+            "type": "string"
+          },
+          "target_members_required": {
+            "exclusiveMinimum": 0.0,
+            "title": "Target Members Required",
+            "type": "integer"
+          },
+          "terminal_target": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Terminal Target",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "start_month",
+          "end_month",
+          "source_version_bundle",
+          "strategy_version",
+          "market_calendar_version",
+          "standard_quantity",
+          "selection_policy",
+          "positive_members_required",
+          "target_members_required",
+          "terminal_target",
+          "maximum_drawdown",
+          "exploratory_months",
+          "formal_months",
+          "overall_pass_floor",
+          "overall_drawdown_floor",
+          "regime_pass_floor",
+          "regime_drawdown_floor",
+          "regime_months",
+          "regime_drawdown_months",
+          "regime_nonoverlapping_windows",
+          "regime_periods",
+          "block_lengths",
+          "confidence",
+          "bootstrap_repetitions",
+          "random_trials",
+          "minimum_availability"
+        ],
+        "title": "HistoricalRegistration",
+        "type": "object"
+      },
+      "HistoricalSelectionReport": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "authorization_granted": {
+            "const": false,
+            "default": false,
+            "title": "Authorization Granted",
+            "type": "boolean"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "REGISTERED",
+              "INSUFFICIENT",
+              "EXPLORATORY",
+              "PASSED",
+              "FAILED",
+              "INDETERMINATE"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "inference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalInference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "months": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HistoricalMonthResult"
+            },
+            "title": "Months",
+            "type": "array"
+          },
+          "previous_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Event Id"
+          },
+          "previous_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Report Id"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "registration": {
+            "$ref": "#/components/schemas/HistoricalRegistration"
+          },
+          "registration_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Event Id"
+          },
+          "report_version": {
+            "default": 1,
+            "title": "Report Version",
+            "type": "integer"
+          }
+        },
+        "required": ["disposition", "registration", "registration_event_id", "cutoff_at"],
+        "title": "HistoricalSelectionReport",
         "type": "object"
       },
       "IssuerConcentration": {
@@ -7851,6 +8599,40 @@
           "recorded_at"
         ],
         "title": "RecordedAlertReplay",
+        "type": "object"
+      },
+      "RegimeWatermark": {
+        "additionalProperties": false,
+        "properties": {
+          "formed_months": {
+            "title": "Formed Months",
+            "type": "integer"
+          },
+          "mature_months": {
+            "title": "Mature Months",
+            "type": "integer"
+          },
+          "nonoverlapping_windows": {
+            "title": "Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "periods": {
+            "title": "Periods",
+            "type": "integer"
+          },
+          "sufficient": {
+            "title": "Sufficient",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mature_months",
+          "formed_months",
+          "nonoverlapping_windows",
+          "periods",
+          "sufficient"
+        ],
+        "title": "RegimeWatermark",
         "type": "object"
       },
       "RegisteredRequalificationApplication": {

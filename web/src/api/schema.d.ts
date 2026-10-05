@@ -424,6 +424,28 @@ export interface components {
             /** Security Id */
             security_id: string | null;
         };
+        /** BaselineResult */
+        BaselineResult: {
+            /** Batch Pass Rate */
+            batch_pass_rate: string | null;
+            /** Drawdown Pass Rate */
+            drawdown_pass_rate: string | null;
+            /** Failed Trials */
+            failed_trials: number;
+            /**
+             * Members
+             * @default []
+             */
+            members: string[];
+            /** Membership Digest */
+            membership_digest: string;
+            /** Positive Rate */
+            positive_rate: string;
+            /** Target Rate */
+            target_rate: string;
+            /** Trial Count */
+            trial_count: number;
+        };
         /** BasisSubstitutionCheck */
         BasisSubstitutionCheck: {
             /**
@@ -1816,6 +1838,7 @@ export interface components {
             evaluation_registrations: components["schemas"]["EvaluationRegistration"][];
             execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
+            historical_selection?: components["schemas"]["HistoricalSelectionReport"] | null;
             /** Key Reasons */
             key_reasons: string[];
             liquidity?: components["schemas"]["LiquidityOutcome"] | null;
@@ -1976,6 +1999,255 @@ export interface components {
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
+        };
+        /** HistoricalCounts */
+        HistoricalCounts: {
+            /**
+             * Availability Failures
+             * @default 0
+             */
+            availability_failures: number;
+            /**
+             * Drawdown Evaluable
+             * @default 0
+             */
+            drawdown_evaluable: number;
+            /**
+             * Due Missing
+             * @default 0
+             */
+            due_missing: number;
+            /**
+             * Immature
+             * @default 0
+             */
+            immature: number;
+            /**
+             * Mature Valid
+             * @default 0
+             */
+            mature_valid: number;
+            /** Missing Months */
+            missing_months: number;
+            /**
+             * Passed Batches
+             * @default 0
+             */
+            passed_batches: number;
+            /** Planned */
+            planned: number;
+        };
+        /** HistoricalGate */
+        HistoricalGate: {
+            /** Block Bounds */
+            block_bounds: {
+                [key: string]: string | null;
+            };
+            /** Estimate */
+            estimate: string | null;
+            /** Lower Bound */
+            lower_bound: string | null;
+            /** Passed */
+            passed: boolean | null;
+            /** Strict */
+            strict: boolean;
+            /** Threshold */
+            threshold: string;
+            /** Undefined Resamples */
+            undefined_resamples: {
+                [key: string]: number;
+            };
+        };
+        /** HistoricalInference */
+        HistoricalInference: {
+            /** Diagnostics */
+            diagnostics: {
+                [key: string]: number | string | null;
+            };
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "INSUFFICIENT" | "EXPLORATORY" | "PASSED" | "FAILED" | "INDETERMINATE";
+            /** Gates */
+            gates: {
+                [key: string]: components["schemas"]["HistoricalGate"];
+            };
+            /** Regimes */
+            regimes: {
+                [key: string]: components["schemas"]["RegimeWatermark"];
+            };
+            /** Resampling */
+            resampling: {
+                [key: string]: {
+                    [key: string]: number | string;
+                };
+            };
+        };
+        /** HistoricalMonthResult */
+        HistoricalMonthResult: {
+            /**
+             * Baselines
+             * @default {}
+             */
+            baselines: {
+                [key: string]: components["schemas"]["BaselineResult"];
+            };
+            /** Batch Pass */
+            batch_pass?: boolean | null;
+            /** Disposition */
+            disposition: string;
+            /** Drawdown Pass */
+            drawdown_pass?: boolean | null;
+            /** Future Index Return */
+            future_index_return?: string | null;
+            /** Matures At */
+            matures_at?: string | null;
+            /** Maximum Drawdown */
+            maximum_drawdown?: string | null;
+            /**
+             * Member Returns
+             * @default {}
+             */
+            member_returns: {
+                [key: string]: string;
+            };
+            /**
+             * Members
+             * @default []
+             */
+            members: string[];
+            /**
+             * Nav
+             * @default []
+             */
+            nav: string[];
+            /** Plan Month */
+            plan_month: string;
+            /** Positive Count */
+            positive_count?: number | null;
+            /** Positive Rate */
+            positive_rate?: string | null;
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Regime */
+            regime?: ("BULL" | "BEAR" | "SIDEWAYS") | null;
+            /** Selection At */
+            selection_at?: string | null;
+            /** Selection Event Id */
+            selection_event_id?: string | null;
+            /** Target Count */
+            target_count?: number | null;
+            /** Target Rate */
+            target_rate?: string | null;
+        };
+        /** HistoricalRegistration */
+        HistoricalRegistration: {
+            /** Block Lengths */
+            block_lengths: number[];
+            /** Bootstrap Repetitions */
+            bootstrap_repetitions: number;
+            /** Confidence */
+            confidence: string;
+            /** End Month */
+            end_month: string;
+            /** Exploratory Months */
+            exploratory_months: number;
+            /** Formal Months */
+            formal_months: number;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /** Maximum Drawdown */
+            maximum_drawdown: string;
+            /** Minimum Availability */
+            minimum_availability: string;
+            /** Overall Drawdown Floor */
+            overall_drawdown_floor: string;
+            /** Overall Pass Floor */
+            overall_pass_floor: string;
+            /** Positive Members Required */
+            positive_members_required: number;
+            /** Random Trials */
+            random_trials: number;
+            /** Regime Drawdown Floor */
+            regime_drawdown_floor: string;
+            /** Regime Drawdown Months */
+            regime_drawdown_months: number;
+            /** Regime Months */
+            regime_months: number;
+            /** Regime Nonoverlapping Windows */
+            regime_nonoverlapping_windows: number;
+            /** Regime Pass Floor */
+            regime_pass_floor: string;
+            /** Regime Periods */
+            regime_periods: number;
+            selection_policy: components["schemas"]["SelectionPolicy"];
+            source_version_bundle: components["schemas"]["DecisionCaseVersionBundle"];
+            /** Standard Quantity */
+            standard_quantity: string;
+            /** Start Month */
+            start_month: string;
+            /** Strategy Version */
+            strategy_version: string;
+            /** Target Members Required */
+            target_members_required: number;
+            /** Terminal Target */
+            terminal_target: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** HistoricalSelectionReport */
+        HistoricalSelectionReport: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Authorization Granted
+             * @default false
+             * @constant
+             */
+            authorization_granted: false;
+            counts?: components["schemas"]["HistoricalCounts"] | null;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "REGISTERED" | "INSUFFICIENT" | "EXPLORATORY" | "PASSED" | "FAILED" | "INDETERMINATE";
+            inference?: components["schemas"]["HistoricalInference"] | null;
+            /**
+             * Months
+             * @default []
+             */
+            months: components["schemas"]["HistoricalMonthResult"][];
+            /** Previous Event Id */
+            previous_event_id?: string | null;
+            /** Previous Report Id */
+            previous_report_id?: string | null;
+            /**
+             * Qualification Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            registration: components["schemas"]["HistoricalRegistration"];
+            /** Registration Event Id */
+            registration_event_id: string | null;
+            /**
+             * Report Version
+             * @default 1
+             */
+            report_version: number;
         };
         /** IssuerConcentration */
         IssuerConcentration: {
@@ -3195,6 +3467,19 @@ export interface components {
             replay: components["schemas"]["ErroneousAlertReplay"];
             scope: components["schemas"]["QualificationScope"];
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /** RegimeWatermark */
+        RegimeWatermark: {
+            /** Formed Months */
+            formed_months: number;
+            /** Mature Months */
+            mature_months: number;
+            /** Nonoverlapping Windows */
+            nonoverlapping_windows: number;
+            /** Periods */
+            periods: number;
+            /** Sufficient */
+            sufficient: boolean;
         };
         /** RegisteredRequalificationApplication */
         RegisteredRequalificationApplication: {

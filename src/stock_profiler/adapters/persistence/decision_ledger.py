@@ -52,6 +52,7 @@ from stock_profiler.modules.decision_cases.ports import (
 from stock_profiler.modules.decision_cases.ports import (
     ResearchAvailabilityFailureFact as ResearchAvailabilityFailureFact,
 )
+from stock_profiler.modules.decision_cases.ports import SelectionAvailabilityFailureFact
 from stock_profiler.modules.delivery.user_facts import UserFact
 from stock_profiler.modules.portfolio.contracts import PortfolioAuthorizationOutcome
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownOutcome
@@ -194,6 +195,65 @@ class DecisionLedger:
     def observed_at(self) -> str:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
+
+    def selection_availability_failure_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[SelectionAvailabilityFailureFact, ...]:
+        """Read saved failed selection attempts without requiring a business commit."""
+        statement = (
+            select(
+                DECISION_STAGE_EVENTS.c.stage_payload,
+                DECISION_STAGE_EVENTS.c.recorded_at,
+                DECISION_CASE_BUSINESS_OBJECTS.c.case_payload,
+            )
+            .select_from(
+                DECISION_STAGE_EVENTS.join(
+                    DECISION_CASE_BUSINESS_OBJECTS,
+                    DECISION_STAGE_EVENTS.c.business_object_id
+                    == DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id,
+                )
+            )
+            .where(DECISION_STAGE_EVENTS.c.decision_event_id.is_(None))
+            .order_by(DECISION_STAGE_EVENTS.c.sequence)
+        )
+        failures: list[SelectionAvailabilityFailureFact] = []
+        for row in connection.execute(statement):
+            if row.case_payload is None:
+                continue
+            try:
+                case = FrozenDecisionCase.model_validate_json(row.case_payload)
+                stage = StageResult.model_validate_json(row.stage_payload)
+            except (ValidationError, TypeError, ValueError) as error:
+                raise DecisionEventCommitError(
+                    "selection availability history unavailable"
+                ) from error
+            if (
+                case.access_scope is not None
+                and case.access_scope.same_scope_as(access_scope)
+                and case.selection is not None
+                and stage.phase in {"FRAMEWORK_RUN", "HOST_VALIDATION", "BUSINESS_COMMIT"}
+                and stage.status in {"FAILED", "CANCELLED"}
+            ):
+                failures.append(
+                    SelectionAvailabilityFailureFact(
+                        case=case, recorded_at=row.recorded_at, stage_result=stage
+                    )
+                )
+        return tuple(failures)
+
+    def historical_selection_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]:
+        """Read complete same-scope historical and monthly selection evidence."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection, "historical selection history unavailable"
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and (fact.result.selection is not None or fact.result.historical_selection is not None)
+        )
 
     def standard_evaluation_history(
         self, connection: Connection, access_scope: ResultAccessScope

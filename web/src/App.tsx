@@ -30,6 +30,7 @@ import { SelectionEvidence } from "./SelectionEvidence";
 import { CandidatePage, CandidateReleaseStatus } from "./CandidatePage";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
 import { StandardOutcomeEvidence } from "./StandardOutcomeEvidence";
+import { HistoricalSelectionEvidence } from "./HistoricalSelectionEvidence";
 import { ReportRecord as Record } from "./ReportRecord";
 
 function createQueryClient() {
@@ -164,6 +165,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
         </ol>
       </section>
 
+      {report.result.historical_selection && (
+        <HistoricalSelectionEvidence evidence={report.result.historical_selection} />
+      )}
       {report.result.standard_outcomes && (
         <StandardOutcomeEvidence outcome={report.result.standard_outcomes} />
       )}
