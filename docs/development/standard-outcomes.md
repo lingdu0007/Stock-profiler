@@ -5,7 +5,9 @@ host resolves a same-owner, same-account committed selection event and retains
 separate identities registered in the source commit for selection members, each frozen calibrated probability,
 and each candidate. Candidate attempts at the selection cutoff retain their
 monthly delivery facts. An empty or failed month can reference its committed
-candidate event directly without inventing selection members.
+candidate event directly when it has no evaluation members, without inventing
+selection members. A candidate event with frozen evaluation members must use its
+selection lineage; changing the entry route cannot restart their outcome history.
 
 The generator and seed identify fictional inputs. This contract does not use
 provider credentials, personal trades, account costs, orders or external

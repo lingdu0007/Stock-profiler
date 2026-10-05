@@ -694,3 +694,26 @@ def test_membership_identities_are_saved_when_source_events_are_committed(
             *candidate.result.evaluation_registrations,
         )
     } == {member.evaluation_id for member in result.report.result.standard_outcomes.members}
+
+
+def test_candidate_route_cannot_restart_existing_evaluation_identity_history(
+    migrated_settings: Settings,
+) -> None:
+    payload = outcome_case(migrated_settings)
+    candidate_id = seed_candidate_snapshot(migrated_settings)
+    payload["standard_outcomes"]["observations"] = [standard_observation()]
+    bind_outcome_input(payload)
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert original.report is not None
+    attack = successor_case(payload, original.report.event_id, "2043-02-02T16:00:00Z")
+    attack["standard_outcomes"].update(
+        selection_event_id=None, candidate_event_id=candidate_id, previous_event_id=None
+    )
+    attack["standard_outcomes"]["observations"][0]["terminal"]["price"] = "7.9"
+    bind_outcome_input(attack)
+    with pytest.raises(ValueError, match="STANDARD_SELECTION_SOURCE_REQUIRED"):
+        run_frozen_decision_case(
+            migrated_settings, attack, clock=GovernanceClock(attack["knowledge_cutoff"])
+        )

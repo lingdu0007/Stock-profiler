@@ -4,11 +4,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from stock_profiler.modules.decision_cases.domain import DecisionEventFact, FrozenDecisionCase
-from stock_profiler.modules.decision_cases.evaluation_registration import evaluation_identity
+from stock_profiler.modules.decision_cases.evaluation_registration import (
+    register_evaluation_members,
+)
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
 from stock_profiler.modules.evaluation.contracts import (
     CandidateBatchDelivery,
     EvaluationMember,
+    EvaluationRegistration,
     StandardObservation,
     StandardOutcomeReport,
 )
@@ -41,13 +44,10 @@ def assess_standard_outcomes(
     ):
         raise ValueError("STANDARD_SELECTION_SOURCE_UNAVAILABLE")
     selection = source.result.selection
-    source_members = (
-        selection.members
-        if selection
-        else tuple(member.security_id for member in source.result.candidate_release.members)
-        if source.result.candidate_release
-        else ()
-    )
+    source_registrations = retained_registrations(source)
+    if command.candidate_event_id and source_registrations:
+        raise ValueError("STANDARD_SELECTION_SOURCE_REQUIRED")
+    source_members = selection.members if selection else ()
     source_cutoff = (
         selection.cutoff_at if selection else datetime.fromisoformat(source.case.knowledge_cutoff)
     )
@@ -122,20 +122,23 @@ def assess_standard_outcomes(
     members = tuple(
         evaluate_member(
             EvaluationMember(
-                evaluation_id=evaluation_identity("SELECTION", source.decision_event_id, security),
-                population="SELECTION",
-                source_event_id=source.decision_event_id,
-                security_id=security,
+                evaluation_id=registration.evaluation_id,
+                population=registration.population,
+                source_event_id=registration.source_event_id,
+                security_id=registration.security_id,
+                inclusion_reason=registration.admission_reason,
+                frozen_probability=registration.frozen_probability,
                 matures_at=maturity,
                 state="UNAVAILABLE" if maturity <= command.cutoff_at else "PENDING",
             ),
-            retained.get(security),
+            retained.get(registration.security_id),
             tuple(session.closed_at for session in sessions),
             command.cutoff_at,
             command.standard_quantity,
             command.market_calendar_version,
         )
-        for security in source_members
+        for registration in source_registrations
+        if registration.population == "SELECTION"
     )
     releases = tuple(
         event
@@ -149,7 +152,7 @@ def assess_standard_outcomes(
         and datetime.fromisoformat(event.committed_at) <= command.cutoff_at
     )
     for event in (source, *releases):
-        for registration in event.result.evaluation_registrations:
+        for registration in retained_registrations(event):
             if (
                 registration.standard_quantity != command.standard_quantity
                 or registration.market_calendar_version != command.market_calendar_version
@@ -158,36 +161,23 @@ def assess_standard_outcomes(
     population_members = list(members) if selection else []
     deliveries = []
     for event in releases:
-        release = event.result.candidate_release
-        if release is not None and release.members:
-            if release.market_calendar_version != command.market_calendar_version:
-                raise ValueError("STANDARD_RELEASE_CALENDAR_MISMATCH")
-            for prediction in release.members:
-                if prediction.security_id not in source_members:
-                    raise ValueError("STANDARD_PROBABILITY_MEMBERSHIP_INVALID")
-                if prediction.calibrated_probability is None:
-                    continue
-                base = next(
-                    member for member in members if member.security_id == prediction.security_id
+        for registration in retained_registrations(event):
+            if registration.security_id not in source_members:
+                raise ValueError("STANDARD_PROBABILITY_MEMBERSHIP_INVALID")
+            base = next(
+                member for member in members if member.security_id == registration.security_id
+            )
+            population_members.append(
+                base.model_copy(
+                    update={
+                        "evaluation_id": registration.evaluation_id,
+                        "population": registration.population,
+                        "source_event_id": registration.source_event_id,
+                        "frozen_probability": registration.frozen_probability,
+                        "inclusion_reason": registration.admission_reason,
+                    }
                 )
-                for population in ("PROBABILITY", "CANDIDATE"):
-                    if population == "CANDIDATE" and not prediction.candidate:
-                        continue
-                    population_members.append(
-                        base.model_copy(
-                            update={
-                                "evaluation_id": evaluation_identity(
-                                    population, event.decision_event_id, prediction.research_id
-                                ),
-                                "population": population,
-                                "source_event_id": event.decision_event_id,
-                                "frozen_probability": prediction.calibrated_probability,
-                                "inclusion_reason": "FROZEN_PROBABILITY"
-                                if population == "PROBABILITY"
-                                else "FROZEN_CANDIDATE",
-                            }
-                        )
-                    )
+            )
         deliveries.append(candidate_batch_delivery(event, case, ledger, connection))
         correction = ledger.get_correction_event(event.decision_event_id, connection)
         if (
@@ -274,3 +264,12 @@ def candidate_batch_delivery(
         superseded_by_event_id=correction.decision_event_id if correction else None,
         reminders=reminders,
     )
+
+
+def retained_registrations(event: DecisionEventFact) -> tuple[EvaluationRegistration, ...]:
+    """Read saved admission decisions; derive only for the legacy source contract."""
+    if event.result.evaluation_registrations:
+        return event.result.evaluation_registrations
+    return register_evaluation_members(
+        event.case, event.decision_event_id, event.result
+    ).evaluation_registrations
