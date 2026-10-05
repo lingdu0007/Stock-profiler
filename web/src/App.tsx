@@ -29,6 +29,7 @@ import { UniverseEvidence } from "./UniverseEvidence";
 import { SelectionEvidence } from "./SelectionEvidence";
 import { CandidatePage, CandidateReleaseStatus } from "./CandidatePage";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
+import { StandardOutcomeEvidence } from "./StandardOutcomeEvidence";
 import { ReportRecord as Record } from "./ReportRecord";
 
 function createQueryClient() {
@@ -163,6 +164,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
         </ol>
       </section>
 
+      {report.result.standard_outcomes && (
+        <StandardOutcomeEvidence outcome={report.result.standard_outcomes} />
+      )}
       {report.result.research && <ResearchEvidence research={report.result.research} />}
       {correction && (
         <section className="report-section" aria-label="Correction evidence">

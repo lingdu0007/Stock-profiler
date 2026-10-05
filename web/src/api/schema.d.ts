@@ -598,6 +598,46 @@ export interface components {
             /** Window Months */
             window_months: string[];
         };
+        /** CandidateBatchDelivery */
+        CandidateBatchDelivery: {
+            /**
+             * Committed At
+             * Format: date-time
+             */
+            committed_at: string;
+            /** Corrects Event Id */
+            corrects_event_id: string | null;
+            /** Disposition */
+            disposition: string;
+            /** Event Id */
+            event_id: string;
+            /** Expired */
+            expired: boolean | null;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+            /** Plan Month */
+            plan_month: string;
+            /** Published At */
+            published_at: string | null;
+            /** Reminders */
+            reminders: components["schemas"]["CandidateReminderRecord"][];
+            /** Report Version Id */
+            report_version_id: string | null;
+            /** Superseded By Event Id */
+            superseded_by_event_id: string | null;
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid Through */
+            valid_through: string | null;
+        };
         /** CandidateDetailView */
         CandidateDetailView: {
             /** Detail Id */
@@ -1379,6 +1419,61 @@ export interface components {
             /** Position Event Id */
             position_event_id: string;
         };
+        /** EntryEvidence */
+        EntryEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Authority
+             * @constant
+             */
+            authority: "EXCHANGE";
+            /** Correction Reason */
+            correction_reason: string | null;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string | null;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Sessions */
+            sessions: components["schemas"]["EntrySession"][];
+            /** Source Version */
+            source_version: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+        };
+        /** EntrySession */
+        EntrySession: {
+            /** Buyable */
+            buyable: boolean;
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            costs: components["schemas"]["TradingCosts"] | null;
+            /** Turnover */
+            turnover: string;
+            /** Unavailable Reason */
+            unavailable_reason: ("SUSPENDED" | "LIMIT_UP" | "NO_SELLER_LIQUIDITY" | "PURCHASE_EXCLUDED") | null;
+            /** Volume */
+            volume: string;
+        };
         /** ErroneousAlertReplay */
         ErroneousAlertReplay: {
             /** Alert Evidence Id */
@@ -1424,6 +1519,85 @@ export interface components {
              * @constant
              */
             quantity_status: "UNKNOWN";
+        };
+        /** EvaluationMember */
+        EvaluationMember: {
+            /** Entry At */
+            entry_at?: string | null;
+            /**
+             * Entry Expired
+             * @default false
+             */
+            entry_expired: boolean;
+            /** Entry Price */
+            entry_price?: string | null;
+            /** Evaluation Id */
+            evaluation_id: string;
+            /** Frozen Probability */
+            frozen_probability?: string | null;
+            /**
+             * Inclusion Reason
+             * @default FROZEN_SELECTION_MEMBER
+             */
+            inclusion_reason: string;
+            /**
+             * Matures At
+             * Format: date-time
+             */
+            matures_at: string;
+            /** Net Total Return */
+            net_total_return?: string | null;
+            observation?: components["schemas"]["StandardObservation"] | null;
+            /**
+             * Population
+             * @enum {string}
+             */
+            population: "SELECTION" | "PROBABILITY" | "CANDIDATE";
+            /** Security Id */
+            security_id: string;
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PENDING" | "UNAVAILABLE" | "ACHIEVED" | "NOT_ACHIEVED";
+        };
+        /** EvaluationRegistration */
+        EvaluationRegistration: {
+            /**
+             * Admission Contract
+             * @default standard-evaluation.1.0.0
+             * @constant
+             */
+            admission_contract: "standard-evaluation.1.0.0";
+            /** Admission Reason */
+            admission_reason: string;
+            /** Evaluation Id */
+            evaluation_id: string;
+            /** Frozen Probability */
+            frozen_probability: string | null;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /**
+             * Population
+             * @enum {string}
+             */
+            population: "SELECTION" | "PROBABILITY" | "CANDIDATE";
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Security Id */
+            security_id: string;
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * Standard Quantity
+             * @default 100
+             */
+            standard_quantity: string;
         };
         /** EvidenceArtifact */
         EvidenceArtifact: {
@@ -1635,6 +1809,11 @@ export interface components {
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
             drawdown?: components["schemas"]["DrawdownOutcome"] | null;
+            /**
+             * Evaluation Registrations
+             * @default []
+             */
+            evaluation_registrations: components["schemas"]["EvaluationRegistration"][];
             execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             /** Key Reasons */
@@ -1647,6 +1826,7 @@ export interface components {
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
             research?: components["schemas"]["ResearchOutcome"] | null;
             selection?: components["schemas"]["SelectionOutcome"] | null;
+            standard_outcomes?: components["schemas"]["StandardOutcomeReport"] | null;
             stress?: components["schemas"]["PortfolioStressOutcome"] | null;
             /** Summary */
             summary: string;
@@ -2302,6 +2482,28 @@ export interface components {
         PolicyBinding: {
             scope: components["schemas"]["QualificationScope"];
             version: components["schemas"]["CapabilityVersion"];
+        };
+        /** PopulationCounts */
+        PopulationCounts: {
+            /** Achieved */
+            achieved: number;
+            /** Due */
+            due: number;
+            /** Evaluable */
+            evaluable: number;
+            /**
+             * Formal Adjudication
+             * @enum {string}
+             */
+            formal_adjudication: "INDETERMINATE" | "EVIDENCE_COMPLETE";
+            /** Immature */
+            immature: number;
+            /** Missing */
+            missing: number;
+            /** Not Achieved */
+            not_achieved: number;
+            /** Registered */
+            registered: number;
         };
         /**
          * PortfolioAuthorization
@@ -3771,6 +3973,45 @@ export interface components {
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
         };
+        /** StandardObservation */
+        StandardObservation: {
+            entry: components["schemas"]["EntryEvidence"] | null;
+            /** Security Id */
+            security_id: string;
+            terminal: components["schemas"]["TerminalEvidence"] | null;
+        };
+        /** StandardOutcomeReport */
+        StandardOutcomeReport: {
+            /** Candidate Event Id */
+            candidate_event_id: string | null;
+            /**
+             * Contract Version
+             * @default 1.0.0
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Delivery */
+            delivery: components["schemas"]["CandidateBatchDelivery"][];
+            /** Members */
+            members: components["schemas"]["EvaluationMember"][];
+            /** Populations */
+            populations: {
+                [key: string]: components["schemas"]["PopulationCounts"];
+            };
+            /** Previous Event Id */
+            previous_event_id: string | null;
+            /** Previous Report Id */
+            previous_report_id: string | null;
+            /** Report Version */
+            report_version: number;
+            /** Selection Event Id */
+            selection_event_id: string | null;
+        };
         /**
          * StressCalculationPolicy
          * @description Explicit conservative gross-stress inputs, never an engine default.
@@ -3874,6 +4115,65 @@ export interface components {
             /** Reasons */
             reasons: string[];
             task_snapshot: components["schemas"]["FrozenTask"];
+        };
+        /** TerminalEvidence */
+        TerminalEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Actions Complete Through
+             * Format: date-time
+             */
+            actions_complete_through: string;
+            /**
+             * Authority
+             * @constant
+             */
+            authority: "EXCHANGE";
+            /** Cash Distributions */
+            cash_distributions: string;
+            /** Correction Reason */
+            correction_reason: string | null;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string | null;
+            costs: components["schemas"]["TradingCosts"];
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Price */
+            price: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Quantity Multiplier */
+            quantity_multiplier: string;
+            /** Source Version */
+            source_version: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+        };
+        /** TradingCosts */
+        TradingCosts: {
+            /** Commission */
+            commission: string;
+            /** Fees */
+            fees: string;
+            /** Slippage */
+            slippage: string;
+            /** Taxes */
+            taxes: string;
         };
         /** TransformedSignal */
         TransformedSignal: {

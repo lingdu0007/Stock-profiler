@@ -1,0 +1,701 @@
+{
+  "synthetic": true,
+  "generator_version": "fictional-standard-outcomes/1",
+  "seed": 1919,
+  "report": {
+    "report_version_id": "report-version-1e845558424a62b0664ef7fdf0c43798aff0665495d43eb28ee98ae02a9a393e",
+    "event_id": "decision-event-b2f45d21cbc248680b66389e175fd177d8abef9a3e6c553ee37c064183232da9",
+    "business_object_id": "business-object-24890310b0db1b706904cc759ac1a195cd1155607372bb842e6f2e75aa1bd656",
+    "framework_run_id": "framework-run-dc7e6ab0bda06af91e0c4df60ea7008b68d63583e6d67480a804e45884c3754b",
+    "case_id": "synthetic-standard-outcomes-v1",
+    "synthetic": true,
+    "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+    "generated_at": "2043-02-01T16:00:00+00:00",
+    "knowledge_cutoff": "2043-02-01T16:00:00+00:00",
+    "evidence_clock": {
+      "fact_effective_at": "2042-05-17T15:00:00Z",
+      "source_published_at": "2042-05-17T15:12:00Z",
+      "acquired_at": "2042-05-17T15:16:00Z",
+      "validated_at": "2042-05-17T15:18:00Z"
+    },
+    "version_bundle": {
+      "case_contract_version": "standard-outcomes.1.0.0",
+      "host_contract_version": "standard-outcomes.1.0.0",
+      "host_application_version": "0.1.0.dev0",
+      "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "agent_definition_id": "synthetic-frozen-decision-case",
+      "agent_definition_version": "2.0.0",
+      "model_adapter_id": "m-agent-deterministic-model-adapter",
+      "routing_policy_version": "d0-single-definition-route-v1",
+      "output_contract_version": "1.0.0",
+      "report_projection_contract_version": "standard-outcomes.1.0.0",
+      "m_agent_version": "0.5.1",
+      "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+      "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+      "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+    },
+    "result": {
+      "outcome_code": "STANDARD_OUTCOMES_RECORDED",
+      "summary": "Saved synthetic standard outcomes and delivery facts.",
+      "key_reasons": ["STANDARD_RESULTS_INDEPENDENT_OF_PERSONAL_EXECUTION"],
+      "standard_outcomes": {
+        "contract_version": "1.0.0",
+        "selection_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+        "candidate_event_id": null,
+        "cutoff_at": "2043-02-01T16:00:00Z",
+        "previous_event_id": null,
+        "members": [
+          {
+            "evaluation_id": "standard-evaluation-42acb34bc5e494a8ae2648db918c2fcafe1c767854c9fac38b85bb9f8a4e89f1",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-00",
+            "matures_at": "2043-01-02T15:00:00Z",
+            "state": "ACHIEVED",
+            "entry_at": "2042-07-02T15:00:00Z",
+            "entry_price": "10.1",
+            "net_total_return": "0.2",
+            "entry_expired": false,
+            "observation": {
+              "security_id": "synthetic-security-00",
+              "entry": {
+                "evidence_id": "fictional-entry-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-market/1",
+                "effective_at": "2042-07-02T15:00:00Z",
+                "published_at": "2042-07-02T15:01:00Z",
+                "acquired_at": "2042-07-02T15:02:00Z",
+                "validated_at": "2042-07-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "sessions": [
+                  {
+                    "closed_at": "2042-07-01T15:00:00Z",
+                    "buyable": false,
+                    "unavailable_reason": "SUSPENDED",
+                    "turnover": "0",
+                    "volume": "0",
+                    "costs": null
+                  },
+                  {
+                    "closed_at": "2042-07-02T15:00:00Z",
+                    "buyable": true,
+                    "unavailable_reason": null,
+                    "turnover": "10000",
+                    "volume": "1000",
+                    "costs": {
+                      "commission": "5",
+                      "fees": "2",
+                      "taxes": "0",
+                      "slippage": "3"
+                    }
+                  }
+                ]
+              },
+              "terminal": {
+                "evidence_id": "fictional-terminal-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-actions/1",
+                "effective_at": "2043-01-02T15:00:00Z",
+                "published_at": "2043-01-02T15:01:00Z",
+                "acquired_at": "2043-01-02T15:02:00Z",
+                "validated_at": "2043-01-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "price": "8",
+                "quantity_multiplier": "1.5",
+                "cash_distributions": "32",
+                "actions_complete_through": "2043-01-02T15:00:00Z",
+                "costs": {
+                  "commission": "5",
+                  "fees": "3",
+                  "taxes": "8",
+                  "slippage": "4"
+                }
+              }
+            }
+          },
+          {
+            "evaluation_id": "standard-evaluation-58f9ab6c28e8ba598e43e5492eea3a341e721819b3e2a4e49b8d92fc54fe48a3",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-01",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-b294d1bf19d486c504f73ed913ab2983c2e9323fec72c6e230d307a14fa960e7",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-02",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-ac4f04a7e3a9247d78ac495d2b1a20e601e704bb31e3b29cbceb88265153c4e3",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-03",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-a033c38cdf44e124d6bf194652f85d2d86681f9aab20a4314d42d904b31d159f",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-04",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-4f499ab7cf7c0fa0c2e97d46ec98772a767d991772528c4206352c8ddd8c73fa",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-05",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-18f062d0018b30d11f5a04cd71858ce1a2c4c4f108ff7839892ad901cc268fd8",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-06",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-5606ddcb241af26a043f47c08e2b15fa16547f7ce2e42a15e59b050e76a82fa3",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-07",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-b7556c7a9f14b001f7587504a7927eacf59527cce5f1f63d849ad1304fcfa937",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-08",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-e8ba9a43ebc5ff6bd2ca867e61d3eb2f16f3732c93f70e12b58decbf03f1814a",
+            "population": "SELECTION",
+            "source_event_id": "decision-event-ecf5d0538981e814a01ed82caaf2edbef87dcb9ac1389b7a21305bb16cdfe2d2",
+            "frozen_probability": null,
+            "inclusion_reason": "FROZEN_SELECTION_MEMBER",
+            "security_id": "synthetic-security-09",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-1beb678d27b0fd143ce25ba41e0af658bbe5b6a091a07d269aef4a3b22d8d01e",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-00",
+            "matures_at": "2043-01-02T15:00:00Z",
+            "state": "ACHIEVED",
+            "entry_at": "2042-07-02T15:00:00Z",
+            "entry_price": "10.1",
+            "net_total_return": "0.2",
+            "entry_expired": false,
+            "observation": {
+              "security_id": "synthetic-security-00",
+              "entry": {
+                "evidence_id": "fictional-entry-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-market/1",
+                "effective_at": "2042-07-02T15:00:00Z",
+                "published_at": "2042-07-02T15:01:00Z",
+                "acquired_at": "2042-07-02T15:02:00Z",
+                "validated_at": "2042-07-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "sessions": [
+                  {
+                    "closed_at": "2042-07-01T15:00:00Z",
+                    "buyable": false,
+                    "unavailable_reason": "SUSPENDED",
+                    "turnover": "0",
+                    "volume": "0",
+                    "costs": null
+                  },
+                  {
+                    "closed_at": "2042-07-02T15:00:00Z",
+                    "buyable": true,
+                    "unavailable_reason": null,
+                    "turnover": "10000",
+                    "volume": "1000",
+                    "costs": {
+                      "commission": "5",
+                      "fees": "2",
+                      "taxes": "0",
+                      "slippage": "3"
+                    }
+                  }
+                ]
+              },
+              "terminal": {
+                "evidence_id": "fictional-terminal-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-actions/1",
+                "effective_at": "2043-01-02T15:00:00Z",
+                "published_at": "2043-01-02T15:01:00Z",
+                "acquired_at": "2043-01-02T15:02:00Z",
+                "validated_at": "2043-01-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "price": "8",
+                "quantity_multiplier": "1.5",
+                "cash_distributions": "32",
+                "actions_complete_through": "2043-01-02T15:00:00Z",
+                "costs": {
+                  "commission": "5",
+                  "fees": "3",
+                  "taxes": "8",
+                  "slippage": "4"
+                }
+              }
+            }
+          },
+          {
+            "evaluation_id": "standard-evaluation-df805ae5dbe1bbfa6ec8c9636699e735e40d899abc7e12b7c2e9fe5f7267176f",
+            "population": "CANDIDATE",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_CANDIDATE",
+            "security_id": "synthetic-security-00",
+            "matures_at": "2043-01-02T15:00:00Z",
+            "state": "ACHIEVED",
+            "entry_at": "2042-07-02T15:00:00Z",
+            "entry_price": "10.1",
+            "net_total_return": "0.2",
+            "entry_expired": false,
+            "observation": {
+              "security_id": "synthetic-security-00",
+              "entry": {
+                "evidence_id": "fictional-entry-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-market/1",
+                "effective_at": "2042-07-02T15:00:00Z",
+                "published_at": "2042-07-02T15:01:00Z",
+                "acquired_at": "2042-07-02T15:02:00Z",
+                "validated_at": "2042-07-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "sessions": [
+                  {
+                    "closed_at": "2042-07-01T15:00:00Z",
+                    "buyable": false,
+                    "unavailable_reason": "SUSPENDED",
+                    "turnover": "0",
+                    "volume": "0",
+                    "costs": null
+                  },
+                  {
+                    "closed_at": "2042-07-02T15:00:00Z",
+                    "buyable": true,
+                    "unavailable_reason": null,
+                    "turnover": "10000",
+                    "volume": "1000",
+                    "costs": {
+                      "commission": "5",
+                      "fees": "2",
+                      "taxes": "0",
+                      "slippage": "3"
+                    }
+                  }
+                ]
+              },
+              "terminal": {
+                "evidence_id": "fictional-terminal-00",
+                "authority": "EXCHANGE",
+                "source_version": "fictional-actions/1",
+                "effective_at": "2043-01-02T15:00:00Z",
+                "published_at": "2043-01-02T15:01:00Z",
+                "acquired_at": "2043-01-02T15:02:00Z",
+                "validated_at": "2043-01-02T15:03:00Z",
+                "corrects_evidence_id": null,
+                "correction_reason": null,
+                "price": "8",
+                "quantity_multiplier": "1.5",
+                "cash_distributions": "32",
+                "actions_complete_through": "2043-01-02T15:00:00Z",
+                "costs": {
+                  "commission": "5",
+                  "fees": "3",
+                  "taxes": "8",
+                  "slippage": "4"
+                }
+              }
+            }
+          },
+          {
+            "evaluation_id": "standard-evaluation-67660429fe70efa44dadb78cffa3629efd24ddfc7a25edb036211720eac2a56e",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.25",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-01",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-6dd8dfb6327e5abb796c43ffb3bfcec9c79eeec42490da86768fa0788aa4a7e7",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-02",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-76e7515c65901331cc562f7aef8e4118e02d4d5b828950d9cf1ee285c8ecd23c",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-03",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-1628cd78306b6fa72bbae5c4f254690c2ac8bf4a4ed0cfadd042bd0e4084c8a1",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-04",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-ad4b6679e295a62182d16c7fa1bcd05b2ca3d67f2380886acc1deb5e4db328f5",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-05",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-74e6a762612d184ae6de1a08de05c540b0e1781b816528df3c1c4e16fcbf963d",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-06",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-0f974681accafa810ce425ce98cffc3b26608e536667ef06ee292585e1de1e3d",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-07",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-ce7c354f10e5868619b5c1cc21a9396fc168796ddcbb0939df32b8dd4655f763",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-08",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          },
+          {
+            "evaluation_id": "standard-evaluation-37180de781e0a085fc61c451918fcae61a0e8a7ac6813642b4a248ccdccfe799",
+            "population": "PROBABILITY",
+            "source_event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "frozen_probability": "0.85",
+            "inclusion_reason": "FROZEN_PROBABILITY",
+            "security_id": "synthetic-security-09",
+            "matures_at": "2043-01-07T15:00:00Z",
+            "state": "UNAVAILABLE",
+            "entry_at": null,
+            "entry_price": null,
+            "net_total_return": null,
+            "entry_expired": false,
+            "observation": null
+          }
+        ],
+        "populations": {
+          "CANDIDATE": {
+            "registered": 1,
+            "due": 1,
+            "evaluable": 1,
+            "missing": 0,
+            "immature": 0,
+            "achieved": 1,
+            "not_achieved": 0,
+            "formal_adjudication": "EVIDENCE_COMPLETE"
+          },
+          "PROBABILITY": {
+            "registered": 10,
+            "due": 10,
+            "evaluable": 1,
+            "missing": 9,
+            "immature": 0,
+            "achieved": 1,
+            "not_achieved": 0,
+            "formal_adjudication": "INDETERMINATE"
+          },
+          "SELECTION": {
+            "registered": 10,
+            "due": 10,
+            "evaluable": 1,
+            "missing": 9,
+            "immature": 0,
+            "achieved": 1,
+            "not_achieved": 0,
+            "formal_adjudication": "INDETERMINATE"
+          }
+        },
+        "previous_report_id": null,
+        "report_version": 1,
+        "delivery": [
+          {
+            "event_id": "decision-event-f18142d8112222c3dba566c05df3c666572baa7bf85decf8526224a715f2c295",
+            "report_version_id": "report-version-62843ec659bece4064cd852ef5d23f3c83d3970463b1acfb01eb447e7c431b6e",
+            "plan_month": "2042-07",
+            "disposition": "CANDIDATES",
+            "knowledge_cutoff": "2042-06-30T23:59:59Z",
+            "generated_at": "2042-07-01T01:00:00Z",
+            "committed_at": "2042-07-01T01:00:00Z",
+            "published_at": "2042-07-01T01:00:00Z",
+            "valid_from": "2042-07-01T08:00:00Z",
+            "valid_through": "2042-07-07T15:00:00Z",
+            "expired": true,
+            "corrects_event_id": null,
+            "superseded_by_event_id": null,
+            "reminders": []
+          }
+        ]
+      }
+    },
+    "stage_results": [
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "CREATED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_CREATED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_CREATED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "RUNNING",
+        "gate_results": [
+          {
+            "gate_id": "RUN_ACTIVE",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_STARTED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_TERMINAL",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FRAMEWORK_EXECUTION",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": ["FRAMEWORK_RUN_SUCCEEDED"],
+        "availability_failure": null
+      },
+      {
+        "phase": "HOST_VALIDATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FROZEN_RESULT_MATCH",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_DECISION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "DECISION_ACCEPTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_COMMIT",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "HOST_RESULT_SAVED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      },
+      {
+        "phase": "PUBLICATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "EVENT_COMMITTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      }
+    ],
+    "corrects_event_id": null,
+    "access_scope": {
+      "contract_version": "1.0.0",
+      "user_id": "stock-profiler-single-user",
+      "account_ids": ["synthetic-account-4017"],
+      "visibility": "USER"
+    }
+  }
+}

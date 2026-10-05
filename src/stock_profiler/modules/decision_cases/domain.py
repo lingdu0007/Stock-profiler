@@ -37,6 +37,11 @@ from stock_profiler.modules.delivery.monitoring_contracts import (
     MonitoringOutcome,
     MonitoringPublication,
 )
+from stock_profiler.modules.evaluation.contracts import (
+    EvaluationRegistration,
+    StandardOutcomeCommand,
+    StandardOutcomeReport,
+)
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
     PortfolioCommand,
@@ -106,6 +111,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "selection.1.0.0",
         "research.1.0.0",
         "candidate-release.1.0.0",
+        "standard-outcomes.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -130,6 +136,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("selection.1.0.0", "selection.1.0.0"),
         ("research.1.0.0", "research.1.0.0"),
         ("candidate-release.1.0.0", "candidate-release.1.0.0"),
+        ("standard-outcomes.1.0.0", "standard-outcomes.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -215,6 +222,12 @@ class ExternalResult(FrozenContract):
     key_reasons: tuple[str, ...]
     universe: UniverseOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
+    evaluation_registrations: tuple[EvaluationRegistration, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    standard_outcomes: StandardOutcomeReport | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     candidate_release: CandidateReleaseOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -913,6 +926,9 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    standard_outcomes: StandardOutcomeCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     candidate_release: CandidateReleaseCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -986,6 +1002,18 @@ class FrozenDecisionCase(FrozenContract):
         candidate_release_governed = (
             self.version_bundle.case_contract_version == "candidate-release.1.0.0"
         )
+        standard_outcomes_governed = (
+            self.version_bundle.case_contract_version == "standard-outcomes.1.0.0"
+        )
+        if standard_outcomes_governed != (
+            self.standard_outcomes is not None
+        ) or standard_outcomes_governed != ("standard_outcomes" in self.input):
+            raise ValueError("standard outcomes require their own frozen contract")
+        if self.standard_outcomes is not None and (
+            self.standard_outcomes.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("standard_outcomes") != self.standard_outcomes.model_dump(mode="json")
+        ):
+            raise ValueError("standard outcomes must bind frozen cutoff and input")
         if selection_governed != (self.selection is not None):
             raise ValueError("selection requires its own frozen contract")
         if self.selection is not None and self.selection.cutoff_at != datetime.fromisoformat(
@@ -1077,6 +1105,7 @@ class FrozenDecisionCase(FrozenContract):
             or selection_governed
             or research_governed
             or candidate_release_governed
+            or standard_outcomes_governed
         )
         if concentration_governed != (self.concentration is not None):
             raise ValueError("concentration requires the version 8.1 frozen contract")
@@ -1107,6 +1136,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.selection,
                     self.research,
                     self.candidate_release,
+                    self.standard_outcomes,
                 )
             )
             > 1
@@ -1136,6 +1166,8 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.standard_outcomes is not None
+            or bool(self.expected_external_result.evaluation_registrations)
             or self.expected_external_result.candidate_release is not None
             or (self.expected_external_result.research is not None and not research_governed)
         ):
@@ -1883,6 +1915,7 @@ def synthetic_outcome_code_from_input(
         return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    input_without_scenario.pop("standard_outcomes", None)
     candidate_release = input_without_scenario.pop("candidate_release", None)
     if candidate_release is not None and not isinstance(candidate_release, dict):
         return None

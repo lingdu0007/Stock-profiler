@@ -31,6 +31,9 @@ from stock_profiler.modules.decision_cases.domain import (
     stored_decision_event_payload,
     stored_report_payload,
 )
+from stock_profiler.modules.decision_cases.evaluation_registration import (
+    register_evaluation_members,
+)
 from stock_profiler.modules.decision_cases.ports import (
     BusinessObjectMapping as BusinessObjectMapping,
 )
@@ -191,6 +194,18 @@ class DecisionLedger:
     def observed_at(self) -> str:
         """Record the controlled UTC instant at which this host observes a write boundary."""
         return _utc_timestamp(self._clock.now())
+
+    def standard_evaluation_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]:
+        """Retain original evaluation lineages in their exact immutable scope."""
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "evaluation history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.result.standard_outcomes is not None
+        )
 
     def research_event_history(
         self,
@@ -1351,6 +1366,8 @@ class DecisionLedger:
         """Construct the exact append-only fact that a commit attempt must preserve."""
         event_id = decision_event_id or case.decision_event_id
         observed_at = committed_at or self.observed_at()
+        if corrects_event_id is None:
+            result = register_evaluation_members(case, event_id, result)
         return DecisionEventFact(
             decision_event_id=event_id,
             business_object_id=case.business_object_id,
