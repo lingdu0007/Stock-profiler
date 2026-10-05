@@ -5,8 +5,6 @@ from typing import Any
 import pytest
 from test_research_risk_veto import (
     _seed_selection_event,
-    _selection_anchor_case,
-    research_command,
 )
 from test_scoped_qualification import GovernanceClock
 
@@ -21,15 +19,25 @@ from stock_profiler.modules.decision_cases.domain import (
 def outcome_case(
     settings: Settings, *, cutoff: str = "2043-02-01T16:00:00+00:00"
 ) -> dict[str, Any]:
-    command = research_command()
-    scope = ResultAccessScope(
-        contract_version="1.0.0",
-        user_id="stock-profiler-single-user",
-        account_ids=("synthetic-account-4017",),
-        visibility="USER",
+    from test_research_risk_veto import _case
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+
+    research_case = _case(settings, risk_scenario="ACCEPT", user_id="stock-profiler-single-user")
+    assert research_case.research is not None and research_case.access_scope is not None
+    scope = research_case.access_scope
+    ledger = DecisionLedger.from_settings(
+        settings, clock=GovernanceClock(research_case.report_generated_at)
     )
-    anchor, selection = _selection_anchor_case(settings, command, scope)
-    _seed_selection_event(settings, anchor, anchor.decision_event_id, selection)
+    ledger.persist_business_mapping_before_framework(research_case)
+    with ledger.serialize_case_execution() as connection:
+        ledger.commit_event(
+            connection,
+            case=research_case,
+            framework_run_id=research_case.framework_run_id,
+            result=research_case.expected_external_result,
+            stage_results=(),
+        )
     payload = load_frozen_decision_case(settings).model_dump(mode="json")
     for key in (
         "case_contract_version",
@@ -49,7 +57,7 @@ def outcome_case(
         "synthetic": True,
         "generator_version": "fictional-standard-outcomes/1",
         "seed": 1919,
-        "selection_event_id": anchor.decision_event_id,
+        "selection_event_id": research_case.research.selection_event_id,
         "cutoff_at": cutoff,
         "market_calendar_version": "synthetic-market-calendar-v1",
         "standard_quantity": "100",
@@ -272,6 +280,16 @@ def seed_candidate_snapshot(settings: Settings) -> str:
     payload: dict[str, Any] = dict(failed_candidate_case(settings))
     payload["knowledge_cutoff"] = "2042-06-30T23:59:59Z"
     payload["report_generated_at"] = "2042-07-01T01:00:00Z"
+    source_ledger = DecisionLedger.from_settings(settings)
+    scope = ResultAccessScope.model_validate(payload["access_scope"])
+    with source_ledger.serialize_case_execution() as connection:
+        history = source_ledger.research_event_history(connection, scope)
+    assert len(history) == 1
+    research = history[0]
+    payload["candidate_release"]["research_event_id"] = research.decision_event_id
+    payload["candidate_release"]["research_object_id"] = research.business_object_id
+    release["research_event_id"] = research.decision_event_id
+    release["research_object_id"] = research.business_object_id
     payload["candidate_release"]["knowledge_cutoff"] = payload["knowledge_cutoff"]
     payload["candidate_release"]["published_at"] = payload["report_generated_at"]
     payload["candidate_release"]["market_calendar_version"] = "synthetic-market-calendar-v1"
@@ -717,3 +735,41 @@ def test_candidate_route_cannot_restart_existing_evaluation_identity_history(
         run_frozen_decision_case(
             migrated_settings, attack, clock=GovernanceClock(attack["knowledge_cutoff"])
         )
+
+
+def test_same_cutoff_different_selection_cannot_adopt_another_pools_predictions(
+    migrated_settings: Settings,
+) -> None:
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+
+    payload = outcome_case(migrated_settings)
+    seed_candidate_snapshot(migrated_settings)
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    with ledger.serialize_case_execution() as connection:
+        source = ledger.get_decision_event(
+            payload["standard_outcomes"]["selection_event_id"], connection
+        )
+    assert source is not None and source.result.selection is not None
+    from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+
+    alternate_payload = source.case.model_dump(mode="json")
+    alternate_payload.update(
+        case_id="fictional-independent-selection-same-cutoff",
+        business_identity="fictional-independent-selection-same-cutoff",
+    )
+    alternate_payload["selection"]["purpose"] = "HISTORICAL_RECONSTRUCTED"
+    alternate_payload["input"]["selection"] = alternate_payload["selection"]
+    alternate = FrozenDecisionCase.model_validate(alternate_payload)
+    _seed_selection_event(
+        migrated_settings, alternate, alternate.decision_event_id, source.result.selection
+    )
+    payload["standard_outcomes"]["selection_event_id"] = alternate.decision_event_id
+    bind_outcome_input(payload)
+    result = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert result.report is not None and result.report.result.standard_outcomes is not None
+    assert result.report.result.standard_outcomes.populations["SELECTION"].registered == 10
+    assert result.report.result.standard_outcomes.populations["PROBABILITY"].registered == 0
+    assert result.report.result.standard_outcomes.populations["CANDIDATE"].registered == 0
+    assert result.report.result.standard_outcomes.delivery == ()

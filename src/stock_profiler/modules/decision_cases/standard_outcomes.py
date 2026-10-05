@@ -151,6 +151,12 @@ def assess_standard_outcomes(
         )
         and datetime.fromisoformat(event.committed_at) <= command.cutoff_at
     )
+    if command.selection_event_id is not None:
+        releases = tuple(
+            event
+            for event in releases
+            if release_belongs_to_selection(event, source, ledger, connection, command.cutoff_at)
+        )
     for event in (source, *releases):
         for registration in retained_registrations(event):
             if (
@@ -273,3 +279,28 @@ def retained_registrations(event: DecisionEventFact) -> tuple[EvaluationRegistra
     return register_evaluation_members(
         event.case, event.decision_event_id, event.result
     ).evaluation_registrations
+
+
+def release_belongs_to_selection(
+    release: DecisionEventFact,
+    selection: DecisionEventFact,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    cutoff: datetime,
+) -> bool:
+    command = release.case.candidate_release
+    assert command is not None
+    research = ledger.get_decision_event(command.research_event_id, connection)
+    if research is None or research.case.research is None:
+        if retained_registrations(release):
+            raise ValueError("STANDARD_RELEASE_LINEAGE_UNAVAILABLE")
+        return True  # Failed monthly attempts have no invented evaluation members.
+    if (
+        research.case.access_scope is None
+        or selection.case.access_scope is None
+        or not research.case.access_scope.same_scope_as(selection.case.access_scope)
+        or research.business_object_id != command.research_object_id
+        or datetime.fromisoformat(research.committed_at) > cutoff
+    ):
+        raise ValueError("STANDARD_RELEASE_LINEAGE_INVALID")
+    return research.case.research.selection_event_id == selection.decision_event_id
