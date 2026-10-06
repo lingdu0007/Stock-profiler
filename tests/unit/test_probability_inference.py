@@ -221,3 +221,26 @@ def test_unknown_selection_state_cannot_be_omitted_from_state_qualification() ->
     result = summarize_probability_history((unknown, *rows[1:]), registration(), seed=2121)
     assert result.overall.disposition == "PASSED"
     assert all(state.disposition == "INDETERMINATE" for state in result.regimes.values())
+
+
+def test_pending_second_state_episode_cannot_supply_historical_evidence() -> None:
+    rows = history()
+    changed = tuple(row.model_copy(update={"regime": "BULL"}) for row in rows[:120])
+    separation = tuple(row.model_copy(update={"regime": "BEAR"}) for row in rows[120:150])
+    pending = tuple(
+        row.model_copy(
+            update={
+                "regime": "BULL",
+                "label_mature": False,
+                "members": tuple(
+                    member.model_copy(update={"state": "PENDING"}) for member in row.members
+                ),
+            }
+        )
+        for row in rows[150:]
+    )
+    result = summarize_probability_history(
+        (*changed, *separation, *pending), registration(), seed=2121
+    )
+    assert result.regimes["BULL"].periods == 1
+    assert result.regimes["BULL"].disposition == "INSUFFICIENT"

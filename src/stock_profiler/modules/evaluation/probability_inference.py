@@ -79,10 +79,19 @@ def _watermark(
             end = row.matures_at
     periods = 0
     previous_state = None
+    mature_months = {row.plan_month for row in mature}
+    episode_has_mature_evidence = False
     for row in rows:
         if row.regime is not None:
-            if row.regime == state and previous_state != state:
+            if row.regime != previous_state:
+                episode_has_mature_evidence = False
+            if (
+                row.regime == state
+                and row.plan_month in mature_months
+                and not episode_has_mature_evidence
+            ):
                 periods += 1
+                episode_has_mature_evidence = True
             previous_state = row.regime
     sufficient = (
         len(mature) >= (policy.overall_months if state is None else policy.regime_months)

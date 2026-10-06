@@ -270,8 +270,38 @@ def test_complete_probability_population_keeps_low_scores_vetoes_and_missing_lab
         migrated_settings, registration, clock=GovernanceClock(registration["knowledge_cutoff"])
     )
     assert registered.report is not None
+    from copy import deepcopy
+
+    import pytest
+
+    wrong_registration = deepcopy(registration)
+    wrong_registration.update(
+        case_id="wrong-source-strategy-registration",
+        business_identity="wrong-source-strategy-registration",
+    )
+    wrong_registration["historical_probability"]["registration"].update(
+        version_id="fictional-wrong-strategy-history-v1",
+        selection_strategy_version="fictional-unrelated-strategy-v1",
+    )
+    wrongly_registered = run_frozen_decision_case(
+        migrated_settings,
+        wrong_registration,
+        clock=GovernanceClock(wrong_registration["knowledge_cutoff"]),
+    )
+    assert wrongly_registered.report is not None
     outcomes = outcome_case(migrated_settings, cutoff="2042-07-02T00:00:00Z")
     source_id = seed_probability_source(migrated_settings)
+    wrong_evaluation = evaluation_case(migrated_settings, wrongly_registered.report.event_id)
+    wrong_evaluation.update(
+        case_id="wrong-strategy-evaluation", business_identity="wrong-strategy-evaluation"
+    )
+    with pytest.raises(ValueError, match="PROBABILITY_SOURCE_STRATEGY_MISMATCH"):
+        run_frozen_decision_case(
+            migrated_settings,
+            wrong_evaluation,
+            clock=GovernanceClock(wrong_evaluation["knowledge_cutoff"]),
+        )
+
     early = run_frozen_decision_case(
         migrated_settings, outcomes, clock=GovernanceClock(outcomes["knowledge_cutoff"])
     )

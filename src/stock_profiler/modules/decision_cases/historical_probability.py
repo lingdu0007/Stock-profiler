@@ -153,6 +153,11 @@ def assess_historical_probability(
             raise ValueError("PROBABILITY_SOURCE_VERSION_MISMATCH")
         if datetime.fromisoformat(event.committed_at) < datetime.fromisoformat(source.committed_at):
             raise ValueError("PROBABILITY_RESULTS_PRECEDE_REGISTRATION")
+        if (
+            event.result.candidate_release is not None
+            and event.result.candidate_release.calibration is not None
+        ):
+            validate_source_strategy(event, registration, ledger, connection)
         if month in by_month:
             raise ValueError("PROBABILITY_MONTH_HAS_MULTIPLE_ORIGINAL_PREDICTIONS")
         by_month[month] = event
@@ -335,6 +340,49 @@ def assess_historical_probability(
         counts=counts,
         inference=inference,
     )
+
+
+def validate_source_strategy(
+    source: DecisionEventFact,
+    registration: ProbabilityRegistration,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+) -> None:
+    """Bind the candidate's actual research and selection lineage to its registered rules."""
+    candidate = source.case.candidate_release
+    assert candidate is not None and source.case.access_scope is not None
+    research = ledger.get_decision_event(candidate.research_event_id, connection)
+    if (
+        research is None
+        or research.case.research is None
+        or research.business_object_id != candidate.research_object_id
+        or research.case.access_scope is None
+        or not research.case.access_scope.same_scope_as(source.case.access_scope)
+        or research.corrects_event_id is not None
+        or datetime.fromisoformat(research.committed_at) > candidate.knowledge_cutoff
+        or research.case.research.raw_score_model.model_version
+        != registration.raw_score_model_version
+    ):
+        raise ValueError("PROBABILITY_RESEARCH_SOURCE_UNAVAILABLE")
+    selection = ledger.get_decision_event(research.case.research.selection_event_id, connection)
+    if (
+        selection is None
+        or selection.case.selection is None
+        or selection.result.selection is None
+        or selection.business_object_id != research.case.research.selection_object_id
+        or selection.case.access_scope is None
+        or not selection.case.access_scope.same_scope_as(source.case.access_scope)
+        or selection.corrects_event_id is not None
+        or datetime.fromisoformat(selection.committed_at) > candidate.knowledge_cutoff
+        or selection.case.selection.cutoff_at > candidate.knowledge_cutoff
+    ):
+        raise ValueError("PROBABILITY_SELECTION_SOURCE_UNAVAILABLE")
+    if (
+        selection.case.selection.strategy_version != registration.selection_strategy_version
+        or research.case.research.screening.strategy_version
+        != registration.selection_strategy_version
+    ):
+        raise ValueError("PROBABILITY_SOURCE_STRATEGY_MISMATCH")
 
 
 def resolve_probability_month(
