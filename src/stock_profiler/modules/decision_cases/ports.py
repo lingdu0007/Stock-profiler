@@ -75,6 +75,15 @@ class ResearchAvailabilityFailureFact:
 
 
 @dataclass(frozen=True)
+class SelectionAvailabilityFailureFact:
+    """A failed monthly selection attempt retained before any successful event."""
+
+    case: FrozenDecisionCase
+    recorded_at: str
+    stage_result: StageResult
+
+
+@dataclass(frozen=True)
 class CandidateAvailabilityFailureFact:
     """A failed candidate-path stage joined to its immutable case snapshot."""
 
@@ -179,6 +188,14 @@ class DecisionLedger(Protocol[Transaction]):
     """Only the adapter interprets the opaque transaction handle."""
 
     def observed_at(self) -> str: ...
+
+    def selection_availability_failure_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[SelectionAvailabilityFailureFact, ...]: ...
+
+    def historical_selection_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]: ...
 
     def standard_evaluation_history(
         self, connection: Transaction, access_scope: ResultAccessScope
