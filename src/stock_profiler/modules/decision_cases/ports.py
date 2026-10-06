@@ -193,6 +193,10 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[SelectionAvailabilityFailureFact, ...]: ...
 
+    def historical_probability_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def historical_selection_history(
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[DecisionEventFact, ...]: ...

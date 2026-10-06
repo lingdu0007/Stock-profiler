@@ -1,0 +1,1879 @@
+{
+  "synthetic": true,
+  "generator_version": "fictional-probability-history/1",
+  "seed": 2121,
+  "report": {
+    "report_version_id": "fictional-probability-report-v1",
+    "event_id": "fictional-probability-event",
+    "business_object_id": "business-object-ba9515469cfe7a12c73485e1d2d8b6274911f838b2335ccf79d12a9bfa66e530",
+    "framework_run_id": "framework-run-7c4c9595b46d17e7c3f53f11abd42d9c0543fd30dba45280ea37e3380dce938f",
+    "case_id": "fictional-probability-evaluation",
+    "synthetic": true,
+    "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+    "generated_at": "2043-03-01T00:00:00Z",
+    "knowledge_cutoff": "2043-03-01T00:00:00Z",
+    "evidence_clock": {
+      "fact_effective_at": "2042-05-17T15:00:00Z",
+      "source_published_at": "2042-05-17T15:12:00Z",
+      "acquired_at": "2042-05-17T15:16:00Z",
+      "validated_at": "2042-05-17T15:18:00Z"
+    },
+    "version_bundle": {
+      "case_contract_version": "historical-probability.1.0.0",
+      "host_contract_version": "historical-probability.1.0.0",
+      "host_application_version": "0.1.0.dev0",
+      "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "agent_definition_id": "synthetic-frozen-decision-case",
+      "agent_definition_version": "2.0.0",
+      "model_adapter_id": "m-agent-deterministic-model-adapter",
+      "routing_policy_version": "d0-single-definition-route-v1",
+      "output_contract_version": "1.0.0",
+      "report_projection_contract_version": "historical-probability.1.0.0",
+      "m_agent_version": "0.5.1",
+      "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+      "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+      "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+    },
+    "result": {
+      "outcome_code": "HISTORICAL_PROBABILITY_RECORDED",
+      "summary": "Original synthetic historical probability evidence.",
+      "key_reasons": [
+        "HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY"
+      ],
+      "historical_probability": {
+        "disposition": "INSUFFICIENT",
+        "registration": {
+          "version_id": "fictional-probability-inference-v1",
+          "start_month": "2034-01",
+          "end_month": "2034-12",
+          "source_version_bundle": {
+            "case_contract_version": "candidate-release.1.0.0",
+            "host_contract_version": "candidate-release.1.0.0",
+            "host_application_version": "0.1.0.dev0",
+            "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent_definition_id": "fictional",
+            "agent_definition_version": "2.0.0",
+            "model_adapter_id": "fictional",
+            "routing_policy_version": "fictional",
+            "output_contract_version": "1.0.0",
+            "report_projection_contract_version": "candidate-release.1.0.0",
+            "m_agent_version": "0.5.1",
+            "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+            "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+            "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+          },
+          "capability_version": "fictional-probability-v1",
+          "raw_score_model_version": "synthetic-elastic-net-v1",
+          "selection_strategy_version": "synthetic-dual-head-strategy-v1",
+          "minimum_availability": "0.95",
+          "market_calendar_version": "synthetic-calendar-v1",
+          "calibrator_version": "monotone-firth-logistic-v1",
+          "high_band_threshold": "0.8",
+          "success_floor": "0.8",
+          "overconfidence_ceiling": "0.05",
+          "coverage_floor": "0.5",
+          "overall_months": 120,
+          "overall_high_band_records": 500,
+          "overall_nonoverlapping_windows": 20,
+          "regime_months": 30,
+          "regime_high_band_records": 100,
+          "regime_nonoverlapping_windows": 5,
+          "regime_periods": 2,
+          "block_lengths": [
+            6,
+            9,
+            12
+          ],
+          "confidence": "0.95",
+          "bootstrap_repetitions": 199
+        },
+        "registration_event_id": "fictional-registration-event",
+        "cutoff_at": "2043-03-01T00:00:00Z",
+        "previous_event_id": null,
+        "previous_report_id": null,
+        "report_version": 1,
+        "months": [
+          {
+            "plan_month": "2034-01",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-0",
+            "standard_event_id": null,
+            "cutoff_at": "2034-01-01T00:00:00Z",
+            "matures_at": "2034-07-15T00:00:00Z",
+            "regime": "BULL",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:0:0",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:1",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:2",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:3",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:4",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:5",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:6",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:7",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:8",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:0:9",
+                "source_event_id": "fictional-month-0",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-07-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-02",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-1",
+            "standard_event_id": null,
+            "cutoff_at": "2034-02-01T00:00:00Z",
+            "matures_at": "2034-08-15T00:00:00Z",
+            "regime": "BEAR",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:1:0",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:1",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:2",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:3",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:4",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:5",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:6",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:7",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:8",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:1:9",
+                "source_event_id": "fictional-month-1",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-08-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-03",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-2",
+            "standard_event_id": null,
+            "cutoff_at": "2034-03-01T00:00:00Z",
+            "matures_at": "2034-09-15T00:00:00Z",
+            "regime": "SIDEWAYS",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:2:0",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:1",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:2",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:3",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:4",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:5",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:6",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:7",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:8",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:2:9",
+                "source_event_id": "fictional-month-2",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-09-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-04",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-3",
+            "standard_event_id": null,
+            "cutoff_at": "2034-04-01T00:00:00Z",
+            "matures_at": "2034-10-15T00:00:00Z",
+            "regime": "BULL",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:3:0",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:1",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:2",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:3",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:4",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:5",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:6",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:7",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:8",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:3:9",
+                "source_event_id": "fictional-month-3",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-10-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-05",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-4",
+            "standard_event_id": null,
+            "cutoff_at": "2034-05-01T00:00:00Z",
+            "matures_at": "2034-11-15T00:00:00Z",
+            "regime": "BEAR",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:4:0",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:1",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:2",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:3",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:4",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:5",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:6",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:7",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:8",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:4:9",
+                "source_event_id": "fictional-month-4",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-11-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-06",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-5",
+            "standard_event_id": null,
+            "cutoff_at": "2034-06-01T00:00:00Z",
+            "matures_at": "2034-12-15T00:00:00Z",
+            "regime": "SIDEWAYS",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:5:0",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:1",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:2",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:3",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:4",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:5",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:6",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:7",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:8",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:5:9",
+                "source_event_id": "fictional-month-5",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2034-12-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-07",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-6",
+            "standard_event_id": null,
+            "cutoff_at": "2034-07-01T00:00:00Z",
+            "matures_at": "2035-01-15T00:00:00Z",
+            "regime": "BULL",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:6:0",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:1",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:2",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:3",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:4",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:5",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:6",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:7",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:8",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:6:9",
+                "source_event_id": "fictional-month-6",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-01-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-08",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-7",
+            "standard_event_id": null,
+            "cutoff_at": "2034-08-01T00:00:00Z",
+            "matures_at": "2035-02-15T00:00:00Z",
+            "regime": "BEAR",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:7:0",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:1",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:2",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:3",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:4",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:5",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:6",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:7",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:8",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:7:9",
+                "source_event_id": "fictional-month-7",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-02-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-09",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-8",
+            "standard_event_id": null,
+            "cutoff_at": "2034-09-01T00:00:00Z",
+            "matures_at": "2035-03-15T00:00:00Z",
+            "regime": "SIDEWAYS",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:8:0",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:1",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:2",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:3",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:4",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:5",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:6",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:7",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:8",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:8:9",
+                "source_event_id": "fictional-month-8",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-03-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-10",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-9",
+            "standard_event_id": null,
+            "cutoff_at": "2034-10-01T00:00:00Z",
+            "matures_at": "2035-04-15T00:00:00Z",
+            "regime": "BULL",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:9:0",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:1",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:2",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:3",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:4",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:5",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:6",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:7",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:8",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:9:9",
+                "source_event_id": "fictional-month-9",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-04-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-11",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-10",
+            "standard_event_id": null,
+            "cutoff_at": "2034-11-01T00:00:00Z",
+            "matures_at": "2035-05-15T00:00:00Z",
+            "regime": "BEAR",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:10:0",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:1",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:2",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:3",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:4",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:5",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:6",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:7",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:8",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:10:9",
+                "source_event_id": "fictional-month-10",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-05-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          },
+          {
+            "plan_month": "2034-12",
+            "disposition": "FROZEN",
+            "source_event_id": "fictional-month-11",
+            "standard_event_id": null,
+            "cutoff_at": "2034-12-01T00:00:00Z",
+            "matures_at": "2035-06-15T00:00:00Z",
+            "regime": "SIDEWAYS",
+            "label_mature": true,
+            "valid_monthly": true,
+            "has_candidates": true,
+            "availability_failure": null,
+            "members": [
+              {
+                "evaluation_id": "fictional:11:0",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-0",
+                "raw_success_score": "0",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:1",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-1",
+                "raw_success_score": "1",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:2",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-2",
+                "raw_success_score": "2",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:3",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-3",
+                "raw_success_score": "3",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:4",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-4",
+                "raw_success_score": "4",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:5",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-5",
+                "raw_success_score": "5",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:6",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-6",
+                "raw_success_score": "6",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:7",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-7",
+                "raw_success_score": "7",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:8",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-8",
+                "raw_success_score": "8",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              },
+              {
+                "evaluation_id": "fictional:11:9",
+                "source_event_id": "fictional-month-11",
+                "security_id": "FICTIONAL-9",
+                "raw_success_score": "9",
+                "frozen_probability": "0.85",
+                "matures_at": "2035-06-15T00:00:00Z",
+                "state": "ACHIEVED",
+                "entry_expired": false
+              }
+            ],
+            "index": null,
+            "reasons": []
+          }
+        ],
+        "counts": {
+          "planned": 12,
+          "missing_months": 0,
+          "valid_months": 12,
+          "recommendation_months": 12,
+          "availability_failures": 0,
+          "registered": 120,
+          "due": 120,
+          "evaluable": 120,
+          "due_missing": 0,
+          "immature": 0,
+          "high_band": 120
+        },
+        "inference": {
+          "overall": {
+            "mature_months": 12,
+            "high_band_records": 120,
+            "nonoverlapping_windows": 2,
+            "periods": 0,
+            "sufficient": false,
+            "disposition": "INSUFFICIENT"
+          },
+          "regimes": {
+            "BULL": {
+              "mature_months": 4,
+              "high_band_records": 40,
+              "nonoverlapping_windows": 2,
+              "periods": 4,
+              "sufficient": false,
+              "disposition": "INSUFFICIENT"
+            },
+            "BEAR": {
+              "mature_months": 4,
+              "high_band_records": 40,
+              "nonoverlapping_windows": 2,
+              "periods": 4,
+              "sufficient": false,
+              "disposition": "INSUFFICIENT"
+            },
+            "SIDEWAYS": {
+              "mature_months": 4,
+              "high_band_records": 40,
+              "nonoverlapping_windows": 2,
+              "periods": 4,
+              "sufficient": false,
+              "disposition": "INSUFFICIENT"
+            }
+          },
+          "gates": {
+            "overall:success": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.8",
+              "passed": true,
+              "block_bounds": {
+                "6": "1",
+                "9": "1",
+                "12": "1"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "overall:overconfidence": {
+              "estimate": "-0.15",
+              "bound": "-0.15",
+              "direction": "UPPER",
+              "threshold": "0.05",
+              "passed": true,
+              "block_bounds": {
+                "6": "-0.15",
+                "9": "-0.15",
+                "12": "-0.15"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "BULL:success": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.8",
+              "passed": true,
+              "block_bounds": {
+                "6": "1",
+                "9": "1",
+                "12": "1"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "BULL:overconfidence": {
+              "estimate": "-0.15",
+              "bound": "-0.15",
+              "direction": "UPPER",
+              "threshold": "0.05",
+              "passed": true,
+              "block_bounds": {
+                "6": "-0.15",
+                "9": "-0.15",
+                "12": "-0.15"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "BEAR:success": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.8",
+              "passed": true,
+              "block_bounds": {
+                "6": "1",
+                "9": "1",
+                "12": "1"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "BEAR:overconfidence": {
+              "estimate": "-0.15",
+              "bound": "-0.15",
+              "direction": "UPPER",
+              "threshold": "0.05",
+              "passed": true,
+              "block_bounds": {
+                "6": "-0.15",
+                "9": "-0.15",
+                "12": "-0.15"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "SIDEWAYS:success": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.8",
+              "passed": true,
+              "block_bounds": {
+                "6": "1",
+                "9": "1",
+                "12": "1"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "SIDEWAYS:overconfidence": {
+              "estimate": "-0.15",
+              "bound": "-0.15",
+              "direction": "UPPER",
+              "threshold": "0.05",
+              "passed": true,
+              "block_bounds": {
+                "6": "-0.15",
+                "9": "-0.15",
+                "12": "-0.15"
+              },
+              "undefined_resamples": {
+                "6": 0,
+                "9": 0,
+                "12": 0
+              }
+            },
+            "coverage": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.5",
+              "passed": true,
+              "block_bounds": {},
+              "undefined_resamples": {}
+            },
+            "availability": {
+              "estimate": "1",
+              "bound": "1",
+              "direction": "LOWER",
+              "threshold": "0.95",
+              "passed": true,
+              "block_bounds": {},
+              "undefined_resamples": {}
+            }
+          },
+          "resampling": {
+            "6": {
+              "calendar_months": 12,
+              "repetitions": 199,
+              "sampling_digest": "354feed6dc09293cd8b36d80cf8b02d03eabad539f220cffdb14ec203f7adccc"
+            },
+            "9": {
+              "calendar_months": 12,
+              "repetitions": 199,
+              "sampling_digest": "b6c08486378202f8ff918a5b502ccf6daf1f066603e843a737c795cc5f96c77d"
+            },
+            "12": {
+              "calendar_months": 12,
+              "repetitions": 199,
+              "sampling_digest": "3e7ce934d6d91aa5ebdc54d4b59349db54f47d0af0e0000f9964aa6192fe4965"
+            }
+          },
+          "diagnostics": {
+            "log_loss": "0.16251893",
+            "brier_score": "0.02250000",
+            "reliability_curve": [
+              {
+                "lower_probability": "0.8",
+                "upper_probability": "0.9",
+                "sample_count": 120,
+                "mean_predicted_probability": "0.8499999999999984",
+                "observed_success_rate": "1.0"
+              }
+            ],
+            "recalibration_fit_status": "AVAILABLE",
+            "calibration_intercept": "5.48479693",
+            "calibration_slope": "0E-8"
+          },
+          "recent_diagnostic_months": [
+            "2034-01",
+            "2034-02",
+            "2034-03",
+            "2034-04",
+            "2034-05",
+            "2034-06",
+            "2034-07",
+            "2034-08",
+            "2034-09",
+            "2034-10",
+            "2034-11",
+            "2034-12"
+          ],
+          "recent_diagnostic_sample_count": 120,
+          "recent_diagnostics": null
+        },
+        "actionable": false,
+        "authorization_granted": false
+      }
+    },
+    "stage_results": [
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "CREATED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_CREATED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "FRAMEWORK_RUN_CREATED"
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "RUNNING",
+        "gate_results": [
+          {
+            "gate_id": "RUN_ACTIVE",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "FRAMEWORK_RUN_STARTED"
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "FRAMEWORK_RUN",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "RUN_TERMINAL",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FRAMEWORK_EXECUTION",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "FRAMEWORK_RUN_SUCCEEDED"
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "HOST_VALIDATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "FROZEN_RESULT_MATCH",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_DECISION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "OUTPUT_CONTRACT",
+            "status": "PASSED"
+          },
+          {
+            "gate_id": "DECISION_ACCEPTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [
+          "All required fictional evidence records are present.",
+          "The output is D0 synthetic evidence and is not a recommendation."
+        ],
+        "availability_failure": null
+      },
+      {
+        "phase": "BUSINESS_COMMIT",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "HOST_RESULT_SAVED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      },
+      {
+        "phase": "PUBLICATION",
+        "status": "SUCCEEDED",
+        "gate_results": [
+          {
+            "gate_id": "EVENT_COMMITTED",
+            "status": "PASSED"
+          }
+        ],
+        "reasons": [],
+        "availability_failure": null
+      }
+    ],
+    "corrects_event_id": null,
+    "access_scope": {
+      "contract_version": "1.0.0",
+      "user_id": "stock-profiler-single-user",
+      "account_ids": [
+        "synthetic-account-4017"
+      ],
+      "visibility": "USER"
+    }
+  }
+}
