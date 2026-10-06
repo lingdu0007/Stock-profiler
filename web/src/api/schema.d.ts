@@ -1853,6 +1853,7 @@ export interface components {
             evaluation_registrations: components["schemas"]["EvaluationRegistration"][];
             execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
+            historical_probability?: components["schemas"]["HistoricalProbabilityReport"] | null;
             historical_selection?: components["schemas"]["HistoricalSelectionReport"] | null;
             /** Key Reasons */
             key_reasons: string[];
@@ -2161,6 +2162,47 @@ export interface components {
             /** Target Rate */
             target_rate?: string | null;
         };
+        /** HistoricalProbabilityReport */
+        HistoricalProbabilityReport: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Authorization Granted
+             * @default false
+             * @constant
+             */
+            authorization_granted: false;
+            counts?: components["schemas"]["ProbabilityCounts"] | null;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Disposition */
+            disposition: string;
+            inference?: components["schemas"]["ProbabilityInference"] | null;
+            /**
+             * Months
+             * @default []
+             */
+            months: components["schemas"]["ProbabilityMonth"][];
+            /** Previous Event Id */
+            previous_event_id?: string | null;
+            /** Previous Report Id */
+            previous_report_id?: string | null;
+            registration: components["schemas"]["ProbabilityRegistration"];
+            /** Registration Event Id */
+            registration_event_id: string | null;
+            /**
+             * Report Version
+             * @default 1
+             */
+            report_version: number;
+        };
         /** HistoricalRegistration */
         HistoricalRegistration: {
             /** Block Lengths */
@@ -2265,6 +2307,16 @@ export interface components {
              * @default 1
              */
             report_version: number;
+        };
+        /** IndexPrice */
+        IndexPrice: {
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            /** Total Return Price */
+            total_return_price: string;
         };
         /** IssuerConcentration */
         IssuerConcentration: {
@@ -3110,6 +3162,220 @@ export interface components {
             /** Reasons */
             reasons: string[];
             snapshot: components["schemas"]["ReconciledPositionSnapshot"];
+        };
+        /** ProbabilityBound */
+        ProbabilityBound: {
+            /** Block Bounds */
+            block_bounds: {
+                [key: string]: string | null;
+            };
+            /** Bound */
+            bound: string | null;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "LOWER" | "UPPER";
+            /** Estimate */
+            estimate: string | null;
+            /** Passed */
+            passed: boolean | null;
+            /** Threshold */
+            threshold: string;
+            /** Undefined Resamples */
+            undefined_resamples: {
+                [key: string]: number;
+            };
+        };
+        /** ProbabilityCounts */
+        ProbabilityCounts: {
+            /** Availability Failures */
+            availability_failures: number;
+            /** Due */
+            due: number;
+            /** Due Missing */
+            due_missing: number;
+            /** Evaluable */
+            evaluable: number;
+            /** High Band */
+            high_band: number;
+            /** Immature */
+            immature: number;
+            /** Missing Months */
+            missing_months: number;
+            /** Planned */
+            planned: number;
+            /** Recommendation Months */
+            recommendation_months: number;
+            /** Registered */
+            registered: number;
+            /** Valid Months */
+            valid_months: number;
+        };
+        /** ProbabilityInference */
+        ProbabilityInference: {
+            diagnostics: components["schemas"]["CalibrationDiagnostics"] | null;
+            /** Gates */
+            gates: {
+                [key: string]: components["schemas"]["ProbabilityBound"];
+            };
+            overall: components["schemas"]["ProbabilityWatermark"];
+            /** Recent Diagnostic Months */
+            recent_diagnostic_months: string[];
+            /** Recent Diagnostic Sample Count */
+            recent_diagnostic_sample_count: number;
+            recent_diagnostics: components["schemas"]["CalibrationDiagnostics"] | null;
+            /** Regimes */
+            regimes: {
+                [key: string]: components["schemas"]["ProbabilityWatermark"];
+            };
+            /** Resampling */
+            resampling: {
+                [key: string]: {
+                    [key: string]: string | number;
+                };
+            };
+        };
+        /** ProbabilityMember */
+        ProbabilityMember: {
+            /** Entry Expired */
+            entry_expired: boolean;
+            /** Evaluation Id */
+            evaluation_id: string;
+            /** Frozen Probability */
+            frozen_probability: string;
+            /**
+             * Matures At
+             * Format: date-time
+             */
+            matures_at: string;
+            /** Raw Success Score */
+            raw_success_score: string;
+            /** Security Id */
+            security_id: string;
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PENDING" | "UNAVAILABLE" | "ACHIEVED" | "NOT_ACHIEVED";
+        };
+        /** ProbabilityMonth */
+        ProbabilityMonth: {
+            /** Availability Failure */
+            availability_failure?: string | null;
+            /** Cutoff At */
+            cutoff_at?: string | null;
+            /** Disposition */
+            disposition: string;
+            /**
+             * Has Candidates
+             * @default false
+             */
+            has_candidates: boolean;
+            index?: components["schemas"]["SelectionIndexEvidence"] | null;
+            /**
+             * Label Mature
+             * @default false
+             */
+            label_mature: boolean;
+            /** Matures At */
+            matures_at?: string | null;
+            /**
+             * Members
+             * @default []
+             */
+            members: components["schemas"]["ProbabilityMember"][];
+            /** Plan Month */
+            plan_month: string;
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Regime */
+            regime?: ("BULL" | "BEAR" | "SIDEWAYS") | null;
+            /** Source Event Id */
+            source_event_id?: string | null;
+            /** Standard Event Id */
+            standard_event_id?: string | null;
+            /**
+             * Valid Monthly
+             * @default false
+             */
+            valid_monthly: boolean;
+        };
+        /** ProbabilityRegistration */
+        ProbabilityRegistration: {
+            /** Block Lengths */
+            block_lengths: number[];
+            /** Bootstrap Repetitions */
+            bootstrap_repetitions: number;
+            /**
+             * Calibrator Version
+             * @constant
+             */
+            calibrator_version: "monotone-firth-logistic-v1";
+            /** Capability Version */
+            capability_version: string;
+            /** Confidence */
+            confidence: string;
+            /** Coverage Floor */
+            coverage_floor: string;
+            /** End Month */
+            end_month: string;
+            /** High Band Threshold */
+            high_band_threshold: string;
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /** Minimum Availability */
+            minimum_availability: string;
+            /** Overall High Band Records */
+            overall_high_band_records: number;
+            /** Overall Months */
+            overall_months: number;
+            /** Overall Nonoverlapping Windows */
+            overall_nonoverlapping_windows: number;
+            /** Overconfidence Ceiling */
+            overconfidence_ceiling: string;
+            /** Raw Score Model Version */
+            raw_score_model_version: string;
+            /** Regime High Band Records */
+            regime_high_band_records: number;
+            /** Regime Months */
+            regime_months: number;
+            /** Regime Nonoverlapping Windows */
+            regime_nonoverlapping_windows: number;
+            /** Regime Periods */
+            regime_periods: number;
+            /** Selection Strategy Version */
+            selection_strategy_version: string;
+            source_version_bundle: components["schemas"]["DecisionCaseVersionBundle"];
+            /** Start Month */
+            start_month: string;
+            /** Success Floor */
+            success_floor: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** ProbabilityWatermark */
+        ProbabilityWatermark: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "INSUFFICIENT" | "INDETERMINATE" | "PASSED" | "FAILED";
+            /** High Band Records */
+            high_band_records: number;
+            /** Mature Months */
+            mature_months: number;
+            /** Nonoverlapping Windows */
+            nonoverlapping_windows: number;
+            /** Periods */
+            periods: number;
+            /** Sufficient */
+            sufficient: boolean;
         };
         /** QualificationEvidence */
         QualificationEvidence: {
@@ -4128,6 +4394,44 @@ export interface components {
             security_id: string;
             /** Terminal Percentile */
             terminal_percentile: string;
+        };
+        /** SelectionIndexEvidence */
+        SelectionIndexEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Authority
+             * @constant
+             */
+            authority: "EXCHANGE";
+            /** Correction Reason */
+            correction_reason: string | null;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string | null;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Prices */
+            prices: components["schemas"]["IndexPrice"][];
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Source Version */
+            source_version: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
         };
         /** SelectionOutcome */
         SelectionOutcome: {

@@ -31,6 +31,9 @@ from stock_profiler.modules.decision_cases.domain import (
     NotificationAttemptStatus,
     load_frozen_decision_case,
 )
+from stock_profiler.modules.decision_cases.historical_probability import (
+    InvalidHistoricalProbabilityRequest,
+)
 from stock_profiler.modules.decision_cases.historical_selection import (
     InvalidHistoricalSelectionRequest,
 )
@@ -159,7 +162,11 @@ def run_frozen_decision_case(
         return service.run_default_frozen_decision_case(
             case, DecisionLedger(runtime.engine, clock=clock), _FrozenFramework(runtime, clock)
         )
-    except (InvalidGovernanceRequest, InvalidHistoricalSelectionRequest):
+    except (
+        InvalidGovernanceRequest,
+        InvalidHistoricalSelectionRequest,
+        InvalidHistoricalProbabilityRequest,
+    ):
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(
             "frozen-case-input", "HOST"
         )

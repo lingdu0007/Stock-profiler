@@ -4127,6 +4127,16 @@
               }
             ]
           },
+          "historical_probability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoricalProbabilityReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "historical_selection": {
             "anyOf": [
               {
@@ -5054,6 +5064,104 @@
         "title": "HistoricalMonthResult",
         "type": "object"
       },
+      "HistoricalProbabilityReport": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "authorization_granted": {
+            "const": false,
+            "default": false,
+            "title": "Authorization Granted",
+            "type": "boolean"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbabilityCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "inference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbabilityInference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "months": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProbabilityMonth"
+            },
+            "title": "Months",
+            "type": "array"
+          },
+          "previous_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Event Id"
+          },
+          "previous_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Report Id"
+          },
+          "registration": {
+            "$ref": "#/components/schemas/ProbabilityRegistration"
+          },
+          "registration_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Event Id"
+          },
+          "report_version": {
+            "default": 1,
+            "title": "Report Version",
+            "type": "integer"
+          }
+        },
+        "required": ["disposition", "registration", "registration_event_id", "cutoff_at"],
+        "title": "HistoricalProbabilityReport",
+        "type": "object"
+      },
       "HistoricalRegistration": {
         "additionalProperties": false,
         "properties": {
@@ -5334,6 +5442,24 @@
         },
         "required": ["disposition", "registration", "registration_event_id", "cutoff_at"],
         "title": "HistoricalSelectionReport",
+        "type": "object"
+      },
+      "IndexPrice": {
+        "additionalProperties": false,
+        "properties": {
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "total_return_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Return Price",
+            "type": "string"
+          }
+        },
+        "required": ["closed_at", "total_return_price"],
+        "title": "IndexPrice",
         "type": "object"
       },
       "IssuerConcentration": {
@@ -7612,6 +7738,607 @@
         },
         "required": ["disposition", "reasons", "snapshot", "conflicts"],
         "title": "PositionReconciliationOutcome",
+        "type": "object"
+      },
+      "ProbabilityBound": {
+        "additionalProperties": false,
+        "properties": {
+          "block_bounds": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Block Bounds",
+            "type": "object"
+          },
+          "bound": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound"
+          },
+          "direction": {
+            "enum": ["LOWER", "UPPER"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "undefined_resamples": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Undefined Resamples",
+            "type": "object"
+          }
+        },
+        "required": [
+          "estimate",
+          "bound",
+          "direction",
+          "threshold",
+          "passed",
+          "block_bounds",
+          "undefined_resamples"
+        ],
+        "title": "ProbabilityBound",
+        "type": "object"
+      },
+      "ProbabilityCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failures": {
+            "title": "Availability Failures",
+            "type": "integer"
+          },
+          "due": {
+            "title": "Due",
+            "type": "integer"
+          },
+          "due_missing": {
+            "title": "Due Missing",
+            "type": "integer"
+          },
+          "evaluable": {
+            "title": "Evaluable",
+            "type": "integer"
+          },
+          "high_band": {
+            "title": "High Band",
+            "type": "integer"
+          },
+          "immature": {
+            "title": "Immature",
+            "type": "integer"
+          },
+          "missing_months": {
+            "title": "Missing Months",
+            "type": "integer"
+          },
+          "planned": {
+            "title": "Planned",
+            "type": "integer"
+          },
+          "recommendation_months": {
+            "title": "Recommendation Months",
+            "type": "integer"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "integer"
+          },
+          "valid_months": {
+            "title": "Valid Months",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "planned",
+          "missing_months",
+          "valid_months",
+          "recommendation_months",
+          "availability_failures",
+          "registered",
+          "due",
+          "evaluable",
+          "due_missing",
+          "immature",
+          "high_band"
+        ],
+        "title": "ProbabilityCounts",
+        "type": "object"
+      },
+      "ProbabilityInference": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gates": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProbabilityBound"
+            },
+            "title": "Gates",
+            "type": "object"
+          },
+          "overall": {
+            "$ref": "#/components/schemas/ProbabilityWatermark"
+          },
+          "recent_diagnostic_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recent Diagnostic Months",
+            "type": "array"
+          },
+          "recent_diagnostic_sample_count": {
+            "title": "Recent Diagnostic Sample Count",
+            "type": "integer"
+          },
+          "recent_diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regimes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProbabilityWatermark"
+            },
+            "title": "Regimes",
+            "type": "object"
+          },
+          "resampling": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Resampling",
+            "type": "object"
+          }
+        },
+        "required": [
+          "overall",
+          "regimes",
+          "gates",
+          "resampling",
+          "diagnostics",
+          "recent_diagnostic_months",
+          "recent_diagnostic_sample_count",
+          "recent_diagnostics"
+        ],
+        "title": "ProbabilityInference",
+        "type": "object"
+      },
+      "ProbabilityMember": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_expired": {
+            "title": "Entry Expired",
+            "type": "boolean"
+          },
+          "evaluation_id": {
+            "title": "Evaluation Id",
+            "type": "string"
+          },
+          "frozen_probability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Frozen Probability",
+            "type": "string"
+          },
+          "matures_at": {
+            "format": "date-time",
+            "title": "Matures At",
+            "type": "string"
+          },
+          "raw_success_score": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Raw Success Score",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["PENDING", "UNAVAILABLE", "ACHIEVED", "NOT_ACHIEVED"],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_id",
+          "source_event_id",
+          "security_id",
+          "raw_success_score",
+          "frozen_probability",
+          "matures_at",
+          "state",
+          "entry_expired"
+        ],
+        "title": "ProbabilityMember",
+        "type": "object"
+      },
+      "ProbabilityMonth": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Failure"
+          },
+          "cutoff_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff At"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "has_candidates": {
+            "default": false,
+            "title": "Has Candidates",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionIndexEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label_mature": {
+            "default": false,
+            "title": "Label Mature",
+            "type": "boolean"
+          },
+          "matures_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matures At"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProbabilityMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "plan_month": {
+            "title": "Plan Month",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "enum": ["BULL", "BEAR", "SIDEWAYS"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
+          "source_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Event Id"
+          },
+          "standard_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standard Event Id"
+          },
+          "valid_monthly": {
+            "default": false,
+            "title": "Valid Monthly",
+            "type": "boolean"
+          }
+        },
+        "required": ["plan_month", "disposition"],
+        "title": "ProbabilityMonth",
+        "type": "object"
+      },
+      "ProbabilityRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "block_lengths": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Block Lengths",
+            "type": "array"
+          },
+          "bootstrap_repetitions": {
+            "minimum": 99.0,
+            "title": "Bootstrap Repetitions",
+            "type": "integer"
+          },
+          "calibrator_version": {
+            "const": "monotone-firth-logistic-v1",
+            "title": "Calibrator Version",
+            "type": "string"
+          },
+          "capability_version": {
+            "minLength": 1,
+            "title": "Capability Version",
+            "type": "string"
+          },
+          "confidence": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "coverage_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Coverage Floor",
+            "type": "string"
+          },
+          "end_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "End Month",
+            "type": "string"
+          },
+          "high_band_threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "High Band Threshold",
+            "type": "string"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "minimum_availability": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Availability",
+            "type": "string"
+          },
+          "overall_high_band_records": {
+            "exclusiveMinimum": 0.0,
+            "title": "Overall High Band Records",
+            "type": "integer"
+          },
+          "overall_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Overall Months",
+            "type": "integer"
+          },
+          "overall_nonoverlapping_windows": {
+            "exclusiveMinimum": 0.0,
+            "title": "Overall Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "overconfidence_ceiling": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Overconfidence Ceiling",
+            "type": "string"
+          },
+          "raw_score_model_version": {
+            "minLength": 1,
+            "title": "Raw Score Model Version",
+            "type": "string"
+          },
+          "regime_high_band_records": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime High Band Records",
+            "type": "integer"
+          },
+          "regime_months": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Months",
+            "type": "integer"
+          },
+          "regime_nonoverlapping_windows": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "regime_periods": {
+            "exclusiveMinimum": 0.0,
+            "title": "Regime Periods",
+            "type": "integer"
+          },
+          "selection_strategy_version": {
+            "minLength": 1,
+            "title": "Selection Strategy Version",
+            "type": "string"
+          },
+          "source_version_bundle": {
+            "$ref": "#/components/schemas/DecisionCaseVersionBundle"
+          },
+          "start_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "Start Month",
+            "type": "string"
+          },
+          "success_floor": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Success Floor",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "start_month",
+          "end_month",
+          "source_version_bundle",
+          "capability_version",
+          "raw_score_model_version",
+          "selection_strategy_version",
+          "minimum_availability",
+          "market_calendar_version",
+          "calibrator_version",
+          "high_band_threshold",
+          "success_floor",
+          "overconfidence_ceiling",
+          "coverage_floor",
+          "overall_months",
+          "overall_high_band_records",
+          "overall_nonoverlapping_windows",
+          "regime_months",
+          "regime_high_band_records",
+          "regime_nonoverlapping_windows",
+          "regime_periods",
+          "block_lengths",
+          "confidence",
+          "bootstrap_repetitions"
+        ],
+        "title": "ProbabilityRegistration",
+        "type": "object"
+      },
+      "ProbabilityWatermark": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": ["INSUFFICIENT", "INDETERMINATE", "PASSED", "FAILED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "high_band_records": {
+            "title": "High Band Records",
+            "type": "integer"
+          },
+          "mature_months": {
+            "title": "Mature Months",
+            "type": "integer"
+          },
+          "nonoverlapping_windows": {
+            "title": "Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "periods": {
+            "title": "Periods",
+            "type": "integer"
+          },
+          "sufficient": {
+            "title": "Sufficient",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mature_months",
+          "high_band_records",
+          "nonoverlapping_windows",
+          "periods",
+          "sufficient",
+          "disposition"
+        ],
+        "title": "ProbabilityWatermark",
         "type": "object"
       },
       "QualificationEvidence": {
@@ -10217,6 +10944,89 @@
           "composite_score"
         ],
         "title": "ScreeningRank",
+        "type": "object"
+      },
+      "SelectionIndexEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "authority": {
+            "const": "EXCHANGE",
+            "title": "Authority",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "corrects_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Evidence Id"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "prices": {
+            "items": {
+              "$ref": "#/components/schemas/IndexPrice"
+            },
+            "title": "Prices",
+            "type": "array"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "authority",
+          "source_version",
+          "effective_at",
+          "published_at",
+          "acquired_at",
+          "validated_at",
+          "corrects_evidence_id",
+          "correction_reason",
+          "prices"
+        ],
+        "title": "SelectionIndexEvidence",
         "type": "object"
       },
       "SelectionOutcome": {

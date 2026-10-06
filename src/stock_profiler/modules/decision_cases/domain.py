@@ -46,6 +46,10 @@ from stock_profiler.modules.evaluation.historical_contracts import (
     HistoricalSelectionCommand,
     HistoricalSelectionReport,
 )
+from stock_profiler.modules.evaluation.probability_contracts import (
+    HistoricalProbabilityCommand,
+    HistoricalProbabilityReport,
+)
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
     PortfolioCommand,
@@ -117,6 +121,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "candidate-release.1.0.0",
         "standard-outcomes.1.0.0",
         "historical-selection.1.0.0",
+        "historical-probability.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -143,6 +148,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("candidate-release.1.0.0", "candidate-release.1.0.0"),
         ("standard-outcomes.1.0.0", "standard-outcomes.1.0.0"),
         ("historical-selection.1.0.0", "historical-selection.1.0.0"),
+        ("historical-probability.1.0.0", "historical-probability.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -230,6 +236,9 @@ class ExternalResult(FrozenContract):
     selection: SelectionOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     evaluation_registrations: tuple[EvaluationRegistration, ...] = Field(
         default=(), exclude_if=lambda value: not value
+    )
+    historical_probability: HistoricalProbabilityReport | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
     historical_selection: HistoricalSelectionReport | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -935,6 +944,9 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    historical_probability: HistoricalProbabilityCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     historical_selection: HistoricalSelectionCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1014,6 +1026,19 @@ class FrozenDecisionCase(FrozenContract):
         candidate_release_governed = (
             self.version_bundle.case_contract_version == "candidate-release.1.0.0"
         )
+        historical_probability_governed = (
+            self.version_bundle.case_contract_version == "historical-probability.1.0.0"
+        )
+        if historical_probability_governed != (
+            self.historical_probability is not None
+        ) or historical_probability_governed != ("historical_probability" in self.input):
+            raise ValueError("historical probability requires its own frozen contract")
+        if self.historical_probability is not None and (
+            self.historical_probability.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("historical_probability")
+            != self.historical_probability.model_dump(mode="json")
+        ):
+            raise ValueError("historical probability must bind frozen cutoff and input")
         historical_selection_governed = (
             self.version_bundle.case_contract_version == "historical-selection.1.0.0"
         )
@@ -1130,6 +1155,7 @@ class FrozenDecisionCase(FrozenContract):
             or selection_governed
             or research_governed
             or candidate_release_governed
+            or historical_probability_governed
             or historical_selection_governed
             or standard_outcomes_governed
         )
@@ -1164,6 +1190,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.candidate_release,
                     self.standard_outcomes,
                     self.historical_selection,
+                    self.historical_probability,
                 )
             )
             > 1
@@ -1193,6 +1220,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.historical_probability is not None
             or self.expected_external_result.historical_selection is not None
             or self.expected_external_result.standard_outcomes is not None
             or bool(self.expected_external_result.evaluation_registrations)
@@ -1944,6 +1972,7 @@ def synthetic_outcome_code_from_input(
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
     input_without_scenario.pop("standard_outcomes", None)
+    input_without_scenario.pop("historical_probability", None)
     input_without_scenario.pop("historical_selection", None)
     candidate_release = input_without_scenario.pop("candidate_release", None)
     if candidate_release is not None and not isinstance(candidate_release, dict):

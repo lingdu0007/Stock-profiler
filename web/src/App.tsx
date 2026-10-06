@@ -30,6 +30,7 @@ import { SelectionEvidence } from "./SelectionEvidence";
 import { CandidatePage, CandidateReleaseStatus } from "./CandidatePage";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
 import { StandardOutcomeEvidence } from "./StandardOutcomeEvidence";
+import { HistoricalProbabilityEvidence } from "./HistoricalProbabilityEvidence";
 import { HistoricalSelectionEvidence } from "./HistoricalSelectionEvidence";
 import { ReportRecord as Record } from "./ReportRecord";
 
@@ -165,6 +166,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
         </ol>
       </section>
 
+      {report.result.historical_probability && (
+        <HistoricalProbabilityEvidence evidence={report.result.historical_probability} />
+      )}
       {report.result.historical_selection && (
         <HistoricalSelectionEvidence evidence={report.result.historical_selection} />
       )}

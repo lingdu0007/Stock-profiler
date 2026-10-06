@@ -48,7 +48,14 @@ MarketStateQualificationStatus = Literal[
 ]
 
 
-class CalibrationRecord(UniverseContract):
+class CalibrationDiagnosticObservation(UniverseContract):
+    """A frozen score and mature label used solely for descriptive calibration diagnostics."""
+
+    raw_success_score: Decimal = Field(allow_inf_nan=False)
+    terminal_success: bool
+
+
+class CalibrationRecord(CalibrationDiagnosticObservation):
     """One already matured raw-score label in the calibration population."""
 
     record_id: str = Field(min_length=1)
@@ -59,9 +66,7 @@ class CalibrationRecord(UniverseContract):
     raw_score_model_version: str = Field(min_length=1)
     raw_score_frozen_at: AwareDatetime
     raw_score_training_watermark_at: AwareDatetime
-    raw_success_score: Decimal
     out_of_sample_probability: Decimal = Field(gt=Decimal("0"), lt=Decimal("1"))
-    terminal_success: bool
     entry_at: AwareDatetime | None = None
     entry_window_ends_at: AwareDatetime
     unified_maturity_at: AwareDatetime
@@ -1031,8 +1036,15 @@ def _fit_calibrator(
     )
 
 
+def summarize_probability_calibration(
+    observations: tuple[CalibrationDiagnosticObservation, ...], probabilities: tuple[Decimal, ...]
+) -> CalibrationDiagnostics:
+    """Describe frozen OOS probabilities without fitting a production calibrator."""
+    return _calibration_diagnostics(observations, tuple(float(value) for value in probabilities))
+
+
 def _calibration_diagnostics(
-    records: tuple[CalibrationRecord, ...],
+    records: tuple[CalibrationDiagnosticObservation, ...],
     probabilities: tuple[float, ...],
 ) -> CalibrationDiagnostics:
     if not records or len(records) != len(probabilities):
@@ -1110,7 +1122,7 @@ def _calibration_diagnostics(
 
 
 def _firth_logistic(
-    records: tuple[CalibrationRecord, ...],
+    records: tuple[CalibrationDiagnosticObservation, ...],
     *,
     nonnegative_slope: bool = True,
 ) -> tuple[float, float]:

@@ -59,6 +59,10 @@ from stock_profiler.modules.decision_cases.domain import (
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
+from stock_profiler.modules.decision_cases.historical_probability import (
+    InvalidHistoricalProbabilityRequest,
+    assess_historical_probability,
+)
 from stock_profiler.modules.decision_cases.historical_selection import (
     InvalidHistoricalSelectionRequest,
     assess_historical_selection,
@@ -3482,6 +3486,22 @@ def _commit_framework_result(
                     result = execution_case.expected_external_result.model_copy(
                         update={"selection": selection}
                     )
+            if business_result is not None and execution_case.historical_probability is not None:
+                try:
+                    if business_result.status != "SUCCEEDED":
+                        raise ValueError("PROBABILITY_EVALUATION_PREREQUISITE_FAILED")
+                    result = result.model_copy(
+                        update={
+                            "historical_probability": assess_historical_probability(
+                                execution_case, ledger, connection
+                            ),
+                            "outcome_code": "HISTORICAL_PROBABILITY_RECORDED",
+                            "summary": "Saved synthetic historical probability evidence.",
+                            "key_reasons": ("HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY",),
+                        }
+                    )
+                except ValueError as error:
+                    raise InvalidHistoricalProbabilityRequest(str(error)) from error
             if business_result is not None and execution_case.historical_selection is not None:
                 try:
                     if business_result.status != "SUCCEEDED":
