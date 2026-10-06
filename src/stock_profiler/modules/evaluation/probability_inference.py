@@ -62,7 +62,8 @@ def _watermark(
     mature = tuple(
         row
         for row in rows
-        if row.members
+        if row.label_mature
+        and row.members
         and all(member.state in {"ACHIEVED", "NOT_ACHIEVED"} for member in row.members)
         and (state is None or row.regime == state)
     )

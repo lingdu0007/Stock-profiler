@@ -244,3 +244,10 @@ def test_pending_second_state_episode_cannot_supply_historical_evidence() -> Non
     )
     assert result.regimes["BULL"].periods == 1
     assert result.regimes["BULL"].disposition == "INSUFFICIENT"
+
+
+def test_month_watermark_waits_for_the_complete_registered_entry_window() -> None:
+    rows = history()
+    early = rows[-1].model_copy(update={"label_mature": False})
+    result = summarize_probability_history((*rows[:-1], early), registration(), seed=2121)
+    assert result.overall.mature_months == 179

@@ -38,7 +38,7 @@ def registration_case(settings: Settings) -> dict[str, Any]:
             "end_month": "2042-06",
             "source_version_bundle": source_versions,
             "capability_version": "fictional-candidate-v1",
-            "raw_score_model_version": "synthetic-elastic-net-v1",
+            "raw_score_model_version": "elastic-net-logistic-z20-v1",
             "selection_strategy_version": "synthetic-dual-head-strategy-v1",
             "minimum_availability": "0.95",
             "market_calendar_version": "synthetic-market-calendar-v1",
@@ -150,6 +150,8 @@ def seed_probability_source(settings: Settings) -> str:
         research = ledger.research_event_history(
             connection, ResultAccessScope.model_validate(payload["access_scope"])
         )[0]
+    assert research.case.research is not None
+    raw_model_version = research.case.research.raw_score_model.model_version
     original = calibrator_case()
     from stock_profiler.modules.portfolio.market_calendar import six_month_terminal_evaluation_at
 
@@ -160,6 +162,7 @@ def seed_probability_source(settings: Settings) -> str:
         return record.model_copy(
             update={
                 "month": frozen.strftime("%Y-%m"),
+                "raw_score_model_version": raw_model_version,
                 "entry_at": entry,
                 "raw_score_frozen_at": frozen,
                 "raw_score_training_watermark_at": record.raw_score_training_watermark_at.replace(

@@ -359,7 +359,8 @@ def validate_source_strategy(
         or research.case.access_scope is None
         or not research.case.access_scope.same_scope_as(source.case.access_scope)
         or research.corrects_event_id is not None
-        or datetime.fromisoformat(research.committed_at) > candidate.knowledge_cutoff
+        or datetime.fromisoformat(research.committed_at) > candidate.published_at
+        or research.case.research.knowledge_cutoff > candidate.knowledge_cutoff
         or research.case.research.raw_score_model.model_version
         != registration.raw_score_model_version
     ):
@@ -373,7 +374,7 @@ def validate_source_strategy(
         or selection.case.access_scope is None
         or not selection.case.access_scope.same_scope_as(source.case.access_scope)
         or selection.corrects_event_id is not None
-        or datetime.fromisoformat(selection.committed_at) > candidate.knowledge_cutoff
+        or datetime.fromisoformat(selection.committed_at) > candidate.published_at
         or selection.case.selection.cutoff_at > candidate.knowledge_cutoff
     ):
         raise ValueError("PROBABILITY_SELECTION_SOURCE_UNAVAILABLE")

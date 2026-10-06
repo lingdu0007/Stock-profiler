@@ -88,7 +88,7 @@
           "bootstrap_repetitions": 199
         },
         "registration_event_id": "fictional-registration-event",
-        "cutoff_at": "2049-07-01T00:00:00Z",
+        "cutoff_at": "2043-03-01T00:00:00Z",
         "previous_event_id": null,
         "previous_report_id": null,
         "report_version": 1,
