@@ -97,6 +97,13 @@ Inputs cannot move to another selection or silently replace previously retained
 context or outcome evidence. Corrections retain authoritative evidence lineage.
 The full calendar retains failed, absent and immature slots.
 
+Formal monthly evidence stays in the complete frozen host case. The framework
+Run input and context carry its canonical SHA-256 reference and the original
+frozen input fingerprint instead of the daily evidence arrays. Creation and
+recovery use the same projection, while host inference consumes the full saved
+evidence. This prevents the framework context budget from rejecting a complete
+formal look and preserves distinct Run identities when original evidence changes.
+
 All gates share whole-month moving-block samples, with original state labels,
 probability records and paired baselines kept together. Nested common block
 samples estimate the variance of each original and resampled statistic. The
