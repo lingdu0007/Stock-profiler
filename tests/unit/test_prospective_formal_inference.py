@@ -20,6 +20,7 @@ def months(count: int) -> tuple[FormalMonth, ...]:
             FormalMonth(
                 cohort=cohort,
                 valid_monthly=True,
+                evaluation_period_mature=True,
                 probabilities=tuple(
                     EvaluationMember(
                         evaluation_id=f"fictional-{index}-{security}",
@@ -189,3 +190,52 @@ def test_formal_conjunction_keeps_original_missing_months_and_empty_recommendati
     assert result.gates["availability"].passed is False
     assert result.gates["coverage"].estimate == 0 and result.gates["coverage"].passed is False
     assert result.disposition != "PASSED"
+
+
+def test_state_windows_retain_a_registered_terminal_boundary_later_than_source_outcomes() -> None:
+    original = months(24)
+    delayed = []
+    for row in original:
+        assert row.cohort.matures_at is not None
+        delayed.append(
+            row.model_copy(
+                update={
+                    "cohort": row.cohort.model_copy(update={"regime": "BULL"}),
+                    "evaluation_end_at": row.cohort.matures_at.replace(
+                        year=row.cohort.matures_at.year + 1
+                    ),
+                }
+            )
+        )
+    result = infer_prospective(
+        tuple(delayed),
+        formal_policy(),
+        high_band_threshold=Decimal(".80"),
+        alpha=Fraction(1, 40),
+        seed=2291,
+    )
+    assert result.regimes["BULL"].stock_windows == result.regimes["BULL"].probability_windows == 2
+
+
+def test_known_individual_labels_cannot_count_a_still_pending_registered_result_window() -> None:
+    pending = tuple(
+        row.model_copy(
+            update={
+                "cohort": row.cohort.model_copy(
+                    update={"regime": "BULL", "batch_pass": None, "drawdown_pass": None}
+                ),
+                "batch_due": False,
+                "evaluation_period_mature": False,
+            }
+        )
+        for row in months(24)
+    )
+    result = infer_prospective(
+        pending,
+        formal_policy(),
+        high_band_threshold=Decimal(".80"),
+        alpha=Fraction(1, 40),
+        seed=2291,
+    )
+    assert result.regimes["BULL"].high_band_records == 48
+    assert result.regimes["BULL"].probability_windows == 0

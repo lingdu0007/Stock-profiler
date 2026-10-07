@@ -474,6 +474,8 @@ class FormalMonth(EvaluationContract):
     batch_due: bool = True
     missing_high_band_records: int = Field(default=0, ge=0, strict=True)
     evaluation_start_at: AwareDatetime | None = None
+    evaluation_end_at: AwareDatetime | None = None
+    evaluation_period_mature: bool = False
     valid_monthly: bool = False
     has_candidates: bool = False
 

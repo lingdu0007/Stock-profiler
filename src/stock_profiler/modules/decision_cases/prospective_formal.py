@@ -128,12 +128,15 @@ def assess_formal_look(
         )
         if plan.matures_at > command.cutoff_at:
             cohort = cohort.model_copy(update={"batch_pass": None, "drawdown_pass": None})
+        terminal_boundary = max((plan.matures_at, *(member.matures_at for member in row.members)))
         months.append(
             FormalMonth(
                 cohort=cohort,
                 probabilities=mature_probability_members(plan, row, command.cutoff_at),
                 batch_due=plan.matures_at <= command.cutoff_at,
                 evaluation_start_at=plan.first_entry_at,
+                evaluation_end_at=terminal_boundary,
+                evaluation_period_mature=terminal_boundary <= command.cutoff_at,
                 valid_monthly=True,
                 has_candidates=observation.status == "CANDIDATES",
                 missing_high_band_records=missing_high_band_records(

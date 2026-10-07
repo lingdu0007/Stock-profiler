@@ -116,8 +116,10 @@ def _probability(
 def _windows(rows: tuple[FormalMonth, ...]) -> int:
     periods = []
     for row in rows:
+        if not row.evaluation_period_mature:
+            continue
         start = row.evaluation_start_at or row.cohort.selection_at
-        maturity = row.cohort.matures_at
+        maturity = row.evaluation_end_at or row.cohort.matures_at
         if start is not None and maturity is not None:
             periods.append(
                 (start, max((maturity, *(member.matures_at for member in row.probabilities))))

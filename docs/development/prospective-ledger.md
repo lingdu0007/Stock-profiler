@@ -69,6 +69,8 @@ terminal boundaries, extended by any later individual result clock; six adjacent
 plan rows cannot substitute for disjoint evaluation periods. High-band counts include all identity-matched,
 individually mature original probability members, including those in incomplete
 batches, independently of recommendation or personal action.
+State windows retain the same terminal boundary and wait until the complete
+registered evaluation period has matured, independently of early individual labels.
 The registered observation milestone does not run a formal check.
 
 Without a population policy, valid months remain pending and then due missing;
