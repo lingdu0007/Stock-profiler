@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import DecisionLedger
+from stock_profiler.modules.decision_cases.prospective_population import resolve_populations
 from stock_profiler.modules.prospective.accounting import (
     data_complete,
     pipeline_complete,
@@ -16,6 +17,7 @@ from stock_profiler.modules.prospective.contracts import (
     CycleWatermark,
     ShadowIncident,
 )
+from stock_profiler.modules.prospective.maturity import summarize_maturity
 
 Transaction = TypeVar("Transaction")
 
@@ -66,6 +68,12 @@ def assess_prospective(
     ):
         raise ValueError("PROSPECTIVE_REGISTRATION_UNAVAILABLE")
     registration = source.case.prospective.registration
+    if (
+        command.observation is not None
+        and command.observation.batch_link is not None
+        and registration.population_policy is None
+    ):
+        raise ValueError("PROSPECTIVE_POPULATION_POLICY_REQUIRED")
     prior = tuple(
         event
         for event in history
@@ -174,6 +182,26 @@ def assess_prospective(
         if data_complete(node, observations.get(node.plan_month), registration.source_scopes)
         and pipeline_complete(node, observations.get(node.plan_month))
     )
+    watermark = CycleWatermark(
+        required=registration.formal_floor,
+        mature_batches=0,
+        nonoverlapping_windows=0,
+        high_band_records=0,
+        pending_batches=sum(node.matures_at > command.cutoff_at for node in valid_nodes),
+        due_missing_batches=sum(node.matures_at <= command.cutoff_at for node in valid_nodes),
+        observation_reached=False,
+        formal_sufficient=False,
+        waiting_for=("MATURE_BATCHES", "NONOVERLAPPING_WINDOWS", "HIGH_BAND_RECORDS"),
+    )
+    if registration.population_policy is not None:
+        populations = resolve_populations(case, registration, observations, ledger, connection)
+        valid_months = {node.plan_month for node in valid_nodes}
+        watermark = summarize_maturity(
+            registration,
+            registration.population_policy.maturity,
+            tuple(row for row in populations if row.plan_month in valid_months),
+            command.cutoff_at,
+        )
     return CycleReport(
         disposition="WAITING_FOR_EVIDENCE",
         registration_event_id=source.decision_event_id,
@@ -183,16 +211,10 @@ def assess_prospective(
         report_version=len(prior) + 1,
         operations=operations,
         source_watermarks=sources,
-        watermark=CycleWatermark(
-            required=registration.formal_floor,
-            mature_batches=0,
-            nonoverlapping_windows=0,
-            high_band_records=0,
-            pending_batches=sum(node.matures_at > command.cutoff_at for node in valid_nodes),
-            due_missing_batches=sum(node.matures_at <= command.cutoff_at for node in valid_nodes),
-            observation_reached=False,
-            formal_sufficient=False,
-            waiting_for=("MATURE_BATCHES", "NONOVERLAPPING_WINDOWS", "HIGH_BAND_RECORDS"),
+        watermark=watermark,
+        formal_look=CycleFormalLook(
+            disposition=(
+                "WAITING_FOR_INFERENCE" if watermark.formal_sufficient else "WAITING_FOR_MATURITY"
+            )
         ),
-        formal_look=CycleFormalLook(disposition="WAITING_FOR_MATURITY"),
     )

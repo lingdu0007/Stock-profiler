@@ -2416,7 +2416,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "WAITING_FOR_MATURITY",
+            "enum": ["WAITING_FOR_MATURITY", "WAITING_FOR_INFERENCE"],
             "title": "Disposition",
             "type": "string"
           }

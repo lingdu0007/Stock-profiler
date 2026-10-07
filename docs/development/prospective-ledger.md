@@ -42,15 +42,32 @@ month resets that streak. A synthetic streak reaching the registered floor still
 qualification. Snapshot clocks and integrity digests are synthetic inputs, not
 proof of production acquisition.
 
-Valid recorded months enter a pending result queue until their registered
-maturity date, then become due missing when no joined outcome evidence exists.
-The current contract has no mature-outcome ingestion or formal inference
-operation. Mature batch, window and high-band counts therefore remain zero;
-formal ordinal and spent alpha remain zero, and the projection explicitly waits
-for evidence. Neither elapsed calendar time nor repeated reviews manufacture
-mature results. Integration with saved candidate/standard outcome populations,
-studentized calendar-block inference and production scheduling remain outside
-this accounting contract. It does not run a production shadow cycle.
+An optional preregistered population policy freezes exact selection, research,
+candidate and standard-outcome implementation bundles, the cohort size, the
+selection strategy and constraints, score-model and calibrator versions,
+standard quantity, observation milestone and high-probability threshold. Its source bundles
+must use the registered host commit and runtime artifact. When that policy is
+present, a valid monthly observation must name its original saved selection and
+candidate events. Their scope, cutoff, research ancestry, calendar, capability,
+commit deadline and saved admission population must agree with the original
+plan. The monthly observation cannot later replace those links.
+
+Reviews join the original admission identities to the latest compatible saved
+standard-outcome report known at the cutoff. A batch becomes mature only after
+its preregistered maturity date and complete, evaluable selection and probability
+populations. Individual outcomes may legitimately mature earlier; they cannot
+advance the whole batch's clock. Missing members or changed frozen probabilities
+leave a due-missing batch. Nonoverlapping six-month windows keep their original
+calendar slots, including gaps. High-band counts include all original probability
+members in complete batches, independently of recommendation or personal action.
+The registered observation milestone does not run a formal check.
+
+Without a population policy, valid months remain pending and then due missing;
+they produce no mature counts. Neither elapsed time nor repeated reviews creates
+outcomes. The contract still has no formal inference operation: check ordinal
+and spent alpha stay zero. Sufficient mature watermarks explicitly wait for
+inference. Studentized calendar-block inference and production scheduling remain
+outside this increment. It does not run a production shadow cycle.
 
 The internal aggregate projection is saved in the immutable decision event.
 Existing SHADOW publication and principal-scoped read denials apply to it. No

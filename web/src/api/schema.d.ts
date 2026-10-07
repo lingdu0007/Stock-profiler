@@ -1180,9 +1180,9 @@ export interface components {
             alpha_spent: string;
             /**
              * Disposition
-             * @constant
+             * @enum {string}
              */
-            disposition: "WAITING_FOR_MATURITY";
+            disposition: "WAITING_FOR_MATURITY" | "WAITING_FOR_INFERENCE";
         };
         /** CycleOperations */
         CycleOperations: {

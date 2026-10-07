@@ -9,7 +9,12 @@ from zoneinfo import ZoneInfo
 from pydantic import AwareDatetime, Field, model_validator
 
 from stock_profiler.foundation.decision_versions import DecisionCaseVersionBundle
-from stock_profiler.modules.evaluation.contracts import EvaluationContract
+from stock_profiler.modules.candidate_selection.selection import SelectionPolicy
+from stock_profiler.modules.evaluation.contracts import (
+    EvaluationContract,
+    EvaluationMember,
+    EvaluationRegistration,
+)
 
 
 class PlanNode(EvaluationContract):
@@ -55,6 +60,46 @@ class EvidenceFloor(EvaluationContract):
     high_band_records: int = Field(ge=1, strict=True)
 
 
+class MaturityPolicy(EvaluationContract):
+    observation_batches: int = Field(ge=1, strict=True)
+    observation_windows: int = Field(ge=1, strict=True)
+    high_band_threshold: Decimal = Field(gt=0, lt=1, allow_inf_nan=False)
+
+
+class BatchPopulation(EvaluationContract):
+    """Host-resolved members joined to their saved original admission decisions."""
+
+    plan_month: str
+    registrations: tuple[EvaluationRegistration, ...]
+    members: tuple[EvaluationMember, ...]
+    standard_event_id: str | None
+
+
+class PopulationPolicy(EvaluationContract):
+    maturity: MaturityPolicy
+    cohort_size: int = Field(ge=1, strict=True)
+    selection_bundle: DecisionCaseVersionBundle
+    research_bundle: DecisionCaseVersionBundle
+    candidate_bundle: DecisionCaseVersionBundle
+    standard_bundle: DecisionCaseVersionBundle
+    selection_policy: SelectionPolicy
+    selection_strategy_version: str = Field(min_length=1)
+    raw_score_model_version: str = Field(min_length=1)
+    calibrator_version: str = Field(min_length=1)
+    standard_quantity: Decimal = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_cohort(self) -> "PopulationPolicy":
+        if self.cohort_size != self.selection_policy.cohort_size:
+            raise ValueError("population size must preserve its frozen selection policy")
+        return self
+
+
+class BatchLink(EvaluationContract):
+    selection_event_id: str = Field(min_length=1)
+    candidate_event_id: str = Field(min_length=1)
+
+
 class CycleRegistration(EvaluationContract):
     version_id: str = Field(min_length=1)
     capability_version: str = Field(min_length=1)
@@ -65,9 +110,30 @@ class CycleRegistration(EvaluationContract):
     operations_policy: OperationsPolicy
     source_months_required: int = Field(ge=1, strict=True)
     formal_floor: EvidenceFloor
+    population_policy: PopulationPolicy | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_timeline(self) -> "CycleRegistration":
+        policy = self.population_policy
+        if policy is not None:
+            for bundle in (
+                policy.selection_bundle,
+                policy.research_bundle,
+                policy.candidate_bundle,
+                policy.standard_bundle,
+            ):
+                if (
+                    bundle.host_source_sha != self.source_version_bundle.host_source_sha
+                    or bundle.runtime_release != self.source_version_bundle.runtime_release
+                ):
+                    raise ValueError("population sources require the locked host and runtime")
+            if (
+                policy.maturity.observation_batches >= self.formal_floor.mature_batches
+                or policy.maturity.observation_windows >= self.formal_floor.nonoverlapping_windows
+            ):
+                raise ValueError("observation milestones must precede formal maturity")
         months = tuple(node.plan_month for node in self.plan_nodes)
         if len(set(self.source_scopes)) != len(self.source_scopes):
             raise ValueError("source scopes must be unique")
@@ -150,6 +216,7 @@ class MonthlyObservation(EvaluationContract):
     first_delivery_at: AwareDatetime | None
     notifications: tuple[NotificationObligation, ...] = Field(max_length=3)
     incidents: tuple[ShadowIncident, ...]
+    batch_link: BatchLink | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_outcome(self) -> "MonthlyObservation":
@@ -267,7 +334,7 @@ class CycleWatermark(EvaluationContract):
 
 
 class CycleFormalLook(EvaluationContract):
-    disposition: Literal["WAITING_FOR_MATURITY"]
+    disposition: Literal["WAITING_FOR_MATURITY", "WAITING_FOR_INFERENCE"]
     actual_ordinal: Literal[0] = 0
     alpha_spent: Decimal = Field(default=Decimal(0), ge=0, le=0)
 
