@@ -24,6 +24,7 @@ from stock_profiler.modules.decision_cases.domain import (
     ExternalResult,
     FrozenDecisionCase,
 )
+from stock_profiler.modules.prospective.contracts import CycleCommand
 from stock_profiler.modules.research.contracts import selection_binding_sha256
 
 
@@ -51,7 +52,7 @@ def store(
 
 
 def sources(
-    settings: Settings, *, selection_abstained: bool = False
+    settings: Settings, *, selection_abstained: bool = False, persist: bool = True
 ) -> tuple[DecisionEventFact, DecisionEventFact, DecisionEventFact]:
     """Save fixture results through the host, without fitting a candidate model."""
     original = _case(settings, risk_scenario="ACCEPT", user_id="stock-profiler-single-user")
@@ -93,6 +94,7 @@ def sources(
                 "evaluation_registrations": (),
             }
         ),
+        persist=persist,
     )
     payload = json.loads(
         json.dumps(original.model_dump(mode="json")).replace(
@@ -124,7 +126,10 @@ def sources(
     payload["input"]["research"] = payload["research"]
     research_case = FrozenDecisionCase.model_validate(payload)
     research = store(
-        settings, research_case, original.expected_external_result, persist=not selection_abstained
+        settings,
+        research_case,
+        original.expected_external_result,
+        persist=persist and not selection_abstained,
     )
     payload = dict[str, Any](failed_candidate_case(settings))
     payload["case_id"] = "fictional-shadow-source-release"
@@ -232,17 +237,18 @@ def sources(
             key_reasons=("SYNTHETIC",),
             candidate_release=CandidateReleaseOutcome.model_validate(release),
         ),
-        persist=not selection_abstained,
+        persist=persist and not selection_abstained,
     )
     return selection, research, candidate
 
 
-def registered_cycle(
+def registration_payload(
     settings: Settings,
     facts: tuple[DecisionEventFact, DecisionEventFact, DecisionEventFact],
     *,
     score_version: str | None = None,
-) -> DecisionEventFact:
+    formal: bool = False,
+) -> dict[str, Any]:
     selection, research, candidate = facts
     assert selection.case.selection is not None
     assert research.case.research is not None
@@ -279,7 +285,67 @@ def registered_cycle(
         "candidate_bundle": candidate.case.version_bundle.model_dump(mode="json"),
         "standard_bundle": bundle,
     }
-    return saved(settings, run_case(settings, payload))
+    if formal:
+        population = payload["prospective"]["registration"]["population_policy"]
+        payload["prospective"]["registration"]["formal_policy"] = {
+            "cohort": {
+                "version_id": "fictional-prospective-baselines-v1",
+                "source_version_bundle": population["selection_bundle"],
+                "strategy_version": population["selection_strategy_version"],
+                "market_calendar_version": "synthetic-market-calendar-v1",
+                "standard_quantity": "100",
+                "selection_policy": population["selection_policy"],
+                "positive_members_required": 8,
+                "target_members_required": 5,
+                "terminal_target": ".20",
+                "maximum_drawdown": ".20",
+                "random_trials": 10000,
+            },
+            "node_months": ["2042-06"],
+            "increment_batches": 6,
+            "increment_windows": 1,
+            "total_alpha": ".05",
+            "block_lengths": [6, 9, 12],
+            "bootstrap_repetitions": 199,
+            "inner_repetitions": 49,
+            "overall_pass_floor": ".8",
+            "overall_drawdown_floor": ".8",
+            "calibration_success_floor": ".8",
+            "overconfidence_ceiling": ".05",
+            "regime_pass_floor": ".5",
+            "regime_drawdown_floor": ".6",
+            "regime_batches": 30,
+            "regime_formed": 24,
+            "regime_windows": 5,
+            "regime_periods": 2,
+            "regime_high_band_records": 100,
+        }
+    payload["prospective"] = CycleCommand.model_validate(payload["prospective"]).model_dump(
+        mode="json"
+    )
+    payload["input"]["prospective"] = payload["prospective"]
+    return payload
+
+
+def registered_cycle(
+    settings: Settings,
+    facts: tuple[DecisionEventFact, DecisionEventFact, DecisionEventFact],
+    *,
+    score_version: str | None = None,
+    formal: bool = False,
+) -> DecisionEventFact:
+    return saved(
+        settings,
+        run_case(
+            settings,
+            registration_payload(
+                settings,
+                facts,
+                score_version=score_version,
+                formal=formal,
+            ),
+        ),
+    )
 
 
 def linked_observation(

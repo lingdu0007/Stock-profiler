@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import DecisionLedger
+from stock_profiler.modules.decision_cases.prospective_formal import assess_formal_look
 from stock_profiler.modules.decision_cases.prospective_population import resolve_populations
 from stock_profiler.modules.prospective.accounting import (
     data_complete,
@@ -12,7 +13,7 @@ from stock_profiler.modules.prospective.accounting import (
     summarize_operations,
 )
 from stock_profiler.modules.prospective.contracts import (
-    CycleFormalLook,
+    BatchPopulation,
     CycleReport,
     CycleWatermark,
     ShadowIncident,
@@ -47,6 +48,13 @@ def assess_prospective(
             for event in history
         ):
             raise ValueError("PROSPECTIVE_LOCK_ALREADY_REGISTERED")
+        if any(
+            event.case.prospective is not None
+            and event.case.prospective.registration is not None
+            and registration.same_scientific_population_as(event.case.prospective.registration)
+            for event in history
+        ):
+            raise ValueError("PROSPECTIVE_SCIENTIFIC_SEQUENCE_ALREADY_REGISTERED")
         return CycleReport(
             disposition="REGISTERED",
             registration_event_id=None,
@@ -193,9 +201,10 @@ def assess_prospective(
         formal_sufficient=False,
         waiting_for=("MATURE_BATCHES", "NONOVERLAPPING_WINDOWS", "HIGH_BAND_RECORDS"),
     )
+    populations: tuple[BatchPopulation, ...] = ()
+    valid_months = {node.plan_month for node in valid_nodes}
     if registration.population_policy is not None:
         populations = resolve_populations(case, registration, observations, ledger, connection)
-        valid_months = {node.plan_month for node in valid_nodes}
         watermark = summarize_maturity(
             registration,
             registration.population_policy.maturity,
@@ -212,9 +221,16 @@ def assess_prospective(
         operations=operations,
         source_watermarks=sources,
         watermark=watermark,
-        formal_look=CycleFormalLook(
-            disposition=(
-                "WAITING_FOR_INFERENCE" if watermark.formal_sufficient else "WAITING_FOR_MATURITY"
-            )
+        formal_look=assess_formal_look(
+            case,
+            registration,
+            source,
+            prior,
+            observations,
+            populations,
+            valid_months,
+            watermark,
+            ledger,
+            connection,
         ),
     )

@@ -6,7 +6,7 @@ from fractions import Fraction
 
 from stock_profiler.modules.evaluation.contracts import EvaluationMember, TerminalEvidence
 from stock_profiler.modules.evaluation.historical_contracts import (
-    HistoricalRegistration,
+    CohortEvaluationPolicy,
     WealthPath,
 )
 from stock_profiler.modules.evaluation.service import exact_costs
@@ -56,7 +56,7 @@ def terminal_wealth(mark: TerminalEvidence, quantity: Decimal) -> Fraction:
 
 
 def cohort_metrics(
-    members: tuple[EvaluationMember, ...], policy: HistoricalRegistration
+    members: tuple[EvaluationMember, ...], policy: CohortEvaluationPolicy
 ) -> dict[str, Decimal | int | bool]:
     returns = tuple(exact_member_return(member, policy.standard_quantity) for member in members)
     positive = sum(value > 0 for value in returns)
@@ -75,7 +75,7 @@ def cohort_nav(
     members: tuple[EvaluationMember, ...],
     paths: tuple[WealthPath, ...],
     sessions: tuple[datetime, ...],
-    policy: HistoricalRegistration,
+    policy: CohortEvaluationPolicy,
     cutoff: datetime,
 ) -> tuple[tuple[Decimal, ...], Fraction]:
     by_security = {path.security_id: path for path in paths}

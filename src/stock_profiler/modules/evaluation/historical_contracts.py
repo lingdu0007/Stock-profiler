@@ -15,10 +15,8 @@ from stock_profiler.modules.evaluation.contracts import (
 )
 
 
-class HistoricalRegistration(EvaluationContract):
+class CohortEvaluationPolicy(EvaluationContract):
     version_id: str = Field(min_length=1)
-    start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     source_version_bundle: DecisionCaseVersionBundle
     strategy_version: str = Field(min_length=1)
     market_calendar_version: str = Field(min_length=1)
@@ -28,6 +26,21 @@ class HistoricalRegistration(EvaluationContract):
     target_members_required: int = Field(gt=0, strict=True)
     terminal_target: Decimal = Field(gt=0, allow_inf_nan=False)
     maximum_drawdown: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
+    random_trials: int = Field(gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_cohort(self) -> "CohortEvaluationPolicy":
+        if (
+            max(self.positive_members_required, self.target_members_required)
+            > self.selection_policy.cohort_size
+        ):
+            raise ValueError("cohort success counts exceed registered size")
+        return self
+
+
+class HistoricalRegistration(CohortEvaluationPolicy):
+    start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     exploratory_months: int = Field(gt=0, strict=True)
     formal_months: int = Field(gt=0, strict=True)
     overall_pass_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
@@ -41,7 +54,6 @@ class HistoricalRegistration(EvaluationContract):
     block_lengths: tuple[int, ...] = Field(min_length=1)
     confidence: Decimal = Field(gt=0, lt=1, allow_inf_nan=False)
     bootstrap_repetitions: int = Field(ge=99, strict=True)
-    random_trials: int = Field(gt=0, strict=True)
     minimum_availability: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
 
     @model_validator(mode="after")

@@ -339,3 +339,19 @@ def test_six_month_floor_uses_exchange_civil_dates_across_timezone_month_boundar
     payload.update(disclosure_at="2042-09-30T16:30:00Z", matures_at="2043-03-30T16:30:00Z")
     with pytest.raises(ValidationError, match="six-calendar-month"):
         PlanNode.model_validate(payload)
+
+
+def test_registered_calendar_preserves_a_non_calendar_month_end_cutoff() -> None:
+    plan = PlanNode(
+        plan_month="2042-08",
+        knowledge_cutoff=datetime(2042, 8, 29, 15, 59, 59, tzinfo=UTC),
+        first_entry_at=datetime(2042, 9, 1, 1, 30, tzinfo=UTC),
+        disclosure_at=datetime(2042, 9, 5, 15, tzinfo=UTC),
+        matures_at=datetime(2043, 3, 5, 15, tzinfo=UTC),
+        calendar_version="synthetic-market-calendar-v1",
+    )
+    assert plan.knowledge_cutoff.day == 29
+    with pytest.raises(ValidationError, match="original monthly trading cutoff"):
+        PlanNode.model_validate(
+            {**plan.model_dump(mode="json"), "knowledge_cutoff": "2042-08-31T15:59:59Z"}
+        )

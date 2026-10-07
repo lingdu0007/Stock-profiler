@@ -2404,8 +2404,8 @@
         "additionalProperties": false,
         "properties": {
           "actual_ordinal": {
-            "const": 0,
             "default": 0,
+            "minimum": 0.0,
             "title": "Actual Ordinal",
             "type": "integer"
           },
@@ -2415,10 +2415,63 @@
             "title": "Alpha Spent",
             "type": "string"
           },
+          "alpha_this": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Alpha This",
+            "type": "string"
+          },
           "disposition": {
-            "enum": ["WAITING_FOR_MATURITY", "WAITING_FOR_INFERENCE"],
+            "enum": [
+              "WAITING_FOR_MATURITY",
+              "WAITING_FOR_INFERENCE",
+              "SKIPPED",
+              "READY",
+              "PASSED",
+              "FAILED",
+              "INDETERMINATE"
+            ],
             "title": "Disposition",
             "type": "string"
+          },
+          "inference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormalInference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mature_batches": {
+            "default": 0,
+            "title": "Mature Batches",
+            "type": "integer"
+          },
+          "node_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Month"
+          },
+          "nonoverlapping_windows": {
+            "default": 0,
+            "title": "Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "waiting_for": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Waiting For",
+            "type": "array"
           }
         },
         "required": ["disposition"],
@@ -4676,6 +4729,165 @@
         "title": "FormalCheckIdentity",
         "type": "object"
       },
+      "FormalGate": {
+        "additionalProperties": false,
+        "properties": {
+          "block_bounds": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Block Bounds",
+            "type": "object"
+          },
+          "bound": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound"
+          },
+          "direction": {
+            "enum": ["LOWER", "UPPER"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "strict": {
+            "title": "Strict",
+            "type": "boolean"
+          },
+          "threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "undefined_resamples": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Undefined Resamples",
+            "type": "object"
+          }
+        },
+        "required": [
+          "estimate",
+          "bound",
+          "direction",
+          "threshold",
+          "strict",
+          "passed",
+          "block_bounds",
+          "undefined_resamples"
+        ],
+        "title": "FormalGate",
+        "type": "object"
+      },
+      "FormalInference": {
+        "additionalProperties": false,
+        "properties": {
+          "calibration_records": {
+            "title": "Calibration Records",
+            "type": "integer"
+          },
+          "disposition": {
+            "enum": ["PASSED", "FAILED", "INDETERMINATE"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "due_missing_high_band_records": {
+            "default": 0,
+            "title": "Due Missing High Band Records",
+            "type": "integer"
+          },
+          "gates": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FormalGate"
+            },
+            "title": "Gates",
+            "type": "object"
+          },
+          "high_band_records": {
+            "title": "High Band Records",
+            "type": "integer"
+          },
+          "qualification_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Qualification Scope",
+            "type": "string"
+          },
+          "qualified": {
+            "const": false,
+            "default": false,
+            "title": "Qualified",
+            "type": "boolean"
+          },
+          "regimes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FormalRegimeWatermark"
+            },
+            "title": "Regimes",
+            "type": "object"
+          },
+          "sampling_digests": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Sampling Digests",
+            "type": "object"
+          },
+          "unreliable_tail": {
+            "title": "Unreliable Tail",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disposition",
+          "gates",
+          "regimes",
+          "sampling_digests",
+          "unreliable_tail",
+          "calibration_records",
+          "high_band_records"
+        ],
+        "title": "FormalInference",
+        "type": "object"
+      },
       "FormalNodeDisposition": {
         "additionalProperties": false,
         "properties": {
@@ -4705,6 +4917,65 @@
         },
         "required": ["scheduled_at", "status", "check_index", "evidence", "recorded_at"],
         "title": "FormalNodeDisposition",
+        "type": "object"
+      },
+      "FormalRegimeWatermark": {
+        "additionalProperties": false,
+        "properties": {
+          "formed_batches": {
+            "title": "Formed Batches",
+            "type": "integer"
+          },
+          "high_band_records": {
+            "title": "High Band Records",
+            "type": "integer"
+          },
+          "mature_batches": {
+            "title": "Mature Batches",
+            "type": "integer"
+          },
+          "probability_months": {
+            "title": "Probability Months",
+            "type": "integer"
+          },
+          "probability_periods": {
+            "title": "Probability Periods",
+            "type": "integer"
+          },
+          "probability_sufficient": {
+            "title": "Probability Sufficient",
+            "type": "boolean"
+          },
+          "probability_windows": {
+            "title": "Probability Windows",
+            "type": "integer"
+          },
+          "stock_periods": {
+            "title": "Stock Periods",
+            "type": "integer"
+          },
+          "stock_sufficient": {
+            "title": "Stock Sufficient",
+            "type": "boolean"
+          },
+          "stock_windows": {
+            "title": "Stock Windows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mature_batches",
+          "formed_batches",
+          "stock_windows",
+          "stock_periods",
+          "probability_months",
+          "high_band_records",
+          "probability_windows",
+          "probability_periods",
+          "stock_sufficient",
+          "probability_sufficient"
+        ],
+        "title": "FormalRegimeWatermark",
         "type": "object"
       },
       "FormalReport": {
@@ -5646,8 +5917,6 @@
         },
         "required": [
           "version_id",
-          "start_month",
-          "end_month",
           "source_version_bundle",
           "strategy_version",
           "market_calendar_version",
@@ -5657,6 +5926,9 @@
           "target_members_required",
           "terminal_target",
           "maximum_drawdown",
+          "random_trials",
+          "start_month",
+          "end_month",
           "exploratory_months",
           "formal_months",
           "overall_pass_floor",
@@ -5670,7 +5942,6 @@
           "block_lengths",
           "confidence",
           "bootstrap_repetitions",
-          "random_trials",
           "minimum_availability"
         ],
         "title": "HistoricalRegistration",

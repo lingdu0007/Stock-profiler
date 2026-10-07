@@ -1170,19 +1170,41 @@ export interface components {
             /**
              * Actual Ordinal
              * @default 0
-             * @constant
              */
-            actual_ordinal: 0;
+            actual_ordinal: number;
             /**
              * Alpha Spent
              * @default 0
              */
             alpha_spent: string;
             /**
+             * Alpha This
+             * @default 0
+             */
+            alpha_this: string;
+            /**
              * Disposition
              * @enum {string}
              */
-            disposition: "WAITING_FOR_MATURITY" | "WAITING_FOR_INFERENCE";
+            disposition: "WAITING_FOR_MATURITY" | "WAITING_FOR_INFERENCE" | "SKIPPED" | "READY" | "PASSED" | "FAILED" | "INDETERMINATE";
+            inference?: components["schemas"]["FormalInference"] | null;
+            /**
+             * Mature Batches
+             * @default 0
+             */
+            mature_batches: number;
+            /** Node Month */
+            node_month?: string | null;
+            /**
+             * Nonoverlapping Windows
+             * @default 0
+             */
+            nonoverlapping_windows: number;
+            /**
+             * Waiting For
+             * @default []
+             */
+            waiting_for: string[];
         };
         /** CycleOperations */
         CycleOperations: {
@@ -2047,6 +2069,75 @@ export interface components {
             /** Sequence Id */
             sequence_id: string;
         };
+        /** FormalGate */
+        FormalGate: {
+            /** Block Bounds */
+            block_bounds: {
+                [key: string]: string | null;
+            };
+            /** Bound */
+            bound: string | null;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "LOWER" | "UPPER";
+            /** Estimate */
+            estimate: string | null;
+            /** Passed */
+            passed: boolean | null;
+            /** Strict */
+            strict: boolean;
+            /** Threshold */
+            threshold: string;
+            /** Undefined Resamples */
+            undefined_resamples: {
+                [key: string]: number;
+            };
+        };
+        /** FormalInference */
+        FormalInference: {
+            /** Calibration Records */
+            calibration_records: number;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "PASSED" | "FAILED" | "INDETERMINATE";
+            /**
+             * Due Missing High Band Records
+             * @default 0
+             */
+            due_missing_high_band_records: number;
+            /** Gates */
+            gates: {
+                [key: string]: components["schemas"]["FormalGate"];
+            };
+            /** High Band Records */
+            high_band_records: number;
+            /**
+             * Qualification Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            qualification_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /**
+             * Qualified
+             * @default false
+             * @constant
+             */
+            qualified: false;
+            /** Regimes */
+            regimes: {
+                [key: string]: components["schemas"]["FormalRegimeWatermark"];
+            };
+            /** Sampling Digests */
+            sampling_digests: {
+                [key: string]: string;
+            };
+            /** Unreliable Tail */
+            unreliable_tail: boolean;
+        };
         /** FormalNodeDisposition */
         FormalNodeDisposition: {
             /** Check Index */
@@ -2067,6 +2158,29 @@ export interface components {
              * @enum {string}
              */
             status: "EXECUTED_PASS" | "EXECUTED_FAIL" | "INSUFFICIENT" | "NOT_EXECUTED";
+        };
+        /** FormalRegimeWatermark */
+        FormalRegimeWatermark: {
+            /** Formed Batches */
+            formed_batches: number;
+            /** High Band Records */
+            high_band_records: number;
+            /** Mature Batches */
+            mature_batches: number;
+            /** Probability Months */
+            probability_months: number;
+            /** Probability Periods */
+            probability_periods: number;
+            /** Probability Sufficient */
+            probability_sufficient: boolean;
+            /** Probability Windows */
+            probability_windows: number;
+            /** Stock Periods */
+            stock_periods: number;
+            /** Stock Sufficient */
+            stock_sufficient: boolean;
+            /** Stock Windows */
+            stock_windows: number;
         };
         /**
          * FormalReport

@@ -1,6 +1,7 @@
 """Project complete original populations without advancing unavailable labels."""
 
 from datetime import datetime
+from decimal import Decimal
 
 from stock_profiler.modules.evaluation.contracts import EvaluationMember, EvaluationRegistration
 from stock_profiler.modules.prospective.contracts import (
@@ -37,6 +38,42 @@ def _known_members(plan: PlanNode, row: BatchPopulation) -> dict[str, Evaluation
         for identity, member in outcomes.items()
         if _matches(plan, admissions[identity], member)
     }
+
+
+def mature_probability_members(
+    plan: PlanNode,
+    row: BatchPopulation,
+    cutoff: datetime,
+) -> tuple[EvaluationMember, ...]:
+    return tuple(
+        member
+        for member in _known_members(plan, row).values()
+        if member.population == "PROBABILITY"
+        and member.frozen_probability is not None
+        and member.matures_at <= cutoff
+        and member.state in {"ACHIEVED", "NOT_ACHIEVED"}
+    )
+
+
+def missing_high_band_records(
+    plan: PlanNode,
+    row: BatchPopulation,
+    cutoff: datetime,
+    threshold: Decimal,
+) -> int:
+    known = _known_members(plan, row)
+    total = 0
+    for admission in row.registrations:
+        if (
+            admission.population != "PROBABILITY"
+            or admission.frozen_probability is None
+            or admission.frozen_probability < threshold
+        ):
+            continue
+        member = known.get(admission.evaluation_id)
+        due = member.matures_at <= cutoff if member is not None else plan.matures_at <= cutoff
+        total += due and (member is None or member.state not in {"ACHIEVED", "NOT_ACHIEVED"})
+    return total
 
 
 def _complete(plan: PlanNode, row: BatchPopulation, cutoff: datetime) -> bool:
@@ -79,13 +116,10 @@ def summarize_maturity(
         for offset in range(0, len(registration.plan_nodes) - 5, 6)
     )
     high_band = sum(
-        member.population == "PROBABILITY"
-        and member.frozen_probability is not None
+        member.frozen_probability is not None
         and member.frozen_probability >= policy.high_band_threshold
-        and member.matures_at <= cutoff
-        and member.state in {"ACHIEVED", "NOT_ACHIEVED"}
         for month, row in rows.items()
-        for member in _known_members(planned[month], row).values()
+        for member in mature_probability_members(planned[month], row, cutoff)
     )
     pending = {
         month
