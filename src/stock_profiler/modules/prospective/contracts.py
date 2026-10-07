@@ -73,6 +73,15 @@ class BatchPopulation(EvaluationContract):
     registrations: tuple[EvaluationRegistration, ...]
     members: tuple[EvaluationMember, ...]
     standard_event_id: str | None
+    selection_abstained: bool = False
+
+    @model_validator(mode="after")
+    def validate_abstention(self) -> "BatchPopulation":
+        if self.selection_abstained and (
+            self.registrations or self.members or self.standard_event_id is not None
+        ):
+            raise ValueError("selection abstention cannot invent an evaluation population")
+        return self
 
 
 class PopulationPolicy(EvaluationContract):
@@ -97,7 +106,9 @@ class PopulationPolicy(EvaluationContract):
 
 class BatchLink(EvaluationContract):
     selection_event_id: str = Field(min_length=1)
-    candidate_event_id: str = Field(min_length=1)
+    candidate_event_id: str | None = Field(
+        default=None, min_length=1, exclude_if=lambda value: value is None
+    )
 
 
 class CycleRegistration(EvaluationContract):

@@ -28,9 +28,17 @@ from stock_profiler.modules.research.contracts import selection_binding_sha256
 
 
 def store(
-    settings: Settings, case: FrozenDecisionCase, result: ExternalResult
+    settings: Settings, case: FrozenDecisionCase, result: ExternalResult, *, persist: bool = True
 ) -> DecisionEventFact:
     ledger = DecisionLedger.from_settings(settings, clock=GovernanceClock(case.report_generated_at))
+    if not persist:
+        # Uncommitted blueprints supply future policy versions, never population evidence.
+        return ledger.build_event_fact(
+            case=case,
+            framework_run_id=case.framework_run_id,
+            result=result,
+            stage_results=(),
+        )
     ledger.persist_business_mapping_before_framework(case)
     with ledger.serialize_case_execution() as connection:
         return ledger.commit_event(
@@ -42,7 +50,9 @@ def store(
         )
 
 
-def sources(settings: Settings) -> tuple[DecisionEventFact, DecisionEventFact, DecisionEventFact]:
+def sources(
+    settings: Settings, *, selection_abstained: bool = False
+) -> tuple[DecisionEventFact, DecisionEventFact, DecisionEventFact]:
     """Save fixture results through the host, without fitting a candidate model."""
     original = _case(settings, risk_scenario="ACCEPT", user_id="stock-profiler-single-user")
     assert original.research is not None
@@ -59,12 +69,23 @@ def sources(settings: Settings) -> tuple[DecisionEventFact, DecisionEventFact, D
     payload["business_identity"] += "-shadow"
     payload["access_scope"]["visibility"] = "SHADOW"
     selection_case = FrozenDecisionCase.model_validate(payload)
+    selected_result = selection.result.selection
+    if selection_abstained:
+        selected_result = selected_result.model_copy(
+            update={
+                "disposition": "ABSTAINED",
+                "members": (),
+                "population": selected_result.population.model_copy(
+                    update={"selection_pass": False}
+                ),
+            }
+        )
     selection = store(
         settings,
         selection_case,
         selection.result.model_copy(
             update={
-                "selection": selection.result.selection.model_copy(
+                "selection": selected_result.model_copy(
                     update={
                         "cutoff_at": datetime.fromisoformat(selection_case.knowledge_cutoff),
                     }
@@ -102,7 +123,9 @@ def sources(settings: Settings) -> tuple[DecisionEventFact, DecisionEventFact, D
     )
     payload["input"]["research"] = payload["research"]
     research_case = FrozenDecisionCase.model_validate(payload)
-    research = store(settings, research_case, original.expected_external_result)
+    research = store(
+        settings, research_case, original.expected_external_result, persist=not selection_abstained
+    )
     payload = dict[str, Any](failed_candidate_case(settings))
     payload["case_id"] = "fictional-shadow-source-release"
     payload["business_identity"] = "fictional-shadow-source-release"
@@ -209,6 +232,7 @@ def sources(settings: Settings) -> tuple[DecisionEventFact, DecisionEventFact, D
             key_reasons=("SYNTHETIC",),
             candidate_release=CandidateReleaseOutcome.model_validate(release),
         ),
+        persist=not selection_abstained,
     )
     return selection, research, candidate
 
@@ -482,3 +506,41 @@ def test_complete_saved_standard_population_advances_maturity_without_alpha(
     assert observed.result.prospective is not None
     assert observed.result.prospective.watermark is not None
     assert observed.result.prospective.watermark.mature_batches == 0
+
+
+def test_original_selection_abstention_requires_no_downstream_population(
+    migrated_settings: Settings,
+) -> None:
+    facts = sources(migrated_settings, selection_abstained=True)
+    registered = registered_cycle(migrated_settings, facts)
+    payload = linked_observation(
+        migrated_settings,
+        registered.decision_event_id,
+        facts[0].decision_event_id,
+        facts[2].decision_event_id,
+    )
+    payload["prospective"]["observation"]["batch_link"].pop("candidate_event_id")
+    payload["prospective"]["observation"]["batch_saved_at"] = facts[0].committed_at
+    observed = saved(migrated_settings, run_case(migrated_settings, payload))
+    reviewed = saved(
+        migrated_settings,
+        run_case(
+            migrated_settings,
+            review_case(
+                migrated_settings,
+                registered.decision_event_id,
+                observed.decision_event_id,
+            ),
+        ),
+    )
+    assert reviewed.result.prospective is not None
+    assert reviewed.result.prospective.watermark is not None
+    assert reviewed.result.prospective.watermark.mature_batches == 1
+    assert reviewed.result.prospective.watermark.high_band_records == 0
+    assert reviewed.result.prospective.watermark.due_missing_batches == 0
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    assert facts[0].case.access_scope is not None
+    with ledger.serialize_case_execution() as connection:
+        assert ledger.candidate_release_history(connection, facts[0].case.access_scope) == ()
+        assert ledger.get_decision_event(facts[1].decision_event_id, connection) is None
+        assert ledger.get_decision_event(facts[2].decision_event_id, connection) is None

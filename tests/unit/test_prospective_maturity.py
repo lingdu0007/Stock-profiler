@@ -1,6 +1,6 @@
 """Saved admission identities and complete original windows govern maturity."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -106,8 +106,73 @@ def test_early_individual_results_wait_for_the_original_batch_clock(settings: Se
     )
     before = summarize_maturity(policy, floor, (early,), node(0).matures_at.replace(day=3))
     assert before.mature_batches == 0 and before.pending_batches == 1
+    assert before.high_band_records == 1
     after = summarize_maturity(policy, floor, (early,), node(0).matures_at)
     assert after.mature_batches == 1 and after.pending_batches == 0
+
+
+def test_later_individual_labels_complete_after_both_maturity_clocks(settings: Settings) -> None:
+    policy = registration(settings, 1)
+    floor = MaturityPolicy(
+        observation_batches=12, observation_windows=2, high_band_threshold=Decimal(".80")
+    )
+    original = population(0)
+    later = original.model_copy(
+        update={
+            "members": tuple(
+                item.model_copy(update={"matures_at": node(0).matures_at + timedelta(hours=8)})
+                for item in original.members
+            )
+        }
+    )
+    before = summarize_maturity(policy, floor, (later,), node(0).matures_at + timedelta(hours=1))
+    assert before.mature_batches == before.high_band_records == 0
+    assert before.pending_batches == 1 and before.due_missing_batches == 0
+    after = summarize_maturity(policy, floor, (later,), datetime(2045, 1, 1, tzinfo=UTC))
+    assert after.mature_batches == after.high_band_records == 1
+    assert after.due_missing_batches == 0
+
+
+def test_high_band_keeps_known_individual_outcomes_in_an_incomplete_batch(
+    settings: Settings,
+) -> None:
+    policy = registration(settings, 1)
+    floor = MaturityPolicy(
+        observation_batches=12, observation_windows=2, high_band_threshold=Decimal(".80")
+    )
+    original = population(0)
+    partial = original.model_copy(
+        update={
+            "registrations": (
+                *original.registrations,
+                *(
+                    item.model_copy(
+                        update={
+                            "evaluation_id": item.evaluation_id + "-other",
+                            "security_id": "fictional-other-security",
+                        }
+                    )
+                    for item in original.registrations
+                ),
+            ),
+            "members": (
+                *original.members,
+                *(
+                    item.model_copy(
+                        update={
+                            "evaluation_id": item.evaluation_id + "-other",
+                            "security_id": "fictional-other-security",
+                            "state": "UNAVAILABLE",
+                        }
+                    )
+                    for item in original.members
+                ),
+            ),
+        }
+    )
+    report = summarize_maturity(policy, floor, (partial,), datetime(2045, 1, 1, tzinfo=UTC))
+    assert report.mature_batches == 0 and report.due_missing_batches == 1
+    assert report.high_band_records == 1
 
 
 def test_predicted_probability_and_population_identity_cannot_be_replaced(
@@ -129,3 +194,22 @@ def test_predicted_probability_and_population_identity_cannot_be_replaced(
     report = summarize_maturity(policy, floor, (altered,), datetime(2045, 1, 1, tzinfo=UTC))
     assert report.mature_batches == report.high_band_records == 0
     assert report.due_missing_batches == 1
+
+
+def test_selection_abstention_retains_a_mature_failed_batch_without_predictions(
+    settings: Settings,
+) -> None:
+    policy = registration(settings, 1)
+    floor = MaturityPolicy(
+        observation_batches=12, observation_windows=2, high_band_threshold=Decimal(".80")
+    )
+    abstention = BatchPopulation(
+        plan_month=node(0).plan_month,
+        registrations=(),
+        members=(),
+        standard_event_id=None,
+        selection_abstained=True,
+    )
+    report = summarize_maturity(policy, floor, (abstention,), datetime(2045, 1, 1, tzinfo=UTC))
+    assert report.mature_batches == 1 and report.high_band_records == 0
+    assert report.due_missing_batches == report.pending_batches == 0

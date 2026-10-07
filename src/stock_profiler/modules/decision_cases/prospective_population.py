@@ -62,6 +62,44 @@ def resolve_populations(
             connection,
             row.completed_at,
         )
+        selected = selection.result.selection
+        if (
+            selected is None
+            or selection.case.selection is None
+            or selection.case.selection.cutoff_at != plan.knowledge_cutoff
+            or selection.case.selection.policy != selected.policy
+            or not selected.population.valid_monthly
+            or selected.cutoff_at != plan.knowledge_cutoff
+        ):
+            raise ValueError("PROSPECTIVE_BATCH_CONTRACT_MISMATCH")
+        if (
+            selected.policy != policy.selection_policy
+            or selection.case.selection.strategy_version != policy.selection_strategy_version
+        ):
+            raise ValueError("PROSPECTIVE_BATCH_MODEL_LOCK_MISMATCH")
+        if selected.disposition == "ABSTAINED":
+            if (
+                row.status != "ABSTAINED"
+                or row.batch_link.candidate_event_id is not None
+                or selected.members
+                or selection.result.evaluation_registrations
+                or not selected.population.selection_pass_denominator
+                or selected.population.selection_pass is not False
+                or row.batch_saved_at != datetime.fromisoformat(selection.committed_at)
+            ):
+                raise ValueError("PROSPECTIVE_BATCH_CONTRACT_MISMATCH")
+            rows.append(
+                BatchPopulation(
+                    plan_month=plan.plan_month,
+                    registrations=(),
+                    members=(),
+                    standard_event_id=None,
+                    selection_abstained=True,
+                )
+            )
+            continue
+        if row.batch_link.candidate_event_id is None:
+            raise ValueError("PROSPECTIVE_ORIGINAL_BATCH_LINK_REQUIRED")
         candidate = _source(
             row.batch_link.candidate_event_id,
             policy.candidate_bundle,
@@ -70,17 +108,10 @@ def resolve_populations(
             connection,
             row.completed_at,
         )
-        selected = selection.result.selection
         release = candidate.result.candidate_release
         command = candidate.case.candidate_release
         if (
-            selected is None
-            or selected.disposition != "FROZEN"
-            or selection.case.selection is None
-            or selection.case.selection.cutoff_at != plan.knowledge_cutoff
-            or selection.case.selection.policy != selected.policy
-            or not selected.population.valid_monthly
-            or selected.cutoff_at != plan.knowledge_cutoff
+            selected.disposition != "FROZEN"
             or len(selected.members) != policy.cohort_size
             or release is None
             or command is None
@@ -116,10 +147,7 @@ def resolve_populations(
         ):
             raise ValueError("PROSPECTIVE_BATCH_LINEAGE_MISMATCH")
         if (
-            selected.policy != policy.selection_policy
-            or selection.case.selection.strategy_version != policy.selection_strategy_version
-            or research.case.research.raw_score_model.model_version
-            != policy.raw_score_model_version
+            research.case.research.raw_score_model.model_version != policy.raw_score_model_version
             or command.calibrator_version != policy.calibrator_version
             or release.calibration is None
             or release.calibration.calibrator_version != policy.calibrator_version

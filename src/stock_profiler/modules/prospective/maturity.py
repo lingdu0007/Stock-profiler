@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from stock_profiler.modules.evaluation.contracts import EvaluationMember, EvaluationRegistration
 from stock_profiler.modules.prospective.contracts import (
     BatchPopulation,
     CycleRegistration,
@@ -11,9 +12,38 @@ from stock_profiler.modules.prospective.contracts import (
 )
 
 
-def _complete(plan: PlanNode, row: BatchPopulation, cutoff: datetime) -> bool:
+def _matches(plan: PlanNode, admission: EvaluationRegistration, member: EvaluationMember) -> bool:
+    return (
+        member.population == admission.population
+        and member.source_event_id == admission.source_event_id
+        and member.security_id == admission.security_id
+        and member.frozen_probability == admission.frozen_probability
+        and admission.registered_at == plan.knowledge_cutoff
+    )
+
+
+def _known_members(plan: PlanNode, row: BatchPopulation) -> dict[str, EvaluationMember]:
     admissions = {item.evaluation_id: item for item in row.registrations}
     outcomes = {item.evaluation_id: item for item in row.members}
+    if (
+        row.standard_event_id is None
+        or len(admissions) != len(row.registrations)
+        or len(outcomes) != len(row.members)
+        or set(outcomes) - set(admissions)
+    ):
+        return {}
+    return {
+        identity: member
+        for identity, member in outcomes.items()
+        if _matches(plan, admissions[identity], member)
+    }
+
+
+def _complete(plan: PlanNode, row: BatchPopulation, cutoff: datetime) -> bool:
+    if row.selection_abstained:
+        return plan.matures_at <= cutoff
+    admissions = {item.evaluation_id: item for item in row.registrations}
+    outcomes = _known_members(plan, row)
     if (
         not admissions
         or plan.matures_at > cutoff
@@ -24,19 +54,10 @@ def _complete(plan: PlanNode, row: BatchPopulation, cutoff: datetime) -> bool:
         or not {"SELECTION", "PROBABILITY"}.issubset(item.population for item in row.registrations)
     ):
         return False
-    for identity, admission in admissions.items():
-        member = outcomes[identity]
-        if (
-            member.population != admission.population
-            or member.source_event_id != admission.source_event_id
-            or member.security_id != admission.security_id
-            or member.frozen_probability != admission.frozen_probability
-            or admission.registered_at != plan.knowledge_cutoff
-            or member.matures_at > plan.matures_at
-            or member.state not in {"ACHIEVED", "NOT_ACHIEVED"}
-        ):
-            return False
-    return True
+    return all(
+        member.matures_at <= cutoff and member.state in {"ACHIEVED", "NOT_ACHIEVED"}
+        for member in outcomes.values()
+    )
 
 
 def summarize_maturity(
@@ -58,12 +79,25 @@ def summarize_maturity(
         for offset in range(0, len(registration.plan_nodes) - 5, 6)
     )
     high_band = sum(
-        item.population == "PROBABILITY"
-        and item.frozen_probability is not None
-        and item.frozen_probability >= policy.high_band_threshold
-        for month in completed
-        for item in rows[month].registrations
+        member.population == "PROBABILITY"
+        and member.frozen_probability is not None
+        and member.frozen_probability >= policy.high_band_threshold
+        and member.matures_at <= cutoff
+        and member.state in {"ACHIEVED", "NOT_ACHIEVED"}
+        for month, row in rows.items()
+        for member in _known_members(planned[month], row).values()
     )
+    pending = {
+        month
+        for month, row in rows.items()
+        if max(
+            (
+                planned[month].matures_at,
+                *(member.matures_at for member in _known_members(planned[month], row).values()),
+            )
+        )
+        > cutoff
+    }
     requirements = (
         ("MATURE_BATCHES", len(completed), registration.formal_floor.mature_batches),
         ("NONOVERLAPPING_WINDOWS", windows, registration.formal_floor.nonoverlapping_windows),
@@ -75,10 +109,8 @@ def summarize_maturity(
         mature_batches=len(completed),
         nonoverlapping_windows=windows,
         high_band_records=high_band,
-        pending_batches=sum(planned[month].matures_at > cutoff for month in rows),
-        due_missing_batches=sum(
-            planned[month].matures_at <= cutoff and month not in completed for month in rows
-        ),
+        pending_batches=len(pending),
+        due_missing_batches=len(set(rows) - pending - completed),
         observation_reached=(
             len(completed) >= policy.observation_batches and windows >= policy.observation_windows
         ),
