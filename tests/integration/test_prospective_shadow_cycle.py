@@ -35,6 +35,17 @@ def cycle_case(settings: Settings, identity: str = "register") -> dict[str, Any]
             "source_version_bundle": dict(payload["version_bundle"]),
             "calendar_version": "fictional-exchange-calendar-v1",
             "source_scopes": ["fictional-market/mainboard/shadow"],
+            "operations_policy": {
+                "window_months": 24,
+                "completion_floor": "0.95",
+                "coverage_floor": "0.50",
+            },
+            "source_months_required": 3,
+            "formal_floor": {
+                "mature_batches": 24,
+                "nonoverlapping_windows": 4,
+                "high_band_records": 100,
+            },
             "plan_nodes": [
                 {
                     "plan_month": "2042-06",
@@ -212,7 +223,7 @@ def test_failed_original_month_cannot_be_replaced_by_a_successful_retry(
     assert operations is not None
     assert operations.planned_months == 1
     assert operations.pipeline.numerator == 0
-    assert operations.reports.numerator == 0
+    assert operations.reports.numerator == 1
     assert operations.failures[0].plan_month == "2042-06"
     assert operations.failures[0].reason == "SYSTEM"
 
@@ -354,3 +365,96 @@ def test_other_shadow_scope_cannot_reference_an_existing_registration(
     payload["access_scope"]["user_id"] = "fictional-other-user"
     with pytest.raises(ValueError, match="PROSPECTIVE_REGISTRATION_UNAVAILABLE"):
         run_case(migrated_settings, payload)
+
+
+def test_saved_logical_cutoff_cannot_rewind_when_host_clock_differs(
+    migrated_settings: Settings,
+) -> None:
+    registered = saved(
+        migrated_settings, run_case(migrated_settings, cycle_case(migrated_settings))
+    )
+    payload = review_case(migrated_settings, registered.decision_event_id)
+    first = saved(migrated_settings, run_frozen_decision_case(migrated_settings, payload))
+    assert first.result.prospective is not None
+    assert first.committed_at < payload["knowledge_cutoff"]
+    with pytest.raises(ValueError, match="PROSPECTIVE_CUTOFF_REWOUND"):
+        run_case(
+            migrated_settings,
+            review_case(
+                migrated_settings,
+                registered.decision_event_id,
+                first.decision_event_id,
+                cutoff="2043-01-01T00:00:00Z",
+                identity="logical-rewind",
+            ),
+        )
+
+
+def test_incident_facts_append_to_original_month_without_replacing_its_outcome(
+    migrated_settings: Settings,
+) -> None:
+    registered = saved(
+        migrated_settings, run_case(migrated_settings, cycle_case(migrated_settings))
+    )
+    observed = saved(
+        migrated_settings,
+        run_case(
+            migrated_settings, observation_case(migrated_settings, registered.decision_event_id)
+        ),
+    )
+    payload = review_case(
+        migrated_settings,
+        registered.decision_event_id,
+        observed.decision_event_id,
+        cutoff="2042-08-01T00:00:00Z",
+        identity="late-incident",
+    )
+    payload["prospective"].update(
+        operation="INCIDENT",
+        incident_fact={
+            "operation": "RECORD",
+            "plan_month": "2042-06",
+            "incident_id": "fictional-incident-1",
+            "kind": "PRIVACY",
+            "occurred_at": "2042-07-06T07:00:00Z",
+            "closed_at": None,
+        },
+    )
+    incident = saved(migrated_settings, run_case(migrated_settings, payload))
+    assert (
+        incident.result.prospective is not None
+        and incident.result.prospective.operations is not None
+    )
+    assert incident.result.prospective.operations.incident_count == 1
+    assert incident.result.prospective.operations.unclosed_incidents == 1
+    assert incident.result.prospective.operations.pipeline.numerator == 1
+    payload = review_case(
+        migrated_settings,
+        registered.decision_event_id,
+        incident.decision_event_id,
+        cutoff="2042-09-01T00:00:00Z",
+        identity="close-incident",
+    )
+    payload["prospective"].update(
+        operation="INCIDENT",
+        incident_fact={
+            "operation": "CLOSE",
+            "plan_month": "2042-06",
+            "incident_id": "fictional-incident-1",
+            "kind": "PRIVACY",
+            "occurred_at": "2042-07-06T07:00:00Z",
+            "closed_at": "2042-08-31T07:00:00Z",
+        },
+    )
+    closed = saved(migrated_settings, run_case(migrated_settings, payload))
+    assert (
+        closed.result.prospective is not None and closed.result.prospective.operations is not None
+    )
+    assert closed.result.prospective.operations.unclosed_incidents == 0
+    assert not closed.result.prospective.operations.safety_clear
+    assert closed.result.prospective.previous_event_id == incident.decision_event_id
+    assert (
+        observed.result.prospective is not None
+        and observed.result.prospective.operations is not None
+    )
+    assert observed.result.prospective.operations.incident_count == 0

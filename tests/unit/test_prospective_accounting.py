@@ -12,8 +12,10 @@ from stock_profiler.modules.decision_cases.domain import load_frozen_decision_ca
 from stock_profiler.modules.prospective.accounting import summarize_operations
 from stock_profiler.modules.prospective.contracts import (
     CycleRegistration,
+    EvidenceFloor,
     MonthlyObservation,
     NotificationObligation,
+    OperationsPolicy,
     PlanNode,
     ShadowIncident,
     SourceSnapshot,
@@ -42,6 +44,13 @@ def registration(settings: Settings, months: int = 24) -> CycleRegistration:
         calendar_version="fictional-calendar-v1",
         source_scopes=("fictional-source/fields/board/use",),
         plan_nodes=tuple(node(index) for index in range(months)),
+        operations_policy=OperationsPolicy(
+            window_months=24, completion_floor=Decimal(".95"), coverage_floor=Decimal(".50")
+        ),
+        source_months_required=3,
+        formal_floor=EvidenceFloor(
+            mature_batches=24, nonoverlapping_windows=4, high_band_records=100
+        ),
     )
 
 
@@ -93,7 +102,7 @@ def test_complete_24_month_window_passes_mechanical_gates_without_granting_quali
     assert report.pipeline.rate == 1 and report.coverage.rate == 1
     assert report.notifications.denominator == 48 and report.notifications.numerator == 48
     assert report.qualified is False
-    assert sources[0].three_month_watermark and sources[0].qualification_granted is False
+    assert sources[0].watermark_reached and sources[0].qualification_granted is False
 
 
 def test_rolling_window_keeps_missing_months_and_never_selects_last_successes(
@@ -152,9 +161,9 @@ def test_source_streak_resets_for_a_missing_or_critical_month(settings: Settings
     policy = registration(settings, 4)
     rows = {plan.plan_month: observation(plan) for plan in policy.plan_nodes[:3]}
     _, sources = summarize_operations(policy, rows, policy.plan_nodes[2].disclosure_at)
-    assert sources[0].consecutive_months == 3 and sources[0].three_month_watermark
+    assert sources[0].consecutive_months == 3 and sources[0].watermark_reached
     _, sources = summarize_operations(policy, rows, policy.plan_nodes[3].disclosure_at)
-    assert sources[0].consecutive_months == 0 and not sources[0].three_month_watermark
+    assert sources[0].consecutive_months == 0 and not sources[0].watermark_reached
     row = observation(policy.plan_nodes[3])
     rows[row.plan_month] = row.model_copy(
         update={"sources": (row.sources[0].model_copy(update={"critical_error": True}),)}
@@ -192,9 +201,17 @@ def test_closed_safety_incident_and_old_unclosed_incident_remain_retained(
         update={
             "incidents": (
                 ShadowIncident(
-                    kind="PRIVACY", occurred_at=plan.disclosure_at, closed_at=plan.disclosure_at
+                    incident_id="fictional-privacy",
+                    kind="PRIVACY",
+                    occurred_at=plan.disclosure_at,
+                    closed_at=plan.disclosure_at,
                 ),
-                ShadowIncident(kind="OPERATIONS", occurred_at=plan.disclosure_at, closed_at=None),
+                ShadowIncident(
+                    incident_id="fictional-operations",
+                    kind="OPERATIONS",
+                    occurred_at=plan.disclosure_at,
+                    closed_at=None,
+                ),
             )
         }
     )
@@ -215,4 +232,110 @@ def test_plan_rejects_shortened_or_invented_monthly_clocks(changes: dict[str, st
     payload = node(0).model_dump(mode="json")
     payload.update(changes)
     with pytest.raises(ValidationError):
+        PlanNode.model_validate(payload)
+
+
+def test_notification_consecutive_failure_uses_plan_months_not_reminder_sequence(
+    settings: Settings,
+) -> None:
+    policy = registration(settings)
+    rows = {plan.plan_month: observation(plan) for plan in policy.plan_nodes}
+    for plan in policy.plan_nodes[-2:]:
+        row = rows[plan.plan_month]
+        rows[plan.plan_month] = row.model_copy(
+            update={
+                "notifications": (
+                    row.notifications[0].model_copy(update={"delivered_at": None}),
+                    row.notifications[1],
+                )
+            }
+        )
+    report, _ = summarize_operations(policy, rows, datetime(2045, 1, 1, tzinfo=UTC))
+    assert report.notifications.numerator == 46
+    assert report.consecutive_obligation_failure and not report.gates_passed
+
+
+def test_two_failed_reminders_in_one_month_do_not_create_two_failed_months(
+    settings: Settings,
+) -> None:
+    policy = registration(settings)
+    rows = {plan.plan_month: observation(plan) for plan in policy.plan_nodes}
+    row = rows[policy.plan_nodes[-1].plan_month]
+    rows[row.plan_month] = row.model_copy(
+        update={
+            "notifications": tuple(
+                item.model_copy(update={"delivered_at": None}) for item in row.notifications
+            )
+        }
+    )
+    report, _ = summarize_operations(policy, rows, datetime(2045, 1, 1, tzinfo=UTC))
+    assert report.notifications.numerator == 46
+    assert not report.consecutive_obligation_failure and report.gates_passed
+
+
+def test_failure_report_counts_independently_of_pipeline_failure(settings: Settings) -> None:
+    policy = registration(settings, 1)
+    plan = policy.plan_nodes[0]
+    row = observation(plan, candidates=False).model_copy(
+        update={"status": "FAILED", "reason": "SYSTEM", "batch_saved_at": None}
+    )
+    report, _ = summarize_operations(policy, {plan.plan_month: row}, plan.disclosure_at)
+    assert report.pipeline.numerator == 0 and report.batches.numerator == 0
+    assert report.reports.numerator == 1
+
+
+def test_notification_from_before_original_window_cannot_count_as_delivery(
+    settings: Settings,
+) -> None:
+    policy = registration(settings, 1)
+    plan = policy.plan_nodes[0]
+    row = observation(plan)
+    row = row.model_copy(
+        update={
+            "notifications": tuple(
+                item.model_copy(
+                    update={"delivered_at": plan.knowledge_cutoff - timedelta(seconds=1)}
+                )
+                for item in row.notifications
+            )
+        }
+    )
+    report, _ = summarize_operations(policy, {plan.plan_month: row}, plan.disclosure_at)
+    assert report.notifications.numerator == 0
+
+
+def test_batch_saved_before_knowledge_cutoff_cannot_complete_the_pipeline(
+    settings: Settings,
+) -> None:
+    policy = registration(settings, 1)
+    plan = policy.plan_nodes[0]
+    row = observation(plan, candidates=False).model_copy(
+        update={"batch_saved_at": plan.knowledge_cutoff - timedelta(seconds=1)}
+    )
+    report, _ = summarize_operations(policy, {plan.plan_month: row}, plan.disclosure_at)
+    assert report.pipeline.numerator == 0
+
+
+def test_preregistered_completion_floor_can_tighten_operations_gate(settings: Settings) -> None:
+    policy = registration(settings)
+    rows = {plan.plan_month: observation(plan) for plan in policy.plan_nodes}
+    row = rows[policy.plan_nodes[-1].plan_month]
+    rows[row.plan_month] = row.model_copy(update={"report_saved_at": None})
+    report, _ = summarize_operations(policy, rows, datetime(2045, 1, 1, tzinfo=UTC))
+    assert report.gates_passed
+    payload = policy.model_dump(mode="json")
+    payload["operations_policy"] = {
+        "window_months": 24,
+        "completion_floor": "1",
+        "coverage_floor": "0.50",
+    }
+    strict = CycleRegistration.model_validate(payload)
+    report, _ = summarize_operations(strict, rows, datetime(2045, 1, 1, tzinfo=UTC))
+    assert not report.gates_passed
+
+
+def test_six_month_floor_uses_exchange_civil_dates_across_timezone_month_boundaries() -> None:
+    payload = node(7).model_dump(mode="json")
+    payload.update(disclosure_at="2042-09-30T16:30:00Z", matures_at="2043-03-30T16:30:00Z")
+    with pytest.raises(ValidationError, match="six-calendar-month"):
         PlanNode.model_validate(payload)

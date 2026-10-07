@@ -10,6 +10,7 @@ from stock_profiler.modules.prospective.contracts import (
     MonthFailure,
     MonthlyObservation,
     PlanNode,
+    ShadowIncident,
     SourceWatermark,
 )
 
@@ -39,7 +40,7 @@ def pipeline_complete(node: PlanNode, row: MonthlyObservation | None) -> bool:
         and row.status in {"CANDIDATES", "ABSTAINED"}
         and row.completed_at <= node.disclosure_at
         and row.batch_saved_at is not None
-        and row.batch_saved_at <= node.disclosure_at
+        and node.knowledge_cutoff <= row.batch_saved_at <= node.disclosure_at
     )
 
 
@@ -47,23 +48,28 @@ def summarize_operations(
     registration: CycleRegistration,
     observations: dict[str, MonthlyObservation],
     cutoff: datetime,
+    *,
+    retained_incidents: dict[str, tuple[ShadowIncident, ...]] | None = None,
 ) -> tuple[CycleOperations, tuple[SourceWatermark, ...]]:
     nodes = tuple(node for node in registration.plan_nodes if node.knowledge_cutoff <= cutoff)
-    window = nodes[-24:]
+    policy = registration.operations_policy
+    window = nodes[-policy.window_months :]
     data = pipeline = batches = reports = recommended = timely = 0
     notifications = delivered = 0
     failures: list[MonthFailure] = []
     core_failures: list[bool] = []
-    incidents = 0
+    if retained_incidents is None:
+        retained_incidents = {month: row.incidents for month, row in observations.items()}
+    incidents = sum(len(retained_incidents.get(node.plan_month, ())) for node in window)
     unclosed = sum(
         item.closed_at is None or item.closed_at > cutoff
-        for row in observations.values()
-        for item in row.incidents
+        for entries in retained_incidents.values()
+        for item in entries
     )
     safety_clear = not any(
         item.kind in {"PRIVACY", "SHADOW"}
-        for row in observations.values()
-        for item in row.incidents
+        for entries in retained_incidents.values()
+        for item in entries
     )
     obligation_results: dict[str, list[bool]] = {
         key: [] for key in ("batch", "report", "timely", "notification")
@@ -85,6 +91,8 @@ def summarize_operations(
             failures.append(MonthFailure(plan_month=node.plan_month, reason="MISSING"))
             candidate_obligations_known = False
             obligation_results["report"].append(False)
+            obligation_results["timely"].append(True)
+            obligation_results["notification"].append(True)
             continue
         if not valid:
             failures.append(
@@ -99,7 +107,8 @@ def summarize_operations(
             candidate_obligations_known = False
         batches += valid
         report_ok = bool(
-            valid and row.report_saved_at is not None and row.report_saved_at <= node.disclosure_at
+            row.report_saved_at is not None
+            and node.knowledge_cutoff <= row.report_saved_at <= node.disclosure_at
         )
         reports += report_ok
         obligation_results["report"].append(report_ok)
@@ -111,17 +120,19 @@ def summarize_operations(
             and row.first_delivery_at < node.first_entry_at
         )
         timely += timely_ok
-        if candidate:
-            obligation_results["timely"].append(timely_ok)
+        obligation_results["timely"].append(timely_ok if candidate else True)
         obligations = tuple(item for item in row.notifications if item.due_at <= cutoff)
         notifications += len(obligations)
         results = [
-            item.delivered_at is not None and item.delivered_at <= item.due_at
+            item.delivered_at is not None
+            and node.knowledge_cutoff <= item.delivered_at <= item.due_at
             for item in sorted(obligations, key=lambda item: item.due_at)
         ]
         delivered += sum(results)
-        obligation_results["notification"].extend(results)
-        incidents += len(row.incidents)
+        if results:
+            obligation_results["notification"].append(all(results))
+        else:
+            obligation_results["notification"].append(True)
     source_watermarks = []
     for scope in registration.source_scopes:
         streak = 0
@@ -141,7 +152,8 @@ def summarize_operations(
             SourceWatermark(
                 scope=scope,
                 consecutive_months=streak,
-                three_month_watermark=streak >= 3,
+                required_months=registration.source_months_required,
+                watermark_reached=streak >= registration.source_months_required,
             )
         )
     hidden = current_opportunity or not candidate_obligations_known
@@ -156,24 +168,24 @@ def summarize_operations(
         return denominator > 0 and Decimal(numerator) >= floor * denominator
 
     gates_passed = (
-        len(window) == 24
+        len(window) == policy.window_months
         and not hidden
         and safety_clear
         and unclosed == 0
         and not consecutive_core
         and not consecutive_obligations
-        and passing(data, len(window), Decimal("0.95"))
-        and passing(pipeline, len(window), Decimal("0.95"))
-        and passing(recommended, pipeline, Decimal("0.50"))
-        and passing(batches, len(window), Decimal("0.95"))
-        and passing(reports, len(window), Decimal("0.95"))
-        and (notifications == 0 or passing(delivered, notifications, Decimal("0.95")))
-        and (recommended == 0 or passing(timely, recommended, Decimal("0.95")))
+        and passing(data, len(window), policy.completion_floor)
+        and passing(pipeline, len(window), policy.completion_floor)
+        and passing(recommended, pipeline, policy.coverage_floor)
+        and passing(batches, len(window), policy.completion_floor)
+        and passing(reports, len(window), policy.completion_floor)
+        and (notifications == 0 or passing(delivered, notifications, policy.completion_floor))
+        and (recommended == 0 or passing(timely, recommended, policy.completion_floor))
     )
     operations = CycleOperations(
         planned_months=len(window),
         window_months=tuple(node.plan_month for node in window),
-        full_window=len(window) == 24,
+        full_window=len(window) == policy.window_months,
         data=rate(data, len(window)),
         pipeline=rate(pipeline, len(window)),
         batches=rate(batches, len(window)),
@@ -183,7 +195,7 @@ def summarize_operations(
         coverage=rate(
             recommended,
             pipeline,
-            withheld=hidden or not passing(pipeline, len(window), Decimal("0.95")),
+            withheld=hidden or not passing(pipeline, len(window), policy.completion_floor),
         ),
         failures=tuple(failures),
         incident_count=incidents,

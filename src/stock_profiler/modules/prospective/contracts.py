@@ -31,15 +31,28 @@ class PlanNode(EvaluationContract):
             raise ValueError("plan node requires its original monthly knowledge cutoff")
         if not self.knowledge_cutoff < self.first_entry_at < self.disclosure_at < self.matures_at:
             raise ValueError("plan, entry, disclosure and maturity clocks must be ordered")
-        total = self.disclosure_at.year * 12 + self.disclosure_at.month - 1 + 6
-        minimum = self.disclosure_at.replace(
+        disclosure = self.disclosure_at.astimezone(ZoneInfo("Asia/Shanghai"))
+        total = disclosure.year * 12 + disclosure.month - 1 + 6
+        minimum = disclosure.replace(
             year=total // 12,
             month=total % 12 + 1,
-            day=min(self.disclosure_at.day, monthrange(total // 12, total % 12 + 1)[1]),
+            day=min(disclosure.day, monthrange(total // 12, total % 12 + 1)[1]),
         )
         if self.matures_at < minimum:
             raise ValueError("maturity cannot shorten the six-calendar-month result window")
         return self
+
+
+class OperationsPolicy(EvaluationContract):
+    window_months: int = Field(ge=1, strict=True)
+    completion_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
+    coverage_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
+
+
+class EvidenceFloor(EvaluationContract):
+    mature_batches: int = Field(ge=1, strict=True)
+    nonoverlapping_windows: int = Field(ge=1, strict=True)
+    high_band_records: int = Field(ge=1, strict=True)
 
 
 class CycleRegistration(EvaluationContract):
@@ -49,6 +62,9 @@ class CycleRegistration(EvaluationContract):
     calendar_version: str = Field(min_length=1)
     source_scopes: tuple[str, ...] = Field(min_length=1)
     plan_nodes: tuple[PlanNode, ...] = Field(min_length=1)
+    operations_policy: OperationsPolicy
+    source_months_required: int = Field(ge=1, strict=True)
+    formal_floor: EvidenceFloor
 
     @model_validator(mode="after")
     def validate_timeline(self) -> "CycleRegistration":
@@ -100,6 +116,7 @@ class NotificationObligation(EvaluationContract):
 
 
 class ShadowIncident(EvaluationContract):
+    incident_id: str = Field(min_length=1)
     kind: Literal["DATA", "OPERATIONS", "PRIVACY", "SHADOW"]
     occurred_at: AwareDatetime
     closed_at: AwareDatetime | None
@@ -108,6 +125,17 @@ class ShadowIncident(EvaluationContract):
     def validate_closure(self) -> "ShadowIncident":
         if self.closed_at is not None and self.closed_at < self.occurred_at:
             raise ValueError("incident cannot close before it occurs")
+        return self
+
+
+class IncidentFact(ShadowIncident):
+    operation: Literal["RECORD", "CLOSE"]
+    plan_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> "IncidentFact":
+        if (self.operation == "CLOSE") != (self.closed_at is not None):
+            raise ValueError("record the original incident before appending a closure")
         return self
 
 
@@ -135,6 +163,8 @@ class MonthlyObservation(EvaluationContract):
             raise ValueError("notification obligations must retain their original natural kind")
         if self.status == "CANDIDATES" and not {"INITIAL", "FINAL"}.issubset(kinds):
             raise ValueError("candidate delivery retains both initial and final obligations")
+        if len({item.incident_id for item in self.incidents}) != len(self.incidents):
+            raise ValueError("incident identities cannot be duplicated")
         if len({item.scope for item in self.sources}) != len(self.sources):
             raise ValueError("source scopes cannot be duplicated")
         clocks = [self.batch_saved_at, self.report_saved_at, self.first_delivery_at]
@@ -155,12 +185,13 @@ class MonthFailure(EvaluationContract):
 class SourceWatermark(EvaluationContract):
     scope: str
     consecutive_months: int
-    three_month_watermark: bool
+    required_months: int
+    watermark_reached: bool
     qualification_granted: Literal[False] = False
 
 
 class CycleCommand(EvaluationContract):
-    operation: Literal["REGISTER", "OBSERVE", "REVIEW"]
+    operation: Literal["REGISTER", "OBSERVE", "INCIDENT", "REVIEW"]
     synthetic: Literal[True]
     generator_version: str = Field(min_length=1)
     seed: int
@@ -169,6 +200,7 @@ class CycleCommand(EvaluationContract):
     registration_event_id: str | None
     previous_event_id: str | None
     observation: MonthlyObservation | None
+    incident_fact: IncidentFact | None = Field(default=None, exclude_if=lambda value: value is None)
     maturity: None
 
     @model_validator(mode="after")
@@ -182,6 +214,13 @@ class CycleCommand(EvaluationContract):
             raise ValueError("cycle operation requires its saved preregistration")
         if (self.operation == "OBSERVE") != (self.observation is not None):
             raise ValueError("only an observation operation can append original monthly evidence")
+        if (self.operation == "INCIDENT") != (self.incident_fact is not None):
+            raise ValueError("only an incident operation can append an incident fact")
+        if self.incident_fact is not None and any(
+            clock is not None and clock > self.cutoff_at
+            for clock in (self.incident_fact.occurred_at, self.incident_fact.closed_at)
+        ):
+            raise ValueError("incident facts must be known at the cutoff")
         if self.observation is not None and self.observation.completed_at > self.cutoff_at:
             raise ValueError("monthly evidence must already exist at the review cutoff")
         return self
@@ -216,6 +255,7 @@ class CycleOperations(EvaluationContract):
 
 
 class CycleWatermark(EvaluationContract):
+    required: EvidenceFloor
     mature_batches: int
     nonoverlapping_windows: int
     high_band_records: int

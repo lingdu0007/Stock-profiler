@@ -14,6 +14,7 @@ from stock_profiler.modules.prospective.contracts import (
     CycleFormalLook,
     CycleReport,
     CycleWatermark,
+    ShadowIncident,
 )
 
 Transaction = TypeVar("Transaction")
@@ -57,6 +58,7 @@ def assess_prospective(
         or not source.case.access_scope.same_scope_as(case.access_scope)
         or source.case.prospective is None
         or source.case.prospective.registration is None
+        or source.case.prospective.cutoff_at > command.cutoff_at
         or source.result.prospective is None
         or source.result.prospective.disposition != "REGISTERED"
         or source.corrects_event_id is not None
@@ -73,7 +75,12 @@ def assess_prospective(
     previous = prior[-1] if prior else None
     if command.previous_event_id != (previous.decision_event_id if previous else None):
         raise ValueError("PROSPECTIVE_LINEAGE_CONFLICT")
-    if previous and command.cutoff_at < datetime.fromisoformat(previous.committed_at):
+    if (
+        previous
+        and previous.case.prospective is not None
+        and command.cutoff_at
+        < max(previous.case.prospective.cutoff_at, datetime.fromisoformat(previous.committed_at))
+    ):
         raise ValueError("PROSPECTIVE_CUTOFF_REWOUND")
     if case.version_bundle != registration.source_version_bundle:
         raise ValueError("PROSPECTIVE_LOCK_BUNDLE_MISMATCH")
@@ -103,6 +110,8 @@ def assess_prospective(
         ):
             raise ValueError("PROSPECTIVE_DELIVERY_OUTSIDE_ORIGINAL_WINDOW")
         for item in row.notifications:
+            if item.delivered_at is not None and item.delivered_at < node.knowledge_cutoff:
+                raise ValueError("PROSPECTIVE_NOTIFICATION_BEFORE_WINDOW")
             expected_due = {"INITIAL": node.first_entry_at, "FINAL": node.disclosure_at}.get(
                 item.kind
             )
@@ -111,7 +120,54 @@ def assess_prospective(
             ) or not node.knowledge_cutoff <= item.due_at <= node.disclosure_at:
                 raise ValueError("PROSPECTIVE_NOTIFICATION_WINDOW_CHANGED")
         observations[row.plan_month] = row
-    operations, sources = summarize_operations(registration, observations, command.cutoff_at)
+    incidents: dict[str, tuple[str, ShadowIncident]] = {}
+    for month, row in observations.items():
+        for incident in row.incidents:
+            if incident.incident_id in incidents:
+                raise ValueError("PROSPECTIVE_INCIDENT_IDENTITY_CONFLICT")
+            incidents[incident.incident_id] = (month, incident)
+    for event in prior:
+        prior_command = event.case.prospective
+        if prior_command is not None and prior_command.incident_fact is not None:
+            fact = prior_command.incident_fact
+            if fact.operation == "RECORD" and fact.incident_id in incidents:
+                raise ValueError("PROSPECTIVE_INCIDENT_IDENTITY_CONFLICT")
+            incidents[fact.incident_id] = (
+                fact.plan_month,
+                ShadowIncident.model_validate(fact.model_dump(exclude={"operation", "plan_month"})),
+            )
+    if command.incident_fact is not None:
+        fact = command.incident_fact
+        node = next(
+            (node for node in registration.plan_nodes if node.plan_month == fact.plan_month), None
+        )
+        if node is None or node.knowledge_cutoff > command.cutoff_at:
+            raise ValueError("PROSPECTIVE_INCIDENT_PLAN_UNAVAILABLE")
+        original = incidents.get(fact.incident_id)
+        if fact.operation == "RECORD":
+            if original is not None:
+                raise ValueError("PROSPECTIVE_INCIDENT_IDENTITY_CONFLICT")
+        elif (
+            original is None
+            or original[0] != fact.plan_month
+            or original[1].kind != fact.kind
+            or original[1].occurred_at != fact.occurred_at
+            or original[1].closed_at is not None
+        ):
+            raise ValueError("PROSPECTIVE_INCIDENT_CLOSURE_CONFLICT")
+        incidents[fact.incident_id] = (
+            fact.plan_month,
+            ShadowIncident.model_validate(fact.model_dump(exclude={"operation", "plan_month"})),
+        )
+    retained = {
+        node.plan_month: tuple(
+            item for month, item in incidents.values() if month == node.plan_month
+        )
+        for node in registration.plan_nodes
+    }
+    operations, sources = summarize_operations(
+        registration, observations, command.cutoff_at, retained_incidents=retained
+    )
     valid_nodes = tuple(
         node
         for node in registration.plan_nodes
@@ -128,6 +184,7 @@ def assess_prospective(
         operations=operations,
         source_watermarks=sources,
         watermark=CycleWatermark(
+            required=registration.formal_floor,
             mature_batches=0,
             nonoverlapping_windows=0,
             high_band_records=0,
@@ -135,7 +192,7 @@ def assess_prospective(
             due_missing_batches=sum(node.matures_at <= command.cutoff_at for node in valid_nodes),
             observation_reached=False,
             formal_sufficient=False,
-            waiting_for=("24_MATURE_BATCHES", "4_NONOVERLAPPING_WINDOWS", "100_HIGH_BAND_RECORDS"),
+            waiting_for=("MATURE_BATCHES", "NONOVERLAPPING_WINDOWS", "HIGH_BAND_RECORDS"),
         ),
         formal_look=CycleFormalLook(disposition="WAITING_FOR_MATURITY"),
     )

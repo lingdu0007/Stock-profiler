@@ -2653,6 +2653,9 @@
             "title": "Pending Batches",
             "type": "integer"
           },
+          "required": {
+            "$ref": "#/components/schemas/EvidenceFloor"
+          },
           "waiting_for": {
             "items": {
               "type": "string"
@@ -2662,6 +2665,7 @@
           }
         },
         "required": [
+          "required",
           "mature_batches",
           "nonoverlapping_windows",
           "high_band_records",
@@ -4013,6 +4017,29 @@
           "required_until"
         ],
         "title": "EvidenceDependencyWindow",
+        "type": "object"
+      },
+      "EvidenceFloor": {
+        "additionalProperties": false,
+        "properties": {
+          "high_band_records": {
+            "minimum": 1.0,
+            "title": "High Band Records",
+            "type": "integer"
+          },
+          "mature_batches": {
+            "minimum": 1.0,
+            "title": "Mature Batches",
+            "type": "integer"
+          },
+          "nonoverlapping_windows": {
+            "minimum": 1.0,
+            "title": "Nonoverlapping Windows",
+            "type": "integer"
+          }
+        },
+        "required": ["mature_batches", "nonoverlapping_windows", "high_band_records"],
+        "title": "EvidenceFloor",
         "type": "object"
       },
       "ExactRatio": {
@@ -11656,16 +11683,20 @@
             "title": "Qualification Granted",
             "type": "boolean"
           },
+          "required_months": {
+            "title": "Required Months",
+            "type": "integer"
+          },
           "scope": {
             "title": "Scope",
             "type": "string"
           },
-          "three_month_watermark": {
-            "title": "Three Month Watermark",
+          "watermark_reached": {
+            "title": "Watermark Reached",
             "type": "boolean"
           }
         },
-        "required": ["scope", "consecutive_months", "three_month_watermark"],
+        "required": ["scope", "consecutive_months", "required_months", "watermark_reached"],
         "title": "SourceWatermark",
         "type": "object"
       },

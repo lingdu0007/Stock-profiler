@@ -1277,6 +1277,7 @@ export interface components {
             observation_reached: boolean;
             /** Pending Batches */
             pending_batches: number;
+            required: components["schemas"]["EvidenceFloor"];
             /** Waiting For */
             waiting_for: string[];
         };
@@ -1836,6 +1837,15 @@ export interface components {
              * Format: date-time
              */
             required_until: string;
+        };
+        /** EvidenceFloor */
+        EvidenceFloor: {
+            /** High Band Records */
+            high_band_records: number;
+            /** Mature Batches */
+            mature_batches: number;
+            /** Nonoverlapping Windows */
+            nonoverlapping_windows: number;
         };
         /** ExactRatio */
         ExactRatio: {
@@ -4699,10 +4709,12 @@ export interface components {
              * @constant
              */
             qualification_granted: false;
+            /** Required Months */
+            required_months: number;
             /** Scope */
             scope: string;
-            /** Three Month Watermark */
-            three_month_watermark: boolean;
+            /** Watermark Reached */
+            watermark_reached: boolean;
         };
         /**
          * StageResult
