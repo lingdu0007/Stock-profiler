@@ -48,7 +48,11 @@ jobs:
             shard_index: 0
             shard_count: 1
           - id: integration
-            paths: tests/integration --ignore=tests/integration/test_research_risk_veto.py
+            paths: tests/integration --ignore=tests/integration/test_research_risk_veto.py --ignore=tests/integration/test_prospective_formal_execution.py
+            shard_index: 0
+            shard_count: 1
+          - id: prospective-formal
+            paths: tests/integration/test_prospective_formal_execution.py
             shard_index: 0
             shard_count: 1
           - id: research-risk-1
