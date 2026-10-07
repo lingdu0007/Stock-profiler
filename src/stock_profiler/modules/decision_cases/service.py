@@ -83,6 +83,10 @@ from stock_profiler.modules.decision_cases.ports import (
     ResearchMemberRunResult,
     Transaction,
 )
+from stock_profiler.modules.decision_cases.prospective import (
+    InvalidProspectiveRequest,
+    assess_prospective,
+)
 from stock_profiler.modules.decision_cases.standard_outcomes import assess_standard_outcomes
 from stock_profiler.modules.portfolio.contracts import (
     PortfolioAuthorizationOutcome,
@@ -3486,6 +3490,20 @@ def _commit_framework_result(
                     result = execution_case.expected_external_result.model_copy(
                         update={"selection": selection}
                     )
+            if business_result is not None and execution_case.prospective is not None:
+                try:
+                    if business_result.status != "SUCCEEDED":
+                        raise ValueError("PROSPECTIVE_PREREQUISITE_FAILED")
+                    result = result.model_copy(
+                        update={
+                            "prospective": assess_prospective(execution_case, ledger, connection),
+                            "outcome_code": "PROSPECTIVE_CYCLE_RECORDED",
+                            "summary": "Saved synthetic prospective-cycle accounting.",
+                            "key_reasons": ("SYNTHETIC_ACCOUNTING_DOES_NOT_GRANT_AUTHORITY",),
+                        }
+                    )
+                except ValueError as error:
+                    raise InvalidProspectiveRequest(str(error)) from error
             if business_result is not None and execution_case.historical_probability is not None:
                 try:
                     if business_result.status != "SUCCEEDED":

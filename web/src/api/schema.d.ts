@@ -1063,6 +1063,20 @@ export interface components {
             /** Unfinished Trades Fact Id */
             unfinished_trades_fact_id: string;
         };
+        /** CompletionRate */
+        CompletionRate: {
+            /** Denominator */
+            denominator: number;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "NOT_APPLICABLE" | "OBSERVED" | "WITHHELD";
+            /** Numerator */
+            numerator: number;
+            /** Rate */
+            rate: string | null;
+        };
         /** ConcentrationOutcome */
         ConcentrationOutcome: {
             /**
@@ -1150,6 +1164,121 @@ export interface components {
             credential: {
                 [key: string]: unknown;
             };
+        };
+        /** CycleFormalLook */
+        CycleFormalLook: {
+            /**
+             * Actual Ordinal
+             * @default 0
+             * @constant
+             */
+            actual_ordinal: 0;
+            /**
+             * Alpha Spent
+             * @default 0
+             */
+            alpha_spent: string;
+            /**
+             * Disposition
+             * @constant
+             */
+            disposition: "WAITING_FOR_MATURITY";
+        };
+        /** CycleOperations */
+        CycleOperations: {
+            batches: components["schemas"]["CompletionRate"];
+            /** Consecutive Failure */
+            consecutive_failure: boolean;
+            /** Consecutive Obligation Failure */
+            consecutive_obligation_failure: boolean;
+            coverage: components["schemas"]["CompletionRate"];
+            data: components["schemas"]["CompletionRate"];
+            /** Failures */
+            failures: components["schemas"]["MonthFailure"][];
+            /** Full Window */
+            full_window: boolean;
+            /** Gates Passed */
+            gates_passed: boolean;
+            /** Incident Count */
+            incident_count: number;
+            notifications: components["schemas"]["CompletionRate"];
+            pipeline: components["schemas"]["CompletionRate"];
+            /** Planned Months */
+            planned_months: number;
+            /**
+             * Qualified
+             * @default false
+             * @constant
+             */
+            qualified: false;
+            reports: components["schemas"]["CompletionRate"];
+            /** Safety Clear */
+            safety_clear: boolean;
+            timeliness: components["schemas"]["CompletionRate"];
+            /** Unclosed Incidents */
+            unclosed_incidents: number;
+            /** Window Months */
+            window_months: string[];
+        };
+        /** CycleReport */
+        CycleReport: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Authorization Granted
+             * @default false
+             * @constant
+             */
+            authorization_granted: false;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Disposition */
+            disposition: string;
+            formal_look?: components["schemas"]["CycleFormalLook"] | null;
+            operations?: components["schemas"]["CycleOperations"] | null;
+            /** Previous Event Id */
+            previous_event_id?: string | null;
+            /** Registration Event Id */
+            registration_event_id: string | null;
+            /**
+             * Report Version
+             * @default 1
+             */
+            report_version: number;
+            /**
+             * Source Watermarks
+             * @default []
+             */
+            source_watermarks: components["schemas"]["SourceWatermark"][];
+            /** Version Id */
+            version_id: string;
+            watermark?: components["schemas"]["CycleWatermark"] | null;
+        };
+        /** CycleWatermark */
+        CycleWatermark: {
+            /** Due Missing Batches */
+            due_missing_batches: number;
+            /** Formal Sufficient */
+            formal_sufficient: boolean;
+            /** High Band Records */
+            high_band_records: number;
+            /** Mature Batches */
+            mature_batches: number;
+            /** Nonoverlapping Windows */
+            nonoverlapping_windows: number;
+            /** Observation Reached */
+            observation_reached: boolean;
+            /** Pending Batches */
+            pending_batches: number;
+            /** Waiting For */
+            waiting_for: string[];
         };
         /**
          * DatedCashObligation
@@ -1863,6 +1992,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            prospective?: components["schemas"]["CycleReport"] | null;
             research?: components["schemas"]["ResearchOutcome"] | null;
             selection?: components["schemas"]["SelectionOutcome"] | null;
             standard_outcomes?: components["schemas"]["StandardOutcomeReport"] | null;
@@ -2724,6 +2854,16 @@ export interface components {
             reports: components["schemas"]["FormalReport"][];
             /** User Facts */
             user_facts: components["schemas"]["UserFact"][];
+        };
+        /** MonthFailure */
+        MonthFailure: {
+            /** Plan Month */
+            plan_month: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "NONE" | "DATA" | "SYSTEM" | "GOVERNANCE" | "MISSING" | "UNKNOWN";
         };
         /**
          * NormalMarketSessionEvidence
@@ -4548,6 +4688,21 @@ export interface components {
             obligation_id: string;
             /** Receipt Id */
             receipt_id: string;
+        };
+        /** SourceWatermark */
+        SourceWatermark: {
+            /** Consecutive Months */
+            consecutive_months: number;
+            /**
+             * Qualification Granted
+             * @default false
+             * @constant
+             */
+            qualification_granted: false;
+            /** Scope */
+            scope: string;
+            /** Three Month Watermark */
+            three_month_watermark: boolean;
         };
         /**
          * StageResult

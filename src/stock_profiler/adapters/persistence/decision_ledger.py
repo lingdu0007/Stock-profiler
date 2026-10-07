@@ -241,6 +241,17 @@ class DecisionLedger:
                 )
         return tuple(failures)
 
+    def prospective_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "prospective history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.same_scope_as(access_scope)
+            and fact.result.prospective is not None
+        )
+
     def historical_probability_history(
         self, connection: Connection, access_scope: ResultAccessScope
     ) -> tuple[DecisionEventFact, ...]:
