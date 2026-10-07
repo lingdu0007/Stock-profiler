@@ -133,6 +133,9 @@ def assess_formal_look(
                 cohort=cohort,
                 probabilities=mature_probability_members(plan, row, command.cutoff_at),
                 batch_due=plan.matures_at <= command.cutoff_at,
+                evaluation_start_at=plan.first_entry_at,
+                valid_monthly=True,
+                has_candidates=observation.status == "CANDIDATES",
                 missing_high_band_records=missing_high_band_records(
                     plan,
                     row,

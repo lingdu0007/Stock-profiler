@@ -345,7 +345,7 @@ def test_registered_calendar_preserves_a_non_calendar_month_end_cutoff() -> None
     plan = PlanNode(
         plan_month="2042-08",
         knowledge_cutoff=datetime(2042, 8, 29, 15, 59, 59, tzinfo=UTC),
-        first_entry_at=datetime(2042, 9, 1, 1, 30, tzinfo=UTC),
+        first_entry_at=datetime(2042, 9, 1, 8, 0, tzinfo=UTC),
         disclosure_at=datetime(2042, 9, 5, 15, tzinfo=UTC),
         matures_at=datetime(2043, 3, 5, 15, tzinfo=UTC),
         calendar_version="synthetic-market-calendar-v1",
@@ -354,4 +354,16 @@ def test_registered_calendar_preserves_a_non_calendar_month_end_cutoff() -> None
     with pytest.raises(ValidationError, match="original monthly trading cutoff"):
         PlanNode.model_validate(
             {**plan.model_dump(mode="json"), "knowledge_cutoff": "2042-08-31T15:59:59Z"}
+        )
+
+
+def test_registered_first_entry_cannot_extend_delivery_past_the_session_open() -> None:
+    with pytest.raises(ValidationError, match="CALENDAR_WINDOW_MISMATCH"):
+        PlanNode(
+            plan_month="2042-08",
+            knowledge_cutoff=datetime(2042, 8, 29, 15, 59, 59, tzinfo=UTC),
+            first_entry_at=datetime(2042, 9, 1, 14, 0, tzinfo=UTC),
+            disclosure_at=datetime(2042, 9, 5, 15, tzinfo=UTC),
+            matures_at=datetime(2043, 3, 5, 15, tzinfo=UTC),
+            calendar_version="synthetic-market-calendar-v1",
         )

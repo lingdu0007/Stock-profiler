@@ -63,8 +63,10 @@ standard-outcome report known at the cutoff. A batch becomes mature only after
 its preregistered maturity date and complete, evaluable selection and probability
 populations. Individual outcomes may legitimately mature earlier or later; both
 the batch floor and every individual outcome clock must have passed. Missing members or changed frozen probabilities
-leave a due-missing batch. Nonoverlapping six-month windows keep their original
-calendar slots, including gaps. High-band counts include all identity-matched,
+leave a due-missing batch. Maturity retains original calendar slots, including
+gaps. Nonoverlapping windows use original entry and
+terminal boundaries, extended by any later individual result clock; six adjacent
+plan rows cannot substitute for disjoint evaluation periods. High-band counts include all identity-matched,
 individually mature original probability members, including those in incomplete
 batches, independently of recommendation or personal action.
 The registered observation milestone does not run a formal check.
@@ -104,7 +106,11 @@ The variance and tail requirements follow the standard
 [bootstrap-t interval definitions](https://stat.ethz.ch/R-manual/R-devel/library/boot/html/boot.ci.html).
 
 The conjunction includes pool success, drawdown, all preregistered paired
-increments, high-band terminal success and directional overconfidence. Probability
+increments, high-band terminal success and directional overconfidence. The
+cumulative availability gate keeps every original due plan month in its
+denominator. Recommendation coverage uses original candidate-bearing valid
+months over all valid months, including empty recommendation and selection
+abstention outcomes; it is distinct from recent operations supervision. Probability
 rates weight individual frozen records, including repeated securities and records
 in incomplete batches. State gates join the same look once their own original
 watermarks are met; an initial overall look does not invent state evidence.

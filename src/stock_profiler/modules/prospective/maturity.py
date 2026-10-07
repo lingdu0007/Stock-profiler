@@ -11,6 +11,7 @@ from stock_profiler.modules.prospective.contracts import (
     MaturityPolicy,
     PlanNode,
 )
+from stock_profiler.modules.prospective.windows import disjoint_windows
 
 
 def _matches(plan: PlanNode, admission: EvaluationRegistration, member: EvaluationMember) -> bool:
@@ -110,10 +111,22 @@ def summarize_maturity(
     if set(rows) - set(planned):
         raise ValueError("PROSPECTIVE_BATCH_PLAN_UNAVAILABLE")
     completed = {month for month, row in rows.items() if _complete(planned[month], row, cutoff)}
-    # The calendar windows are fixed from preregistration, including missing months.
-    windows = sum(
-        all(node.plan_month in completed for node in registration.plan_nodes[offset : offset + 6])
-        for offset in range(0, len(registration.plan_nodes) - 5, 6)
+    windows = disjoint_windows(
+        tuple(
+            (
+                planned[month].first_entry_at,
+                max(
+                    (
+                        planned[month].matures_at,
+                        *(
+                            member.matures_at
+                            for member in _known_members(planned[month], rows[month]).values()
+                        ),
+                    ),
+                ),
+            )
+            for month in completed
+        )
     )
     high_band = sum(
         member.frozen_probability is not None

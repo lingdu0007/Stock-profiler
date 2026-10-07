@@ -22,6 +22,7 @@ from stock_profiler.modules.evaluation.historical_contracts import (
     HistoricalMonthResult,
 )
 from stock_profiler.modules.portfolio.market_calendar import (
+    next_market_session_open_after,
     six_month_terminal_evaluation_at,
     synthetic_market_calendar,
 )
@@ -84,9 +85,7 @@ def validate_market_plan(plan: PlanNode, version: str) -> None:
     entry = calendar.sessions_after_open(plan.knowledge_cutoff, 5)
     if (
         len(entry) != 5
-        or plan.first_entry_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        != entry[0].closed_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        or plan.first_entry_at > entry[0].closed_at
+        or plan.first_entry_at != next_market_session_open_after(plan.knowledge_cutoff, version)
         or plan.disclosure_at != entry[-1].closed_at
         or plan.matures_at < six_month_terminal_evaluation_at(entry[-1].closed_at, version)
     ):
@@ -169,6 +168,8 @@ class FormalPolicy(EvaluationContract):
     overall_drawdown_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
     calibration_success_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
     overconfidence_ceiling: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+    minimum_availability: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
+    coverage_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
     regime_pass_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
     regime_drawdown_floor: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
     regime_batches: int = Field(gt=0, strict=True)
@@ -472,6 +473,9 @@ class FormalMonth(EvaluationContract):
     probabilities: tuple[EvaluationMember, ...]
     batch_due: bool = True
     missing_high_band_records: int = Field(default=0, ge=0, strict=True)
+    evaluation_start_at: AwareDatetime | None = None
+    valid_monthly: bool = False
+    has_candidates: bool = False
 
 
 class FormalGate(EvaluationContract):

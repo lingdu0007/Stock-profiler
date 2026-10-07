@@ -15,6 +15,7 @@ from stock_profiler.modules.prospective.contracts import (
     FormalRegimeWatermark,
 )
 from stock_profiler.modules.prospective.studentized import MetricDefinition, studentized_bounds
+from stock_profiler.modules.prospective.windows import disjoint_windows
 
 Metric = Callable[[tuple[FormalMonth, ...]], Fraction | None]
 
@@ -113,14 +114,15 @@ def _probability(
 
 
 def _windows(rows: tuple[FormalMonth, ...]) -> int:
-    end = None
-    count = 0
+    periods = []
     for row in rows:
-        start, maturity = row.cohort.selection_at, row.cohort.matures_at
-        if start is not None and maturity is not None and (end is None or start > end):
-            count += 1
-            end = max((maturity, *(member.matures_at for member in row.probabilities)))
-    return count
+        start = row.evaluation_start_at or row.cohort.selection_at
+        maturity = row.cohort.matures_at
+        if start is not None and maturity is not None:
+            periods.append(
+                (start, max((maturity, *(member.matures_at for member in row.probabilities))))
+            )
+    return disjoint_windows(tuple(periods))
 
 
 def _periods(
@@ -287,6 +289,28 @@ def infer_prospective(
                 for label, value in result.block_bounds.items()
             },
             undefined_resamples=result.undefined_resamples,
+        )
+    valid = tuple(row for row in rows if row.valid_monthly)
+    availability = (
+        Fraction(sum(row.cohort.availability_failure is None for row in valid), len(rows))
+        if rows
+        else None
+    )
+    coverage = Fraction(sum(row.has_candidates for row in valid), len(valid)) if valid else None
+    for key, estimate, floor in (
+        ("availability", availability, policy.minimum_availability),
+        ("coverage", coverage, policy.coverage_floor),
+    ):
+        value = decimal_fraction(estimate) if estimate is not None else None
+        gates[key] = FormalGate(
+            estimate=value,
+            bound=value,
+            direction="LOWER",
+            threshold=floor,
+            strict=False,
+            passed=estimate >= Fraction(floor) if estimate is not None else None,
+            block_bounds={},
+            undefined_resamples={},
         )
     return FormalInference(
         disposition="INDETERMINATE"

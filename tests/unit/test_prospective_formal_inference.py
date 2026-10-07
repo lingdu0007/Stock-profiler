@@ -7,6 +7,7 @@ from test_historical_inference import history
 from test_prospective_formal_nodes import formal_policy
 
 from stock_profiler.modules.evaluation.contracts import EvaluationMember
+from stock_profiler.modules.evaluation.historical_contracts import HistoricalMonthResult
 from stock_profiler.modules.prospective.contracts import FormalMonth
 from stock_profiler.modules.prospective.formal_inference import infer_prospective
 
@@ -18,6 +19,7 @@ def months(count: int) -> tuple[FormalMonth, ...]:
         result.append(
             FormalMonth(
                 cohort=cohort,
+                valid_monthly=True,
                 probabilities=tuple(
                     EvaluationMember(
                         evaluation_id=f"fictional-{index}-{security}",
@@ -48,6 +50,8 @@ def test_first_conjunction_does_not_invent_due_state_qualification() -> None:
         "overall_drawdown",
         "calibration_success",
         "overconfidence",
+        "availability",
+        "coverage",
         *(
             f"increment:{baseline}:{field}"
             for baseline in ("UNIVERSE", "RANDOM", "FOUR_FACTOR")
@@ -156,3 +160,32 @@ def test_due_missing_original_probability_records_keep_the_formal_gate_indetermi
     )
     assert result.gates["calibration_success"].passed is None
     assert result.gates["overconfidence"].passed is None
+
+
+def test_formal_conjunction_keeps_original_missing_months_and_empty_recommendation_coverage() -> (
+    None
+):
+    original = months(24)
+    missing = tuple(
+        FormalMonth(
+            cohort=HistoricalMonthResult(
+                plan_month=f"2049-{index + 1:02}", disposition="UNAVAILABLE"
+            ),
+            probabilities=(),
+        )
+        for index in range(12)
+    )
+    result = infer_prospective(
+        (*original, *missing),
+        formal_policy(),
+        high_band_threshold=Decimal(".80"),
+        alpha=Fraction(1, 40),
+        seed=2291,
+    )
+    assert result.gates["availability"].estimate is not None
+    assert abs(Fraction(result.gates["availability"].estimate) - Fraction(2, 3)) < Fraction(
+        1, 10**120
+    )
+    assert result.gates["availability"].passed is False
+    assert result.gates["coverage"].estimate == 0 and result.gates["coverage"].passed is False
+    assert result.disposition != "PASSED"

@@ -77,7 +77,7 @@ def nodes() -> tuple[PlanNode, ...]:
             PlanNode(
                 plan_month=f"{year}-{month:02}",
                 knowledge_cutoff=cutoff,
-                first_entry_at=sessions[0].closed_at - timedelta(hours=5),
+                first_entry_at=sessions[0].closed_at - timedelta(hours=7),
                 disclosure_at=disclosure,
                 matures_at=six_month_terminal_evaluation_at(disclosure, calendar.version_id),
                 calendar_version=calendar.version_id,
@@ -668,3 +668,22 @@ def test_saved_formal_execution_keeps_alpha_and_labels_across_replay_and_review(
     )
     assert reviewed.result.prospective.formal_look.actual_ordinal == 1
     assert reviewed.result.prospective.formal_look.alpha_spent == look.alpha_spent
+    assert look.inference.gates["coverage"].estimate == 0
+    assert look.inference.gates["coverage"].passed is False
+    following = review_case(
+        settings,
+        registered.decision_event_id,
+        reviewed.decision_event_id,
+        cutoff=iso(plans[24].disclosure_at),
+        identity="formal-next-insufficient",
+    )
+    following["prospective"].update(operation="CHECK", formal_node_month=plans[24].plan_month)
+    skipped = saved(settings, run_case(settings, normalize(following)))
+    assert (
+        skipped.result.prospective is not None
+        and skipped.result.prospective.formal_look is not None
+    )
+    next_look = skipped.result.prospective.formal_look
+    assert next_look.disposition == "SKIPPED" and next_look.actual_ordinal == 1
+    assert next_look.alpha_spent == look.alpha_spent and next_look.alpha_this == 0
+    assert "MATURE_BATCHES" in next_look.waiting_for and next_look.inference is None

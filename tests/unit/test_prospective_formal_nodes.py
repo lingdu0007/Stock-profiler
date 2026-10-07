@@ -33,6 +33,8 @@ def formal_policy() -> FormalPolicy:
         overall_drawdown_floor=Decimal(".8"),
         calibration_success_floor=Decimal(".8"),
         overconfidence_ceiling=Decimal(".05"),
+        minimum_availability=Decimal(".95"),
+        coverage_floor=Decimal(".50"),
         regime_pass_floor=Decimal(".5"),
         regime_drawdown_floor=Decimal(".6"),
         regime_batches=30,

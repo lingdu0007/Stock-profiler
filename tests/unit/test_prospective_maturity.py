@@ -63,6 +63,23 @@ def test_twelve_complete_batches_are_observation_only(settings: Settings) -> Non
     assert not report.formal_sufficient
 
 
+def test_original_evaluation_periods_prevent_adjacent_six_month_blocks_from_overlapping(
+    settings: Settings,
+) -> None:
+    policy = registration(settings, 42)
+    floor = MaturityPolicy(
+        observation_batches=12, observation_windows=2, high_band_threshold=Decimal(".80")
+    )
+    report = summarize_maturity(
+        policy,
+        floor,
+        tuple(population(index) for index in range(42)),
+        datetime(2047, 1, 1, tzinfo=UTC),
+    )
+    assert report.mature_batches == 42
+    assert report.nonoverlapping_windows == 6
+
+
 def test_missing_original_member_never_shrinks_a_complete_batch(settings: Settings) -> None:
     policy = registration(settings, 24)
     floor = MaturityPolicy(
@@ -71,7 +88,7 @@ def test_missing_original_member_never_shrinks_a_complete_batch(settings: Settin
     rows = tuple(population(index, missing=index == 8) for index in range(24))
     report = summarize_maturity(policy, floor, rows, datetime(2045, 1, 1, tzinfo=UTC))
     assert report.mature_batches == 23 and report.due_missing_batches == 1
-    assert report.nonoverlapping_windows == 3
+    assert report.nonoverlapping_windows == 4
     assert not report.formal_sufficient
     trimmed = rows[8].model_copy(update={"members": rows[8].members[:1]})
     again = summarize_maturity(

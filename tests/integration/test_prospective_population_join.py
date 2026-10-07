@@ -312,6 +312,8 @@ def registration_payload(
             "overall_drawdown_floor": ".8",
             "calibration_success_floor": ".8",
             "overconfidence_ceiling": ".05",
+            "minimum_availability": ".95",
+            "coverage_floor": ".50",
             "regime_pass_floor": ".5",
             "regime_drawdown_floor": ".6",
             "regime_batches": 30,
