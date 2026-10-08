@@ -41,7 +41,7 @@ PYTHON_NOTICE_COMPONENT_MARKERS = (
 )
 REQUIRED_WEB_BUILD_COMPONENTS = frozenset({"@tailwindcss/vite", "tailwindcss"})
 SUPPLIED_NOTICE_DIGESTS = {
-    "scipy-1.16.2.txt": "4daf14e37432e7026165979ecb7a39930707a3e89bef4876cfaf9dad36ed364a",
+    "scipy-1.16.2.txt": "feaec49453853a0ce26a338b99578a6e0e0cf27f683779dbfda9e8a795f2fbb7",
     "numpy-2.4.6.txt": "4860083caa0de2ac3292ca98bd074bd8f45d8b32624e37b1e70a240bff61e488",
     "highs.txt": "10b39dba7b7731175f0705398b6db4320b64add1bd2ed9f9ec5b512a9ef1bd95",
 }

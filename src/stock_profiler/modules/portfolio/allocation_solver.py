@@ -10,15 +10,30 @@ from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from math import inf
 from time import monotonic
+from typing import Literal
 
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 
-from stock_profiler.modules.portfolio.allocation_contracts import AcquisitionRoute
+from stock_profiler.modules.portfolio.allocation_contracts import (
+    AcquisitionRoute,
+    AllocationComparison,
+    AllocationCriterion,
+)
 
 
 class AllocationSolveFailed(Exception):
     """No bounded, verified optimal allocation is available."""
+
+
+class _InfeasibleAllocation(AllocationSolveFailed):
+    """The immutable capacity polytope cannot satisfy mandatory coverage."""
+
+
+@dataclass
+class _SolveBudget:
+    deadline: float
+    solve_count: int = 0
 
 
 def _number(value: Decimal) -> float:
@@ -54,6 +69,14 @@ class AllocationProblem:
 class ContinuousAllocation:
     principals: tuple[Decimal, ...]
     route_principals: tuple[Decimal, ...]
+
+
+@dataclass(frozen=True)
+class DiscreteAllocation:
+    quantities: tuple[Decimal, ...]
+    objectives: tuple[tuple[Decimal, ...], ...]
+    comparisons: dict[int, tuple[AllocationComparison, ...]]
+    below_minimum: frozenset[int]
 
 
 def capacity_is_feasible(
@@ -98,13 +121,12 @@ def capacity_is_feasible(
 
 
 class _Model:
-    def __init__(self) -> None:
+    def __init__(self, budget: _SolveBudget | None = None) -> None:
         self.lower: list[float] = []
         self.upper: list[float] = []
         self.integer: list[int] = []
         self.constraints: list[tuple[dict[int, float], float, float]] = []
-        self.deadline = monotonic() + 120
-        self.solve_count = 0
+        self.budget = budget or _SolveBudget(monotonic() + 120)
 
     def variable(self, upper: float = inf, *, integer: bool = False) -> int:
         if len(self.lower) >= 2000 or np.isnan(upper):
@@ -121,9 +143,9 @@ class _Model:
         self.constraints.append((values, lower, upper))
 
     def solve(self, objective: dict[int, float]) -> list[float]:
-        remaining = self.deadline - monotonic()
-        self.solve_count += 1
-        if remaining <= 0 or self.solve_count > 512:
+        remaining = self.budget.deadline - monotonic()
+        self.budget.solve_count += 1
+        if remaining <= 0 or self.budget.solve_count > 512:
             raise AllocationSolveFailed("allocation solve budget exceeded")
         coefficients = np.zeros(len(self.lower))
         for index, value in objective.items():
@@ -152,6 +174,8 @@ class _Model:
             )
         except ValueError as error:
             raise AllocationSolveFailed("allocation numeric domain exceeded") from error
+        if result.status == 2:
+            raise _InfeasibleAllocation("mandatory allocation infeasible")
         if result.status != 0 or result.x is None or not np.isfinite(result.x).all():
             raise AllocationSolveFailed("optimal allocation unavailable")
         return [float(value) for value in result.x]
@@ -172,9 +196,9 @@ def _sum(expressions: list[dict[int, float]]) -> dict[int, float]:
 
 
 def _base(
-    problem: AllocationProblem, *, discrete: bool
+    problem: AllocationProblem, *, discrete: bool, budget: _SolveBudget | None = None
 ) -> tuple[_Model, list[dict[int, float]], list[int], list[int], list[int]]:
-    model = _Model()
+    model = _Model(budget)
     amounts: list[dict[int, float]] = []
     active: list[int] = []
     quantities: list[int] = []
@@ -352,13 +376,18 @@ def continuous_allocation(problem: AllocationProblem) -> ContinuousAllocation:
 
 
 def discrete_principal_ceiling(
-    problem: AllocationProblem, continuous: tuple[Decimal, ...], member: int
+    problem: AllocationProblem,
+    continuous: tuple[Decimal, ...],
+    member: int,
+    quantities: tuple[Decimal, ...],
 ) -> Decimal:
     unit = min(
         (
             route.minimum_quantity * (route.price_cap or Decimal(0))
-            for route, index in zip(problem.routes, problem.route_members, strict=True)
-            if index == member
+            for route, index, quantity in zip(
+                problem.routes, problem.route_members, quantities, strict=True
+            )
+            if index == member and quantity > 0
         ),
         default=Decimal(0),
     )
@@ -369,26 +398,40 @@ def discrete_principal_ceiling(
     )
 
 
-def discrete_allocation(
-    problem: AllocationProblem, continuous: tuple[Decimal, ...]
+def _discrete_solution(
+    problem: AllocationProblem,
+    continuous: tuple[Decimal, ...],
+    budget: _SolveBudget,
+    required_member: int | None = None,
 ) -> tuple[Decimal, ...]:
     if not problem.routes:
         return ()
-    model, amounts, active, increments, fees = _base(problem, discrete=True)
+    model, amounts, active, increments, fees = _base(problem, discrete=True, budget=budget)
     members = _member_amounts(problem, amounts)
     coverage = [model.variable(1, integer=True) for _ in members]
     for index, expression in enumerate(members):
         member_routes = [
             route for route, member in enumerate(problem.route_members) if member == index
         ]
-        upper = discrete_principal_ceiling(problem, continuous, index)
+        upper = problem.targets[index] if continuous[index] > 0 else Decimal(0)
         model.constrain(expression, upper=_number(upper))
+        for route in member_routes:
+            minimum = problem.routes[route].minimum_quantity * (
+                problem.routes[route].price_cap or Decimal(0)
+            )
+            # Only a selected route can supply the one-minimum-unit residual allowance.
+            model.constrain(
+                {**expression, active[route]: _number(upper)},
+                upper=_number(upper + continuous[index] + minimum),
+            )
         model.constrain(
             {coverage[index]: 1, **{active[route]: -1 for route in member_routes}}, upper=0
         )
         for route in member_routes:
             model.constrain({active[route]: 1, coverage[index]: -1}, upper=0)
     model.constrain(_sum(amounts), upper=_number(sum(continuous, Decimal(0))))
+    if required_member is not None:
+        model.constrain({coverage[required_member]: 1}, lower=1)
     solution = model.maximize_and_fix(dict.fromkeys(coverage, 1.0))
     count = round(sum(solution[index] for index in coverage))
     if count == 0:
@@ -446,10 +489,141 @@ def discrete_allocation(
     )
     model.maximize_and_fix(costs)
     model.maximize_and_fix(dict.fromkeys(active, -1.0))
-    for amount in amounts:
-        solution = model.maximize_and_fix(amount)
+    for route in sorted(
+        range(len(amounts)),
+        key=lambda index: (problem.routes[index].security_id, problem.routes[index].account_id),
+    ):
+        solution = model.maximize_and_fix(amounts[route])
     return tuple(
         route.minimum_quantity * round(solution[enabled])
         + route.quantity_increment * round(solution[increment])
         for route, enabled, increment in zip(problem.routes, active, increments, strict=True)
     )
+
+
+def _objectives(
+    problem: AllocationProblem, continuous: tuple[Decimal, ...], quantities: tuple[Decimal, ...]
+) -> tuple[tuple[Decimal, ...], ...]:
+    amounts = tuple(
+        quantity * (route.price_cap or Decimal(0))
+        for route, quantity in zip(problem.routes, quantities, strict=True)
+    )
+    members = tuple(
+        sum(
+            (
+                amount
+                for amount, owner in zip(amounts, problem.route_members, strict=True)
+                if owner == index
+            ),
+            Decimal(0),
+        )
+        for index in range(len(continuous))
+    )
+    covered = tuple(index for index, amount in enumerate(members) if amount > 0)
+    if (
+        not capacity_is_feasible(problem, members, amounts)
+        or any(
+            quantity > 0
+            and (
+                quantity < route.minimum_quantity
+                or (quantity - route.minimum_quantity) % route.quantity_increment != 0
+            )
+            for route, quantity in zip(problem.routes, quantities, strict=True)
+        )
+        or sum(amounts, Decimal(0)) > sum(continuous, Decimal(0))
+        or any(
+            amount > discrete_principal_ceiling(problem, continuous, index, quantities)
+            for index, amount in enumerate(members)
+        )
+    ):
+        raise AllocationSolveFailed("comparison capacity verification failed")
+    return (
+        (Decimal(len(covered)),),
+        tuple(sorted(members[index] / continuous[index] for index in covered)),
+        (sum(amounts, Decimal(0)),),
+        tuple(sorted(problem.probabilities[index] for index in covered)),
+        (
+            sum(
+                (route.cost(amount) for route, amount in zip(problem.routes, amounts, strict=True)),
+                Decimal(0),
+            ),
+        ),
+        (Decimal(sum(quantity > 0 for quantity in quantities)),),
+        tuple(
+            amounts[index]
+            for index in sorted(
+                range(len(amounts)),
+                key=lambda index: (
+                    problem.routes[index].security_id,
+                    problem.routes[index].account_id,
+                ),
+            )
+        ),
+    )
+
+
+def discrete_allocation(
+    problem: AllocationProblem, continuous: tuple[Decimal, ...]
+) -> DiscreteAllocation:
+    """Select once; explain excluded members against the same frozen capacities.
+
+    Mandatory-member counterfactuals are audit queries only. They neither apply
+    allocations nor replenish capacity and share the original bounded solve budget.
+    """
+    budget = _SolveBudget(monotonic() + 120)
+    quantities = _discrete_solution(problem, continuous, budget)
+    selected = _objectives(problem, continuous, quantities)
+    comparisons: dict[int, tuple[AllocationComparison, ...]] = {}
+    below_minimum: set[int] = set()
+    criteria: tuple[AllocationCriterion, ...] = (
+        "COVERAGE",
+        "COMPLETION_RATIOS",
+        "PRINCIPAL",
+        "PROBABILITIES",
+        "PURCHASE_COST",
+        "ORDER_COUNT",
+        "STABLE_IDENTITIES",
+    )
+    for member, amount in enumerate(continuous):
+        if amount == 0 or any(
+            quantity > 0 and owner == member
+            for quantity, owner in zip(quantities, problem.route_members, strict=True)
+        ):
+            continue
+        try:
+            alternative = _objectives(
+                problem, continuous, _discrete_solution(problem, continuous, budget, member)
+            )
+        except _InfeasibleAllocation:
+            alternative = None
+            below_minimum.add(member)
+        entries = []
+        decided = False
+        for index, criterion in enumerate(criteria):
+            direction: Literal["MINIMIZE", "MAXIMIZE"] = (
+                "MINIMIZE" if index in {4, 5} else "MAXIMIZE"
+            )
+            relation: Literal["INFEASIBLE", "NOT_REACHED", "EQUAL", "WORSE"] = (
+                "INFEASIBLE" if alternative is None else "NOT_REACHED" if decided else "EQUAL"
+            )
+            if alternative is not None and not decided and selected[index] != alternative[index]:
+                better = selected[index] > alternative[index]
+                if direction == "MINIMIZE":
+                    better = not better
+                if not better:
+                    raise AllocationSolveFailed("unverified lexicographic optimum")
+                relation = "WORSE"
+                decided = True
+            entries.append(
+                AllocationComparison(
+                    criterion=criterion,
+                    direction=direction,
+                    selected_value=selected[index],
+                    alternative_value=alternative[index] if alternative is not None else None,
+                    relation=relation,
+                )
+            )
+        if alternative is not None and not decided:
+            raise AllocationSolveFailed("stable allocation identities ambiguous")
+        comparisons[member] = tuple(entries)
+    return DiscreteAllocation(quantities, selected, comparisons, frozenset(below_minimum))

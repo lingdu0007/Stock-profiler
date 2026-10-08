@@ -19,7 +19,8 @@ export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
       <h2>Candidate allocation</h2>
       <p className="outcome-code">{states[plan.disposition]}</p>
       <p>
-        Candidate qualification retained. This saved plan does not reserve cash or submit orders.
+        Original candidate conclusions retained. This saved plan does not reserve cash or submit
+        orders.
       </p>
       <p className="stage-reasons">{plan.reasons.join(", ")}</p>
       <dl className="record-list">
@@ -61,7 +62,35 @@ export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
             <Record label="Issuer target gap" value={String(row.target_gap)} />
             <Record label="Continuous principal" value={String(row.continuous_principal)} />
             <Record label="Legal allocated principal" value={String(row.principal)} />
+            <Record label="Primary allocation reason" value={row.primary_reason ?? "None"} />
           </dl>
+          {(row.route_failures ?? []).map((failure) => (
+            <p className="stage-reasons" key={failure.route.account_id}>
+              {failure.route.account_id}: {failure.reasons.join(", ")}
+            </p>
+          ))}
+          {(row.comparisons ?? []).length > 0 && (
+            <table aria-label={`Allocation priority for ${row.candidate.security_id}`}>
+              <thead>
+                <tr>
+                  <th>Criterion</th>
+                  <th>Selected plan</th>
+                  <th>Plan covering this candidate</th>
+                  <th>Comparison</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(row.comparisons ?? []).map((entry) => (
+                  <tr key={entry.criterion}>
+                    <td>{entry.criterion}</td>
+                    <td>{entry.selected_value.join(", ")}</td>
+                    <td>{entry.alternative_value?.join(", ") ?? "Infeasible"}</td>
+                    <td>{entry.relation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {row.legs.map((leg) => (
             <dl className="record-list" key={leg.route.account_id}>
               <Record label="Account" value={leg.route.account_id} />

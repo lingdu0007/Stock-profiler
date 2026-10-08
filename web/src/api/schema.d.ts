@@ -431,6 +431,25 @@ export interface components {
             /** Transferred Restriction Evidence Id */
             transferred_restriction_evidence_id?: string | null;
         };
+        /** AllocationCapacityCheck */
+        AllocationCapacityCheck: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Available Before */
+            available_before: string;
+            /** Committed Margin */
+            committed_margin: string;
+            /** Gate Id */
+            gate_id: string;
+            /** Reason */
+            reason: string;
+            /** Remaining After Continuous */
+            remaining_after_continuous: string;
+            /** Remaining After Plan */
+            remaining_after_plan: string;
+            /** Security Ids */
+            security_ids: string[];
+        };
         /** AllocationCommitment */
         AllocationCommitment: {
             /** Account Id */
@@ -454,6 +473,28 @@ export interface components {
             quantity?: string | null;
             /** Security Id */
             security_id: string;
+        };
+        /** AllocationComparison */
+        AllocationComparison: {
+            /** Alternative Value */
+            alternative_value: string[] | null;
+            /**
+             * Criterion
+             * @enum {string}
+             */
+            criterion: "COVERAGE" | "COMPLETION_RATIOS" | "PRINCIPAL" | "PROBABILITIES" | "PURCHASE_COST" | "ORDER_COUNT" | "STABLE_IDENTITIES";
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "MAXIMIZE" | "MINIMIZE";
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "EQUAL" | "WORSE" | "NOT_REACHED" | "INFEASIBLE";
+            /** Selected Value */
+            selected_value: string[];
         };
         /** AllocationCorrelations */
         AllocationCorrelations: {
@@ -497,6 +538,12 @@ export interface components {
             turnover_ratio: string;
             /** Version Id */
             version_id: string;
+        };
+        /** AllocationRouteFailure */
+        AllocationRouteFailure: {
+            /** Reasons */
+            reasons: string[];
+            route: components["schemas"]["AcquisitionRoute"];
         };
         /** AllocationSecurity */
         AllocationSecurity: {
@@ -780,6 +827,11 @@ export interface components {
             /** Candidate Event Id */
             candidate_event_id?: string | null;
             /**
+             * Capacity Checks
+             * @default []
+             */
+            capacity_checks: components["schemas"]["AllocationCapacityCheck"][];
+            /**
              * Commitments
              * @default []
              */
@@ -792,10 +844,20 @@ export interface components {
             contract_version: "1.0.0";
             correlations?: components["schemas"]["AllocationCorrelations"] | null;
             /**
+             * Discrete Objectives
+             * @default []
+             */
+            discrete_objectives: string[][];
+            /**
              * Disposition
              * @enum {string}
              */
             disposition: "BLOCKED" | "PLANNED" | "AWAITING_PRICE_CAP";
+            /**
+             * Eligibility Evidence Ids
+             * @default []
+             */
+            eligibility_evidence_ids: string[];
             /** Formed At */
             formed_at?: string | null;
             /** Plan Id */
@@ -843,6 +905,11 @@ export interface components {
             candidate: components["schemas"]["CalibratedMember"];
             /** Committed Exposure */
             committed_exposure: string;
+            /**
+             * Comparisons
+             * @default []
+             */
+            comparisons: components["schemas"]["AllocationComparison"][];
             /** Continuous Principal */
             continuous_principal: string;
             /** Issuer Id */
@@ -857,10 +924,17 @@ export interface components {
              * @enum {string}
              */
             outcome: "FULLY_ALLOCATED" | "PARTIALLY_ALLOCATED" | "UNALLOCATED";
+            /** Primary Reason */
+            primary_reason?: string | null;
             /** Principal */
             principal: string;
             /** Reasons */
             reasons: string[];
+            /**
+             * Route Failures
+             * @default []
+             */
+            route_failures: components["schemas"]["AllocationRouteFailure"][];
             /** Target Gap */
             target_gap: string;
         };

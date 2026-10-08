@@ -3508,6 +3508,7 @@ def test_accepted_research_replays_the_same_report_without_new_downstream_output
     ("risk_scenario", "candidate_scenario"),
     [
         ("ACCEPT", "NORMAL"),
+        ("ACCEPT", "QUALIFIED_NORMAL"),
         ("ACCEPT", "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT"),
         ("REJECT", "NORMAL"),
         ("ACCEPT", "CALIBRATION_FAILURE"),
@@ -3573,6 +3574,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     risk_scenario: Literal["ACCEPT", "REJECT"],
     candidate_scenario: Literal[
         "NORMAL",
+        "QUALIFIED_NORMAL",
         "CALIBRATION_DUPLICATE_RESEARCH_SNAPSHOT",
         "CALIBRATION_FAILURE",
         "CALIBRATION_SOURCE_MISSING",
@@ -4007,6 +4009,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
     bear_qualification_record: QualificationRecord | None = None
     if candidate_scenario in {
         "CALIBRATION_EQUAL_TRAINING_WATERMARK",
+        "QUALIFIED_NORMAL",
         "QUALIFICATION_NOT_OBTAINED_RECORDED",
         "QUALIFICATION_VERSION_CHANGED_ON_FINAL_CHECK",
         "QUALIFICATION_VERSION_CHANGED_AFTER_REPORT_SAVE",
@@ -5104,6 +5107,7 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         "UNRELATED_QUALIFICATION_SCOPE": "RECOMMENDATION_ABSTAINED",
         "UNRELATED_CALENDAR_QUALIFICATION": "FAILED",
         "UNRELATED_LATEST_SCOPE": "CANDIDATES",
+        "QUALIFIED_NORMAL": "CANDIDATES",
         "VERSION_MISMATCH": "FAILED",
         "ORIGINAL_REJECTED": "BLOCKED",
     }[candidate_scenario]
@@ -5441,5 +5445,5 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if candidate_scenario == "CALENDAR_WINDOW_MISSING"
         else tuple(session.market_date for session in sessions)
     )
-    if candidate_scenario == "UNRELATED_LATEST_SCOPE" and risk_scenario == "ACCEPT":
+    if candidate_scenario == "QUALIFIED_NORMAL" and risk_scenario == "ACCEPT":
         assert_allocation_preserves_genuine_release(migrated_settings, execution.report)

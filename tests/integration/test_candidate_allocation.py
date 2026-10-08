@@ -1,6 +1,7 @@
 """Allocation behavior through the frozen case and committed-report boundary."""
 
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -67,6 +68,11 @@ def test_allocation_reaches_issuer_target_and_keeps_the_remainder_as_cash(
     assert plan.rows[0].candidate == source.members[0]
     assert plan.total_principal == 700
     assert plan.remaining_cash == 3400
+    cash_check = next(check for check in plan.capacity_checks if check.gate_id == "global:cash")
+    assert cash_check.available_before == 4100 and cash_check.remaining_after_plan == 3400
+    stress_check = next(check for check in plan.capacity_checks if check.gate_id == "global:stress")
+    assert stress_check.remaining_after_plan == Decimal(779)
+    assert all(check.remaining_after_plan >= 0 for check in plan.capacity_checks)
     assert (
         get_formal_report(
             report.report_version_id,
@@ -611,22 +617,197 @@ def test_non_normal_capital_state_cannot_create_new_candidate_exposure(
     assert plan.rows[0].candidate == source.members[0]
 
 
+@pytest.mark.parametrize("price", ["1E-400", "1E+100"])
 def test_unrepresentable_price_basis_fails_closed_with_original_candidates(
     migrated_settings: Settings,
+    price: str,
 ) -> None:
     from synthetic_candidate_allocation import feasible_payload
 
     payload, source = feasible_payload(migrated_settings)
     route = payload["candidate_allocation"]["routes"][0]
-    route.update(
-        price_cap="1E-400", current_price="1E-400", price_tick="1E-400", minimum_price="1E-400"
-    )
+    if price == "1E-400":
+        route.update(price_cap=price, current_price=price, price_tick=price, minimum_price=price)
+    else:
+        route.update(price_cap=price, maximum_price=price, price_tick="0.01")
     payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
     report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
     assert report is not None and report.result.candidate_allocation is not None
     plan = report.result.candidate_allocation
     assert plan.disposition == "BLOCKED" and plan.rows[0].candidate == source.members[0]
     assert plan.reasons == ("ALLOCATION_OPTIMUM_UNAVAILABLE",)
+
+
+def test_broker_reservation_must_cover_the_complete_committed_buy_cost(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings, open_buy=True)
+    command = payload["candidate_allocation"]
+    command["commitments"] = [
+        {
+            "commitment_id": "synthetic-broker-buy-cost",
+            "account_id": "synthetic-account-4017",
+            "security_id": "SYNTH-CANDIDATE",
+            "issuer_id": "fictional-new-issuer",
+            "broker_order_id": "synthetic-open-buy",
+            "principal": "300",
+            "quantity": "30",
+            "price_cap": "10",
+            "purchase_cost": "4000",
+            "disposal_friction": "0",
+            "evidence": deepcopy(command["securities"][0]["evidence"]),
+        }
+    ]
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.disposition == "BLOCKED" and plan.rows[0].candidate == source.members[0]
+    assert plan.reasons == ("BUY_COMMITMENT_RESERVATION_INCOMPLETE",)
+
+
+def test_unused_small_unit_route_cannot_reduce_the_selected_route_residual_allowance(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings, candidate_count=2)
+    command = payload["candidate_allocation"]
+    command["policy"]["neighborhood_ratio"] = "0.012"
+    command["commitments"] = [
+        {
+            "commitment_id": "synthetic-small-existing-buy",
+            "account_id": "synthetic-account-4017",
+            "security_id": "SYNTH-CANDIDATE",
+            "issuer_id": "fictional-new-issuer",
+            "broker_order_id": None,
+            "principal": "20",
+            "quantity": "2",
+            "price_cap": "10",
+            "purchase_cost": "0",
+            "disposal_friction": "0",
+            "evidence": deepcopy(command["securities"][0]["evidence"]),
+        }
+    ]
+    funded, peer = command["routes"]
+    funded.update(minimum_quantity="6", quantity_increment="6")
+    peer.update(minimum_quantity="0.1", quantity_increment="0.1")
+    unused = deepcopy(funded)
+    unused.update(
+        account_id="synthetic-account-8029", minimum_quantity="0.1", quantity_increment="0.1"
+    )
+    command["routes"].append(unused)
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert [row.continuous_principal for row in plan.rows] == [40, 60]
+    assert [row.principal for row in plan.rows] == [60, 40]
+    assert tuple(row.candidate for row in plan.rows) == source.members
+
+
+def test_complete_discrete_tie_uses_security_identity_instead_of_source_order(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(
+        migrated_settings, candidate_count=2, security_id="Z-SYNTH-CANDIDATE"
+    )
+    command = payload["candidate_allocation"]
+    command["policy"]["neighborhood_ratio"] = "0.01"
+    for route in command["routes"]:
+        route.update(minimum_quantity="6", quantity_increment="6")
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert [row.continuous_principal for row in plan.rows] == [50, 50]
+    assert [row.principal for row in plan.rows] == [0, 60]
+    assert tuple(row.candidate for row in plan.rows) == source.members
+
+
+@pytest.mark.parametrize("change", ["expired", "missing", "REVOKED", "SUSPENDED", "restored"])
+def test_current_qualification_failure_cannot_revive_or_allocate_a_saved_candidate(
+    migrated_settings: Settings, change: str
+) -> None:
+    from datetime import datetime
+
+    from synthetic_candidate_allocation import feasible_payload, save_qualification_prior
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+
+    payload, source = feasible_payload(
+        migrated_settings,
+        qualification_valid_through="2042-05-17T15:30:00Z"
+        if change == "expired"
+        else "2042-05-22T15:00:00Z",
+        seed_qualification=change != "missing",
+    )
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    if change in {"REVOKED", "SUSPENDED", "restored"}:
+        with ledger.serialize_case_execution() as connection:
+            fact = ledger.get_decision_event(
+                payload["candidate_allocation"]["candidate_event_id"], connection
+            )
+            assert fact is not None and fact.case.access_scope is not None
+            history = ledger.governance_history(connection, fact.case.access_scope)
+        previous = history[-1].qualification
+        assert previous is not None
+        revoked = previous.model_copy(
+            update={
+                "decision_id": "synthetic-allocation-qualification-withdrawal",
+                "previous_decision_id": previous.decision_id,
+                "status": "SUSPENDED" if change == "SUSPENDED" else "REVOKED",
+                "cause": "AUTHORIZATION_REVOKED",
+                "recorded_at": datetime.fromisoformat("2042-05-17T15:20:00Z"),
+            }
+        )
+        save_qualification_prior(migrated_settings, fact.case, revoked)
+        if change == "restored":
+            restored = previous.model_copy(
+                update={
+                    "decision_id": "synthetic-allocation-qualification-restoration",
+                    "previous_decision_id": revoked.decision_id,
+                    "recorded_at": datetime.fromisoformat("2042-05-17T15:40:00Z"),
+                }
+            )
+            save_qualification_prior(migrated_settings, fact.case, restored)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.disposition == "BLOCKED" and plan.total_principal == 0
+    assert plan.rows[0].candidate == source.members[0]
+
+
+def test_corrected_candidate_conclusion_cannot_allocate_using_its_original_report(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.bootstrap.decision_cases import correct_default_frozen_decision_case
+
+    payload, source = feasible_payload(migrated_settings)
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    with ledger.serialize_case_execution() as connection:
+        original = ledger.get_decision_event(
+            payload["candidate_allocation"]["candidate_event_id"], connection
+        )
+        assert original is not None
+    correction = correct_default_frozen_decision_case(
+        migrated_settings,
+        original.case.business_identity,
+        clock=GovernanceClock("2042-05-17T16:00:30Z"),
+    )
+    assert correction.report is not None
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.disposition == "BLOCKED" and plan.rows[0].candidate == source.members[0]
+    assert plan.reasons == ("CANDIDATE_CONCLUSION_SUPERSEDED",)
 
 
 def test_continuous_fractional_equalization_also_respects_exact_stress_capacity(
@@ -674,3 +855,101 @@ def test_joint_completion_ratios_cover_a_ten_candidate_cohort_without_permutatio
         == [200] * (10 - upper_count) + [300] * upper_count
     )
     assert plan.total_principal == 2000 + upper_count * 100
+
+
+def test_uncovered_candidate_retains_each_discrete_priority_comparison(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(
+        migrated_settings, candidate_count=2, security_id="Z-SYNTH-CANDIDATE"
+    )
+    command = payload["candidate_allocation"]
+    command["policy"]["neighborhood_ratio"] = "0.01"
+    for route in command["routes"]:
+        route.update(minimum_quantity="6", quantity_increment="6")
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    row = plan.rows[0]
+    assert row.candidate == source.members[0] and row.principal == 0
+    assert "UNALLOCATED_CAPACITY_PRIORITY" in row.reasons
+    assert [entry.criterion for entry in row.comparisons] == [
+        "COVERAGE",
+        "COMPLETION_RATIOS",
+        "PRINCIPAL",
+        "PROBABILITIES",
+        "PURCHASE_COST",
+        "ORDER_COUNT",
+        "STABLE_IDENTITIES",
+    ]
+    assert [entry.relation for entry in row.comparisons] == ["EQUAL"] * 6 + ["WORSE"]
+    assert row.comparisons[0].selected_value == (Decimal(1),)
+    assert row.comparisons[1].selected_value == row.comparisons[1].alternative_value
+    assert row.comparisons[2].selected_value == (Decimal(60),)
+    assert row.comparisons[6].selected_value == (Decimal(60), Decimal(0))
+    assert row.comparisons[6].alternative_value == (Decimal(0), Decimal(60))
+    assert plan.discrete_objectives == tuple(entry.selected_value for entry in row.comparisons)
+
+
+def test_below_minimum_unit_has_a_distinct_reason_and_infeasible_comparison(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings)
+    command = payload["candidate_allocation"]
+    command["routes"][0].update(minimum_quantity="100", quantity_increment="100")
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    row = report.result.candidate_allocation.rows[0]
+    assert row.candidate == source.members[0] and row.continuous_principal == 700
+    assert row.principal == 0 and row.primary_reason == "BELOW_MINIMUM_BUY_UNIT"
+    assert "UNALLOCATED_CAPACITY_PRIORITY" not in row.reasons
+    assert len(row.comparisons) == 7
+    assert all(entry.relation == "INFEASIBLE" for entry in row.comparisons)
+
+
+def test_route_failures_keep_all_reasons_and_fixed_primary_precedence(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings)
+    command = payload["candidate_allocation"]
+    route = command["routes"][0]
+    route.update(permission=False, current_price=None, rule_version="unknown-rule")
+    route["evidence"]["expires_at"] = "2042-05-17T15:30:00Z"
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    row = report.result.candidate_allocation.rows[0]
+    assert row.candidate == source.members[0] and row.principal == 0
+    assert row.primary_reason == "ACCOUNT_PERMISSION_DENIED"
+    assert {
+        "ACCOUNT_PERMISSION_DENIED",
+        "BUY_ROUTE_EVIDENCE_FAILED",
+        "CURRENT_PRICE_UNAVAILABLE",
+    }.issubset(row.reasons)
+    assert len(row.route_failures) == 1
+    assert row.route_failures[0].route.account_id == route["account_id"]
+    assert set(row.route_failures[0].reasons).issuperset(row.reasons)
+
+
+def test_unaffordable_minimum_commission_explains_zero_continuous_capacity(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings)
+    command = payload["candidate_allocation"]
+    command["routes"][0]["minimum_commission"] = "5000"
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    row = report.result.candidate_allocation.rows[0]
+    assert row.candidate == source.members[0] and row.continuous_principal == 0
+    assert row.principal == 0 and row.primary_reason == "CASH_CAPACITY_EXHAUSTED"

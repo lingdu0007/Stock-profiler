@@ -17,6 +17,7 @@ components:
   notices include OpenBLAS, LAPACK, GCC runtime (GPL with GCC runtime exception),
   and libquadmath (LGPL). The complete supplied notices are retained in
   [SciPy license text](docs/licenses/scipy-1.16.2.txt).
+  Trailing whitespace in the supplied text is normalized; all license terms and notices are retained.
 - HiGHS, MIT, as pinned by the SciPy source distribution at
   `222cce79a2bca866dbfbcd91b55da11336ae88f4`; see its
   [license text](docs/licenses/highs.txt) and the

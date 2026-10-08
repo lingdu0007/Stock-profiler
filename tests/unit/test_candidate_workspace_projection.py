@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.modules.decision_cases.domain import FormalReport, load_frozen_decision_case
 from stock_profiler.modules.delivery.candidate_workspace import (
@@ -302,3 +304,126 @@ def test_window_expiry_anchor_does_not_change_when_qualification_expires_later(
         == later.withdrawal_evidence_ids
         == (source.report.event_id,)
     )
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ("scope", "CURRENT_QUALIFICATION_SCOPE_OR_VERSION_CHANGED"),
+        ("basis", "CURRENT_QUALIFICATION_SCOPE_OR_VERSION_CHANGED"),
+        ("conflicting_heads", "CURRENT_QUALIFICATION_AMBIGUOUS"),
+        ("no_head", "CURRENT_QUALIFICATION_UNAVAILABLE"),
+        ("missing_predecessor", "CURRENT_QUALIFICATION_LINEAGE_UNAVAILABLE"),
+        ("cyclic_predecessor", "CURRENT_QUALIFICATION_AMBIGUOUS"),
+        ("changed_version", "CURRENT_QUALIFICATION_SCOPE_OR_VERSION_CHANGED"),
+        ("latest_basis_missing", "CURRENT_QUALIFICATION_SCOPE_OR_VERSION_CHANGED"),
+        ("latest_calendar", "CURRENT_QUALIFICATION_SCOPE_OR_VERSION_CHANGED"),
+        ("original_expired", "RELEASE_QUALIFICATION_EXPIRED"),
+        ("latest_expired", "CURRENT_QUALIFICATION_EXPIRED"),
+        ("scope_missing", "CURRENT_QUALIFICATION_UNAVAILABLE"),
+    ],
+)
+def test_unusable_qualification_history_preserves_the_original_candidate(
+    settings: Settings,
+    change: str,
+    reason: str,
+) -> None:
+    from dataclasses import replace
+
+    source = qualified_source(settings)
+    original = source.qualification_history[0].qualification
+    assert original is not None
+    now = datetime.fromisoformat("2042-07-02T09:00:00+00:00")
+    latest = original.model_copy(
+        update={
+            "decision_id": "synthetic-latest-review",
+            "previous_decision_id": original.decision_id,
+            "recorded_at": now,
+        }
+    )
+    records = [original]
+    if change == "scope":
+        records = [
+            original.model_copy(
+                update={
+                    "scope": original.scope.model_copy(update={"user_id": "synthetic-other-user"})
+                }
+            )
+        ]
+    elif change == "basis":
+        records = [
+            original.model_copy(
+                update={"formal_passing_evidence": None, "authorization_evidence": None}
+            )
+        ]
+    elif change == "conflicting_heads":
+        records.append(latest.model_copy(update={"previous_decision_id": None}))
+    elif change == "no_head":
+        records = [original.model_copy(update={"previous_decision_id": original.decision_id})]
+    elif change in {"missing_predecessor", "cyclic_predecessor"}:
+        records = [
+            original.model_copy(update={"previous_decision_id": original.decision_id}),
+            latest.model_copy(update={"previous_decision_id": "synthetic-unmatched-predecessor"}),
+        ]
+        if change == "cyclic_predecessor":
+            records.append(
+                latest.model_copy(
+                    update={
+                        "decision_id": "synthetic-unmatched-predecessor",
+                        "previous_decision_id": "synthetic-unmatched-predecessor",
+                        "version": original.version.model_copy(
+                            update={"version_id": "synthetic-other-version"}
+                        ),
+                    }
+                )
+            )
+    elif change == "changed_version":
+        records.append(
+            latest.model_copy(
+                update={
+                    "version": original.version.model_copy(
+                        update={"version_id": "synthetic-other-version"}
+                    )
+                }
+            )
+        )
+    elif change in {"latest_basis_missing", "latest_calendar"}:
+        basis = latest.formal_passing_evidence
+        assert basis is not None
+        records.append(
+            latest.model_copy(
+                update={
+                    "formal_passing_evidence": None
+                    if change == "latest_basis_missing"
+                    else basis.model_copy(
+                        update={"market_calendar_version": "synthetic-other-calendar"}
+                    ),
+                    "authorization_evidence": None,
+                }
+            )
+        )
+    elif change in {"original_expired", "latest_expired"}:
+        target = original if change == "original_expired" else latest
+        expired = {}
+        for name in ("authorization_evidence", "formal_evidence", "formal_passing_evidence"):
+            evidence = getattr(target, name)
+            assert evidence is not None
+            expired[name] = evidence.model_copy(
+                update={"expires_at": datetime.fromisoformat("2042-07-01T08:00:00+00:00")}
+            )
+        expired_record = target.model_copy(update=expired)
+        records = (
+            [expired_record, latest] if change == "original_expired" else [original, expired_record]
+        )
+    elif change == "scope_missing":
+        source = replace(source, case=source.case.model_copy(update={"access_scope": None}))
+    history = tuple(
+        source.qualification_history[0].model_copy(update={"qualification": record})
+        for record in records
+    )
+    projected = project_candidate_workspace(
+        (replace(source, qualification_history=history),), now
+    ).releases[0]
+    assert projected.status == "INVALIDATED"
+    assert reason in projected.status_reasons
+    assert projected.release == source.report.result.candidate_release

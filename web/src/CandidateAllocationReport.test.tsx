@@ -61,7 +61,7 @@ it("shows a saved partial allocation without replacing qualification or probabil
   render(<App />);
   const region = await screen.findByRole("region", { name: "Candidate allocation" });
   expect(region).toHaveTextContent("Partially allocated");
-  expect(region).toHaveTextContent("Candidate qualification retained");
+  expect(region).toHaveTextContent("Original candidate conclusions retained");
   expect(region).toHaveTextContent(member.calibrated_probability);
   expect(region).toHaveTextContent("LIQUIDITY_CAPACITY_EXHAUSTED");
   expect(region).toHaveTextContent("3890");

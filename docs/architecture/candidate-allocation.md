@@ -12,6 +12,11 @@ row retains the complete original calibrated member, including its research
 identity, probability, thesis and entry window. Allocation cannot rewrite the
 source report or its standard evaluation registrations. Missing or inaccessible
 source reports fail closed without disclosing their members.
+Before new allocation, shared retained-qualification checks bind the original
+scope and version, trace current qualification history, and reject expiry or
+withdrawal. Restoration cannot revive an invalidated release. A correction to
+the candidate conclusion or its source research blocks current use. The result
+retains the invalidating evidence identities and unchanged original members.
 
 ## Frozen inputs and gates
 
@@ -31,7 +36,9 @@ protection handoffs, the current effective authorization, normal capital state,
 known stress capacity and no pending deterministic reduction. A newer protection
 handoff blocks use of a superseded report. Current broker-final trading cash
 already excludes unfinished-buy reservations; those reservations are not
-deducted again. Accepted commitments outside the broker snapshot deduct their
+deducted again. Broker-linked commitments must prove that the reservation covers their frozen
+principal and full purchase cost; an inconsistent reservation blocks allocation.
+Accepted commitments outside the broker snapshot deduct their
 principal and full purchase cost. Every commitment also consumes issuer,
 turnover, neighborhood and stress capacity.
 
@@ -61,7 +68,7 @@ Only complete ties use the ascending covered-probability vector. Purchase costs,
 order count and stable security/account identities resolve remaining ties.
 Each positive account quantity is its minimum buy plus an integer number of
 increments. A candidate may exceed its continuous allocation by at most one
-minimum legal unit, while total principal stays within the continuous total and
+minimum legal unit of its selected account route, while total principal stays within the continuous total and
 all original capacities. Exact Decimal validation checks quantities and every
 monetary capacity again. There is no iterative leftover-cash purchase sweep.
 
@@ -78,6 +85,22 @@ Planned rows distinguish full, partial and zero allocation and retain structured
 reasons. The purchase sequence orders positive rows by entry-window expiry,
 prior issuer exposure, prior neighborhood exposure, descending probability,
 ascending purchase-cost rate and security identity.
+Each row saves all applicable gate reasons and a primary reason selected by
+fixed precedence: global protection and cash/stress, issuer and market capacity,
+execution evidence and minimum units, discrete priority, then entry expiry.
+Excluded account routes retain their complete frozen facts and all failure
+reasons. A positive continuous allocation that cannot fit any legal minimum unit
+uses `BELOW_MINIMUM_BUY_UNIT`. A legal but uncovered candidate uses
+`UNALLOCATED_CAPACITY_PRIORITY` with every lexicographic comparison against the
+best plan that requires its coverage. These counterfactuals are audit queries
+over the same capacities, share the integer phase's solve budget and never apply
+another allocation or replenish residual cash. The report records exact selected
+objective vectors, alternative vectors, and the first losing comparison; later
+layers are explicitly not reached.
+Saved capacity checks identify each gate's affected securities and account,
+committed margin, available buying capacity, and remaining continuous and planned
+capacity. A pre-existing breach is retained as a negative committed margin with
+zero buying capacity for its affected neighborhood.
 
 The capability is a synthetic report-only contract. It does not confirm a plan,
 create reservations, submit broker orders, reconcile future fills or activate

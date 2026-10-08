@@ -124,6 +124,41 @@ class AcquisitionLeg(PositionContract):
     purchase_cost: Decimal
 
 
+AllocationCriterion = Literal[
+    "COVERAGE",
+    "COMPLETION_RATIOS",
+    "PRINCIPAL",
+    "PROBABILITIES",
+    "PURCHASE_COST",
+    "ORDER_COUNT",
+    "STABLE_IDENTITIES",
+]
+
+
+class AllocationComparison(PositionContract):
+    criterion: AllocationCriterion
+    direction: Literal["MAXIMIZE", "MINIMIZE"]
+    selected_value: tuple[Decimal, ...]
+    alternative_value: tuple[Decimal, ...] | None
+    relation: Literal["EQUAL", "WORSE", "NOT_REACHED", "INFEASIBLE"]
+
+
+class AllocationRouteFailure(PositionContract):
+    route: AcquisitionRoute
+    reasons: tuple[str, ...]
+
+
+class AllocationCapacityCheck(PositionContract):
+    gate_id: str
+    reason: str
+    security_ids: tuple[str, ...]
+    account_id: str | None = None
+    committed_margin: Decimal
+    available_before: Decimal
+    remaining_after_continuous: Decimal
+    remaining_after_plan: Decimal
+
+
 class CandidateAllocationRow(PositionContract):
     candidate: CalibratedMember
     issuer_id: str
@@ -133,6 +168,9 @@ class CandidateAllocationRow(PositionContract):
     principal: Decimal
     outcome: Literal["FULLY_ALLOCATED", "PARTIALLY_ALLOCATED", "UNALLOCATED"]
     reasons: tuple[str, ...]
+    primary_reason: str | None = None
+    comparisons: tuple[AllocationComparison, ...] = ()
+    route_failures: tuple[AllocationRouteFailure, ...] = ()
     legs: tuple[AcquisitionLeg, ...] = ()
 
 
@@ -160,3 +198,6 @@ class CandidateAllocationOutcome(PositionContract):
     securities: tuple[AllocationSecurity, ...] = ()
     routes: tuple[AcquisitionRoute, ...] = ()
     purchase_sequence: tuple[str, ...] = ()
+    eligibility_evidence_ids: tuple[str, ...] = ()
+    discrete_objectives: tuple[tuple[Decimal, ...], ...] = ()
+    capacity_checks: tuple[AllocationCapacityCheck, ...] = ()

@@ -534,6 +534,68 @@
         "title": "AlertClosureProof",
         "type": "object"
       },
+      "AllocationCapacityCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "available_before": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Before",
+            "type": "string"
+          },
+          "committed_margin": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Margin",
+            "type": "string"
+          },
+          "gate_id": {
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_after_continuous": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining After Continuous",
+            "type": "string"
+          },
+          "remaining_after_plan": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining After Plan",
+            "type": "string"
+          },
+          "security_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Security Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gate_id",
+          "reason",
+          "security_ids",
+          "committed_margin",
+          "available_before",
+          "remaining_after_continuous",
+          "remaining_after_plan"
+        ],
+        "title": "AllocationCapacityCheck",
+        "type": "object"
+      },
       "AllocationCommitment": {
         "additionalProperties": false,
         "properties": {
@@ -623,6 +685,60 @@
           "evidence"
         ],
         "title": "AllocationCommitment",
+        "type": "object"
+      },
+      "AllocationComparison": {
+        "additionalProperties": false,
+        "properties": {
+          "alternative_value": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Value"
+          },
+          "criterion": {
+            "enum": [
+              "COVERAGE",
+              "COMPLETION_RATIOS",
+              "PRINCIPAL",
+              "PROBABILITIES",
+              "PURCHASE_COST",
+              "ORDER_COUNT",
+              "STABLE_IDENTITIES"
+            ],
+            "title": "Criterion",
+            "type": "string"
+          },
+          "direction": {
+            "enum": ["MAXIMIZE", "MINIMIZE"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "relation": {
+            "enum": ["EQUAL", "WORSE", "NOT_REACHED", "INFEASIBLE"],
+            "title": "Relation",
+            "type": "string"
+          },
+          "selected_value": {
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Selected Value",
+            "type": "array"
+          }
+        },
+        "required": ["criterion", "direction", "selected_value", "alternative_value", "relation"],
+        "title": "AllocationComparison",
         "type": "object"
       },
       "AllocationCorrelations": {
@@ -737,6 +853,24 @@
           "correlation_window"
         ],
         "title": "AllocationPolicy",
+        "type": "object"
+      },
+      "AllocationRouteFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "route": {
+            "$ref": "#/components/schemas/AcquisitionRoute"
+          }
+        },
+        "required": ["route", "reasons"],
+        "title": "AllocationRouteFailure",
         "type": "object"
       },
       "AllocationSecurity": {
@@ -1478,6 +1612,14 @@
             ],
             "title": "Candidate Event Id"
           },
+          "capacity_checks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCapacityCheck"
+            },
+            "title": "Capacity Checks",
+            "type": "array"
+          },
           "commitments": {
             "default": [],
             "items": {
@@ -1502,10 +1644,30 @@
               }
             ]
           },
+          "discrete_objectives": {
+            "default": [],
+            "items": {
+              "items": {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Discrete Objectives",
+            "type": "array"
+          },
           "disposition": {
             "enum": ["BLOCKED", "PLANNED", "AWAITING_PRICE_CAP"],
             "title": "Disposition",
             "type": "string"
+          },
+          "eligibility_evidence_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Eligibility Evidence Ids",
+            "type": "array"
           },
           "formed_at": {
             "anyOf": [
@@ -1665,6 +1827,14 @@
             "title": "Committed Exposure",
             "type": "string"
           },
+          "comparisons": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationComparison"
+            },
+            "title": "Comparisons",
+            "type": "array"
+          },
           "continuous_principal": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Continuous Principal",
@@ -1687,6 +1857,17 @@
             "title": "Outcome",
             "type": "string"
           },
+          "primary_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Reason"
+          },
           "principal": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Principal",
@@ -1697,6 +1878,14 @@
               "type": "string"
             },
             "title": "Reasons",
+            "type": "array"
+          },
+          "route_failures": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationRouteFailure"
+            },
+            "title": "Route Failures",
             "type": "array"
           },
           "target_gap": {

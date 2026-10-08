@@ -19,8 +19,119 @@ from stock_profiler.modules.decision_cases.domain import (
     FormalReport,
     FrozenDecisionCase,
     StageResult,
+    load_frozen_decision_case,
 )
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+from stock_profiler.modules.qualification.contracts import (
+    CapabilityVersion,
+    GovernanceOutcome,
+    QualificationEvidence,
+    QualificationPolicy,
+    QualificationRecord,
+    QualificationScope,
+)
+
+
+def save_qualification_prior(
+    settings: Settings, source_case: FrozenDecisionCase, record: QualificationRecord
+) -> None:
+    """Retain an original D0 qualification fact in the same scoped event ledger."""
+    from test_scoped_qualification import GovernanceClock
+
+    payload = load_frozen_decision_case(settings).model_dump(mode="json")
+    payload.update(business_identity=record.decision_id, case_id=record.decision_id)
+    assert source_case.access_scope is not None
+    payload["access_scope"] = source_case.access_scope.model_dump(mode="json")
+    payload["version_bundle"].update(
+        case_contract_version="3.0.0",
+        host_contract_version="3.0.0",
+        report_projection_contract_version="3.0.0",
+        agent_definition_version="2.0.0",
+    )
+    payload["agent_definition"]["version"] = "2.0.0"
+    case = FrozenDecisionCase.model_validate(payload)
+    ledger = DecisionLedger.from_settings(
+        settings, clock=GovernanceClock(record.recorded_at.isoformat())
+    )
+    ledger.persist_business_mapping_before_framework(case)
+    with ledger.serialize_case_execution() as connection:
+        ledger.commit_event(
+            connection,
+            case=case,
+            framework_run_id=case.framework_run_id,
+            result=ExternalResult(
+                outcome_code="QUALIFICATION_PRIOR_FACT",
+                summary="Original D0 qualification prior fact.",
+                key_reasons=(record.cause,),
+                governance=GovernanceOutcome(
+                    disposition="APPROVED", reasons=(record.cause,), qualification=record
+                ),
+            ),
+            stage_results=(),
+            committed_at=record.recorded_at.isoformat(),
+        )
+
+
+def qualified_prior_record(
+    case: FrozenDecisionCase, release: CandidateReleaseOutcome
+) -> QualificationRecord:
+    assert case.access_scope is not None and release.qualification is not None
+    scope = QualificationScope(
+        capability="candidate-release",
+        purpose="CANDIDATE_BUY",
+        evidence_level="D0",
+        user_id=case.access_scope.user_id,
+        account_ids=case.access_scope.account_ids,
+        account_type="SYNTHETIC",
+        source="SYNTHETIC_D0",
+        market_state=release.market_state,
+        board="SYNTHETIC",
+        target="SIX_MONTH_TERMINAL_20_PERCENT",
+    )
+    policy = QualificationPolicy(
+        contract_version="1.0.0",
+        policy_version="synthetic-allocation-qualification-policy",
+        synthetic=True,
+        generator_version="allocation-qualification-v1",
+        seed=2323,
+        evaluation_max_age_months=12,
+        state_activity_max_age_months=12,
+        require_state_activity=False,
+    )
+    version = CapabilityVersion(
+        version_id=release.capability_version,
+        policy_version=policy.policy_version,
+        implementation=case.version_bundle,
+        qualification_policy=policy,
+    )
+    snapshot = release.qualification
+    evidence = QualificationEvidence(
+        evidence_id="synthetic-allocation-qualification-proof",
+        synthetic=True,
+        generator_version="allocation-qualification-v1",
+        seed=2323,
+        version=version,
+        scope=scope,
+        kind="QUALIFICATION_PASS",
+        digest="c" * 64,
+        evaluation_end=snapshot.recorded_at,
+        available_at=snapshot.recorded_at,
+        expires_at=snapshot.valid_through,
+        market_calendar_version=release.market_calendar_version,
+    )
+    return QualificationRecord(
+        decision_id=snapshot.qualification_id,
+        authorization_id=snapshot.qualification_id,
+        scope=scope,
+        version=version,
+        status="VALID",
+        cause="QUALIFICATION_PASS",
+        authorization_evidence=evidence,
+        recorded_at=snapshot.recorded_at,
+        evidence=evidence,
+        formal_evidence=evidence,
+        formal_passing_evidence=evidence,
+    )
 
 
 def return_market_dates(cutoff_at: str, calendar_version: str) -> list[str]:
@@ -42,6 +153,8 @@ def feasible_payload(
     expected_purchase_fees: str = "0",
     security_id: str = "SYNTH-CANDIDATE",
     capital_state: str | None = None,
+    qualification_valid_through: str = "2042-05-22T15:00:00Z",
+    seed_qualification: bool = True,
 ) -> tuple[dict[str, Any], CandidateReleaseOutcome]:
     from test_candidate_allocation import allocation_payload
 
@@ -67,6 +180,9 @@ def feasible_payload(
         published_at="2042-05-17T15:01:00Z",
         valid_market_dates=[f"2042-05-{day}" for day in range(18, 23)],
     )
+    release["qualification"].update(
+        recorded_at="2042-05-17T14:59:00Z", valid_through=qualification_valid_through
+    )
     release["members"][0]["valid_market_dates"] = release["valid_market_dates"]
     release["members"][0]["security_id"] = security_id
     for index in range(1, candidate_count):
@@ -78,6 +194,8 @@ def feasible_payload(
     for member, probability in zip(release["members"], probabilities, strict=False):
         member["calibrated_probability"] = probability
     source = CandidateReleaseOutcome.model_validate(release)
+    if seed_qualification:
+        save_qualification_prior(settings, case, qualified_prior_record(case, source))
     runtime = initialize_runtime_storage(settings)
     from test_scoped_qualification import GovernanceClock
 
@@ -206,7 +324,10 @@ def assert_allocation_preserves_genuine_release(
     from test_candidate_allocation import allocation_payload
     from test_scoped_qualification import GovernanceClock
 
-    from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
+    from stock_profiler.bootstrap.decision_cases import (
+        correct_default_frozen_decision_case,
+        run_frozen_decision_case,
+    )
     from stock_profiler.modules.portfolio.allocation_contracts import CandidateAllocationCommand
 
     release = source_report.result.candidate_release
@@ -320,3 +441,33 @@ def assert_allocation_preserves_genuine_release(
     assert after is not None
     assert after == source_report
     assert after.result.evaluation_registrations == source_report.result.evaluation_registrations
+    with runtime.engine.connect() as connection:
+        research = ledger.get_decision_event(release.research_event_id, connection)
+    assert research is not None
+    correction = correct_default_frozen_decision_case(
+        settings,
+        research.case.business_identity,
+        clock=GovernanceClock("2042-07-01T16:02:00Z"),
+    )
+    assert (
+        correction.report is not None
+        and correction.report.corrects_event_id == research.decision_event_id
+    )
+    payload.update(
+        case_id="synthetic-allocation-after-research-correction",
+        business_identity="synthetic-allocation-after-research-correction",
+    )
+    denied = run_frozen_decision_case(
+        settings, payload, clock=GovernanceClock("2042-07-01T16:03:00Z")
+    ).report
+    assert denied is not None and denied.result.candidate_allocation is not None
+    blocked = denied.result.candidate_allocation
+    assert blocked.disposition == "BLOCKED"
+    assert blocked.reasons == ("RESEARCH_EVIDENCE_CORRECTED",)
+    assert blocked.eligibility_evidence_ids == (correction.report.event_id,)
+    assert tuple(row.candidate for row in blocked.rows) == tuple(row.candidate for row in plan.rows)
+    with runtime.engine.connect() as connection:
+        assert ledger.get_formal_report_for_event(report.event_id, connection) == report
+        assert (
+            ledger.get_formal_report_for_event(source_report.event_id, connection) == source_report
+        )

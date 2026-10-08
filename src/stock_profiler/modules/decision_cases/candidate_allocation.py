@@ -1,13 +1,18 @@
 """Host-owned allocation from saved candidates and authoritative risk handoffs."""
 
 from collections import defaultdict
-from decimal import Context, Decimal, localcontext
+from decimal import Context, Decimal, DecimalException, localcontext
 
-from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+from stock_profiler.modules.candidate_selection.current_eligibility import (
+    candidate_qualification_eligibility,
+)
+from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
 from stock_profiler.modules.portfolio.allocation_contracts import (
     AcquisitionLeg,
+    AllocationCapacityCheck,
+    AllocationRouteFailure,
     CandidateAllocationOutcome,
     CandidateAllocationRow,
 )
@@ -15,12 +20,54 @@ from stock_profiler.modules.portfolio.allocation_solver import (
     AllocationProblem,
     AllocationSolveFailed,
     Capacity,
+    DiscreteAllocation,
     capacity_is_feasible,
     continuous_allocation,
     discrete_allocation,
     discrete_principal_ceiling,
 )
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+
+_REASON_ORDER = (
+    "COMPLETE_PORTFOLIO_REQUIRED",
+    "ACTIVE_RISK_BUDGET_REQUIRED",
+    "NEW_EXPOSURE_BLOCKED",
+    "CASH_CAPACITY_EXHAUSTED",
+    "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+    "STRESS_CAPACITY_EXHAUSTED",
+    "ENTRY_TARGET_REACHED",
+    "ISSUER_CAPACITY_EXHAUSTED",
+    "CORRELATION_CAPACITY_EXHAUSTED",
+    "CORRELATION_EVIDENCE_FAILED",
+    "LIQUIDITY_CAPACITY_EXHAUSTED",
+    "MARKET_CAPACITY_EVIDENCE_FAILED",
+    "ISSUER_IDENTITY_MISMATCH",
+    "ACCOUNT_SCOPE_MISMATCH",
+    "ACCOUNT_PERMISSION_DENIED",
+    "ACCOUNT_EXECUTION_RESTRICTED",
+    "PRICE_CAP_REQUIRED",
+    "CURRENT_PRICE_UNAVAILABLE",
+    "CURRENT_PRICE_OUT_OF_RANGE",
+    "PRICE_CAP_OUT_OF_RANGE",
+    "PRICE_TICK_INVALID",
+    "BUY_ROUTE_EVIDENCE_FAILED",
+    "BUY_ROUTE_UNAVAILABLE",
+    "BELOW_MINIMUM_BUY_UNIT",
+    "UNALLOCATED_CAPACITY_PRIORITY",
+    "ROUNDING_REMAINDER_UNUSABLE",
+    "ENTRY_WINDOW_EXPIRED",
+)
+
+
+def _ordered_reasons(reasons: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            dict.fromkeys(reasons),
+            key=lambda reason: (
+                _REASON_ORDER.index(reason) if reason in _REASON_ORDER else len(_REASON_ORDER)
+            ),
+        )
+    )
 
 
 def _correlated(left: tuple[Decimal, ...], right: tuple[Decimal, ...], ceiling: Decimal) -> bool:
@@ -40,9 +87,70 @@ def adjudicate_candidate_allocation(
     business_prerequisite_met: bool,
 ) -> CandidateAllocationOutcome:
     with localcontext(Context(prec=38)):
-        return _adjudicate_candidate_allocation(
-            case, ledger, connection, business_prerequisite_met=business_prerequisite_met
-        )
+        try:
+            return _adjudicate_candidate_allocation(
+                case, ledger, connection, business_prerequisite_met=business_prerequisite_met
+            )
+        except DecimalException:
+            assert case.candidate_allocation is not None and case.access_scope is not None
+            source = ledger.get_formal_report_for_event(
+                case.candidate_allocation.candidate_event_id, connection
+            )
+            if (
+                source is None
+                or source.access_scope is None
+                or not case.access_scope.same_scope_as(source.access_scope)
+                or source.result.candidate_release is None
+            ):
+                return CandidateAllocationOutcome(
+                    disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+                )
+            return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
+
+
+def _blocked(
+    case: FrozenDecisionCase,
+    source: FormalReport,
+    reason: str | tuple[str, ...],
+    evidence_ids: tuple[str, ...] = (),
+) -> CandidateAllocationOutcome:
+    command = case.candidate_allocation
+    release = source.result.candidate_release
+    assert command is not None and release is not None
+    securities = {row.security_id: row for row in command.securities}
+    reasons = _ordered_reasons((reason,) if isinstance(reason, str) else reason)
+    return CandidateAllocationOutcome(
+        disposition="BLOCKED",
+        reasons=reasons,
+        eligibility_evidence_ids=evidence_ids,
+        candidate_event_id=command.candidate_event_id,
+        candidate_batch_id=release.batch_id,
+        candidate_conclusion_version=source.report_version_id,
+        formed_at=command.cutoff_at,
+        policy=command.policy,
+        risk_handoff=command.risk_handoff,
+        correlations=command.correlations,
+        commitments=command.commitments,
+        securities=command.securities,
+        routes=command.routes,
+        rows=tuple(
+            CandidateAllocationRow(
+                candidate=member,
+                issuer_id=securities[member.security_id].issuer_id
+                if member.security_id in securities
+                else "UNKNOWN",
+                committed_exposure=Decimal(0),
+                target_gap=Decimal(0),
+                continuous_principal=Decimal(0),
+                principal=Decimal(0),
+                outcome="UNALLOCATED",
+                reasons=reasons,
+                primary_reason=reasons[0],
+            )
+            for member in release.members
+            if member.candidate
+        ),
+    )
 
 
 def _adjudicate_candidate_allocation(
@@ -68,36 +176,10 @@ def _adjudicate_candidate_allocation(
     candidates = tuple(member for member in release.members if member.candidate)
     securities = {row.security_id: row for row in command.securities}
 
-    def blocked(reason: str) -> CandidateAllocationOutcome:
-        return CandidateAllocationOutcome(
-            disposition="BLOCKED",
-            reasons=(reason,),
-            candidate_event_id=command.candidate_event_id,
-            candidate_batch_id=release.batch_id,
-            formed_at=command.cutoff_at,
-            policy=command.policy,
-            risk_handoff=command.risk_handoff,
-            rows=tuple(
-                CandidateAllocationRow(
-                    candidate=member,
-                    issuer_id=securities[member.security_id].issuer_id
-                    if member.security_id in securities
-                    else "UNKNOWN",
-                    committed_exposure=Decimal(0),
-                    target_gap=Decimal(0),
-                    continuous_principal=Decimal(0),
-                    principal=Decimal(0),
-                    outcome="UNALLOCATED",
-                    reasons=(reason,),
-                )
-                for member in candidates
-            ),
-        )
-
     if not business_prerequisite_met:
-        return blocked("BUSINESS_PREREQUISITE_NOT_MET")
+        return _blocked(case, source, "BUSINESS_PREREQUISITE_NOT_MET")
     if command.policy is None:
-        return blocked("ALLOCATION_POLICY_REQUIRED")
+        return _blocked(case, source, "ALLOCATION_POLICY_REQUIRED")
     policy = command.policy
     if (
         release.disposition != "CANDIDATES"
@@ -105,9 +187,27 @@ def _adjudicate_candidate_allocation(
         or release.published_at > command.cutoff_at
         or any(member.calibrated_probability is None for member in candidates)
     ):
-        return blocked("CANDIDATE_HANDOFF_INVALID")
+        return _blocked(case, source, "CANDIDATE_HANDOFF_INVALID")
     if len({member.security_id for member in candidates}) != len(candidates):
-        return blocked("CANDIDATE_IDENTITIES_AMBIGUOUS")
+        return _blocked(case, source, "CANDIDATE_IDENTITIES_AMBIGUOUS")
+    original = ledger.get_decision_event(source.event_id, connection)
+    if original is None:
+        return _blocked(case, source, "CANDIDATE_HANDOFF_EVIDENCE_UNAVAILABLE")
+    for event_id, reason in (
+        (source.event_id, "CANDIDATE_CONCLUSION_SUPERSEDED"),
+        (release.research_event_id, "RESEARCH_EVIDENCE_CORRECTED"),
+    ):
+        correction = ledger.get_correction_event(event_id, connection)
+        if correction is not None:
+            return _blocked(case, source, reason, (correction.decision_event_id,))
+    eligibility_reasons, eligibility_ids, _ = candidate_qualification_eligibility(
+        release,
+        original.case,
+        ledger.governance_history(connection, scope),
+        command.cutoff_at,
+    )
+    if eligibility_reasons:
+        return _blocked(case, source, eligibility_reasons, eligibility_ids)
     protection = adjudicate_execution_plan(
         case.model_copy(update={"execution_plan": command.risk_handoff}), ledger, connection
     )
@@ -116,7 +216,7 @@ def _adjudicate_candidate_allocation(
         or protection.disposition == "BLOCKED"
         or any((target.required_sale_quantity or Decimal(0)) > 0 for target in protection.targets)
     ):
-        return blocked("NEW_EXPOSURE_BLOCKED")
+        return _blocked(case, source, ("NEW_EXPOSURE_BLOCKED", *protection.reasons))
     reports = tuple(
         ledger.get_formal_report_for_event(event, connection)
         for event in (
@@ -162,10 +262,10 @@ def _adjudicate_candidate_allocation(
         or not capital_history
         or capital_history[-1] != drawdown
     ):
-        return blocked("RISK_HANDOFF_SUPERSEDED")
+        return _blocked(case, source, "RISK_HANDOFF_SUPERSEDED")
     authorization = liquidity.purchase_authorization
     if not authorization or not authorization.usage or not authorization.usage.allowed:
-        return blocked("ACTIVE_RISK_BUDGET_REQUIRED")
+        return _blocked(case, source, "ACTIVE_RISK_BUDGET_REQUIRED")
     usage = authorization.usage
     budget = usage.authorization_snapshot.proposal.risk_budget
     history = ledger.portfolio_authorization_history(
@@ -183,7 +283,7 @@ def _adjudicate_candidate_allocation(
         or stress.gross_stress_loss is None
         or stress.calculation_policy is None
     ):
-        return blocked("NEW_EXPOSURE_BLOCKED")
+        return _blocked(case, source, "NEW_EXPOSURE_BLOCKED")
     snapshot = liquidity.position_snapshot.snapshot
     equity, cash = liquidity.net_liquidation_equity, liquidity.deployable_purchase_cash
     assert equity is not None and cash is not None
@@ -191,13 +291,13 @@ def _adjudicate_candidate_allocation(
         liquidity_report.business_object_id, connection
     )
     if liquidity_fact is None or liquidity_fact.case.liquidity is None:
-        return blocked("LIQUIDITY_COST_BINDING_UNAVAILABLE")
+        return _blocked(case, source, "LIQUIDITY_COST_BINDING_UNAVAILABLE")
     # Replace the prior aggregate estimate with this plan's actual full route costs.
     cash += liquidity_fact.case.liquidity.expected_purchase_fees
     if equity <= 0 or set(scope.account_ids) != {row.account_id for row in snapshot.cash_states}:
-        return blocked("COMPLETE_PORTFOLIO_REQUIRED")
+        return _blocked(case, source, "COMPLETE_PORTFOLIO_REQUIRED")
     if any(row.current_market_exposure is None for row in snapshot.issuer_exposures):
-        return blocked("COMMITTED_EXPOSURE_UNKNOWN")
+        return _blocked(case, source, "COMMITTED_EXPOSURE_UNKNOWN")
     existing: dict[str, Decimal] = defaultdict(Decimal)
     held_issuers = {unit.security_id: unit.issuer_id for unit in snapshot.action_units}
     for row in snapshot.issuer_exposures:
@@ -214,24 +314,24 @@ def _adjudicate_candidate_allocation(
         row.broker_order_id for row in command.commitments if row.broker_order_id is not None
     }
     if set(broker_orders) != supplied_orders:
-        return blocked("BUY_COMMITMENTS_INCOMPLETE")
+        return _blocked(case, source, "BUY_COMMITMENTS_INCOMPLETE")
     security_committed: dict[str, Decimal] = defaultdict(Decimal)
     for commitment in command.commitments:
         if (
             commitment.security_id in held_issuers
             and held_issuers[commitment.security_id] != commitment.issuer_id
         ):
-            return blocked("BUY_COMMITMENT_IDENTITY_MISMATCH")
+            return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
         if (
             commitment.quantity is None
             or commitment.price_cap is None
             or commitment.principal != commitment.quantity * commitment.price_cap
         ):
-            return blocked("BUY_COMMITMENT_PRICE_BASIS_UNKNOWN")
+            return _blocked(case, source, "BUY_COMMITMENT_PRICE_BASIS_UNKNOWN")
         if commitment.account_id not in account_cash or commitment.evidence.problem_codes(
             command.cutoff_at, require_current_completeness=True
         ):
-            return blocked("BUY_COMMITMENT_EVIDENCE_FAILED")
+            return _blocked(case, source, "BUY_COMMITMENT_EVIDENCE_FAILED")
         if commitment.broker_order_id is not None:
             order = broker_orders[commitment.broker_order_id]
             if (
@@ -242,7 +342,13 @@ def _adjudicate_candidate_allocation(
                     command.cutoff_at, require_current_completeness=True
                 )
             ):
-                return blocked("BUY_COMMITMENT_IDENTITY_MISMATCH")
+                return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
+            if (
+                order.reserved_cash is None
+                or order.reserved_cash_semantics != "BROKER_FINAL_RESERVED_CASH"
+                or order.reserved_cash < commitment.principal + commitment.purchase_cost
+            ):
+                return _blocked(case, source, "BUY_COMMITMENT_RESERVATION_INCOMPLETE")
         else:
             deduction = commitment.principal + commitment.purchase_cost
             account_cash[commitment.account_id] -= deduction
@@ -257,7 +363,7 @@ def _adjudicate_candidate_allocation(
         equity * budget.stress.target_ratio - stress.gross_stress_loss - commitment_stress
     )
     if stress_remaining < 0 or cash < 0:
-        return blocked("COMMITTED_PROTECTION_CAPACITY_EXCEEDED")
+        return _blocked(case, source, "COMMITTED_PROTECTION_CAPACITY_EXCEEDED")
 
     issuer_ids = tuple(
         held_issuers.get(member.security_id, securities[member.security_id].issuer_id)
@@ -363,39 +469,54 @@ def _adjudicate_candidate_allocation(
 
     routes = []
     route_members = []
+    route_failures: dict[int, list[AllocationRouteFailure]] = defaultdict(list)
     awaiting = False
     for index, member in enumerate(candidates):
         eligible = []
         for route in sorted(command.routes, key=lambda row: (row.security_id, row.account_id)):
-            if route.security_id != member.security_id or route.account_id not in account_cash:
+            if route.security_id != member.security_id:
                 continue
-            if not route.permission or route.evidence.problem_codes(
-                command.cutoff_at, require_current_completeness=True
-            ):
-                continue
+            failures = []
+            if route.account_id not in account_cash:
+                failures.append("ACCOUNT_SCOPE_MISMATCH")
+            if not route.permission:
+                failures.append("ACCOUNT_PERMISSION_DENIED")
+            if route.evidence.problem_codes(command.cutoff_at, require_current_completeness=True):
+                failures.append("BUY_ROUTE_EVIDENCE_FAILED")
             if any(
                 restriction.active
                 and restriction.account_id == route.account_id
                 and restriction.security_id in {None, route.security_id}
                 for restriction in snapshot.execution_restrictions
             ):
-                continue
-            if (
-                route.current_price is None
-                or not route.minimum_price <= route.current_price <= route.maximum_price
-            ):
+                failures.append("ACCOUNT_EXECUTION_RESTRICTED")
+            if route.current_price is None:
+                failures.append("CURRENT_PRICE_UNAVAILABLE")
+            elif not route.minimum_price <= route.current_price <= route.maximum_price:
+                failures.append("CURRENT_PRICE_OUT_OF_RANGE")
+            if route.price_cap is not None and route.price_cap_confirmed:
+                if not route.minimum_price <= route.price_cap <= route.maximum_price:
+                    failures.append("PRICE_CAP_OUT_OF_RANGE")
+                if route.price_cap % route.price_tick != 0:
+                    failures.append("PRICE_TICK_INVALID")
+            if failures:
+                route_failures[index].append(
+                    AllocationRouteFailure(
+                        route=route,
+                        reasons=_ordered_reasons(failures),
+                    )
+                )
                 continue
             if route.price_cap is None or not route.price_cap_confirmed:
                 awaiting = True
                 route = route.model_copy(update={"price_cap": route.current_price})
-            elif (
-                not route.minimum_price <= route.price_cap <= route.maximum_price
-                or route.price_cap % route.price_tick != 0
-            ):
-                continue
             eligible.append(route)
-        if not eligible and not reasons[index]:
-            reasons[index].append("BUY_ROUTE_UNAVAILABLE")
+        if not eligible:
+            reasons[index].extend(
+                reason for failure in route_failures[index] for reason in failure.reasons
+            )
+            if not route_failures[index]:
+                reasons[index].append("BUY_ROUTE_UNAVAILABLE")
         routes.extend(eligible)
         route_members.extend([index] * len(eligible))
     problem = AllocationProblem(
@@ -415,14 +536,15 @@ def _adjudicate_candidate_allocation(
         continuous_solution = continuous_allocation(problem)
         continuous = continuous_solution.principals
         if not capacity_is_feasible(problem, continuous, continuous_solution.route_principals):
-            return blocked("ALLOCATION_CAPACITY_VERIFICATION_FAILED")
-        quantities = (
-            tuple(Decimal(0) for _ in routes)
+            return _blocked(case, source, "ALLOCATION_CAPACITY_VERIFICATION_FAILED")
+        discrete = (
+            DiscreteAllocation(tuple(Decimal(0) for _ in routes), (), {}, frozenset())
             if awaiting
             else discrete_allocation(problem, continuous)
         )
+        quantities = discrete.quantities
     except AllocationSolveFailed:
-        return blocked("ALLOCATION_OPTIMUM_UNAVAILABLE")
+        return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
     legs_by_member: dict[int, list[AcquisitionLeg]] = defaultdict(list)
     for route, member_index, quantity in zip(routes, route_members, quantities, strict=True):
         if quantity == 0:
@@ -433,7 +555,7 @@ def _adjudicate_candidate_allocation(
             quantity < route.minimum_quantity
             or (quantity - route.minimum_quantity) % route.quantity_increment != 0
         ):
-            return blocked("ALLOCATION_QUANTITY_VERIFICATION_FAILED")
+            return _blocked(case, source, "ALLOCATION_QUANTITY_VERIFICATION_FAILED")
         legs_by_member[member_index].append(
             AcquisitionLeg(
                 route=route,
@@ -451,7 +573,7 @@ def _adjudicate_candidate_allocation(
     if (
         total > sum(continuous, Decimal(0))
         or any(
-            principal > discrete_principal_ceiling(problem, continuous, index)
+            principal > discrete_principal_ceiling(problem, continuous, index, quantities)
             for index, principal in enumerate(principals)
         )
         or not capacity_is_feasible(
@@ -463,7 +585,106 @@ def _adjudicate_candidate_allocation(
             ),
         )
     ):
-        return blocked("ALLOCATION_CAPACITY_VERIFICATION_FAILED")
+        return _blocked(case, source, "ALLOCATION_CAPACITY_VERIFICATION_FAILED")
+    capacity_checks = []
+    all_security_ids = tuple(member.security_id for member in candidates)
+    continuous_cost = sum(
+        (
+            route.cost(amount)
+            for route, amount in zip(routes, continuous_solution.route_principals, strict=True)
+        ),
+        Decimal(0),
+    )
+    continuous_stress = sum(
+        (
+            amount * (problem.shock + route.disposal_friction_ratio)
+            for route, amount in zip(routes, continuous_solution.route_principals, strict=True)
+        ),
+        Decimal(0),
+    )
+    planned_stress = sum(
+        (
+            leg.principal * (problem.shock + leg.route.disposal_friction_ratio)
+            for legs in legs_by_member.values()
+            for leg in legs
+        ),
+        Decimal(0),
+    )
+    for gate_id, reason, margin, used_continuous, used_plan in (
+        (
+            "global:cash",
+            "CASH_CAPACITY_EXHAUSTED",
+            cash,
+            sum(continuous, Decimal(0)) + continuous_cost,
+            total + costs,
+        ),
+        (
+            "global:stress",
+            "STRESS_CAPACITY_EXHAUSTED",
+            stress_remaining,
+            continuous_stress,
+            planned_stress,
+        ),
+    ):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=gate_id,
+                reason=reason,
+                security_ids=all_security_ids,
+                committed_margin=margin,
+                available_before=max(Decimal(0), margin),
+                remaining_after_continuous=max(Decimal(0), margin) - used_continuous,
+                remaining_after_plan=max(Decimal(0), margin) - used_plan,
+            )
+        )
+    for index, capacity in enumerate(capacities):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=f"capacity:{index}",
+                reason=capacity.reason,
+                security_ids=tuple(candidates[member].security_id for member in capacity.members),
+                committed_margin=capacity.remaining,
+                available_before=max(Decimal(0), capacity.remaining),
+                remaining_after_continuous=max(Decimal(0), capacity.remaining)
+                - sum((continuous[member] for member in capacity.members), Decimal(0)),
+                remaining_after_plan=max(Decimal(0), capacity.remaining)
+                - sum((principals[member] for member in capacity.members), Decimal(0)),
+            )
+        )
+    for account, available in sorted(account_cash.items()):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=f"account:{account}",
+                reason="ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+                security_ids=tuple(
+                    sorted({route.security_id for route in routes if route.account_id == account})
+                ),
+                account_id=account,
+                committed_margin=available,
+                available_before=available,
+                remaining_after_continuous=available
+                - sum(
+                    (
+                        amount + route.cost(amount)
+                        for route, amount in zip(
+                            routes, continuous_solution.route_principals, strict=True
+                        )
+                        if route.account_id == account
+                    ),
+                    Decimal(0),
+                ),
+                remaining_after_plan=available
+                - sum(
+                    (
+                        leg.principal + leg.purchase_cost
+                        for legs in legs_by_member.values()
+                        for leg in legs
+                        if leg.route.account_id == account
+                    ),
+                    Decimal(0),
+                ),
+            )
+        )
     rows = []
     for index, member in enumerate(candidates):
         principal = principals[index]
@@ -482,7 +703,16 @@ def _adjudicate_candidate_allocation(
             default=Decimal(0),
         )
         row_reasons = list(reasons[index])
-        if issuer_continuous < targets[index] and not row_reasons:
+        if issuer_continuous < targets[index]:
+            # A minimum commission can close positive capacity before any cash is
+            # consumed. Preserve that cash gate rather than publishing an unexplained zero.
+            if member_routes and all(route.minimum_commission >= cash for route in member_routes):
+                row_reasons.append("CASH_CAPACITY_EXHAUSTED")
+            if member_routes and all(
+                route.minimum_commission >= account_cash[route.account_id]
+                for route in member_routes
+            ):
+                row_reasons.append("ACCOUNT_CASH_CAPACITY_EXHAUSTED")
             if (
                 sum(
                     (
@@ -509,6 +739,22 @@ def _adjudicate_candidate_allocation(
                 >= cash
             ):
                 row_reasons.append("CASH_CAPACITY_EXHAUSTED")
+            for account, available in account_cash.items():
+                if (
+                    any(route.account_id == account for route in member_routes)
+                    and sum(
+                        (
+                            amount + route.cost(amount)
+                            for amount, route in zip(
+                                continuous_solution.route_principals, routes, strict=True
+                            )
+                            if route.account_id == account
+                        ),
+                        Decimal(0),
+                    )
+                    >= available
+                ):
+                    row_reasons.append("ACCOUNT_CASH_CAPACITY_EXHAUSTED")
             for capacity in capacities:
                 if (
                     index in capacity.members
@@ -517,12 +763,17 @@ def _adjudicate_candidate_allocation(
                     and capacity.reason != "ENTRY_TARGET_REACHED"
                 ):
                     row_reasons.append(capacity.reason)
-            if not row_reasons:
-                row_reasons.append("CASH_OR_STRESS_CAPACITY_EXHAUSTED")
         if awaiting:
             row_reasons.append("PRICE_CAP_REQUIRED")
+        elif continuous[index] > 0 and principal == 0:
+            row_reasons.append(
+                "BELOW_MINIMUM_BUY_UNIT"
+                if index in discrete.below_minimum
+                else "UNALLOCATED_CAPACITY_PRIORITY"
+            )
         elif principal < continuous[index]:
-            row_reasons.append("LEGAL_UNIT_OR_LEXICOGRAPHIC_LIMIT")
+            row_reasons.append("ROUNDING_REMAINDER_UNUSABLE")
+        ordered_reasons = _ordered_reasons(row_reasons)
         full = (
             principal > 0
             and not any(reason.endswith("CAPACITY_EXHAUSTED") for reason in row_reasons)
@@ -541,7 +792,10 @@ def _adjudicate_candidate_allocation(
                 else "PARTIALLY_ALLOCATED"
                 if principal > 0
                 else "UNALLOCATED",
-                reasons=tuple(dict.fromkeys(row_reasons)),
+                reasons=ordered_reasons,
+                primary_reason=ordered_reasons[0] if ordered_reasons else None,
+                comparisons=discrete.comparisons.get(index, ()),
+                route_failures=tuple(route_failures[index]),
                 legs=tuple(legs_by_member[index]),
             )
         )
@@ -579,4 +833,7 @@ def _adjudicate_candidate_allocation(
         securities=command.securities,
         routes=command.routes,
         purchase_sequence=tuple(candidates[index].security_id for index in ordered),
+        eligibility_evidence_ids=eligibility_ids,
+        discrete_objectives=discrete.objectives,
+        capacity_checks=tuple(capacity_checks),
     )
