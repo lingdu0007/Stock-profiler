@@ -131,3 +131,6 @@ officially maintained or endorsed deployment.
 
 The credential-free isolation contract and its precise trusted-host boundary
 are documented in [`Read-only isolation`](docs/architecture/read-only-isolation.md).
+
+The frozen report-only allocation capability is documented in
+[`Saved candidate allocation`](docs/architecture/candidate-allocation.md).

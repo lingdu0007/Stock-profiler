@@ -30,6 +30,9 @@ from stock_profiler.modules.candidate_selection.calibrated_candidates import (
 )
 from stock_profiler.modules.candidate_selection.selection import freeze_selection
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
+from stock_profiler.modules.decision_cases.candidate_allocation import (
+    adjudicate_candidate_allocation,
+)
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     BusinessCommitStatus,
@@ -3071,6 +3074,7 @@ def _commit_framework_result(
     drawdown_result: StageResult | None = None
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
+    allocation_result: StageResult | None = None
     execution_plan_result: StageResult | None = None
     candidate_release_result: StageResult | None = None
     if framework.output is None:
@@ -3390,6 +3394,20 @@ def _commit_framework_result(
                         ),
                     ),
                     reasons=concentration.reasons,
+                )
+            if business_result is not None and execution_case.candidate_allocation is not None:
+                allocation = adjudicate_candidate_allocation(
+                    execution_case,
+                    ledger,
+                    connection,
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"candidate_allocation": allocation})
+                allocation_result = StageResult(
+                    phase="CANDIDATE_ALLOCATION",
+                    status="REJECTED" if allocation.disposition == "BLOCKED" else "SUCCEEDED",
+                    gate_results=(),
+                    reasons=allocation.reasons,
                 )
             if business_result is not None and execution_case.execution_plan is not None:
                 plan = adjudicate_execution_plan(execution_case, ledger, connection)
@@ -3761,6 +3779,13 @@ def _commit_framework_result(
             stage_result=stress_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if allocation_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=allocation_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     if execution_plan_result is not None:
         ledger.record_stage_result(
             connection,
@@ -3787,6 +3812,7 @@ def _commit_framework_result(
         *((drawdown_result,) if drawdown_result is not None else ()),
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
+        *((allocation_result,) if allocation_result is not None else ()),
         *((execution_plan_result,) if execution_plan_result is not None else ()),
         *((candidate_release_result,) if candidate_release_result is not None else ()),
     )

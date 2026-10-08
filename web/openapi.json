@@ -273,6 +273,158 @@
         "title": "AccountOpenOrder",
         "type": "object"
       },
+      "AcquisitionLeg": {
+        "additionalProperties": false,
+        "properties": {
+          "principal": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Principal",
+            "type": "string"
+          },
+          "purchase_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Purchase Cost",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "route": {
+            "$ref": "#/components/schemas/AcquisitionRoute"
+          }
+        },
+        "required": ["route", "quantity", "principal", "purchase_cost"],
+        "title": "AcquisitionLeg",
+        "type": "object"
+      },
+      "AcquisitionRoute": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "commission_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission Ratio",
+            "type": "string"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "disposal_friction_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction Ratio",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "maximum_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Price",
+            "type": "string"
+          },
+          "minimum_commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Commission",
+            "type": "string"
+          },
+          "minimum_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Price",
+            "type": "string"
+          },
+          "minimum_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Quantity",
+            "type": "string"
+          },
+          "other_cost_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Other Cost Ratio",
+            "type": "string"
+          },
+          "permission": {
+            "title": "Permission",
+            "type": "boolean"
+          },
+          "price_cap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Cap"
+          },
+          "price_cap_confirmed": {
+            "title": "Price Cap Confirmed",
+            "type": "boolean"
+          },
+          "price_tick": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Price Tick",
+            "type": "string"
+          },
+          "quantity_increment": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Increment",
+            "type": "string"
+          },
+          "rule_version": {
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "security_id",
+          "account_id",
+          "permission",
+          "price_cap",
+          "price_cap_confirmed",
+          "price_tick",
+          "minimum_price",
+          "maximum_price",
+          "minimum_quantity",
+          "quantity_increment",
+          "commission_ratio",
+          "minimum_commission",
+          "other_cost_ratio",
+          "disposal_friction_ratio",
+          "version_id",
+          "rule_version",
+          "evidence"
+        ],
+        "title": "AcquisitionRoute",
+        "type": "object"
+      },
       "AlertClosure": {
         "additionalProperties": false,
         "properties": {
@@ -380,6 +532,382 @@
         },
         "required": ["contract_version", "alert_evidence_id", "resolution", "rule_version"],
         "title": "AlertClosureProof",
+        "type": "object"
+      },
+      "AllocationCapacityCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "available_before": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Before",
+            "type": "string"
+          },
+          "committed_margin": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Margin",
+            "type": "string"
+          },
+          "gate_id": {
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_after_continuous": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining After Continuous",
+            "type": "string"
+          },
+          "remaining_after_plan": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining After Plan",
+            "type": "string"
+          },
+          "security_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Security Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gate_id",
+          "reason",
+          "security_ids",
+          "committed_margin",
+          "available_before",
+          "remaining_after_continuous",
+          "remaining_after_plan"
+        ],
+        "title": "AllocationCapacityCheck",
+        "type": "object"
+      },
+      "AllocationCommitment": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "broker_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Order Id"
+          },
+          "commitment_id": {
+            "minLength": 1,
+            "title": "Commitment Id",
+            "type": "string"
+          },
+          "disposal_friction": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Disposal Friction",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "issuer_id": {
+            "minLength": 1,
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "price_cap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Cap"
+          },
+          "principal": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Principal",
+            "type": "string"
+          },
+          "purchase_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Purchase Cost",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commitment_id",
+          "account_id",
+          "security_id",
+          "issuer_id",
+          "broker_order_id",
+          "principal",
+          "purchase_cost",
+          "disposal_friction",
+          "evidence"
+        ],
+        "title": "AllocationCommitment",
+        "type": "object"
+      },
+      "AllocationComparison": {
+        "additionalProperties": false,
+        "properties": {
+          "alternative_value": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Value"
+          },
+          "criterion": {
+            "enum": [
+              "COVERAGE",
+              "COMPLETION_RATIOS",
+              "PRINCIPAL",
+              "PROBABILITIES",
+              "PURCHASE_COST",
+              "ORDER_COUNT",
+              "STABLE_IDENTITIES"
+            ],
+            "title": "Criterion",
+            "type": "string"
+          },
+          "direction": {
+            "enum": ["MAXIMIZE", "MINIMIZE"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "relation": {
+            "enum": ["EQUAL", "WORSE", "NOT_REACHED", "INFEASIBLE"],
+            "title": "Relation",
+            "type": "string"
+          },
+          "selected_value": {
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Selected Value",
+            "type": "array"
+          }
+        },
+        "required": ["criterion", "direction", "selected_value", "alternative_value", "relation"],
+        "title": "AllocationComparison",
+        "type": "object"
+      },
+      "AllocationCorrelations": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "market_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Market Dates",
+            "type": "array"
+          },
+          "return_semantics": {
+            "const": "DAILY_ADJUSTED",
+            "title": "Return Semantics",
+            "type": "string"
+          },
+          "returns": {
+            "additionalProperties": {
+              "items": {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Returns",
+            "type": "object"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "market_calendar_version",
+          "return_semantics",
+          "market_dates",
+          "returns",
+          "evidence"
+        ],
+        "title": "AllocationCorrelations",
+        "type": "object"
+      },
+      "AllocationPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_ceiling": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Correlation Ceiling",
+            "type": "string"
+          },
+          "correlation_window": {
+            "minimum": 2.0,
+            "title": "Correlation Window",
+            "type": "integer"
+          },
+          "entry_target_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entry Target Ratio",
+            "type": "string"
+          },
+          "generator_version": {
+            "minLength": 1,
+            "title": "Generator Version",
+            "type": "string"
+          },
+          "neighborhood_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Neighborhood Ratio",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "synthetic": {
+            "const": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "turnover_ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Turnover Ratio",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "synthetic",
+          "generator_version",
+          "seed",
+          "version_id",
+          "entry_target_ratio",
+          "correlation_ceiling",
+          "neighborhood_ratio",
+          "turnover_ratio",
+          "correlation_window"
+        ],
+        "title": "AllocationPolicy",
+        "type": "object"
+      },
+      "AllocationRouteFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "route": {
+            "$ref": "#/components/schemas/AcquisitionRoute"
+          }
+        },
+        "required": ["route", "reasons"],
+        "title": "AllocationRouteFailure",
+        "type": "object"
+      },
+      "AllocationSecurity": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "issuer_id": {
+            "minLength": 1,
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "median_turnover": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Median Turnover",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "turnover_window_sessions": {
+            "const": 20,
+            "title": "Turnover Window Sessions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "security_id",
+          "issuer_id",
+          "median_turnover",
+          "turnover_window_sessions",
+          "evidence"
+        ],
+        "title": "AllocationSecurity",
         "type": "object"
       },
       "AuthenticationVerificationDto": {
@@ -1040,6 +1568,343 @@
           "diagnostics"
         ],
         "title": "CalibratorSelectionSnapshot",
+        "type": "object"
+      },
+      "CandidateAllocationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "candidate_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Batch Id"
+          },
+          "candidate_conclusion_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Conclusion Version"
+          },
+          "candidate_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Event Id"
+          },
+          "capacity_checks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCapacityCheck"
+            },
+            "title": "Capacity Checks",
+            "type": "array"
+          },
+          "commitments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCommitment"
+            },
+            "title": "Commitments",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "default": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "correlations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AllocationCorrelations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discrete_objectives": {
+            "default": [],
+            "items": {
+              "items": {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Discrete Objectives",
+            "type": "array"
+          },
+          "disposition": {
+            "enum": ["BLOCKED", "PLANNED", "AWAITING_PRICE_CAP"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "eligibility_evidence_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Eligibility Evidence Ids",
+            "type": "array"
+          },
+          "formed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formed At"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AllocationPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReconciledPositionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Snapshot Id"
+          },
+          "purchase_sequence": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Purchase Sequence",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "remaining_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Cash"
+          },
+          "risk_budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonalRiskBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk_budget_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Budget Version Id"
+          },
+          "risk_handoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionPlanCommand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "routes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AcquisitionRoute"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "rows": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateAllocationRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "securities": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationSecurity"
+            },
+            "title": "Securities",
+            "type": "array"
+          },
+          "total_principal": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Principal",
+            "type": "string"
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "CandidateAllocationOutcome",
+        "type": "object"
+      },
+      "CandidateAllocationRow": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/CalibratedMember"
+          },
+          "committed_exposure": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Exposure",
+            "type": "string"
+          },
+          "comparisons": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationComparison"
+            },
+            "title": "Comparisons",
+            "type": "array"
+          },
+          "continuous_principal": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Continuous Principal",
+            "type": "string"
+          },
+          "issuer_id": {
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "legs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AcquisitionLeg"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "outcome": {
+            "enum": ["FULLY_ALLOCATED", "PARTIALLY_ALLOCATED", "UNALLOCATED"],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "primary_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Reason"
+          },
+          "principal": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Principal",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "route_failures": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationRouteFailure"
+            },
+            "title": "Route Failures",
+            "type": "array"
+          },
+          "target_gap": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Gap",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate",
+          "issuer_id",
+          "committed_exposure",
+          "target_gap",
+          "continuous_principal",
+          "principal",
+          "outcome",
+          "reasons"
+        ],
+        "title": "CandidateAllocationRow",
         "type": "object"
       },
       "CandidateBatchDelivery": {
@@ -3744,6 +4609,66 @@
         "title": "EstablishedObligation",
         "type": "object"
       },
+      "EstablishedQuantityTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "enum": ["REDUCE", "EXIT"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "enum": ["P0", "P1", "P2"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "qualified": {
+            "title": "Qualified",
+            "type": "boolean"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "target_id": {
+            "minLength": 1,
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "security_id",
+          "target_quantity",
+          "direction",
+          "qualified",
+          "policy_version",
+          "evidence"
+        ],
+        "title": "EstablishedQuantityTarget",
+        "type": "object"
+      },
       "EvaluationMember": {
         "additionalProperties": false,
         "properties": {
@@ -4180,6 +5105,85 @@
         "title": "ExecutionLeg",
         "type": "object"
       },
+      "ExecutionPlanCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization_id": {
+            "minLength": 1,
+            "title": "Authorization Id",
+            "type": "string"
+          },
+          "concentration_event_id": {
+            "minLength": 1,
+            "title": "Concentration Event Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "drawdown_event_id": {
+            "minLength": 1,
+            "title": "Drawdown Event Id",
+            "type": "string"
+          },
+          "established_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EstablishedQuantityTarget"
+            },
+            "title": "Established Targets",
+            "type": "array"
+          },
+          "liquidity_event_id": {
+            "minLength": 1,
+            "title": "Liquidity Event Id",
+            "type": "string"
+          },
+          "operation": {
+            "const": "EXECUTION_PLAN",
+            "title": "Operation",
+            "type": "string"
+          },
+          "portfolio_id": {
+            "minLength": 1,
+            "title": "Portfolio Id",
+            "type": "string"
+          },
+          "routes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionRoute"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "stress_event_id": {
+            "minLength": 1,
+            "title": "Stress Event Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "operation",
+          "portfolio_id",
+          "authorization_id",
+          "cutoff_at",
+          "concentration_event_id",
+          "stress_event_id",
+          "liquidity_event_id",
+          "drawdown_event_id"
+        ],
+        "title": "ExecutionPlanCommand",
+        "type": "object"
+      },
       "ExecutionPlanOutcome": {
         "additionalProperties": false,
         "properties": {
@@ -4446,6 +5450,16 @@
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
         "properties": {
+          "candidate_allocation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateAllocationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "candidate_release": {
             "anyOf": [
               {
@@ -12019,6 +13033,7 @@
               "LIQUIDITY_PROTECTION",
               "CANDIDATE_RELEASE",
               "PORTFOLIO_STRESS",
+              "CANDIDATE_ALLOCATION",
               "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",

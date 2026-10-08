@@ -1,0 +1,828 @@
+"""Host-owned allocation from saved candidates and authoritative risk handoffs."""
+
+from collections import defaultdict
+from decimal import Context, Decimal, DecimalException, localcontext
+
+from stock_profiler.modules.candidate_selection.current_eligibility import (
+    candidate_qualification_eligibility,
+)
+from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
+from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
+from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
+from stock_profiler.modules.portfolio.allocation_contracts import (
+    AcquisitionLeg,
+    AllocationCapacityCheck,
+    AllocationRouteFailure,
+    CandidateAllocationOutcome,
+    CandidateAllocationRow,
+)
+from stock_profiler.modules.portfolio.allocation_solver import (
+    CONTINUOUS_PRINCIPAL_QUANTUM,
+    AllocationProblem,
+    AllocationSolveFailed,
+    Capacity,
+    DiscreteAllocation,
+    capacity_is_feasible,
+    continuous_allocation,
+    discrete_allocation,
+    discrete_principal_ceiling,
+)
+from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+
+_REASON_ORDER = (
+    "COMPLETE_PORTFOLIO_REQUIRED",
+    "ACTIVE_RISK_BUDGET_REQUIRED",
+    "NEW_EXPOSURE_BLOCKED",
+    "CASH_CAPACITY_EXHAUSTED",
+    "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+    "STRESS_CAPACITY_EXHAUSTED",
+    "ENTRY_TARGET_REACHED",
+    "ISSUER_CAPACITY_EXHAUSTED",
+    "CORRELATION_CAPACITY_EXHAUSTED",
+    "CORRELATION_EVIDENCE_FAILED",
+    "LIQUIDITY_CAPACITY_EXHAUSTED",
+    "MARKET_CAPACITY_EVIDENCE_FAILED",
+    "ISSUER_IDENTITY_MISMATCH",
+    "ACCOUNT_SCOPE_MISMATCH",
+    "ACCOUNT_PERMISSION_DENIED",
+    "ACCOUNT_EXECUTION_RESTRICTED",
+    "PRICE_CAP_REQUIRED",
+    "CURRENT_PRICE_UNAVAILABLE",
+    "CURRENT_PRICE_OUT_OF_RANGE",
+    "PRICE_CAP_OUT_OF_RANGE",
+    "PRICE_TICK_INVALID",
+    "BUY_ROUTE_EVIDENCE_FAILED",
+    "BUY_ROUTE_UNAVAILABLE",
+    "BELOW_MINIMUM_BUY_UNIT",
+    "UNALLOCATED_CAPACITY_PRIORITY",
+    "ROUNDING_REMAINDER_UNUSABLE",
+    "ENTRY_WINDOW_EXPIRED",
+)
+
+
+def _ordered_reasons(reasons: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            dict.fromkeys(reasons),
+            key=lambda reason: (
+                _REASON_ORDER.index(reason) if reason in _REASON_ORDER else len(_REASON_ORDER)
+            ),
+        )
+    )
+
+
+def _capacity_binding(problem: AllocationProblem, check: AllocationCapacityCheck) -> bool:
+    """Explain a binding gate despite downward truncation of its monetary proposal.
+
+    This allowance labels reasons only. Every published quantity and capacity
+    still passes the original exact Decimal checks without any allowance.
+    """
+    allowance = Decimal(0)
+    for route in problem.routes:
+        if route.security_id not in check.security_ids or (
+            check.account_id is not None and route.account_id != check.account_id
+        ):
+            continue
+        coefficient = (
+            problem.shock + route.disposal_friction_ratio
+            if check.gate_id == "global:stress"
+            else 1 + route.commission_ratio + route.other_cost_ratio
+            if check.gate_id == "global:cash" or check.account_id is not None
+            else Decimal(1)
+        )
+        allowance += CONTINUOUS_PRINCIPAL_QUANTUM * coefficient
+    return check.remaining_after_continuous <= allowance
+
+
+def _correlated(left: tuple[Decimal, ...], right: tuple[Decimal, ...], ceiling: Decimal) -> bool:
+    count = Decimal(len(left))
+    left_mean, right_mean = sum(left) / count, sum(right) / count
+    covariance = sum((a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True))
+    left_variance = sum((value - left_mean) ** 2 for value in left)
+    right_variance = sum((value - right_mean) ** 2 for value in right)
+    return covariance > 0 and covariance**2 > ceiling**2 * left_variance * right_variance
+
+
+def adjudicate_candidate_allocation(
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    *,
+    business_prerequisite_met: bool,
+) -> CandidateAllocationOutcome:
+    with localcontext(Context(prec=38)):
+        try:
+            return _adjudicate_candidate_allocation(
+                case, ledger, connection, business_prerequisite_met=business_prerequisite_met
+            )
+        except DecimalException:
+            assert case.candidate_allocation is not None and case.access_scope is not None
+            source = ledger.get_formal_report_for_event(
+                case.candidate_allocation.candidate_event_id, connection
+            )
+            if (
+                source is None
+                or source.access_scope is None
+                or not case.access_scope.same_scope_as(source.access_scope)
+                or source.result.candidate_release is None
+            ):
+                return CandidateAllocationOutcome(
+                    disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+                )
+            return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
+
+
+def _blocked(
+    case: FrozenDecisionCase,
+    source: FormalReport,
+    reason: str | tuple[str, ...],
+    evidence_ids: tuple[str, ...] = (),
+) -> CandidateAllocationOutcome:
+    command = case.candidate_allocation
+    release = source.result.candidate_release
+    assert command is not None and release is not None
+    securities = {row.security_id: row for row in command.securities}
+    reasons = _ordered_reasons((reason,) if isinstance(reason, str) else reason)
+    return CandidateAllocationOutcome(
+        disposition="BLOCKED",
+        reasons=reasons,
+        eligibility_evidence_ids=evidence_ids,
+        candidate_event_id=command.candidate_event_id,
+        candidate_batch_id=release.batch_id,
+        candidate_conclusion_version=source.report_version_id,
+        formed_at=command.cutoff_at,
+        policy=command.policy,
+        risk_handoff=command.risk_handoff,
+        correlations=command.correlations,
+        commitments=command.commitments,
+        securities=command.securities,
+        routes=command.routes,
+        rows=tuple(
+            CandidateAllocationRow(
+                candidate=member,
+                issuer_id=securities[member.security_id].issuer_id
+                if member.security_id in securities
+                else "UNKNOWN",
+                committed_exposure=Decimal(0),
+                target_gap=Decimal(0),
+                continuous_principal=Decimal(0),
+                principal=Decimal(0),
+                outcome="UNALLOCATED",
+                reasons=reasons,
+                primary_reason=reasons[0],
+            )
+            for member in release.members
+            if member.candidate
+        ),
+    )
+
+
+def _adjudicate_candidate_allocation(
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    *,
+    business_prerequisite_met: bool,
+) -> CandidateAllocationOutcome:
+    command, scope = case.candidate_allocation, case.access_scope
+    assert command is not None and scope is not None
+    source = ledger.get_formal_report_for_event(command.candidate_event_id, connection)
+    if (
+        source is None
+        or source.access_scope is None
+        or not scope.same_scope_as(source.access_scope)
+        or source.result.candidate_release is None
+    ):
+        return CandidateAllocationOutcome(
+            disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+        )
+    release = source.result.candidate_release
+    candidates = tuple(member for member in release.members if member.candidate)
+    securities = {row.security_id: row for row in command.securities}
+
+    if not business_prerequisite_met:
+        return _blocked(case, source, "BUSINESS_PREREQUISITE_NOT_MET")
+    if command.policy is None:
+        return _blocked(case, source, "ALLOCATION_POLICY_REQUIRED")
+    policy = command.policy
+    if (
+        release.disposition != "CANDIDATES"
+        or release.knowledge_cutoff > command.cutoff_at
+        or release.published_at > command.cutoff_at
+        or any(member.calibrated_probability is None for member in candidates)
+    ):
+        return _blocked(case, source, "CANDIDATE_HANDOFF_INVALID")
+    if len({member.security_id for member in candidates}) != len(candidates):
+        return _blocked(case, source, "CANDIDATE_IDENTITIES_AMBIGUOUS")
+    original = ledger.get_decision_event(source.event_id, connection)
+    if original is None:
+        return _blocked(case, source, "CANDIDATE_HANDOFF_EVIDENCE_UNAVAILABLE")
+    for event_id, reason in (
+        (source.event_id, "CANDIDATE_CONCLUSION_SUPERSEDED"),
+        (release.research_event_id, "RESEARCH_EVIDENCE_CORRECTED"),
+    ):
+        correction = ledger.get_correction_event(event_id, connection)
+        if correction is not None:
+            return _blocked(case, source, reason, (correction.decision_event_id,))
+    eligibility_reasons, eligibility_ids, _ = candidate_qualification_eligibility(
+        release,
+        original.case,
+        ledger.governance_history(connection, scope),
+        command.cutoff_at,
+    )
+    if eligibility_reasons:
+        return _blocked(case, source, eligibility_reasons, eligibility_ids)
+    protection = adjudicate_execution_plan(
+        case.model_copy(update={"execution_plan": command.risk_handoff}), ledger, connection
+    )
+    if (
+        protection.new_exposure_blocked
+        or protection.disposition == "BLOCKED"
+        or any((target.required_sale_quantity or Decimal(0)) > 0 for target in protection.targets)
+    ):
+        return _blocked(case, source, ("NEW_EXPOSURE_BLOCKED", *protection.reasons))
+    reports = tuple(
+        ledger.get_formal_report_for_event(event, connection)
+        for event in (
+            command.risk_handoff.liquidity_event_id,
+            command.risk_handoff.stress_event_id,
+            command.risk_handoff.drawdown_event_id,
+        )
+    )
+    liquidity_report, stress_report, drawdown_report = reports
+    assert liquidity_report and stress_report and drawdown_report
+    liquidity, stress, drawdown = (
+        liquidity_report.result.liquidity,
+        stress_report.result.stress,
+        drawdown_report.result.drawdown,
+    )
+    assert liquidity and stress and drawdown and drawdown.state
+    concentration_report = ledger.get_formal_report_for_event(
+        command.risk_handoff.concentration_event_id, connection
+    )
+    assert concentration_report and concentration_report.result.concentration
+    concentration_history = ledger.concentration_history(
+        connection, scope, command.risk_handoff.portfolio_id
+    )
+    stress_history = ledger.portfolio_stress_history(
+        connection, scope, command.risk_handoff.portfolio_id
+    )
+    liquidity_history = ledger.liquidity_history(
+        connection, scope, command.risk_handoff.portfolio_id, command.cutoff_at
+    )
+    capital_history = tuple(
+        item
+        for item in ledger.drawdown_history(connection, scope)
+        if item.state is not None and item.state.portfolio_id == command.risk_handoff.portfolio_id
+    )
+    if (
+        concentration_history.uncovered_obligation
+        or not concentration_history.outcomes
+        or concentration_history.outcomes[-1] != concentration_report.result.concentration
+        or not stress_history
+        or stress_history[-1] != stress
+        or not liquidity_history
+        or liquidity_history[-1] != liquidity
+        or not capital_history
+        or capital_history[-1] != drawdown
+    ):
+        return _blocked(case, source, "RISK_HANDOFF_SUPERSEDED")
+    authorization = liquidity.purchase_authorization
+    if not authorization or not authorization.usage or not authorization.usage.allowed:
+        return _blocked(case, source, "ACTIVE_RISK_BUDGET_REQUIRED")
+    usage = authorization.usage
+    budget = usage.authorization_snapshot.proposal.risk_budget
+    history = ledger.portfolio_authorization_history(
+        connection, scope, command.risk_handoff.portfolio_id, command.cutoff_at.isoformat()
+    )
+    approved = [outcome.authorization for outcome in history if outcome.authorization is not None]
+    if (
+        not approved
+        or approved[-1].authorization_id != command.risk_handoff.authorization_id
+        or not budget.effective_at <= command.cutoff_at < budget.expires_at
+        or stress.risk_budget_version_id != budget.version_id
+        or drawdown.state.risk_state != "NORMAL"
+        or stress.obligation is not None
+        and stress.obligation.status == "OUTSTANDING"
+        or stress.gross_stress_loss is None
+        or stress.calculation_policy is None
+    ):
+        return _blocked(case, source, "NEW_EXPOSURE_BLOCKED")
+    snapshot = liquidity.position_snapshot.snapshot
+    equity, cash = liquidity.net_liquidation_equity, liquidity.deployable_purchase_cash
+    assert equity is not None and cash is not None
+    liquidity_fact = ledger.get_original_decision_event(
+        liquidity_report.business_object_id, connection
+    )
+    if liquidity_fact is None or liquidity_fact.case.liquidity is None:
+        return _blocked(case, source, "LIQUIDITY_COST_BINDING_UNAVAILABLE")
+    # Replace the prior aggregate estimate with this plan's actual full route costs.
+    cash += liquidity_fact.case.liquidity.expected_purchase_fees
+    if equity <= 0 or set(scope.account_ids) != {row.account_id for row in snapshot.cash_states}:
+        return _blocked(case, source, "COMPLETE_PORTFOLIO_REQUIRED")
+    if any(row.current_market_exposure is None for row in snapshot.issuer_exposures):
+        return _blocked(case, source, "COMMITTED_EXPOSURE_UNKNOWN")
+    existing: dict[str, Decimal] = defaultdict(Decimal)
+    held_issuers = {unit.security_id: unit.issuer_id for unit in snapshot.action_units}
+    for row in snapshot.issuer_exposures:
+        assert row.current_market_exposure is not None
+        existing[row.issuer_id] += row.current_market_exposure
+    account_cash = {row.account_id: row.trading_cash or Decimal(0) for row in snapshot.cash_states}
+    for obligation in liquidity.obligation_funding:
+        account_cash[obligation.target_account_id] -= obligation.required_cash
+    commitment_stress = Decimal(0)
+    broker_orders = {
+        order.order_id: order for order in snapshot.unfinished_orders if order.side == "BUY"
+    }
+    supplied_orders = {
+        row.broker_order_id for row in command.commitments if row.broker_order_id is not None
+    }
+    if set(broker_orders) != supplied_orders:
+        return _blocked(case, source, "BUY_COMMITMENTS_INCOMPLETE")
+    security_committed: dict[str, Decimal] = defaultdict(Decimal)
+    known_issuers = {security.security_id: security.issuer_id for security in command.securities}
+    for commitment in command.commitments:
+        if (
+            commitment.security_id in held_issuers
+            and held_issuers[commitment.security_id] != commitment.issuer_id
+        ) or (
+            commitment.security_id in known_issuers
+            and known_issuers[commitment.security_id] != commitment.issuer_id
+        ):
+            return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
+        known_issuers[commitment.security_id] = commitment.issuer_id
+        if (
+            commitment.quantity is None
+            or commitment.price_cap is None
+            or commitment.principal != commitment.quantity * commitment.price_cap
+        ):
+            return _blocked(case, source, "BUY_COMMITMENT_PRICE_BASIS_UNKNOWN")
+        if commitment.account_id not in account_cash or commitment.evidence.problem_codes(
+            command.cutoff_at, require_current_completeness=True
+        ):
+            return _blocked(case, source, "BUY_COMMITMENT_EVIDENCE_FAILED")
+        if commitment.broker_order_id is not None:
+            order = broker_orders[commitment.broker_order_id]
+            if (
+                order.account_id != commitment.account_id
+                or order.security_id != commitment.security_id
+                or order.remaining_quantity != commitment.quantity
+                or order.evidence.problem_codes(
+                    command.cutoff_at, require_current_completeness=True
+                )
+            ):
+                return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
+            if (
+                order.reserved_cash is None
+                or order.reserved_cash_semantics != "BROKER_FINAL_RESERVED_CASH"
+                or order.reserved_cash < commitment.principal + commitment.purchase_cost
+            ):
+                return _blocked(case, source, "BUY_COMMITMENT_RESERVATION_INCOMPLETE")
+        else:
+            deduction = commitment.principal + commitment.purchase_cost
+            account_cash[commitment.account_id] -= deduction
+            cash -= deduction
+        existing[commitment.issuer_id] += commitment.principal
+        security_committed[commitment.security_id] += commitment.principal
+        commitment_stress += (
+            commitment.principal * stress.calculation_policy.shock_ratio
+            + commitment.disposal_friction
+        )
+    stress_remaining = (
+        equity * budget.stress.target_ratio - stress.gross_stress_loss - commitment_stress
+    )
+    if stress_remaining < 0 or cash < 0:
+        return _blocked(case, source, "COMMITTED_PROTECTION_CAPACITY_EXCEEDED")
+
+    issuer_ids = tuple(
+        held_issuers.get(member.security_id, securities[member.security_id].issuer_id)
+        if member.security_id in securities
+        else "UNKNOWN"
+        for member in candidates
+    )
+    reasons: list[list[str]] = [[] for _ in candidates]
+    targets = tuple(
+        max(Decimal(0), equity * policy.entry_target_ratio - existing[issuer])
+        for issuer in issuer_ids
+    )
+    capacities: list[Capacity] = []
+    for issuer in sorted(set(issuer_ids)):
+        indices = tuple(index for index, identity in enumerate(issuer_ids) if identity == issuer)
+        capacities.extend(
+            (
+                Capacity(indices, targets[indices[0]], "ENTRY_TARGET_REACHED"),
+                Capacity(
+                    indices,
+                    equity * budget.concentration.target_ratio - existing[issuer],
+                    "ISSUER_CAPACITY_EXHAUSTED",
+                ),
+            )
+        )
+    correlations = command.correlations
+    committed_issuers = {issuer for issuer, exposure in existing.items() if exposure > 0}
+    relevant = set(issuer_ids) | committed_issuers
+    valid_series: dict[str, tuple[Decimal, ...]] = {}
+    if correlations is not None and not correlations.evidence.problem_codes(
+        command.cutoff_at, require_current_completeness=True
+    ):
+        dates = correlations.market_dates
+        calendar = synthetic_market_calendar(correlations.market_calendar_version)
+        expected_dates = (
+            tuple(
+                session.closed_at.date()
+                for session in calendar.recent_completed_sessions(
+                    command.cutoff_at, policy.correlation_window
+                )
+            )
+            if calendar is not None
+            else ()
+        )
+        if (
+            len(dates) == policy.correlation_window
+            and dates == expected_dates
+            and correlations.market_calendar_version == release.market_calendar_version
+        ):
+            for issuer in relevant:
+                series = correlations.returns.get(issuer)
+                if series is not None and len(series) == len(dates) and len(set(series)) > 1:
+                    valid_series[issuer] = series
+    neighborhoods: dict[str, set[str]] = {}
+    for issuer in sorted(set(issuer_ids)):
+        neighborhood = {issuer}
+        if issuer in valid_series:
+            for other in sorted(relevant):
+                if other in valid_series and _correlated(
+                    valid_series[issuer], valid_series[other], policy.correlation_ceiling
+                ):
+                    neighborhood.add(other)
+        neighborhoods[issuer] = neighborhood
+        capacities.append(
+            Capacity(
+                tuple(
+                    index for index, identity in enumerate(issuer_ids) if identity in neighborhood
+                ),
+                equity * policy.neighborhood_ratio
+                - sum((existing[identity] for identity in neighborhood), Decimal(0)),
+                "CORRELATION_CAPACITY_EXHAUSTED",
+            )
+        )
+    for index, member in enumerate(candidates):
+        security = securities.get(member.security_id)
+        if security is not None and security.issuer_id != issuer_ids[index]:
+            reasons[index].append("ISSUER_IDENTITY_MISMATCH")
+        if (
+            not member.valid_market_dates
+            or member.valid_market_dates[-1] < command.cutoff_at.date()
+        ):
+            reasons[index].append("ENTRY_WINDOW_EXPIRED")
+        if security is None or security.evidence.problem_codes(
+            command.cutoff_at, require_current_completeness=True
+        ):
+            reasons[index].append("MARKET_CAPACITY_EVIDENCE_FAILED")
+        if not (committed_issuers | {issuer_ids[index]}).issubset(valid_series):
+            reasons[index].append("CORRELATION_EVIDENCE_FAILED")
+        if targets[index] == 0:
+            reasons[index].append("ENTRY_TARGET_REACHED")
+        capacities.append(
+            Capacity(
+                (index,),
+                security.median_turnover * policy.turnover_ratio
+                - security_committed[member.security_id]
+                if security
+                else Decimal(0),
+                "LIQUIDITY_CAPACITY_EXHAUSTED",
+            )
+        )
+        if reasons[index]:
+            capacities.append(Capacity((index,), Decimal(0), reasons[index][0]))
+
+    routes = []
+    route_members = []
+    route_failures: dict[int, list[AllocationRouteFailure]] = defaultdict(list)
+    awaiting = False
+    for index, member in enumerate(candidates):
+        eligible = []
+        for route in sorted(command.routes, key=lambda row: (row.security_id, row.account_id)):
+            if route.security_id != member.security_id:
+                continue
+            failures = []
+            if route.account_id not in account_cash:
+                failures.append("ACCOUNT_SCOPE_MISMATCH")
+            if not route.permission:
+                failures.append("ACCOUNT_PERMISSION_DENIED")
+            if route.evidence.problem_codes(command.cutoff_at, require_current_completeness=True):
+                failures.append("BUY_ROUTE_EVIDENCE_FAILED")
+            if any(
+                restriction.active
+                and restriction.account_id == route.account_id
+                and restriction.security_id in {None, route.security_id}
+                for restriction in snapshot.execution_restrictions
+            ):
+                failures.append("ACCOUNT_EXECUTION_RESTRICTED")
+            if route.current_price is None:
+                failures.append("CURRENT_PRICE_UNAVAILABLE")
+            elif not route.minimum_price <= route.current_price <= route.maximum_price:
+                failures.append("CURRENT_PRICE_OUT_OF_RANGE")
+            if route.price_cap is not None and route.price_cap_confirmed:
+                if not route.minimum_price <= route.price_cap <= route.maximum_price:
+                    failures.append("PRICE_CAP_OUT_OF_RANGE")
+                if route.price_cap % route.price_tick != 0:
+                    failures.append("PRICE_TICK_INVALID")
+            if failures:
+                route_failures[index].append(
+                    AllocationRouteFailure(
+                        route=route,
+                        reasons=_ordered_reasons(failures),
+                    )
+                )
+                continue
+            if route.price_cap is None or not route.price_cap_confirmed:
+                awaiting = True
+                route = route.model_copy(update={"price_cap": route.current_price})
+            eligible.append(route)
+        if not eligible:
+            reasons[index].extend(
+                reason for failure in route_failures[index] for reason in failure.reasons
+            )
+            if not route_failures[index]:
+                reasons[index].append("BUY_ROUTE_UNAVAILABLE")
+        routes.extend(eligible)
+        route_members.extend([index] * len(eligible))
+    problem = AllocationProblem(
+        routes=tuple(routes),
+        route_members=tuple(route_members),
+        issuers=issuer_ids,
+        existing=tuple(existing[issuer] for issuer in issuer_ids),
+        targets=targets,
+        probabilities=tuple(member.calibrated_probability or Decimal(0) for member in candidates),
+        account_cash=account_cash,
+        cash=cash,
+        stress_remaining=stress_remaining,
+        shock=stress.calculation_policy.shock_ratio,
+        capacities=tuple(capacities),
+    )
+    try:
+        continuous_solution = continuous_allocation(problem)
+        continuous = continuous_solution.principals
+        if not capacity_is_feasible(problem, continuous, continuous_solution.route_principals):
+            return _blocked(case, source, "ALLOCATION_CAPACITY_VERIFICATION_FAILED")
+        discrete = (
+            DiscreteAllocation(tuple(Decimal(0) for _ in routes), (), {}, frozenset())
+            if awaiting
+            else discrete_allocation(problem, continuous)
+        )
+        quantities = discrete.quantities
+    except AllocationSolveFailed:
+        return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
+    legs_by_member: dict[int, list[AcquisitionLeg]] = defaultdict(list)
+    for route, member_index, quantity in zip(routes, route_members, quantities, strict=True):
+        if quantity == 0:
+            continue
+        assert route.price_cap is not None
+        principal = quantity * route.price_cap
+        if (
+            quantity < route.minimum_quantity
+            or (quantity - route.minimum_quantity) % route.quantity_increment != 0
+        ):
+            return _blocked(case, source, "ALLOCATION_QUANTITY_VERIFICATION_FAILED")
+        legs_by_member[member_index].append(
+            AcquisitionLeg(
+                route=route,
+                quantity=quantity,
+                principal=principal,
+                purchase_cost=route.cost(principal),
+            )
+        )
+    principals = tuple(
+        sum((leg.principal for leg in legs_by_member[index]), Decimal(0))
+        for index in range(len(candidates))
+    )
+    total = sum(principals, Decimal(0))
+    costs = sum((leg.purchase_cost for legs in legs_by_member.values() for leg in legs), Decimal(0))
+    if (
+        total > sum(continuous, Decimal(0))
+        or any(
+            principal > discrete_principal_ceiling(problem, continuous, index, quantities)
+            for index, principal in enumerate(principals)
+        )
+        or not capacity_is_feasible(
+            problem,
+            principals,
+            tuple(
+                quantity * (route.price_cap or Decimal(0))
+                for route, quantity in zip(routes, quantities, strict=True)
+            ),
+        )
+    ):
+        return _blocked(case, source, "ALLOCATION_CAPACITY_VERIFICATION_FAILED")
+    capacity_checks = []
+    all_security_ids = tuple(member.security_id for member in candidates)
+    continuous_cost = sum(
+        (
+            route.cost(amount)
+            for route, amount in zip(routes, continuous_solution.route_principals, strict=True)
+        ),
+        Decimal(0),
+    )
+    continuous_stress = sum(
+        (
+            amount * (problem.shock + route.disposal_friction_ratio)
+            for route, amount in zip(routes, continuous_solution.route_principals, strict=True)
+        ),
+        Decimal(0),
+    )
+    planned_stress = sum(
+        (
+            leg.principal * (problem.shock + leg.route.disposal_friction_ratio)
+            for legs in legs_by_member.values()
+            for leg in legs
+        ),
+        Decimal(0),
+    )
+    for gate_id, reason, margin, used_continuous, used_plan in (
+        (
+            "global:cash",
+            "CASH_CAPACITY_EXHAUSTED",
+            cash,
+            sum(continuous, Decimal(0)) + continuous_cost,
+            total + costs,
+        ),
+        (
+            "global:stress",
+            "STRESS_CAPACITY_EXHAUSTED",
+            stress_remaining,
+            continuous_stress,
+            planned_stress,
+        ),
+    ):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=gate_id,
+                reason=reason,
+                security_ids=all_security_ids,
+                committed_margin=margin,
+                available_before=max(Decimal(0), margin),
+                remaining_after_continuous=max(Decimal(0), margin) - used_continuous,
+                remaining_after_plan=max(Decimal(0), margin) - used_plan,
+            )
+        )
+    for index, capacity in enumerate(capacities):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=f"capacity:{index}",
+                reason=capacity.reason,
+                security_ids=tuple(candidates[member].security_id for member in capacity.members),
+                committed_margin=capacity.remaining,
+                available_before=max(Decimal(0), capacity.remaining),
+                remaining_after_continuous=max(Decimal(0), capacity.remaining)
+                - sum((continuous[member] for member in capacity.members), Decimal(0)),
+                remaining_after_plan=max(Decimal(0), capacity.remaining)
+                - sum((principals[member] for member in capacity.members), Decimal(0)),
+            )
+        )
+    for account, available in sorted(account_cash.items()):
+        capacity_checks.append(
+            AllocationCapacityCheck(
+                gate_id=f"account:{account}",
+                reason="ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+                security_ids=tuple(
+                    sorted({route.security_id for route in routes if route.account_id == account})
+                ),
+                account_id=account,
+                committed_margin=available,
+                available_before=available,
+                remaining_after_continuous=available
+                - sum(
+                    (
+                        amount + route.cost(amount)
+                        for route, amount in zip(
+                            routes, continuous_solution.route_principals, strict=True
+                        )
+                        if route.account_id == account
+                    ),
+                    Decimal(0),
+                ),
+                remaining_after_plan=available
+                - sum(
+                    (
+                        leg.principal + leg.purchase_cost
+                        for legs in legs_by_member.values()
+                        for leg in legs
+                        if leg.route.account_id == account
+                    ),
+                    Decimal(0),
+                ),
+            )
+        )
+    rows = []
+    for index, member in enumerate(candidates):
+        principal = principals[index]
+        issuer_members = tuple(
+            identity for identity, issuer in enumerate(issuer_ids) if issuer == issuer_ids[index]
+        )
+        issuer_continuous = sum((continuous[identity] for identity in issuer_members), Decimal(0))
+        issuer_principal = sum((principals[identity] for identity in issuer_members), Decimal(0))
+        member_routes = [
+            route
+            for route, identity in zip(routes, route_members, strict=True)
+            if identity == index
+        ]
+        unit = min(
+            (
+                leg.route.minimum_quantity * (leg.route.price_cap or Decimal(0))
+                for leg in legs_by_member[index]
+            ),
+            default=Decimal(0),
+        )
+        row_reasons = list(reasons[index])
+        if issuer_continuous < targets[index]:
+            # A minimum commission can close positive capacity before any cash is
+            # consumed. Preserve that cash gate rather than publishing an unexplained zero.
+            if member_routes and all(route.minimum_commission >= cash for route in member_routes):
+                row_reasons.append("CASH_CAPACITY_EXHAUSTED")
+            if member_routes and all(
+                route.minimum_commission >= account_cash[route.account_id]
+                for route in member_routes
+            ):
+                row_reasons.append("ACCOUNT_CASH_CAPACITY_EXHAUSTED")
+            for check in capacity_checks:
+                if (
+                    member.security_id in check.security_ids
+                    and check.reason != "ENTRY_TARGET_REACHED"
+                    and _capacity_binding(problem, check)
+                ):
+                    row_reasons.append(check.reason)
+        if awaiting:
+            row_reasons.append("PRICE_CAP_REQUIRED")
+        elif continuous[index] > 0 and principal == 0:
+            row_reasons.append(
+                "BELOW_MINIMUM_BUY_UNIT"
+                if index in discrete.below_minimum
+                else "UNALLOCATED_CAPACITY_PRIORITY"
+            )
+        elif principal < continuous[index]:
+            row_reasons.append("ROUNDING_REMAINDER_UNUSABLE")
+        ordered_reasons = _ordered_reasons(row_reasons)
+        full = (
+            principal > 0
+            and not any(reason.endswith("CAPACITY_EXHAUSTED") for reason in row_reasons)
+            and targets[index] - issuer_principal < unit
+        )
+        rows.append(
+            CandidateAllocationRow(
+                candidate=member,
+                issuer_id=issuer_ids[index],
+                committed_exposure=existing[issuer_ids[index]],
+                target_gap=targets[index],
+                continuous_principal=continuous[index],
+                principal=principal,
+                outcome="FULLY_ALLOCATED"
+                if full
+                else "PARTIALLY_ALLOCATED"
+                if principal > 0
+                else "UNALLOCATED",
+                reasons=ordered_reasons,
+                primary_reason=ordered_reasons[0] if ordered_reasons else None,
+                comparisons=discrete.comparisons.get(index, ()),
+                route_failures=tuple(route_failures[index]),
+                legs=tuple(legs_by_member[index]),
+            )
+        )
+    ordered = sorted(
+        (index for index, principal in enumerate(principals) if principal > 0),
+        key=lambda index: (
+            candidates[index].valid_market_dates[-1],
+            existing[issuer_ids[index]],
+            sum((existing[issuer] for issuer in neighborhoods[issuer_ids[index]]), Decimal(0)),
+            -(candidates[index].calibrated_probability or Decimal(0)),
+            sum((leg.purchase_cost for leg in legs_by_member[index]), Decimal(0))
+            / principals[index],
+            candidates[index].security_id,
+        ),
+    )
+    return CandidateAllocationOutcome(
+        disposition="AWAITING_PRICE_CAP" if awaiting else "PLANNED",
+        reasons=("PRICE_CAP_REQUIRED",) if awaiting else (),
+        rows=tuple(rows),
+        plan_id=case.decision_event_id,
+        formed_at=command.cutoff_at,
+        candidate_event_id=command.candidate_event_id,
+        candidate_batch_id=release.batch_id,
+        candidate_conclusion_version=source.report_version_id,
+        policy=policy,
+        position_snapshot_id=snapshot.snapshot_id,
+        risk_budget_version_id=budget.version_id,
+        position_snapshot=snapshot,
+        risk_budget=budget,
+        total_principal=total,
+        remaining_cash=cash - total - costs,
+        risk_handoff=command.risk_handoff,
+        correlations=command.correlations,
+        commitments=command.commitments,
+        securities=command.securities,
+        routes=command.routes,
+        purchase_sequence=tuple(candidates[index].security_id for index in ordered),
+        eligibility_evidence_ids=eligibility_ids,
+        discrete_objectives=discrete.objectives,
+        capacity_checks=tuple(capacity_checks),
+    )

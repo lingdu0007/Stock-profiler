@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -83,8 +84,29 @@ def risk_handoff_payload(
     buffer: bool = False,
     capital_state: str | None = None,
     split: bool = False,
+    account_cash: tuple[str, str] | None = None,
+    open_buy: bool = False,
+    expected_purchase_fees: str = "0",
+    single_account: bool = False,
+    cutoff_at: str | None = None,
+    user_id: str = "stock-profiler-single-user",
 ) -> dict[str, Any]:
+    def save(payload: dict[str, Any]) -> FormalReport:
+        payload["access_scope"]["user_id"] = user_id
+        if "portfolio" in payload and "confirmation" in payload["portfolio"]:
+            payload["portfolio"]["confirmation"]["user_id"] = user_id
+        execution = run_frozen_decision_case(
+            settings, payload, clock=GovernanceClock(cutoff_at or "2042-05-17T16:01:00Z")
+        )
+        assert execution.report is not None
+        return execution.report
+
     authorization_payload = concentration_authorization_payload(settings)
+    if single_account:
+        proposal = authorization_payload["portfolio"]["proposal"]
+        proposal["snapshot"]["accounts"] = proposal["snapshot"]["accounts"][:1]
+        proposal["snapshot"]["selected_account_ids"] = ["synthetic-account-4017"]
+        authorization_payload["access_scope"]["account_ids"] = ["synthetic-account-4017"]
     if normal:
         authorization_payload["portfolio"]["proposal"]["risk_budget"]["concentration"] = {
             "target_ratio": "0.30",
@@ -111,15 +133,60 @@ def risk_handoff_payload(
             for key in ("stress_calculation", "downside_grid")
         }
     )
-    authorization = committed(settings, authorization_payload)
+    authorization = save(authorization_payload)
     concentration = concentration_payload(
         settings, authorization.event_id, quantity="100", identity="plan-concentration"
     )
     snapshot = concentration["concentration"]["position_snapshot"]
+    if single_account:
+        snapshot["accounts"] = snapshot["accounts"][:1]
+        concentration["access_scope"]["account_ids"] = ["synthetic-account-4017"]
+        concentration["concentration"]["liquidation_costs"] = concentration["concentration"][
+            "liquidation_costs"
+        ][:1]
+    if cutoff_at is not None:
+        snapshot["cutoff_at"] = cutoff_at
+        refresh_current_position_evidence(snapshot, cutoff_at)
+        concentration["knowledge_cutoff"] = cutoff_at
+        for cost in concentration["concentration"]["liquidation_costs"]:
+            cost["evidence"] = position_evidence("synthetic-current-cost", cutoff_at=cutoff_at)
+    if account_cash is not None:
+        for account, amount in zip(snapshot["accounts"], account_cash, strict=True):
+            position = account["positions"][0]
+            cash = account["cash_state"]
+            cash.update(
+                opening_ledger_cash=str(Decimal(amount) + Decimal(position["reported_cost_basis"])),
+                ledger_cash=amount,
+                trading_cash=amount,
+                transferable_cash=amount,
+            )
+            account["account_equity"] = str(
+                Decimal(amount)
+                + Decimal(position["total_quantity"]) * Decimal(position["market_price"])
+            )
+    if open_buy:
+        account = snapshot["accounts"][0]
+        cash = account["cash_state"]
+        cash.update(
+            trading_cash=str(Decimal(cash["trading_cash"]) - 320),
+            transferable_cash=str(Decimal(cash["transferable_cash"]) - 320),
+            frozen_cash="320",
+        )
+        account["open_orders"] = [
+            {
+                "order_id": "synthetic-open-buy",
+                "security_id": "SYNTH-CANDIDATE",
+                "side": "BUY",
+                "remaining_quantity": "30",
+                "reserved_cash": "320",
+                "reserved_cash_semantics": "BROKER_FINAL_RESERVED_CASH",
+                "evidence": position_evidence("synthetic-open-buy"),
+            }
+        ]
     opening_position = None
     if capital_state is not None:
-        opening_position = committed(
-            settings, position_case_payload(settings, "plan-opening-position", deepcopy(snapshot))
+        opening_position = save(
+            position_case_payload(settings, "plan-opening-position", deepcopy(snapshot))
         )
         snapshot["cutoff_at"] = "2042-05-18T16:00:00Z"
         refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
@@ -168,12 +235,10 @@ def risk_handoff_payload(
                 opening_ledger_cash="4500", ledger_cash="0", trading_cash="0", transferable_cash="0"
             )
             account["account_equity"] = "5000"
-    concentration_report = committed(settings, concentration)
+    concentration_report = save(concentration)
     assert concentration_report.result.concentration is not None
     assert concentration_report.result.concentration.disposition == "ASSESSED"
-    position_report = committed(
-        settings, position_case_payload(settings, "plan-position", snapshot)
-    )
+    position_report = save(position_case_payload(settings, "plan-position", snapshot))
     refs = {"concentration": concentration_report.event_id}
     for name, version, command in (
         (
@@ -199,7 +264,7 @@ def risk_handoff_payload(
                 "portfolio_id": "synthetic-decision-portfolio-alpha",
                 "authorization_id": authorization.event_id,
                 "position_snapshot": snapshot,
-                "expected_purchase_fees": "0",
+                "expected_purchase_fees": expected_purchase_fees,
                 "expected_liquidation_fees": "0",
                 "sale_terms": [
                     {
@@ -211,7 +276,9 @@ def risk_handoff_payload(
                         "commission_ratio": "0",
                         "minimum_commission": "0",
                         "other_cost_ratio": "0",
-                        "transferable_at": "2042-05-18T16:00:00Z",
+                        "transferable_at": (
+                            datetime.fromisoformat(snapshot["cutoff_at"]) + timedelta(days=1)
+                        ).isoformat(),
                         "evidence": snapshot["snapshot_evidence"],
                     }
                     for account in snapshot["accounts"]
@@ -231,7 +298,7 @@ def risk_handoff_payload(
             report_projection_contract_version=version,
         )
         payload[name] = command
-        report = committed(settings, payload)
+        report = save(payload)
         refs[name] = report.event_id
         if name == "stress":
             assert report.result.stress is not None
@@ -240,9 +307,8 @@ def risk_handoff_payload(
             assert report.result.liquidity is not None
             assert report.result.liquidity.disposition == (
                 "REMEDIATION_REQUIRED" if multi else "AVAILABLE"
-            )
-    capital = committed(
-        settings,
+            ), report.result.liquidity.reasons
+    capital = save(
         drawdown_case(
             settings,
             "plan-capital",
@@ -284,8 +350,7 @@ def risk_handoff_payload(
     assert capital.result.drawdown.disposition == "ACCEPTED"
     if capital_state is not None:
         assert capital.result.drawdown.state is not None
-        capital = committed(
-            settings,
+        capital = save(
             drawdown_case(
                 settings,
                 "plan-capital-observation",
@@ -320,6 +385,10 @@ def risk_handoff_payload(
     refs["drawdown"] = capital.event_id
     payload = execution_payload(settings)
     payload["knowledge_cutoff"] = snapshot["cutoff_at"]
+    payload["access_scope"]["user_id"] = user_id
+    payload["access_scope"]["account_ids"] = [
+        account["account_id"] for account in snapshot["accounts"]
+    ]
     payload["execution_plan"].update(
         cutoff_at=snapshot["cutoff_at"],
         authorization_id=authorization.event_id,
