@@ -21,8 +21,8 @@ from stock_profiler.modules.evaluation.contracts import EvaluationMember
 from stock_profiler.modules.evaluation.historical_contracts import (
     BaselineCounts,
     BaselineResult,
+    CohortEvaluationPolicy,
     HistoricalMonthInput,
-    HistoricalRegistration,
 )
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
@@ -140,7 +140,7 @@ def paired_baselines(
     selection_event_id: str,
     members: tuple[EvaluationMember, ...],
     sessions: tuple[datetime, ...],
-    policy: HistoricalRegistration,
+    policy: CohortEvaluationPolicy,
     cutoff: datetime,
 ) -> dict[str, BaselineResult]:
     factor_order = _factor_order(month, command, policy.market_calendar_version)

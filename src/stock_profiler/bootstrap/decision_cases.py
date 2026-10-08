@@ -43,6 +43,7 @@ from stock_profiler.modules.decision_cases.ports import (
     FrameworkTransitionRecorder,
     ResearchMemberRunReservationRecorder,
 )
+from stock_profiler.modules.decision_cases.prospective import InvalidProspectiveRequest
 from stock_profiler.modules.delivery.access import AccessPrincipal
 from stock_profiler.modules.qualification.governance import InvalidGovernanceRequest
 from stock_profiler.modules.research.contracts import ResearchMemberInput, ResearchRiskPlan
@@ -166,6 +167,7 @@ def run_frozen_decision_case(
         InvalidGovernanceRequest,
         InvalidHistoricalSelectionRequest,
         InvalidHistoricalProbabilityRequest,
+        InvalidProspectiveRequest,
     ):
         ResultDelivery(runtime.engine, clock=clock).record_capability_denial(
             "frozen-case-input", "HOST"

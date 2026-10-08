@@ -9,6 +9,7 @@ from contextlib import closing
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from importlib.metadata import version
 from typing import Literal, cast
 
@@ -1422,9 +1423,27 @@ def _frozen_definition(case: FrozenDecisionCase) -> AgentDefinition:
     )
 
 
-def _frozen_framework_context_input(case: FrozenDecisionCase) -> dict[str, object]:
-    """Keep host-owned calibration evidence out of the framework context budget."""
+def _frozen_framework_run_input(case: FrozenDecisionCase) -> dict[str, object]:
+    """Bind host-owned formal evidence without dispatching it to the model."""
     payload = deepcopy(case.input)
+    prospective = payload.get("prospective")
+    if case.prospective is not None and isinstance(prospective, dict):
+        months = prospective.pop("formal_months", None)
+        if months is not None:
+            prospective["formal_months_reference"] = {
+                "sha256": sha256(
+                    json.dumps(
+                        months, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+                    ).encode()
+                ).hexdigest(),
+                "frozen_input_fingerprint": case.frozen_input_fingerprint,
+            }
+    return payload
+
+
+def _frozen_framework_context_input(case: FrozenDecisionCase) -> dict[str, object]:
+    """Keep host-owned cohort and calibration evidence out of the model budget."""
+    payload = _frozen_framework_run_input(case)
     candidate_release = payload.get("candidate_release")
     if isinstance(candidate_release, dict):
         for evidence_field in (
@@ -1497,7 +1516,12 @@ async def execute_frozen_decision_case(
             created = await runner.create_run(
                 definition.definition_id,
                 definition.version,
-                json.dumps(case.input, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                json.dumps(
+                    _frozen_framework_run_input(case),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 run_id=case.framework_run_id,
             )
             await record_framework_statuses()
@@ -2361,7 +2385,7 @@ def _assert_existing_run_matches_case(
 ) -> None:
     """Bind a recovered run to the same frozen definition and input before reuse."""
     expected_input = json.dumps(
-        case.input,
+        _frozen_framework_run_input(case),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,

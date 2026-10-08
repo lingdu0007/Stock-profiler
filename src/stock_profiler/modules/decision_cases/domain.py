@@ -71,6 +71,7 @@ from stock_profiler.modules.position_management.execution_contracts import (
     ExecutionPlanCommand,
     ExecutionPlanOutcome,
 )
+from stock_profiler.modules.prospective.contracts import CycleCommand, CycleReport
 from stock_profiler.modules.qualification.contracts import (
     GovernanceCommand,
     GovernanceOutcome,
@@ -122,6 +123,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "standard-outcomes.1.0.0",
         "historical-selection.1.0.0",
         "historical-probability.1.0.0",
+        "prospective.1.0.0",
     }
 )
 _SUPPORTED_REPORT_PROJECTION_CONTRACT_VERSIONS = frozenset(
@@ -149,6 +151,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("standard-outcomes.1.0.0", "standard-outcomes.1.0.0"),
         ("historical-selection.1.0.0", "historical-selection.1.0.0"),
         ("historical-probability.1.0.0", "historical-probability.1.0.0"),
+        ("prospective.1.0.0", "prospective.1.0.0"),
     }
 )
 FROZEN_QUALIFICATION_SCOPE = "D0_SYNTHETIC_CONTRACT_ONLY"
@@ -237,6 +240,7 @@ class ExternalResult(FrozenContract):
     evaluation_registrations: tuple[EvaluationRegistration, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    prospective: CycleReport | None = Field(default=None, exclude_if=lambda value: value is None)
     historical_probability: HistoricalProbabilityReport | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -944,6 +948,7 @@ class FrozenDecisionCase(FrozenContract):
     expected_external_result: ExternalResult
     universe: UniverseCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     selection: SelectionCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    prospective: CycleCommand | None = Field(default=None, exclude_if=lambda value: value is None)
     historical_probability: HistoricalProbabilityCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1026,6 +1031,16 @@ class FrozenDecisionCase(FrozenContract):
         candidate_release_governed = (
             self.version_bundle.case_contract_version == "candidate-release.1.0.0"
         )
+        prospective_governed = self.version_bundle.case_contract_version == "prospective.1.0.0"
+        if prospective_governed != (self.prospective is not None) or prospective_governed != (
+            "prospective" in self.input
+        ):
+            raise ValueError("prospective accounting requires its own frozen contract")
+        if self.prospective is not None and (
+            self.prospective.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("prospective") != self.prospective.model_dump(mode="json")
+        ):
+            raise ValueError("prospective accounting must bind the frozen cutoff and input")
         historical_probability_governed = (
             self.version_bundle.case_contract_version == "historical-probability.1.0.0"
         )
@@ -1156,6 +1171,7 @@ class FrozenDecisionCase(FrozenContract):
             or research_governed
             or candidate_release_governed
             or historical_probability_governed
+            or prospective_governed
             or historical_selection_governed
             or standard_outcomes_governed
         )
@@ -1191,6 +1207,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.standard_outcomes,
                     self.historical_selection,
                     self.historical_probability,
+                    self.prospective,
                 )
             )
             > 1
@@ -1220,6 +1237,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.monitoring is not None
             or self.expected_external_result.universe is not None
             or self.expected_external_result.selection is not None
+            or self.expected_external_result.prospective is not None
             or self.expected_external_result.historical_probability is not None
             or self.expected_external_result.historical_selection is not None
             or self.expected_external_result.standard_outcomes is not None
@@ -1973,6 +1991,7 @@ def synthetic_outcome_code_from_input(
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
     input_without_scenario.pop("standard_outcomes", None)
     input_without_scenario.pop("historical_probability", None)
+    input_without_scenario.pop("prospective", None)
     input_without_scenario.pop("historical_selection", None)
     candidate_release = input_without_scenario.pop("candidate_release", None)
     if candidate_release is not None and not isinstance(candidate_release, dict):
