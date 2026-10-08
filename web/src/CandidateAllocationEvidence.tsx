@@ -1,0 +1,81 @@
+import type { FormalReport } from "./api/client";
+import { ReportRecord as Record } from "./ReportRecord";
+
+type Allocation = NonNullable<FormalReport["result"]["candidate_allocation"]>;
+const outcomes: Record<Allocation["rows"][number]["outcome"], string> = {
+  FULLY_ALLOCATED: "Fully allocated",
+  PARTIALLY_ALLOCATED: "Partially allocated",
+  UNALLOCATED: "Unallocated"
+};
+const states: Record<Allocation["disposition"], string> = {
+  PLANNED: "Allocation awaiting confirmation",
+  BLOCKED: "Allocation blocked",
+  AWAITING_PRICE_CAP: "Continuous allocation awaiting a confirmed price cap"
+};
+
+export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
+  return (
+    <section className="report-section" aria-label="Candidate allocation">
+      <h2>Candidate allocation</h2>
+      <p className="outcome-code">{states[plan.disposition]}</p>
+      <p>
+        Candidate qualification retained. This saved plan does not reserve cash or submit orders.
+      </p>
+      <p className="stage-reasons">{plan.reasons.join(", ")}</p>
+      <dl className="record-list">
+        <Record label="Plan version" value={plan.plan_id ?? "Unavailable"} />
+        <Record label="Formed at" value={plan.formed_at ?? "Unknown"} />
+        <Record label="Candidate batch" value={plan.candidate_batch_id ?? "Unknown"} />
+        <Record label="Source conclusion" value={plan.candidate_conclusion_version ?? "Unknown"} />
+        <Record
+          label="Complete portfolio snapshot"
+          value={plan.position_snapshot_id ?? "Unknown"}
+        />
+        <Record label="Risk budget" value={plan.risk_budget_version_id ?? "Unknown"} />
+        <Record label="Allocated principal" value={String(plan.total_principal)} />
+        <Record
+          label="Remaining deployable cash"
+          value={String(plan.remaining_cash ?? "Unknown")}
+        />
+        <Record label="Suggested sequence" value={plan.purchase_sequence.join(", ")} />
+      </dl>
+      {plan.rows.map((row) => (
+        <div
+          className="portfolio-subsection"
+          key={`${row.candidate.security_id}:${row.candidate.research_id}`}
+        >
+          <h3>{row.candidate.security_id}</h3>
+          <p className="outcome-code">{outcomes[row.outcome]}</p>
+          <p className="stage-reasons">{row.reasons.join(", ")}</p>
+          <dl className="record-list">
+            <Record label="Candidate identity" value={row.candidate.research_id} />
+            <Record
+              label="Frozen probability"
+              value={String(row.candidate.calibrated_probability ?? "Unknown")}
+            />
+            <Record label="Issuer" value={row.issuer_id} />
+            <Record
+              label="Existing and committed exposure"
+              value={String(row.committed_exposure)}
+            />
+            <Record label="Issuer target gap" value={String(row.target_gap)} />
+            <Record label="Continuous principal" value={String(row.continuous_principal)} />
+            <Record label="Legal allocated principal" value={String(row.principal)} />
+          </dl>
+          {row.legs.map((leg) => (
+            <dl className="record-list" key={leg.route.account_id}>
+              <Record label="Account" value={leg.route.account_id} />
+              <Record label="Legal buy quantity" value={String(leg.quantity)} />
+              <Record label="Confirmed price cap" value={String(leg.route.price_cap)} />
+              <Record label="Purchase cost" value={String(leg.purchase_cost)} />
+              <Record
+                label="Cost and rule versions"
+                value={`${leg.route.version_id}; ${leg.route.rule_version}`}
+              />
+            </dl>
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}

@@ -338,6 +338,54 @@ export interface components {
              */
             side: "BUY" | "SELL";
         };
+        /** AcquisitionLeg */
+        AcquisitionLeg: {
+            /** Principal */
+            principal: string;
+            /** Purchase Cost */
+            purchase_cost: string;
+            /** Quantity */
+            quantity: string;
+            route: components["schemas"]["AcquisitionRoute"];
+        };
+        /** AcquisitionRoute */
+        AcquisitionRoute: {
+            /** Account Id */
+            account_id: string;
+            /** Commission Ratio */
+            commission_ratio: string;
+            /** Current Price */
+            current_price?: string | null;
+            /** Disposal Friction Ratio */
+            disposal_friction_ratio: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Maximum Price */
+            maximum_price: string;
+            /** Minimum Commission */
+            minimum_commission: string;
+            /** Minimum Price */
+            minimum_price: string;
+            /** Minimum Quantity */
+            minimum_quantity: string;
+            /** Other Cost Ratio */
+            other_cost_ratio: string;
+            /** Permission */
+            permission: boolean;
+            /** Price Cap */
+            price_cap: string | null;
+            /** Price Cap Confirmed */
+            price_cap_confirmed: boolean;
+            /** Price Tick */
+            price_tick: string;
+            /** Quantity Increment */
+            quantity_increment: string;
+            /** Rule Version */
+            rule_version: string;
+            /** Security Id */
+            security_id: string;
+            /** Version Id */
+            version_id: string;
+        };
         /** AlertClosure */
         AlertClosure: {
             /** Alert Evidence Id */
@@ -382,6 +430,88 @@ export interface components {
             rule_version: string;
             /** Transferred Restriction Evidence Id */
             transferred_restriction_evidence_id?: string | null;
+        };
+        /** AllocationCommitment */
+        AllocationCommitment: {
+            /** Account Id */
+            account_id: string;
+            /** Broker Order Id */
+            broker_order_id: string | null;
+            /** Commitment Id */
+            commitment_id: string;
+            /** Disposal Friction */
+            disposal_friction: string;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Issuer Id */
+            issuer_id: string;
+            /** Price Cap */
+            price_cap?: string | null;
+            /** Principal */
+            principal: string;
+            /** Purchase Cost */
+            purchase_cost: string;
+            /** Quantity */
+            quantity?: string | null;
+            /** Security Id */
+            security_id: string;
+        };
+        /** AllocationCorrelations */
+        AllocationCorrelations: {
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /** Market Dates */
+            market_dates: string[];
+            /**
+             * Return Semantics
+             * @constant
+             */
+            return_semantics: "DAILY_ADJUSTED";
+            /** Returns */
+            returns: {
+                [key: string]: string[];
+            };
+            /** Version Id */
+            version_id: string;
+        };
+        /** AllocationPolicy */
+        AllocationPolicy: {
+            /** Correlation Ceiling */
+            correlation_ceiling: string;
+            /** Correlation Window */
+            correlation_window: number;
+            /** Entry Target Ratio */
+            entry_target_ratio: string;
+            /** Generator Version */
+            generator_version: string;
+            /** Neighborhood Ratio */
+            neighborhood_ratio: string;
+            /** Seed */
+            seed: number;
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: true;
+            /** Turnover Ratio */
+            turnover_ratio: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** AllocationSecurity */
+        AllocationSecurity: {
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Issuer Id */
+            issuer_id: string;
+            /** Median Turnover */
+            median_turnover: string;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Turnover Window Sessions
+             * @constant
+             */
+            turnover_window_sessions: 20;
         };
         /**
          * AuthenticationVerificationDto
@@ -634,6 +764,105 @@ export interface components {
             selected_calibrator_version: "monotone-firth-logistic-v1";
             /** Window Months */
             window_months: string[];
+        };
+        /** CandidateAllocationOutcome */
+        CandidateAllocationOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /** Candidate Batch Id */
+            candidate_batch_id?: string | null;
+            /** Candidate Conclusion Version */
+            candidate_conclusion_version?: string | null;
+            /** Candidate Event Id */
+            candidate_event_id?: string | null;
+            /**
+             * Commitments
+             * @default []
+             */
+            commitments: components["schemas"]["AllocationCommitment"][];
+            /**
+             * Contract Version
+             * @default 1.0.0
+             * @constant
+             */
+            contract_version: "1.0.0";
+            correlations?: components["schemas"]["AllocationCorrelations"] | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "BLOCKED" | "PLANNED" | "AWAITING_PRICE_CAP";
+            /** Formed At */
+            formed_at?: string | null;
+            /** Plan Id */
+            plan_id?: string | null;
+            policy?: components["schemas"]["AllocationPolicy"] | null;
+            position_snapshot?: components["schemas"]["ReconciledPositionSnapshot"] | null;
+            /** Position Snapshot Id */
+            position_snapshot_id?: string | null;
+            /**
+             * Purchase Sequence
+             * @default []
+             */
+            purchase_sequence: string[];
+            /** Reasons */
+            reasons: string[];
+            /** Remaining Cash */
+            remaining_cash?: string | null;
+            risk_budget?: components["schemas"]["PersonalRiskBudget"] | null;
+            /** Risk Budget Version Id */
+            risk_budget_version_id?: string | null;
+            risk_handoff?: components["schemas"]["ExecutionPlanCommand"] | null;
+            /**
+             * Routes
+             * @default []
+             */
+            routes: components["schemas"]["AcquisitionRoute"][];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: components["schemas"]["CandidateAllocationRow"][];
+            /**
+             * Securities
+             * @default []
+             */
+            securities: components["schemas"]["AllocationSecurity"][];
+            /**
+             * Total Principal
+             * @default 0
+             */
+            total_principal: string;
+        };
+        /** CandidateAllocationRow */
+        CandidateAllocationRow: {
+            candidate: components["schemas"]["CalibratedMember"];
+            /** Committed Exposure */
+            committed_exposure: string;
+            /** Continuous Principal */
+            continuous_principal: string;
+            /** Issuer Id */
+            issuer_id: string;
+            /**
+             * Legs
+             * @default []
+             */
+            legs: components["schemas"]["AcquisitionLeg"][];
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "FULLY_ALLOCATED" | "PARTIALLY_ALLOCATED" | "UNALLOCATED";
+            /** Principal */
+            principal: string;
+            /** Reasons */
+            reasons: string[];
+            /** Target Gap */
+            target_gap: string;
         };
         /** CandidateBatchDelivery */
         CandidateBatchDelivery: {
@@ -1709,6 +1938,27 @@ export interface components {
              */
             quantity_status: "UNKNOWN";
         };
+        /** EstablishedQuantityTarget */
+        EstablishedQuantityTarget: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "REDUCE" | "EXIT";
+            evidence: components["schemas"]["PositionEvidence"];
+            /** Policy Version */
+            policy_version: string;
+            /** Priority */
+            priority?: ("P0" | "P1" | "P2") | null;
+            /** Qualified */
+            qualified: boolean;
+            /** Security Id */
+            security_id: string;
+            /** Target Id */
+            target_id: string;
+            /** Target Quantity */
+            target_quantity: string;
+        };
         /** EvaluationMember */
         EvaluationMember: {
             /** Entry At */
@@ -1904,6 +2154,46 @@ export interface components {
             /** Security Id */
             security_id: string;
         };
+        /** ExecutionPlanCommand */
+        ExecutionPlanCommand: {
+            /** Authorization Id */
+            authorization_id: string;
+            /** Concentration Event Id */
+            concentration_event_id: string;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Drawdown Event Id */
+            drawdown_event_id: string;
+            /**
+             * Established Targets
+             * @default []
+             */
+            established_targets: components["schemas"]["EstablishedQuantityTarget"][];
+            /** Liquidity Event Id */
+            liquidity_event_id: string;
+            /**
+             * Operation
+             * @constant
+             */
+            operation: "EXECUTION_PLAN";
+            /** Portfolio Id */
+            portfolio_id: string;
+            /**
+             * Routes
+             * @default []
+             */
+            routes: components["schemas"]["ExecutionRoute"][];
+            /** Stress Event Id */
+            stress_event_id: string;
+        };
         /** ExecutionPlanOutcome */
         ExecutionPlanOutcome: {
             /** Cost Routing Basis */
@@ -2003,6 +2293,7 @@ export interface components {
          * @description The user-visible result expected from this original synthetic fixture.
          */
         ExternalResult: {
+            candidate_allocation?: components["schemas"]["CandidateAllocationOutcome"] | null;
             candidate_release?: components["schemas"]["CandidateReleaseOutcome"] | null;
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
@@ -4844,7 +5135,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

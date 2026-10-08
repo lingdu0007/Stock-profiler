@@ -36,6 +36,9 @@ def test_spdx_sbom_has_unique_ids_and_all_locked_build_inputs(monkeypatch: Monke
     assert {"fastapi", "react", "python:3.11.15-slim", "caddy:2.10.2-alpine"} <= names
     assert payload["documentNamespace"].endswith("-" + "a" * 40)
     assert licenses["m-agent"] == "Apache-2.0"
+    assert licenses["numpy"] == "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+    assert licenses["scipy"] == "NOASSERTION"
+    assert all("\n" not in expression for expression in licenses.values())
     assert licenses["@simplewebauthn/browser"] == "MIT"
     assert not {
         "Apache 2.0",

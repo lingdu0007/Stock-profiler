@@ -78,6 +78,9 @@ def installed_python_license(name: str) -> str:
         or package_metadata.get("License")
         or "NOASSERTION"
     )
+    if "\n" in expression:
+        # Supplied multi-license texts are not SPDX expressions; notices travel separately.
+        return "NOASSERTION"
     return LICENSE_ALIASES.get(expression, expression)
 
 

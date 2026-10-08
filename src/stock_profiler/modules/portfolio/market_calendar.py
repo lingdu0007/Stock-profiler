@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import cached_property
 
 
 def _utc(value: str) -> datetime:
@@ -46,7 +48,9 @@ def market_session_close_on(
         sessions = calendar.sessions
     else:
         sessions = calendar.terminal_sessions or calendar.sessions
-    session = next((item for item in sessions if item.closed_at.date() == market_date), None)
+    dates = calendar._session_dates if sessions is calendar.sessions else calendar._terminal_dates
+    index = bisect_left(dates, market_date)
+    session = sessions[index] if index < len(sessions) and dates[index] == market_date else None
     return session.closed_at if session is not None else None
 
 
@@ -68,15 +72,15 @@ def next_market_session_open_after(
         sessions = calendar.sessions
     else:
         sessions = calendar.terminal_sessions or calendar.sessions
-    session = next((item for item in sessions if item.closed_at - timedelta(hours=7) > value), None)
+    closes = (
+        calendar._session_closes if sessions is calendar.sessions else calendar._terminal_closes
+    )
+    index = bisect_right(closes, value + timedelta(hours=7))
+    session = sessions[index] if index < len(sessions) else None
     if session is None and sessions is calendar.sessions and calendar.terminal_sessions:
-        session = next(
-            (
-                item
-                for item in calendar.terminal_sessions
-                if item.closed_at - timedelta(hours=7) > value
-            ),
-            None,
+        index = bisect_right(calendar._terminal_closes, value + timedelta(hours=7))
+        session = (
+            calendar.terminal_sessions[index] if index < len(calendar.terminal_sessions) else None
         )
     if session is None:
         raise ValueError("MARKET_CALENDAR_ENTRY_WINDOW_UNAVAILABLE")
@@ -101,6 +105,37 @@ class SyntheticMarketCalendar:
     terminal_session_coverage_through: date
     terminal_sessions: tuple[MarketSession, ...] = ()
 
+    @cached_property
+    def _session_dates(self) -> tuple[date, ...]:
+        return tuple(session.closed_at.date() for session in self.sessions)
+
+    @cached_property
+    def _terminal_dates(self) -> tuple[date, ...]:
+        return tuple(
+            session.closed_at.date() for session in (self.terminal_sessions or self.sessions)
+        )
+
+    @cached_property
+    def _session_closes(self) -> tuple[datetime, ...]:
+        return tuple(session.closed_at for session in self.sessions)
+
+    @cached_property
+    def _terminal_closes(self) -> tuple[datetime, ...]:
+        return tuple(session.closed_at for session in (self.terminal_sessions or self.sessions))
+
+    @cached_property
+    def _covered_sessions(self) -> tuple[MarketSession, ...]:
+        if not self.sessions:
+            return self.terminal_sessions
+        extended = self.terminal_sessions or self.sessions
+        before = bisect_left(self._terminal_dates, self._session_dates[0])
+        after = bisect_right(self._terminal_dates, self._session_dates[-1])
+        return extended[:before] + self.sessions + extended[after:]
+
+    @cached_property
+    def _covered_closes(self) -> tuple[datetime, ...]:
+        return tuple(session.closed_at for session in self._covered_sessions)
+
     def session_for(self, ordinal: int) -> MarketSession | None:
         return next((session for session in self.sessions if session.ordinal == ordinal), None)
 
@@ -117,26 +152,15 @@ class SyntheticMarketCalendar:
         first_covered_date = self.terminal_session_coverage_from
         if first_covered_date is not None and value.astimezone(UTC).date() < first_covered_date:
             return ()
-        if self.sessions:
-            first_date = self.sessions[0].closed_at.date()
-            last_date = self.sessions[-1].closed_at.date()
-            extended_sessions = self.terminal_sessions or self.sessions
-            sessions = (
-                tuple(
-                    session
-                    for session in extended_sessions
-                    if session.closed_at.date() < first_date
-                )
-                + self.sessions
-                + tuple(
-                    session for session in extended_sessions if session.closed_at.date() > last_date
-                )
-            )
-        else:
-            sessions = self.terminal_sessions
-        return tuple(
-            session for session in sessions if session.closed_at - timedelta(hours=7) > value
-        )[:count]
+        start = bisect_right(self._covered_closes, value + timedelta(hours=7))
+        return self._covered_sessions[start : start + count]
+
+    def recent_completed_sessions(self, value: datetime, count: int) -> tuple[MarketSession, ...]:
+        """Return the latest completed saved sessions with active-calendar precedence."""
+        if count <= 0 or value.astimezone(UTC).date() > self.terminal_session_coverage_through:
+            return ()
+        end = bisect_right(self._covered_closes, value)
+        return self._covered_sessions[max(0, end - count) : end]
 
     @property
     def terminal_session_coverage_from(self) -> date | None:
@@ -152,23 +176,23 @@ class SyntheticMarketCalendar:
         if self.sessions and self.sessions[0].closed_at.date() <= value_date <= (
             self.sessions[-1].closed_at.date()
         ):
-            completed_sessions = tuple(
-                session for session in self.sessions if session.closed_at <= value
-            )
-            if completed_sessions:
-                return completed_sessions[-1]
+            index = bisect_right(self._session_closes, value) - 1
+            if index >= 0:
+                return self.sessions[index]
             first_saved_date = self.sessions[0].closed_at.date()
-            prior_sessions = tuple(
-                session
-                for session in self.terminal_sessions
-                if session.closed_at.date() < first_saved_date and session.closed_at <= value
+            if not self.terminal_sessions:
+                return None
+            index = (
+                min(
+                    bisect_right(self._terminal_closes, value),
+                    bisect_left(self._terminal_dates, first_saved_date),
+                )
+                - 1
             )
-            return prior_sessions[-1] if prior_sessions else None
+            return self.terminal_sessions[index] if index >= 0 else None
         extended_sessions = self.terminal_sessions or self.sessions
-        completed_sessions = tuple(
-            session for session in extended_sessions if session.closed_at <= value
-        )
-        return completed_sessions[-1] if completed_sessions else None
+        index = bisect_right(self._terminal_closes, value) - 1
+        return extended_sessions[index] if index >= 0 else None
 
     def next_monthly_selection_cutoff_after(self, closed_at: datetime) -> datetime | None:
         return next(
@@ -178,14 +202,14 @@ class SyntheticMarketCalendar:
 
     def last_terminal_session_on_or_before(self, target_date: date) -> MarketSession | None:
         sessions = self.terminal_sessions or self.sessions
+        dates = self._terminal_dates
         if self.sessions and self.sessions[0].closed_at.date() <= target_date <= (
             self.sessions[-1].closed_at.date()
         ):
             sessions = self.sessions
-        return next(
-            (session for session in reversed(sessions) if session.closed_at.date() <= target_date),
-            None,
-        )
+            dates = self._session_dates
+        index = bisect_right(dates, target_date) - 1
+        return sessions[index] if index >= 0 else None
 
 
 def _weekday_sessions(

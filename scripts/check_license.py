@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tomllib
+from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, metadata
 from pathlib import Path
 
@@ -14,7 +15,9 @@ PYTHON_DIRECT_COMPONENTS = frozenset(
         "alembic",
         "fastapi",
         "m-agent",
+        "numpy",
         "pydantic-settings",
+        "scipy",
         "sqlalchemy",
         "structlog",
         "typer",
@@ -24,6 +27,9 @@ PYTHON_DIRECT_COMPONENTS = frozenset(
 )
 PYTHON_NOTICE_COMPONENT_MARKERS = (
     "M-Agent",
+    "NumPy",
+    "SciPy",
+    "HiGHS",
     "FastAPI",
     "SQLAlchemy",
     "Alembic",
@@ -34,12 +40,18 @@ PYTHON_NOTICE_COMPONENT_MARKERS = (
     "webauthn",
 )
 REQUIRED_WEB_BUILD_COMPONENTS = frozenset({"@tailwindcss/vite", "tailwindcss"})
+SUPPLIED_NOTICE_DIGESTS = {
+    "scipy-1.16.2.txt": "4daf14e37432e7026165979ecb7a39930707a3e89bef4876cfaf9dad36ed364a",
+    "numpy-2.4.6.txt": "4860083caa0de2ac3292ca98bd074bd8f45d8b32624e37b1e70a240bff61e488",
+    "highs.txt": "10b39dba7b7731175f0705398b6db4320b64add1bd2ed9f9ec5b512a9ef1bd95",
+}
 ALLOWED_PYTHON_LICENSES = frozenset(
     {
         "Apache-2.0",
         "BSD-3-Clause",
         "MIT",
         "MIT OR Apache-2.0",
+        "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
     }
 )
 ALLOWED_FRONTEND_LICENSES = frozenset(
@@ -88,6 +100,18 @@ def require_python_license_metadata() -> None:
         license_expression = (
             component_metadata.get("License-Expression") or component_metadata.get("License") or ""
         )
+        if component == "scipy":
+            # This pinned distribution uses a full multi-license notice rather than SPDX.
+            normalized = (
+                "\n".join(line.rstrip() for line in license_expression.strip().splitlines()) + "\n"
+            )
+            if (
+                component_metadata["Version"] != "1.16.2"
+                or sha256(normalized.encode()).hexdigest()
+                != "d6b4ae8940de638296131c7ad7f4b6b29b1b4cf94472999af896bc2f4ffd881e"
+            ):
+                raise SystemExit("SciPy distribution license requires renewed review")
+            continue
         if license_expression not in ALLOWED_PYTHON_LICENSES:
             raise SystemExit(f"unapproved Python license for {component}: {license_expression!r}")
 
@@ -146,6 +170,9 @@ def main() -> None:
     require_text(ROOT / "NOTICE", "Stock Profiler")
     notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     require_direct_component_notices(notices)
+    for filename, digest in SUPPLIED_NOTICE_DIGESTS.items():
+        if sha256((ROOT / "docs" / "licenses" / filename).read_bytes()).hexdigest() != digest:
+            raise SystemExit(f"supplied dependency notice requires renewed review: {filename}")
     require_python_license_metadata()
     frontend_licenses = frontend_license_inventory()
     require_allowed_frontend_licenses(frontend_licenses)

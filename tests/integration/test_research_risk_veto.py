@@ -31,6 +31,7 @@ from m_agent.runtime import (
     parse_stage_result,
 )
 from sqlalchemy import select
+from synthetic_candidate_allocation import assert_allocation_preserves_genuine_release
 
 import stock_profiler.adapters.m_agent.frozen_decision_case as frozen_decision_case
 import stock_profiler.bootstrap.decision_cases as case_bootstrap
@@ -5440,3 +5441,5 @@ def test_candidate_release_uses_committed_raw_scores_and_saves_market_state_abst
         if candidate_scenario == "CALENDAR_WINDOW_MISSING"
         else tuple(session.market_date for session in sessions)
     )
+    if candidate_scenario == "UNRELATED_LATEST_SCOPE" and risk_scenario == "ACCEPT":
+        assert_allocation_preserves_genuine_release(migrated_settings, execution.report)

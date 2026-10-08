@@ -14,7 +14,9 @@ dependencies = [
   "alembic>=1.16.0,<2.0.0",
   "fastapi>=0.115.0,<1.0.0",
   "m-agent @ https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl#sha256=7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+  "numpy==2.4.6",
   "pydantic-settings>=2.10.0,<3.0.0",
+  "scipy==1.16.2",
   "sqlalchemy>=2.0.0,<3.0.0",
   "structlog>=25.0.0,<26.0.0",
   "typer>=0.16.0,<1.0.0",
@@ -49,6 +51,11 @@ where = ["src"]
   "tests/fixtures/synthetic/replayable_frozen_decision_case.json",
   "tests/fixtures/synthetic/frozen_correction_evidence.json",
 ]
+"stock-profiler/licenses" = [
+  "docs/licenses/scipy-1.16.2.txt",
+  "docs/licenses/numpy-2.4.6.txt",
+  "docs/licenses/highs.txt",
+]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --cov=stock_profiler --cov-branch --cov-report=term-missing --cov-fail-under=80"
@@ -77,5 +84,5 @@ files = ["src", "tests"]
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["m_agent.*"]
+module = ["m_agent.*", "scipy.*"]
 ignore_missing_imports = true
