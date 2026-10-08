@@ -829,6 +829,7 @@ def test_continuous_fractional_equalization_also_respects_exact_stress_capacity(
     assert tuple(row.candidate for row in plan.rows) == source.members
     assert sum(row.continuous_principal for row in plan.rows) * Decimal("0.23") <= 940
     assert len({row.continuous_principal for row in plan.rows}) == 1
+    assert all(row.primary_reason == "STRESS_CAPACITY_EXHAUSTED" for row in plan.rows)
 
 
 @pytest.mark.parametrize("neighborhood_ratio,upper_count", [("0.24", 4), ("0.216", 1)])

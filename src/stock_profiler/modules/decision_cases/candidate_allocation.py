@@ -17,6 +17,7 @@ from stock_profiler.modules.portfolio.allocation_contracts import (
     CandidateAllocationRow,
 )
 from stock_profiler.modules.portfolio.allocation_solver import (
+    CONTINUOUS_PRINCIPAL_QUANTUM,
     AllocationProblem,
     AllocationSolveFailed,
     Capacity,
@@ -68,6 +69,29 @@ def _ordered_reasons(reasons: list[str] | tuple[str, ...]) -> tuple[str, ...]:
             ),
         )
     )
+
+
+def _capacity_binding(problem: AllocationProblem, check: AllocationCapacityCheck) -> bool:
+    """Explain a binding gate despite downward truncation of its monetary proposal.
+
+    This allowance labels reasons only. Every published quantity and capacity
+    still passes the original exact Decimal checks without any allowance.
+    """
+    allowance = Decimal(0)
+    for route in problem.routes:
+        if route.security_id not in check.security_ids or (
+            check.account_id is not None and route.account_id != check.account_id
+        ):
+            continue
+        coefficient = (
+            problem.shock + route.disposal_friction_ratio
+            if check.gate_id == "global:stress"
+            else 1 + route.commission_ratio + route.other_cost_ratio
+            if check.gate_id == "global:cash" or check.account_id is not None
+            else Decimal(1)
+        )
+        allowance += CONTINUOUS_PRINCIPAL_QUANTUM * coefficient
+    return check.remaining_after_continuous <= allowance
 
 
 def _correlated(left: tuple[Decimal, ...], right: tuple[Decimal, ...], ceiling: Decimal) -> bool:
@@ -721,56 +745,13 @@ def _adjudicate_candidate_allocation(
                 for route in member_routes
             ):
                 row_reasons.append("ACCOUNT_CASH_CAPACITY_EXHAUSTED")
-            if (
-                sum(
-                    (
-                        amount * (problem.shock + route.disposal_friction_ratio)
-                        for amount, route in zip(
-                            continuous_solution.route_principals, routes, strict=True
-                        )
-                    ),
-                    Decimal(0),
-                )
-                >= stress_remaining
-            ):
-                row_reasons.append("STRESS_CAPACITY_EXHAUSTED")
-            if (
-                sum(
-                    (
-                        amount + route.cost(amount)
-                        for amount, route in zip(
-                            continuous_solution.route_principals, routes, strict=True
-                        )
-                    ),
-                    Decimal(0),
-                )
-                >= cash
-            ):
-                row_reasons.append("CASH_CAPACITY_EXHAUSTED")
-            for account, available in account_cash.items():
+            for check in capacity_checks:
                 if (
-                    any(route.account_id == account for route in member_routes)
-                    and sum(
-                        (
-                            amount + route.cost(amount)
-                            for amount, route in zip(
-                                continuous_solution.route_principals, routes, strict=True
-                            )
-                            if route.account_id == account
-                        ),
-                        Decimal(0),
-                    )
-                    >= available
+                    member.security_id in check.security_ids
+                    and check.reason != "ENTRY_TARGET_REACHED"
+                    and _capacity_binding(problem, check)
                 ):
-                    row_reasons.append("ACCOUNT_CASH_CAPACITY_EXHAUSTED")
-            for capacity in capacities:
-                if (
-                    index in capacity.members
-                    and sum((continuous[identity] for identity in capacity.members), Decimal(0))
-                    >= max(Decimal(0), capacity.remaining)
-                    and capacity.reason != "ENTRY_TARGET_REACHED"
-                ):
-                    row_reasons.append(capacity.reason)
+                    row_reasons.append(check.reason)
         if awaiting:
             row_reasons.append("PRICE_CAP_REQUIRED")
         elif continuous[index] > 0 and principal == 0:

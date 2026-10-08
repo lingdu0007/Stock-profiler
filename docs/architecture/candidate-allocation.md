@@ -106,6 +106,10 @@ Saved capacity checks identify each gate's affected securities and account,
 committed margin, available buying capacity, and remaining continuous and planned
 capacity. A pre-existing breach is retained as a negative committed margin with
 zero buying capacity for its affected neighborhood.
+Binding-gate reasons account for the maximum six-decimal per-route downward
+truncation allowance, so a tiny residual cannot hide the economic capacity that
+limited a partial allocation. This allowance affects explanations only; exact
+quantity and capacity verification never permits an overspend or risk excess.
 
 The capability is a synthetic report-only contract. It does not confirm a plan,
 create reservations, submit broker orders, reconcile future fills or activate

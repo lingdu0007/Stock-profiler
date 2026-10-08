@@ -21,6 +21,8 @@ from stock_profiler.modules.portfolio.allocation_contracts import (
     AllocationCriterion,
 )
 
+CONTINUOUS_PRINCIPAL_QUANTUM = Decimal("0.000001")
+
 
 class AllocationSolveFailed(Exception):
     """No bounded, verified optimal allocation is available."""
@@ -357,7 +359,7 @@ def continuous_allocation(problem: AllocationProblem) -> ContinuousAllocation:
     solution = model.solve({index: 1.0 for index in fees})
     route_principals = tuple(
         Decimal(str(sum(solution[index] * value for index, value in amount.items()))).quantize(
-            Decimal("0.000001"), rounding=ROUND_FLOOR
+            CONTINUOUS_PRINCIPAL_QUANTUM, rounding=ROUND_FLOOR
         )
         for amount in amounts
     )
