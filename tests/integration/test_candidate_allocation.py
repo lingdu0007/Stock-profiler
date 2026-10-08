@@ -953,3 +953,70 @@ def test_unaffordable_minimum_commission_explains_zero_continuous_capacity(
     row = report.result.candidate_allocation.rows[0]
     assert row.candidate == source.members[0] and row.continuous_principal == 0
     assert row.principal == 0 and row.primary_reason == "CASH_CAPACITY_EXHAUSTED"
+
+
+@pytest.mark.parametrize("conflict", ["candidate", "other_commitment"])
+def test_conflicting_security_issuer_facts_cannot_bypass_committed_exposure(
+    migrated_settings: Settings,
+    conflict: str,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings, open_buy=conflict == "candidate")
+    command = payload["candidate_allocation"]
+    commitment = {
+        "commitment_id": "synthetic-conflicting-buy",
+        "account_id": "synthetic-account-4017",
+        "security_id": "SYNTH-CANDIDATE" if conflict == "candidate" else "SYNTH-OTHER-BUY",
+        "issuer_id": "fictional-conflicting-issuer",
+        "broker_order_id": "synthetic-open-buy" if conflict == "candidate" else None,
+        "principal": "300",
+        "quantity": "30",
+        "price_cap": "10",
+        "purchase_cost": "20",
+        "disposal_friction": "0",
+        "evidence": deepcopy(command["securities"][0]["evidence"]),
+    }
+    command["commitments"] = [commitment]
+    if conflict == "other_commitment":
+        peer = deepcopy(commitment)
+        peer.update(
+            commitment_id="synthetic-conflicting-peer-buy", issuer_id="fictional-peer-issuer"
+        )
+        command["commitments"].append(peer)
+        command["correlations"]["returns"]["fictional-peer-issuer"] = command["correlations"][
+            "returns"
+        ]["fictional-new-issuer"]
+    command["correlations"]["returns"]["fictional-conflicting-issuer"] = command["correlations"][
+        "returns"
+    ]["fictional-new-issuer"]
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.disposition == "BLOCKED" and plan.rows[0].candidate == source.members[0]
+    assert plan.reasons == ("BUY_COMMITMENT_IDENTITY_MISMATCH",)
+
+
+def test_unfunded_small_unit_route_does_not_prevent_legal_full_allocation(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_allocation import feasible_payload
+
+    payload, source = feasible_payload(migrated_settings)
+    command = payload["candidate_allocation"]
+    command["policy"]["entry_target_ratio"] = "0.084"
+    funded = command["routes"][0]
+    funded.update(minimum_quantity="60", quantity_increment="60")
+    unfunded = deepcopy(funded)
+    unfunded.update(
+        account_id="synthetic-account-8029", minimum_quantity="1", quantity_increment="1"
+    )
+    command["routes"].append(unfunded)
+    payload["input"]["candidate_allocation"] = deepcopy(command)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    row = report.result.candidate_allocation.rows[0]
+    assert row.candidate == source.members[0] and row.target_gap == row.continuous_principal == 840
+    assert row.principal == 600 and row.outcome == "FULLY_ALLOCATED"
+    assert row.reasons == ("ROUNDING_REMAINDER_UNUSABLE",)

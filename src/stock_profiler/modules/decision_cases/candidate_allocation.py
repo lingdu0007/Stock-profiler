@@ -316,12 +316,17 @@ def _adjudicate_candidate_allocation(
     if set(broker_orders) != supplied_orders:
         return _blocked(case, source, "BUY_COMMITMENTS_INCOMPLETE")
     security_committed: dict[str, Decimal] = defaultdict(Decimal)
+    known_issuers = {security.security_id: security.issuer_id for security in command.securities}
     for commitment in command.commitments:
         if (
             commitment.security_id in held_issuers
             and held_issuers[commitment.security_id] != commitment.issuer_id
+        ) or (
+            commitment.security_id in known_issuers
+            and known_issuers[commitment.security_id] != commitment.issuer_id
         ):
             return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
+        known_issuers[commitment.security_id] = commitment.issuer_id
         if (
             commitment.quantity is None
             or commitment.price_cap is None
@@ -699,7 +704,10 @@ def _adjudicate_candidate_allocation(
             if identity == index
         ]
         unit = min(
-            (route.minimum_quantity * (route.price_cap or Decimal(0)) for route in member_routes),
+            (
+                leg.route.minimum_quantity * (leg.route.price_cap or Decimal(0))
+                for leg in legs_by_member[index]
+            ),
             default=Decimal(0),
         )
         row_reasons = list(reasons[index])

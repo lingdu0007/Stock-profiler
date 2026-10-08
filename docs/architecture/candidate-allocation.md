@@ -53,6 +53,9 @@ Each candidate's own direct neighborhood governs its allocation. An unrelated
 existing neighborhood above its buying cap creates no portfolio-wide sell or
 purchase gate. Missing history for an uncommitted peer closes that peer without
 closing candidates whose own and committed-exposure history is complete.
+Commitment issuer identities must agree with held and supplied security facts
+and with every other commitment for that security. Contradictions block the
+allocation rather than moving exposure into another issuer's target.
 
 ## Allocation and verification
 
@@ -82,7 +85,9 @@ They never publish an unverified feasible incumbent as the optimum.
 Missing confirmation of an otherwise evidenced price cap permits only a
 continuous `AWAITING_PRICE_CAP` result. It produces no purchase quantities.
 Planned rows distinguish full, partial and zero allocation and retain structured
-reasons. The purchase sequence orders positive rows by entry-window expiry,
+reasons. Legal completion uses the minimum unit of the selected, funded routes;
+an unusable small-unit route cannot turn a complete allocation into a partial one.
+The purchase sequence orders positive rows by entry-window expiry,
 prior issuer exposure, prior neighborhood exposure, descending probability,
 ascending purchase-cost rate and security identity.
 Each row saves all applicable gate reasons and a primary reason selected by
