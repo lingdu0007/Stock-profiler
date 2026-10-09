@@ -37,6 +37,10 @@ from stock_profiler.modules.decision_cases.candidate_confirmation import (
     adjudicate_candidate_confirmation,
     finalize_candidate_confirmation,
 )
+from stock_profiler.modules.decision_cases.candidate_execution import (
+    adjudicate_candidate_execution,
+    finalize_candidate_execution,
+)
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
     BusinessCommitStatus,
@@ -2560,6 +2564,17 @@ def _run_frozen_decision_case(
             ):
                 raise DecisionEventCommitError("confirmation idempotency key payload conflict")
             case = original
+        if case.candidate_execution is not None and has_existing_mapping:
+            mapping = ledger.get_business_object_mapping(existing_business_object_id, connection)
+            if mapping is None or mapping.case is None:
+                raise DecisionEventCommitError("execution identity has no recoverable request")
+            original = mapping.case
+            if (
+                case.candidate_execution != original.candidate_execution
+                or case.access_scope != original.access_scope
+            ):
+                raise DecisionEventCommitError("execution idempotency key payload conflict")
+            case = original
         known_run_ids = ledger.mapped_framework_run_ids(connection)
     if not has_existing_mapping and case.recovery_framework_run_id is None:
         try:
@@ -3089,6 +3104,7 @@ def _commit_framework_result(
     drawdown_result: StageResult | None = None
     liquidity_result: StageResult | None = None
     stress_result: StageResult | None = None
+    candidate_execution_result: StageResult | None = None
     confirmation_result: StageResult | None = None
     allocation_result: StageResult | None = None
     execution_plan_result: StageResult | None = None
@@ -3410,6 +3426,20 @@ def _commit_framework_result(
                         ),
                     ),
                     reasons=concentration.reasons,
+                )
+            if business_result is not None and execution_case.candidate_execution is not None:
+                execution = adjudicate_candidate_execution(
+                    execution_case,
+                    ledger,
+                    connection,
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"candidate_execution": execution})
+                candidate_execution_result = StageResult(
+                    phase="CANDIDATE_EXECUTION",
+                    status="REJECTED" if execution.disposition == "BLOCKED" else "SUCCEEDED",
+                    gate_results=(),
+                    reasons=execution.reasons,
                 )
             if business_result is not None and execution_case.candidate_confirmation is not None:
                 confirmation = adjudicate_candidate_confirmation(
@@ -3809,6 +3839,13 @@ def _commit_framework_result(
             stage_result=stress_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if candidate_execution_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=candidate_execution_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     if confirmation_result is not None:
         ledger.record_stage_result(
             connection,
@@ -3849,6 +3886,7 @@ def _commit_framework_result(
         *((drawdown_result,) if drawdown_result is not None else ()),
         *((liquidity_result,) if liquidity_result is not None else ()),
         *((stress_result,) if stress_result is not None else ()),
+        *((candidate_execution_result,) if candidate_execution_result is not None else ()),
         *((confirmation_result,) if confirmation_result is not None else ()),
         *((allocation_result,) if allocation_result is not None else ()),
         *((execution_plan_result,) if execution_plan_result is not None else ()),
@@ -3877,6 +3915,37 @@ def _commit_framework_result(
         )
     assert framework.output is not None
     commit_observed_at = ledger.observed_at()
+    if execution_case.candidate_execution is not None:
+        assert result.candidate_execution is not None
+        final_execution = finalize_candidate_execution(
+            execution_case,
+            result.candidate_execution,
+            ledger,
+            connection,
+            committed_at=commit_observed_at,
+        )
+        if final_execution != result.candidate_execution:
+            result = result.model_copy(update={"candidate_execution": final_execution})
+            execution_stage = StageResult(
+                phase="CANDIDATE_EXECUTION",
+                status="REJECTED",
+                gate_results=(),
+                reasons=final_execution.reasons,
+            )
+            ledger.record_stage_result(
+                connection,
+                case=execution_case,
+                stage_result=execution_stage,
+                framework_run_id=execution_case.framework_run_id,
+                allow_repeated_occurrence=True,
+            )
+            stage_results_before_commit = ledger.get_stage_results(
+                execution_case.business_object_id, connection
+            )
+            current_stage_results_before_commit = (
+                *current_stage_results_before_commit,
+                execution_stage,
+            )
     if execution_case.candidate_confirmation is not None:
         assert result.candidate_confirmation is not None
         final_confirmation = finalize_candidate_confirmation(

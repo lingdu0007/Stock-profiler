@@ -454,8 +454,21 @@ export interface components {
         AllocationCommitment: {
             /** Account Id */
             account_id: string;
+            /**
+             * Broker Order Bindings
+             * @default []
+             */
+            broker_order_bindings: [
+                string,
+                string
+            ][];
             /** Broker Order Id */
             broker_order_id: string | null;
+            /**
+             * Broker Order Ids
+             * @default []
+             */
+            broker_order_ids: string[];
             /** Commitment Id */
             commitment_id: string;
             /** Disposal Friction */
@@ -471,6 +484,11 @@ export interface components {
             purchase_cost: string;
             /** Quantity */
             quantity?: string | null;
+            /**
+             * Reconciliation Cash Hold
+             * @default 0
+             */
+            reconciliation_cash_hold: string;
             /** Security Id */
             security_id: string;
         };
@@ -559,6 +577,60 @@ export interface components {
              * @constant
              */
             turnover_window_sessions: 20;
+        };
+        /** AttributedFill */
+        AttributedFill: {
+            /** Account Id */
+            account_id: string;
+            /** Cash Used */
+            cash_used: string;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "PLANNED" | "DEVIATION" | "EXTERNAL" | "UNKNOWN";
+            /** Corrects Entry Id */
+            corrects_entry_id?: string | null;
+            /** Entry Id */
+            entry_id: string;
+            /**
+             * External Quantity
+             * @default 0
+             */
+            external_quantity: string;
+            /** Fees */
+            fees: string;
+            /**
+             * Intent Quantity
+             * @default 0
+             */
+            intent_quantity: string;
+            /** Order Id */
+            order_id: string;
+            /** Quantity */
+            quantity: string;
+            /** Reasons */
+            reasons: string[];
+            /** Reservation Id */
+            reservation_id: string | null;
+            /** Security Id */
+            security_id: string;
+        };
+        /** AttributedOrder */
+        AttributedOrder: {
+            /** Account Id */
+            account_id: string;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "PLANNED" | "DEVIATION" | "EXTERNAL" | "UNKNOWN";
+            /** Order Id */
+            order_id: string;
+            /** Reasons */
+            reasons: string[];
+            /** Reservation Id */
+            reservation_id: string | null;
         };
         /**
          * AuthenticationVerificationDto
@@ -661,6 +733,49 @@ export interface components {
             passed: true;
             /** Substitute Basis Digest */
             substitute_basis_digest: string;
+        };
+        /** BrokerExecutionOrder */
+        BrokerExecutionOrder: {
+            /** Account Id */
+            account_id: string;
+            /** Causal Reservation Id */
+            causal_reservation_id: string | null;
+            evidence: components["schemas"]["PositionEvidence"];
+            /** External Origin Id */
+            external_origin_id?: string | null;
+            /** Filled Quantity */
+            filled_quantity: string;
+            /** Issuer Id */
+            issuer_id: string;
+            /** Limit Price */
+            limit_price: string | null;
+            /** Order Id */
+            order_id: string;
+            /** Quantity */
+            quantity: string;
+            /** Remaining Quantity */
+            remaining_quantity: string | null;
+            /** Reserved Cash */
+            reserved_cash: string | null;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "BUY" | "SELL";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "OPEN" | "UNKNOWN" | "FILLED" | "CANCELLED" | "REJECTED" | "EXPIRED";
+            /** Step Confirmation Id */
+            step_confirmation_id: string | null;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
         };
         /** CalibratedMember */
         CalibratedMember: {
@@ -1068,6 +1183,87 @@ export interface components {
             source_published_at?: string | null;
             /** Validated At */
             validated_at?: string | null;
+        };
+        /** CandidateExecutionOutcome */
+        CandidateExecutionOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /** Confirmation Id */
+            confirmation_id?: string | null;
+            /**
+             * Declarations
+             * @default []
+             */
+            declarations: components["schemas"]["ExecutionDeclaration"][];
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "PENDING_RECONCILIATION" | "RECONCILED" | "BLOCKED";
+            /** Execution Id */
+            execution_id?: string | null;
+            /**
+             * Fills
+             * @default []
+             */
+            fills: components["schemas"]["AttributedFill"][];
+            /**
+             * Order Attributions
+             * @default []
+             */
+            order_attributions: components["schemas"]["AttributedOrder"][];
+            /**
+             * Orders
+             * @default []
+             */
+            orders: components["schemas"]["BrokerExecutionOrder"][];
+            /** Plan Id */
+            plan_id?: string | null;
+            /** Portfolio Id */
+            portfolio_id?: string | null;
+            /** Position Event Id */
+            position_event_id?: string | null;
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Released Reservation Ids
+             * @default []
+             */
+            released_reservation_ids: string[];
+            /**
+             * Reservations
+             * @default []
+             */
+            reservations: components["schemas"]["AllocationCommitment"][];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: components["schemas"]["ExecutionRow"][];
+            /** Terminal Outcome */
+            terminal_outcome?: ("NO_TRADE" | "ALL_DECLINED" | "DEFERRED_EXPIRED" | "PARTIALLY_FILLED" | "FULLY_FILLED") | null;
+            /**
+             * Unassociated Commitments
+             * @default []
+             */
+            unassociated_commitments: components["schemas"]["AllocationCommitment"][];
+            /**
+             * Unresolved Order Keys
+             * @default []
+             */
+            unresolved_order_keys: [
+                string,
+                string
+            ][];
+            /**
+             * Withdrawn Reservation Ids
+             * @default []
+             */
+            withdrawn_reservation_ids: string[];
         };
         /** CandidatePopulation */
         CandidatePopulation: {
@@ -2261,6 +2457,23 @@ export interface components {
              */
             reason: "NOT_SELECTED" | "UNSUPPORTED_ACCOUNT_TYPE" | "UNKNOWN_ACCOUNT_TYPE";
         };
+        /** ExecutionDeclaration */
+        ExecutionDeclaration: {
+            /** Broker Order Id */
+            broker_order_id: string | null;
+            /**
+             * Declared At
+             * Format: date-time
+             */
+            declared_at: string;
+            /** Security Id */
+            security_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PREPARING" | "SUBMITTED" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED" | "UNABLE";
+        };
         /** ExecutionLeg */
         ExecutionLeg: {
             /** Account Id */
@@ -2386,6 +2599,24 @@ export interface components {
              */
             transferable_at: string;
         };
+        /** ExecutionRow */
+        ExecutionRow: {
+            /** Accepted Quantity */
+            accepted_quantity: string;
+            /** Filled Quantity */
+            filled_quantity: string;
+            /** Remaining Quantity */
+            remaining_quantity: string;
+            /** Reservation Id */
+            reservation_id: string;
+            /** Security Id */
+            security_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "UNEXECUTED" | "PARTIALLY_FILLED" | "FILLED" | "TERMINAL_UNFILLED" | "UNKNOWN";
+        };
         /** ExecutionTarget */
         ExecutionTarget: {
             /**
@@ -2418,6 +2649,7 @@ export interface components {
         ExternalResult: {
             candidate_allocation?: components["schemas"]["CandidateAllocationOutcome"] | null;
             candidate_confirmation?: components["schemas"]["CandidateConfirmationOutcome"] | null;
+            candidate_execution?: components["schemas"]["CandidateExecutionOutcome"] | null;
             candidate_release?: components["schemas"]["CandidateReleaseOutcome"] | null;
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
@@ -5259,7 +5491,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_EXECUTION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

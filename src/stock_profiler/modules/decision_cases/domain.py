@@ -65,6 +65,10 @@ from stock_profiler.modules.portfolio.contracts import (
     PortfolioUseCommand,
 )
 from stock_profiler.modules.portfolio.drawdown_contracts import DrawdownCommand, DrawdownOutcome
+from stock_profiler.modules.portfolio.execution_contracts import (
+    CandidateExecutionCommand,
+    CandidateExecutionOutcome,
+)
 from stock_profiler.modules.portfolio.liquidity import LiquidityCommand, LiquidityOutcome
 from stock_profiler.modules.portfolio.stress import PortfolioStressCommand, PortfolioStressOutcome
 from stock_profiler.modules.position_management.concentration_contracts import (
@@ -124,6 +128,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "drawdown.1.0.0",
         "candidate-allocation.1.0.0",
         "candidate-confirmation.1.0.0",
+        "candidate-execution.1.0.0",
         "execution.1.0.0",
         "monitoring.1.0.0",
         "universe.1.0.0",
@@ -154,6 +159,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("8.2.0", "8.2.0"),
         ("candidate-allocation.1.0.0", "candidate-allocation.1.0.0"),
         ("candidate-confirmation.1.0.0", "candidate-confirmation.1.0.0"),
+        ("candidate-execution.1.0.0", "candidate-execution.1.0.0"),
         ("execution.1.0.0", "execution.1.0.0"),
         ("monitoring.1.0.0", "monitoring.1.0.0"),
         ("universe.1.0.0", "universe.1.0.0"),
@@ -285,6 +291,9 @@ class ExternalResult(FrozenContract):
     stress: PortfolioStressOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    candidate_execution: CandidateExecutionOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     candidate_confirmation: CandidateConfirmationOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -341,6 +350,7 @@ StagePhase = Literal[
     "CANDIDATE_RELEASE",
     "PORTFOLIO_STRESS",
     "CANDIDATE_CONFIRMATION",
+    "CANDIDATE_EXECUTION",
     "CANDIDATE_ALLOCATION",
     "EXECUTION_PLAN",
     "ADJUDICATION_LIFECYCLE",
@@ -406,6 +416,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "LIQUIDITY_PROTECTION": frozenset({"SUCCEEDED", "REJECTED"}),
     "PORTFOLIO_STRESS": frozenset({"SUCCEEDED", "REJECTED"}),
     "CANDIDATE_CONFIRMATION": frozenset({"SUCCEEDED", "REJECTED"}),
+    "CANDIDATE_EXECUTION": frozenset({"SUCCEEDED", "REJECTED"}),
     "CANDIDATE_ALLOCATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "EXECUTION_PLAN": frozenset({"SUCCEEDED", "REJECTED"}),
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
@@ -1003,6 +1014,9 @@ class FrozenDecisionCase(FrozenContract):
     stress: PortfolioStressCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    candidate_execution: CandidateExecutionCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     candidate_confirmation: CandidateConfirmationCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1051,6 +1065,19 @@ class FrozenDecisionCase(FrozenContract):
         position_governed = self.version_bundle.case_contract_version == "7.0.0"
         concentration_governed = self.version_bundle.case_contract_version == "8.1.0"
         drawdown_governed = self.version_bundle.case_contract_version == "drawdown.1.0.0"
+        candidate_execution_governed = (
+            self.version_bundle.case_contract_version == "candidate-execution.1.0.0"
+        )
+        if candidate_execution_governed != (
+            self.candidate_execution is not None
+        ) or candidate_execution_governed != ("candidate_execution" in self.input):
+            raise ValueError("candidate execution requires its own frozen contract")
+        if self.candidate_execution is not None and (
+            self.candidate_execution.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("candidate_execution")
+            != self.candidate_execution.model_dump(mode="json")
+        ):
+            raise ValueError("candidate execution must bind frozen input and cutoff")
         confirmation_governed = (
             self.version_bundle.case_contract_version == "candidate-confirmation.1.0.0"
         )
@@ -1219,6 +1246,7 @@ class FrozenDecisionCase(FrozenContract):
             or liquidity_governed
             or stress_governed
             or drawdown_governed
+            or candidate_execution_governed
             or confirmation_governed
             or allocation_governed
             or execution_governed
@@ -1255,6 +1283,7 @@ class FrozenDecisionCase(FrozenContract):
                     self.liquidity,
                     self.stress,
                     self.drawdown,
+                    self.candidate_execution,
                     self.candidate_confirmation,
                     self.candidate_allocation,
                     self.execution_plan,
@@ -1292,6 +1321,7 @@ class FrozenDecisionCase(FrozenContract):
             or self.expected_external_result.drawdown is not None
             or self.expected_external_result.liquidity is not None
             or self.expected_external_result.stress is not None
+            or self.expected_external_result.candidate_execution is not None
             or self.expected_external_result.candidate_confirmation is not None
             or self.expected_external_result.candidate_allocation is not None
             or self.expected_external_result.execution_plan is not None
@@ -1452,6 +1482,18 @@ class FrozenDecisionCase(FrozenContract):
     @property
     def business_object_id(self) -> str:
         """Identify the Stock Profiler business object independently from a framework Run."""
+        if self.candidate_execution is not None:
+            assert self.access_scope is not None
+            return _stable_id(
+                "business-object",
+                {
+                    "owner": self.access_scope.user_id,
+                    "visibility": self.access_scope.visibility,
+                    "portfolio": self.candidate_execution.portfolio_id,
+                    "idempotency_key": self.candidate_execution.idempotency_key,
+                    "contract": "candidate-execution",
+                },
+            )
         if self.candidate_confirmation is not None:
             assert self.access_scope is not None
             return _stable_id(
@@ -2062,6 +2104,7 @@ def synthetic_outcome_code_from_input(
         return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    input_without_scenario.pop("candidate_execution", None)
     input_without_scenario.pop("candidate_confirmation", None)
     input_without_scenario.pop("candidate_allocation", None)
     input_without_scenario.pop("standard_outcomes", None)

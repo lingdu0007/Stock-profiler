@@ -604,6 +604,24 @@
             "title": "Account Id",
             "type": "string"
           },
+          "broker_order_bindings": {
+            "default": [],
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Broker Order Bindings",
+            "type": "array"
+          },
           "broker_order_id": {
             "anyOf": [
               {
@@ -614,6 +632,14 @@
               }
             ],
             "title": "Broker Order Id"
+          },
+          "broker_order_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Broker Order Ids",
+            "type": "array"
           },
           "commitment_id": {
             "minLength": 1,
@@ -666,6 +692,12 @@
               }
             ],
             "title": "Quantity"
+          },
+          "reconciliation_cash_hold": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reconciliation Cash Hold",
+            "type": "string"
           },
           "security_id": {
             "minLength": 1,
@@ -908,6 +940,141 @@
           "evidence"
         ],
         "title": "AllocationSecurity",
+        "type": "object"
+      },
+      "AttributedFill": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "cash_used": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cash Used",
+            "type": "string"
+          },
+          "classification": {
+            "enum": ["PLANNED", "DEVIATION", "EXTERNAL", "UNKNOWN"],
+            "title": "Classification",
+            "type": "string"
+          },
+          "corrects_entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Entry Id"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "external_quantity": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "External Quantity",
+            "type": "string"
+          },
+          "fees": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fees",
+            "type": "string"
+          },
+          "intent_quantity": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Intent Quantity",
+            "type": "string"
+          },
+          "order_id": {
+            "title": "Order Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "reservation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reservation Id"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "order_id",
+          "account_id",
+          "security_id",
+          "reservation_id",
+          "classification",
+          "reasons",
+          "quantity",
+          "cash_used",
+          "fees"
+        ],
+        "title": "AttributedFill",
+        "type": "object"
+      },
+      "AttributedOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "classification": {
+            "enum": ["PLANNED", "DEVIATION", "EXTERNAL", "UNKNOWN"],
+            "title": "Classification",
+            "type": "string"
+          },
+          "order_id": {
+            "title": "Order Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "reservation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reservation Id"
+          }
+        },
+        "required": ["account_id", "order_id", "reservation_id", "classification", "reasons"],
+        "title": "AttributedOrder",
         "type": "object"
       },
       "AuthenticationVerificationDto": {
@@ -1184,6 +1351,148 @@
           "available_at"
         ],
         "title": "BasisSubstitutionCheck",
+        "type": "object"
+      },
+      "BrokerExecutionOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "causal_reservation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Causal Reservation Id"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/PositionEvidence"
+          },
+          "external_origin_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Origin Id"
+          },
+          "filled_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Filled Quantity",
+            "type": "string"
+          },
+          "issuer_id": {
+            "minLength": 1,
+            "title": "Issuer Id",
+            "type": "string"
+          },
+          "limit_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit Price"
+          },
+          "order_id": {
+            "minLength": 1,
+            "title": "Order Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "remaining_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Quantity"
+          },
+          "reserved_cash": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reserved Cash"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "side": {
+            "enum": ["BUY", "SELL"],
+            "title": "Side",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["OPEN", "UNKNOWN", "FILLED", "CANCELLED", "REJECTED", "EXPIRED"],
+            "title": "Status",
+            "type": "string"
+          },
+          "step_confirmation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Confirmation Id"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id",
+          "account_id",
+          "security_id",
+          "issuer_id",
+          "side",
+          "status",
+          "quantity",
+          "filled_quantity",
+          "remaining_quantity",
+          "limit_price",
+          "reserved_cash",
+          "submitted_at",
+          "causal_reservation_id",
+          "step_confirmation_id",
+          "evidence"
+        ],
+        "title": "BrokerExecutionOrder",
         "type": "object"
       },
       "CalibratedMember": {
@@ -2265,6 +2574,195 @@
         },
         "required": ["evidence_id", "knowledge_cutoff"],
         "title": "CandidateEvidenceClock",
+        "type": "object"
+      },
+      "CandidateExecutionOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "confirmation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Id"
+          },
+          "declarations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionDeclaration"
+            },
+            "title": "Declarations",
+            "type": "array"
+          },
+          "disposition": {
+            "enum": ["PENDING_RECONCILIATION", "RECONCILED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Id"
+          },
+          "fills": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributedFill"
+            },
+            "title": "Fills",
+            "type": "array"
+          },
+          "order_attributions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributedOrder"
+            },
+            "title": "Order Attributions",
+            "type": "array"
+          },
+          "orders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BrokerExecutionOrder"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "portfolio_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Id"
+          },
+          "position_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Event Id"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "released_reservation_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Released Reservation Ids",
+            "type": "array"
+          },
+          "reservations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCommitment"
+            },
+            "title": "Reservations",
+            "type": "array"
+          },
+          "rows": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExecutionRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "terminal_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NO_TRADE",
+                  "ALL_DECLINED",
+                  "DEFERRED_EXPIRED",
+                  "PARTIALLY_FILLED",
+                  "FULLY_FILLED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Outcome"
+          },
+          "unassociated_commitments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCommitment"
+            },
+            "title": "Unassociated Commitments",
+            "type": "array"
+          },
+          "unresolved_order_keys": {
+            "default": [],
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Unresolved Order Keys",
+            "type": "array"
+          },
+          "withdrawn_reservation_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Withdrawn Reservation Ids",
+            "type": "array"
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "CandidateExecutionOutcome",
         "type": "object"
       },
       "CandidatePopulation": {
@@ -5170,6 +5668,40 @@
         "title": "ExcludedAccount",
         "type": "object"
       },
+      "ExecutionDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "broker_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Order Id"
+          },
+          "declared_at": {
+            "format": "date-time",
+            "title": "Declared At",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PREPARING", "SUBMITTED", "PARTIALLY_FILLED", "FILLED", "CANCELLED", "UNABLE"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "status", "broker_order_id", "declared_at"],
+        "title": "ExecutionDeclaration",
+        "type": "object"
+      },
       "ExecutionLeg": {
         "additionalProperties": false,
         "properties": {
@@ -5482,6 +6014,49 @@
         "title": "ExecutionRoute",
         "type": "object"
       },
+      "ExecutionRow": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Accepted Quantity",
+            "type": "string"
+          },
+          "filled_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Filled Quantity",
+            "type": "string"
+          },
+          "remaining_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Quantity",
+            "type": "string"
+          },
+          "reservation_id": {
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["UNEXECUTED", "PARTIALLY_FILLED", "FILLED", "TERMINAL_UNFILLED", "UNKNOWN"],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id",
+          "security_id",
+          "accepted_quantity",
+          "filled_quantity",
+          "remaining_quantity",
+          "state"
+        ],
+        "title": "ExecutionRow",
+        "type": "object"
+      },
       "ExecutionTarget": {
         "additionalProperties": false,
         "properties": {
@@ -5576,6 +6151,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CandidateConfirmationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidate_execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateExecutionOutcome"
               },
               {
                 "type": "null"
@@ -13156,6 +13741,7 @@
               "CANDIDATE_RELEASE",
               "PORTFOLIO_STRESS",
               "CANDIDATE_CONFIRMATION",
+              "CANDIDATE_EXECUTION",
               "CANDIDATE_ALLOCATION",
               "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",

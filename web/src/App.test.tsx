@@ -17,6 +17,80 @@ describe("App", () => {
     window.history.pushState({}, "", "/");
   });
 
+  it("keeps execution declarations separate from authoritative fills and retained capacity", async () => {
+    const executionReport: FormalReport = {
+      ...report,
+      result: {
+        ...report.result,
+        candidate_execution: {
+          disposition: "PENDING_RECONCILIATION",
+          reasons: [],
+          actionable: false,
+          declarations: [
+            {
+              security_id: "SYNTH-ALPHA",
+              status: "CANCELLED",
+              broker_order_id: "synthetic-order",
+              declared_at: "2042-05-19T16:02:00Z"
+            }
+          ],
+          rows: [
+            {
+              reservation_id: "synthetic-intent",
+              security_id: "SYNTH-ALPHA",
+              accepted_quantity: "70",
+              filled_quantity: "20",
+              remaining_quantity: "50",
+              state: "PARTIALLY_FILLED"
+            }
+          ],
+          fills: [
+            {
+              entry_id: "synthetic-fill",
+              order_id: "synthetic-order",
+              account_id: "synthetic-account",
+              security_id: "SYNTH-ALPHA",
+              reservation_id: "synthetic-intent",
+              classification: "PLANNED",
+              reasons: [],
+              quantity: "20",
+              intent_quantity: "20",
+              external_quantity: "0",
+              cash_used: "182",
+              fees: "2"
+            }
+          ],
+          reservations: [],
+          unassociated_commitments: [],
+          orders: [],
+          released_reservation_ids: [],
+          order_attributions: [],
+          unresolved_order_keys: [],
+          withdrawn_reservation_ids: []
+        }
+      }
+    };
+    window.history.pushState({}, "", `/reports/${report.report_version_id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(executionReport), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+        })
+      )
+    );
+    render(<App />);
+    const evidence = await screen.findByRole("region", { name: "Candidate execution" });
+    expect(evidence).toHaveTextContent("User declarations awaiting reconciliation");
+    expect(evidence).toHaveTextContent("CANCELLED");
+    expect(evidence).toHaveTextContent("PARTIALLY_FILLED");
+    expect(evidence).toHaveTextContent("PLANNED");
+    expect(evidence).toHaveTextContent("182");
+    expect(evidence).toHaveTextContent("Plan remains open");
+    expect(evidence.querySelector("button")).toBeNull();
+  });
+
   it("renders only the committed report projection returned by the generated API client", async () => {
     window.history.pushState({}, "", `/reports/${report.report_version_id}`);
     const fetchMock = vi.fn().mockResolvedValue(

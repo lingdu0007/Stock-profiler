@@ -24,6 +24,7 @@ import {
 } from "./api/client";
 import { LiquidityEvidence } from "./LiquidityEvidence";
 import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
+import { CandidateExecutionEvidence } from "./CandidateExecutionEvidence";
 import { CandidateAllocationEvidence } from "./CandidateAllocationEvidence";
 import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 import { UniverseEvidence } from "./UniverseEvidence";
@@ -213,6 +214,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
       )}
       {report.result.candidate_allocation && (
         <CandidateAllocationEvidence plan={report.result.candidate_allocation} />
+      )}
+      {report.result.candidate_execution && (
+        <CandidateExecutionEvidence execution={report.result.candidate_execution} />
       )}
       {report.result.monitoring && <MonitoringEvidence report={report} />}
       {report.result.universe && <UniverseEvidence universe={report.result.universe} />}
