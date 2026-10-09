@@ -318,6 +318,7 @@ class ResultDelivery:
                         report.result.candidate_release,
                         report.result.candidate_allocation,
                         report.result.candidate_confirmation,
+                        report.result.candidate_execution,
                     )
                 )
                 and request.kind != "VIEWED"

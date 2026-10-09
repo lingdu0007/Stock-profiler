@@ -272,6 +272,17 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...
 
+    def candidate_execution_history(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        portfolio_id: str | None = None,
+    ) -> tuple[DecisionEventFact, ...]: ...
+
+    def pending_candidate_executions(
+        self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> frozenset[str]: ...
+
     def execution_plan_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...

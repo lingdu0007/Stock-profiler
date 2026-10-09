@@ -119,12 +119,34 @@ def adjudicate_candidate_allocation(
         confirmation = fact.result.candidate_confirmation
         assert confirmation is not None
         latest[confirmation.plan_id] = confirmation
+    executions = {}
+    for fact in ledger.candidate_execution_history(
+        connection, case.access_scope, case.candidate_allocation.risk_handoff.portfolio_id
+    ):
+        execution = fact.result.candidate_execution
+        assert execution is not None
+        if (
+            execution.plan_id in latest
+            and execution.confirmation_id == latest[execution.plan_id].confirmation_id
+        ):
+            executions[execution.plan_id] = execution
     retained = {
         row.commitment_id: row
         for confirmation in latest.values()
         if confirmation.plan_id != exclude_confirmation_plan_id
-        for row in confirmation.reservations
+        for row in (
+            executions[confirmation.plan_id].reservations
+            if confirmation.plan_id in executions
+            else confirmation.reservations
+        )
     }
+    for execution in executions.values():
+        retained.update((row.commitment_id, row) for row in execution.unassociated_commitments)
+    execution_reservation_ids = frozenset(
+        row.commitment_id
+        for execution in executions.values()
+        for row in (*execution.reservations, *execution.unassociated_commitments)
+    )
     if any(row.account_id not in case.access_scope.account_ids for row in retained.values()):
         return CandidateAllocationOutcome(
             disposition="BLOCKED", reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",)
@@ -150,6 +172,41 @@ def adjudicate_candidate_allocation(
         update={"commitments": tuple({**supplied, **retained}.values())}
     )
     case = case.model_copy(update={"candidate_allocation": command})
+    assert case.access_scope is not None
+    source = ledger.get_formal_report_for_event(command.candidate_event_id, connection)
+    if source is not None and source.result.candidate_release is not None:
+        if ledger.pending_candidate_executions(
+            connection, case.access_scope, command.risk_handoff.portfolio_id
+        ):
+            return _blocked(case, source, "EXECUTION_PENDING_RECONCILIATION")
+        if any(
+            execution.disposition == "BLOCKED"
+            or bool(execution.reasons)
+            or any(order.classification == "UNKNOWN" for order in execution.order_attributions)
+            or any(fill.classification == "UNKNOWN" for fill in execution.fills)
+            for execution in executions.values()
+        ):
+            return _blocked(case, source, "EXECUTION_FACTS_UNRESOLVED")
+    if source is not None and source.result.candidate_release is not None:
+        liquidity_source = ledger.get_formal_report_for_event(
+            command.risk_handoff.liquidity_event_id, connection
+        )
+        for execution in executions.values():
+            if execution.disposition == "PENDING_RECONCILIATION":
+                return _blocked(case, source, "EXECUTION_PENDING_RECONCILIATION")
+            if execution.position_event_id is None:
+                continue
+            proof = ledger.get_decision_event(execution.position_event_id, connection)
+            if (
+                proof is None
+                or proof.result.position is None
+                or liquidity_source is None
+                or liquidity_source.result.liquidity is None
+                or liquidity_source.result.liquidity.position_snapshot.snapshot
+                != proof.result.position.snapshot
+                or ledger.get_correction_event(proof.decision_event_id, connection) is not None
+            ):
+                return _blocked(case, source, "EXECUTION_POSITION_NOT_RECONCILED")
     with localcontext(Context(prec=38)):
         try:
             return _adjudicate_candidate_allocation(
@@ -158,6 +215,7 @@ def adjudicate_candidate_allocation(
                 connection,
                 business_prerequisite_met=business_prerequisite_met,
                 reservation_ids=frozenset(retained),
+                execution_reservation_ids=execution_reservation_ids,
             )
         except DecimalException:
             assert case.candidate_allocation is not None and case.access_scope is not None
@@ -228,6 +286,7 @@ def _adjudicate_candidate_allocation(
     *,
     business_prerequisite_met: bool,
     reservation_ids: frozenset[str],
+    execution_reservation_ids: frozenset[str],
 ) -> CandidateAllocationOutcome:
     command, scope = case.candidate_allocation, case.access_scope
     assert command is not None and scope is not None
@@ -381,16 +440,17 @@ def _adjudicate_candidate_allocation(
         account_cash[obligation.target_account_id] -= obligation.required_cash
     commitment_stress = Decimal(0)
     broker_orders = {
-        order.order_id: order for order in snapshot.unfinished_orders if order.side == "BUY"
+        (order.account_id, order.order_id): order
+        for order in snapshot.unfinished_orders
+        if order.side == "BUY"
     }
-    supplied_orders = {
-        row.broker_order_id for row in command.commitments if row.broker_order_id is not None
-    }
+    supplied_orders = {key for row in command.commitments for key in row.order_keys}
     if set(broker_orders) != supplied_orders:
         return _blocked(case, source, "BUY_COMMITMENTS_INCOMPLETE")
     security_committed: dict[str, Decimal] = defaultdict(Decimal)
     known_issuers = {security.security_id: security.issuer_id for security in command.securities}
     for commitment in command.commitments:
+        reconciled = commitment.commitment_id in execution_reservation_ids
         if (
             commitment.security_id in held_issuers
             and held_issuers[commitment.security_id] != commitment.issuer_id
@@ -400,7 +460,13 @@ def _adjudicate_candidate_allocation(
         ):
             return _blocked(case, source, "BUY_COMMITMENT_IDENTITY_MISMATCH")
         known_issuers[commitment.security_id] = commitment.issuer_id
-        if (
+        cash_only = (
+            reconciled
+            and commitment.principal == 0
+            and commitment.quantity is None
+            and commitment.reconciliation_cash_hold > 0
+        )
+        if not cash_only and (
             commitment.quantity is None
             or commitment.price_cap is None
             or commitment.principal != commitment.quantity * commitment.price_cap
@@ -411,12 +477,17 @@ def _adjudicate_candidate_allocation(
             require_current_completeness=commitment.commitment_id not in reservation_ids,
         ):
             return _blocked(case, source, "BUY_COMMITMENT_EVIDENCE_FAILED")
-        if commitment.broker_order_id is not None:
-            order = broker_orders[commitment.broker_order_id]
+        keys = commitment.order_keys
+        frozen_cash = Decimal(0)
+        own_account_frozen_cash = Decimal(0)
+        broker_quantity = Decimal(0)
+        if commitment.broker_order_bindings and not reconciled:
+            return _blocked(case, source, "UNPROVEN_ORDER_MERGE")
+        for key in keys:
+            order = broker_orders[key]
             if (
-                order.account_id != commitment.account_id
-                or order.security_id != commitment.security_id
-                or order.remaining_quantity != commitment.quantity
+                order.security_id != commitment.security_id
+                or order.remaining_quantity is None
                 or order.evidence.problem_codes(
                     command.cutoff_at, require_current_completeness=True
                 )
@@ -425,13 +496,38 @@ def _adjudicate_candidate_allocation(
             if (
                 order.reserved_cash is None
                 or order.reserved_cash_semantics != "BROKER_FINAL_RESERVED_CASH"
-                or order.reserved_cash < commitment.principal + commitment.purchase_cost
             ):
                 return _blocked(case, source, "BUY_COMMITMENT_RESERVATION_INCOMPLETE")
-        else:
-            deduction = commitment.principal + commitment.purchase_cost
-            account_cash[commitment.account_id] -= deduction
-            cash -= deduction
+            broker_quantity += order.remaining_quantity
+            frozen_cash += order.reserved_cash
+            if order.account_id == commitment.account_id:
+                own_account_frozen_cash += order.reserved_cash
+        if (
+            keys
+            and not reconciled
+            and (
+                broker_quantity != commitment.quantity
+                or frozen_cash < commitment.principal + commitment.purchase_cost
+            )
+        ):
+            return _blocked(case, source, "BUY_COMMITMENT_RESERVATION_INCOMPLETE")
+        if keys and reconciled and broker_quantity > (commitment.quantity or Decimal(0)):
+            return _blocked(case, source, "EXECUTION_FACTS_UNRESOLVED")
+        deduction = max(
+            Decimal(0),
+            commitment.principal
+            + commitment.purchase_cost
+            + commitment.reconciliation_cash_hold
+            - frozen_cash,
+        )
+        account_cash[commitment.account_id] -= max(
+            Decimal(0),
+            commitment.principal
+            + commitment.purchase_cost
+            + commitment.reconciliation_cash_hold
+            - own_account_frozen_cash,
+        )
+        cash -= deduction
         existing[commitment.issuer_id] += commitment.principal
         security_committed[commitment.security_id] += commitment.principal
         commitment_stress += (

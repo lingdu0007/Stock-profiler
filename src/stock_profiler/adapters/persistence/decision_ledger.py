@@ -537,6 +537,54 @@ class DecisionLedger:
             and fact.result.candidate_confirmation.disposition == "CONFIRMED"
         )
 
+    def candidate_execution_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str | None = None,
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection, "broker execution history unavailable"
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.candidate_execution is not None
+            and (portfolio_id is None or fact.case.candidate_execution.portfolio_id == portfolio_id)
+            and fact.result.candidate_execution is not None
+        )
+
+    def pending_candidate_executions(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> frozenset[str]:
+        pending = set()
+        for identity in connection.execute(
+            select(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id)
+        ).scalars():
+            mapping = self.get_business_object_mapping(identity, connection)
+            if mapping is None or mapping.case is None:
+                continue
+            case = mapping.case
+            if (
+                case.access_scope is None
+                or case.candidate_execution is None
+                or case.access_scope.user_id != access_scope.user_id
+                or case.access_scope.visibility != access_scope.visibility
+                or case.candidate_execution.portfolio_id != portfolio_id
+                or self.get_original_decision_event(identity, connection) is not None
+            ):
+                continue
+            commits = [
+                stage
+                for stage in self.get_stage_results(identity, connection)
+                if stage.phase in {"BUSINESS_COMMIT", "COMMIT_RECONCILIATION"}
+            ]
+            if commits and commits[-1].status == "UNKNOWN":
+                pending.add(identity)
+        return frozenset(pending)
+
     def execution_plan_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]:

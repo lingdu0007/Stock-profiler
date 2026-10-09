@@ -12,7 +12,12 @@ from stock_profiler.bootstrap.settings import Settings
 
 
 def confirmation_payload(
-    settings: Settings, *, held_topup: bool = False, disposal_friction: str = "0"
+    settings: Settings,
+    *,
+    held_topup: bool = False,
+    disposal_friction: str = "0",
+    alternate_account_route: bool = False,
+    minimum_commission: str = "0",
 ) -> dict[str, Any]:
     payload, _ = feasible_payload(
         settings,
@@ -23,6 +28,13 @@ def confirmation_payload(
     )
     for route in payload["candidate_allocation"]["routes"]:
         route["disposal_friction_ratio"] = disposal_friction
+        route["minimum_commission"] = minimum_commission
+    if alternate_account_route:
+        routes = payload["candidate_allocation"]["routes"]
+        for route in list(routes):
+            alternative = deepcopy(route)
+            alternative["account_id"] = "synthetic-account-8029"
+            routes.append(alternative)
     payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
     if held_topup:
         command = payload["candidate_allocation"]

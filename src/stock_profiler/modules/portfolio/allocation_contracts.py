@@ -71,12 +71,34 @@ class AllocationCommitment(PositionContract):
     security_id: str = Field(min_length=1)
     issuer_id: str = Field(min_length=1)
     broker_order_id: str | None
+    broker_order_bindings: tuple[tuple[str, str], ...] = Field(
+        default=(), exclude_if=lambda v: not v
+    )
     principal: Decimal = Field(ge=0)
     quantity: Decimal | None = Field(default=None, gt=0)
     price_cap: Decimal | None = Field(default=None, gt=0)
     purchase_cost: Decimal = Field(ge=0)
+    reconciliation_cash_hold: Decimal = Field(default=Decimal(0), ge=0, exclude_if=lambda v: v == 0)
     disposal_friction: Decimal = Field(ge=0)
     evidence: PositionEvidence
+
+    @property
+    def order_keys(self) -> tuple[tuple[str, str], ...]:
+        if self.broker_order_bindings:
+            return self.broker_order_bindings
+        return (
+            ((self.account_id, self.broker_order_id),) if self.broker_order_id is not None else ()
+        )
+
+    @model_validator(mode="after")
+    def distinct_order_bindings(self) -> "AllocationCommitment":
+        if self.broker_order_id is not None and self.broker_order_bindings:
+            raise ValueError("only one broker order reference representation is allowed")
+        if any(not account or not order for account, order in self.order_keys):
+            raise ValueError("broker order identities must be nonempty")
+        if len(set(self.order_keys)) != len(self.order_keys):
+            raise ValueError("broker order identities must be unique")
+        return self
 
 
 class AllocationCorrelations(PositionContract):
@@ -108,9 +130,7 @@ class CandidateAllocationCommand(PositionContract):
             tuple(row.security_id for row in self.securities),
             tuple((row.security_id, row.account_id) for row in self.routes),
             tuple(row.commitment_id for row in self.commitments),
-            tuple(
-                row.broker_order_id for row in self.commitments if row.broker_order_id is not None
-            ),
+            tuple(key for row in self.commitments for key in row.order_keys),
         ):
             if len(set(identities)) != len(identities):
                 raise ValueError("allocation inputs must have unique identities")

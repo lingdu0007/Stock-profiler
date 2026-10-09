@@ -36,6 +36,8 @@ ledger and includes its retained reservations in cash, stress, issuer, turnover
 and correlation capacity. Callers cannot omit or replace a reservation. Its
 original provenance remains historical evidence; later snapshots do not expire
 that capacity claim. Reservations remain after the entry window closes.
+[Broker execution reconciliation](candidate-execution.md) can replace the retained
+claim using saved authoritative execution evidence.
 
 A revision appends a successor event and keeps the identities and quantities of
 accepted legs that remain accepted. Withdrawn legs are named in the same event's
