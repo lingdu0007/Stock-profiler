@@ -327,6 +327,7 @@ def _reconcile(
                 and entry.corrects_entry_id is None
                 or not ledger_entry_evidence_is_visible(entry, command.cutoff_at)
                 or entry.security_id != order.security_id
+                or entry.occurred_at < order.submitted_at
                 or (
                     entry.quantity_delta != 0
                     and -entry.cash_delta != entry.quantity_delta * fill.price

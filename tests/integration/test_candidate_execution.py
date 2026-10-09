@@ -814,6 +814,24 @@ def test_actual_fill_price_above_cap_is_provable_execution_deviation(
     assert "FILL_PRICE_DEVIATION" in report.result.candidate_execution.fills[0].reasons
 
 
+def test_fill_cannot_consume_an_intent_before_its_alleged_order_was_submitted(
+    migrated_settings: Settings,
+) -> None:
+    payload, accepted = broker_payload(migrated_settings)
+    payload["candidate_execution"]["orders"][0]["submitted_at"] = "2042-05-19T16:01:35Z"
+    freeze_execution(payload)
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert report is not None and report.result.candidate_execution is not None
+    assert report.result.candidate_execution.disposition == "BLOCKED"
+    assert (
+        report.result.candidate_execution.reservations
+        == accepted.result.candidate_confirmation.reservations
+    )
+    assert report.result.candidate_execution.fills == ()
+
+
 def test_authoritative_external_origin_distinguishes_autonomous_same_security_buy(
     migrated_settings: Settings,
 ) -> None:
