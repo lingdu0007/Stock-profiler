@@ -633,14 +633,6 @@
             ],
             "title": "Broker Order Id"
           },
-          "broker_order_ids": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Broker Order Ids",
-            "type": "array"
-          },
           "commitment_id": {
             "minLength": 1,
             "title": "Commitment Id",

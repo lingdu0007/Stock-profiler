@@ -91,11 +91,7 @@ export function CandidateExecutionEvidence({ execution }: { execution: Execution
                 (claim.broker_order_bindings ?? [])
                   .map(([account, order]) => `${account} / ${order}`)
                   .join(", ") ||
-                (claim.broker_order_id
-                  ? `${claim.account_id} / ${claim.broker_order_id}`
-                  : (claim.broker_order_ids ?? [])
-                      .map((order) => `${claim.account_id} / ${order}`)
-                      .join(", ")) ||
+                (claim.broker_order_id ? `${claim.account_id} / ${claim.broker_order_id}` : "") ||
                 "None"
               }
             />

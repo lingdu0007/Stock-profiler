@@ -25,8 +25,12 @@ autonomous purchase even when it uses a candidate security.
 The saved report distinguishes planned execution, provable deviations, external
 purchases and unknown attribution. Causal evidence alone does not establish
 planned execution: account, quantity, price, market window and saved step review
-also matter. Fill quantities beyond the accepted intent are separately retained
-as external quantities. Signed correction quantities remain linked to their
+also matter. A step needs a separate saved atomic confirmation that replayed the
+full allocation policy; the original batch acceptance alone does not establish
+step review. Earlier order commitments consume the accepted quantity, and later
+steps must follow the saved purchase sequence with review evidence covering
+intervening fills. Fill quantities beyond the accepted intent are separately
+retained as external quantities. Signed correction quantities remain linked to their
 original broker entry and order; the broker ledger's additive deltas reconstruct
 the current quantity and cash while every original entry and report survives.
 Fees belong to one fill and cannot be counted twice or omitted.
@@ -37,8 +41,9 @@ fresh risk handoffs and replaces the original reservation with the saved remaini
 claim. A linked open order and the unfilled plan share the stricter principal and
 quantity commitment, including multiple broker orders. A proven account deviation
 retains the original accepted account and qualifies each linked broker order by
-its actual account. Available route costs conservatively bound that deviation;
-missing cost curves block new allocation. Cash already frozen by
+its actual account. Every linked order contributes its estimated acquisition cost,
+including each minimum commission; missing cost curves block new allocation.
+Cash already frozen by
 the broker is deducted only once; any larger plan cash requirement or held
 reconciliation difference is additionally reserved. Unassociated open orders
 reserve independently. Missing external-order cost curves block new allocation.
@@ -50,7 +55,9 @@ attribution or unfinished related orders prevent release. A complete no-order
 proof, broker final state, reconciled full fill, or partial fill with a withdrawn,
 expired or invalidated remainder can close the corresponding commitment. A cash
 hold remains until reconciliation completes. Expiry alone cannot release unknown
-or open orders. Future requests cannot revive an explicitly withdrawn intent.
+or open orders. A known unfinished order disappearing from a later snapshot
+requires explicit broker terminal evidence. Future requests cannot revive an
+explicitly withdrawn intent.
 
 A plan terminal requires all actionable choices, accepted intents, broker orders,
 fills, remaining claims and funds reconciliation to be closed. Outcomes include

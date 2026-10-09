@@ -71,7 +71,6 @@ class AllocationCommitment(PositionContract):
     security_id: str = Field(min_length=1)
     issuer_id: str = Field(min_length=1)
     broker_order_id: str | None
-    broker_order_ids: tuple[str, ...] = Field(default=(), exclude_if=lambda v: not v)
     broker_order_bindings: tuple[tuple[str, str], ...] = Field(
         default=(), exclude_if=lambda v: not v
     )
@@ -87,22 +86,13 @@ class AllocationCommitment(PositionContract):
     def order_keys(self) -> tuple[tuple[str, str], ...]:
         if self.broker_order_bindings:
             return self.broker_order_bindings
-        ids = (self.broker_order_id,) if self.broker_order_id is not None else self.broker_order_ids
-        return tuple((self.account_id, identity) for identity in ids)
+        return (
+            ((self.account_id, self.broker_order_id),) if self.broker_order_id is not None else ()
+        )
 
     @model_validator(mode="after")
     def distinct_order_bindings(self) -> "AllocationCommitment":
-        if (
-            sum(
-                bool(value)
-                for value in (
-                    self.broker_order_id,
-                    self.broker_order_ids,
-                    self.broker_order_bindings,
-                )
-            )
-            > 1
-        ):
+        if self.broker_order_id is not None and self.broker_order_bindings:
             raise ValueError("only one broker order reference representation is allowed")
         if any(not account or not order for account, order in self.order_keys):
             raise ValueError("broker order identities must be nonempty")

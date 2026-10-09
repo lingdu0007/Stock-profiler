@@ -17,6 +17,7 @@ def confirmation_payload(
     held_topup: bool = False,
     disposal_friction: str = "0",
     alternate_account_route: bool = False,
+    minimum_commission: str = "0",
 ) -> dict[str, Any]:
     payload, _ = feasible_payload(
         settings,
@@ -27,6 +28,7 @@ def confirmation_payload(
     )
     for route in payload["candidate_allocation"]["routes"]:
         route["disposal_friction_ratio"] = disposal_friction
+        route["minimum_commission"] = minimum_commission
     if alternate_account_route:
         routes = payload["candidate_allocation"]["routes"]
         for route in list(routes):

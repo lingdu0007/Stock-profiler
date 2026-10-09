@@ -21,9 +21,18 @@ def freeze_execution(payload: dict[str, Any]) -> None:
 
 
 def execution_payload(
-    settings: Settings, *, choice: str = "ACCEPT", alternate_account_route: bool = False
+    settings: Settings,
+    *,
+    choice: str = "ACCEPT",
+    alternate_account_route: bool = False,
+    review_step: bool = True,
+    minimum_commission: str = "0",
 ) -> tuple[dict[str, Any], Any]:
-    payload = confirmation_payload(settings, alternate_account_route=alternate_account_route)
+    payload = confirmation_payload(
+        settings,
+        alternate_account_route=alternate_account_route,
+        minimum_commission=minimum_commission,
+    )
     for row in payload["candidate_confirmation"]["choices"]:
         row["choice"] = choice
     payload["input"]["candidate_confirmation"] = deepcopy(payload["candidate_confirmation"])
@@ -31,6 +40,18 @@ def execution_payload(
         settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
     ).report
     assert accepted is not None and accepted.result.candidate_confirmation is not None
+    if review_step:
+        payload["business_identity"] += ":step-review"
+        payload["candidate_confirmation"].update(
+            seen_confirmation_id=accepted.result.candidate_confirmation.confirmation_id,
+            idempotency_key="step-review",
+        )
+        payload["input"]["candidate_confirmation"] = deepcopy(payload["candidate_confirmation"])
+        accepted = run_frozen_decision_case(
+            settings, payload, clock=GovernanceClock("2042-05-19T16:01:10Z")
+        ).report
+        assert accepted is not None and accepted.result.candidate_confirmation is not None
+        assert accepted.result.candidate_confirmation.disposition == "CONFIRMED"
     confirmation = payload.pop("candidate_confirmation")
     payload["input"].pop("candidate_confirmation")
     version = "candidate-execution.1.0.0"
@@ -124,6 +145,9 @@ def broker_payload(
     terminal: bool = False,
     order_price: str = "10",
     broker_account_id: str | None = None,
+    review_step: bool = True,
+    reservation_index: int = 0,
+    minimum_commission: str = "0",
 ) -> tuple[dict[str, Any], Any]:
     from test_position_state_reconciliation import (
         position_case_payload,
@@ -135,7 +159,10 @@ def broker_payload(
     from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 
     payload, accepted = execution_payload(
-        settings, alternate_account_route=broker_account_id is not None
+        settings,
+        alternate_account_route=broker_account_id is not None,
+        review_step=review_step,
+        minimum_commission=minimum_commission,
     )
     ledger = DecisionLedger(initialize_runtime_storage(settings).engine)
     with ledger.serialize_case_execution() as connection:
@@ -152,7 +179,7 @@ def broker_payload(
     snapshot["snapshot_id"] = "synthetic-execution-snapshot"
     snapshot["cutoff_at"] = payload["knowledge_cutoff"]
     refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
-    reservation = accepted.result.candidate_confirmation.reservations[0]
+    reservation = accepted.result.candidate_confirmation.reservations[reservation_index]
     account = next(
         a
         for a in snapshot["accounts"]
@@ -1135,17 +1162,16 @@ def test_expired_unattributed_order_without_fills_keeps_both_capacity_claims(
     assert outcome.terminal_outcome is None
 
 
-def test_multiple_broker_orders_share_the_stricter_remaining_intent_claim(
-    migrated_settings: Settings,
+def split_broker_order(
+    settings: Settings, payload: dict[str, Any], *, extra_quantity: bool = False
 ) -> None:
     from test_position_state_reconciliation import position_case_payload
 
     from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
     from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
 
-    payload, _ = broker_payload(migrated_settings, order_price="12")
     command = payload["candidate_execution"]
-    ledger = DecisionLedger(initialize_runtime_storage(migrated_settings).engine)
+    ledger = DecisionLedger(initialize_runtime_storage(settings).engine)
     with ledger.serialize_case_execution() as connection:
         fact = ledger.get_decision_event(command["position_event_id"], connection)
     assert fact is not None and fact.case.position is not None
@@ -1153,17 +1179,43 @@ def test_multiple_broker_orders_share_the_stricter_remaining_intent_claim(
     account = next(
         a for a in snapshot["accounts"] if a["account_id"] == command["orders"][0]["account_id"]
     )
-    account["open_orders"][-1].update(remaining_quantity="25", reserved_cash="300")
+    original = command["orders"][0]
+    remaining = Decimal(original["remaining_quantity"])
+    first_quantity = remaining // 2
+    second_quantity = remaining if extra_quantity else remaining - first_quantity
+    price = Decimal(original["limit_price"])
+    account["open_orders"][-1].update(
+        remaining_quantity=str(first_quantity), reserved_cash=str(first_quantity * price)
+    )
     second = deepcopy(account["open_orders"][-1])
     second["order_id"] += ":second"
+    second.update(
+        remaining_quantity=str(second_quantity), reserved_cash=str(second_quantity * price)
+    )
     account["open_orders"].append(second)
-    command["orders"][0].update(quantity="45", remaining_quantity="25", reserved_cash="300")
+    command["orders"][0].update(
+        quantity=str(Decimal(original["filled_quantity"]) + first_quantity),
+        remaining_quantity=str(first_quantity),
+        reserved_cash=str(first_quantity * price),
+    )
     second_order = deepcopy(command["orders"][0])
-    second_order.update(order_id=second["order_id"], quantity="25", filled_quantity="0")
+    second_order.update(
+        order_id=second["order_id"],
+        quantity=str(second_quantity),
+        filled_quantity="0",
+        remaining_quantity=str(second_quantity),
+        reserved_cash=str(second_quantity * price),
+    )
     command["orders"].append(second_order)
+    extra_cash = (first_quantity + second_quantity - remaining) * price
+    account["cash_state"]["frozen_cash"] = str(
+        Decimal(account["cash_state"]["frozen_cash"]) + extra_cash
+    )
+    for field in ("trading_cash", "transferable_cash"):
+        account["cash_state"][field] = str(Decimal(account["cash_state"][field]) - extra_cash)
     proof = run_frozen_decision_case(
-        migrated_settings,
-        position_case_payload(migrated_settings, "split-order-proof", snapshot),
+        settings,
+        position_case_payload(settings, "split-order-proof", snapshot),
         clock=GovernanceClock(payload["knowledge_cutoff"]),
     ).report
     assert (
@@ -1173,13 +1225,20 @@ def test_multiple_broker_orders_share_the_stricter_remaining_intent_claim(
     )
     command["position_event_id"] = proof.event_id
     freeze_execution(payload)
+
+
+def test_multiple_broker_orders_share_the_stricter_remaining_intent_claim(
+    migrated_settings: Settings,
+) -> None:
+    payload, _ = broker_payload(migrated_settings, order_price="12")
+    split_broker_order(migrated_settings, payload)
     report = run_frozen_decision_case(
         migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
     ).report
     assert report is not None and report.result.candidate_execution is not None
     outcome = report.result.candidate_execution
     assert outcome.reservations[0].principal == 600
-    assert len(outcome.reservations[0].broker_order_ids) == 2
+    assert len(outcome.reservations[0].broker_order_bindings) == 2
     assert outcome.unassociated_commitments == ()
     later = forward_allocation_payload(migrated_settings, payload)
     allocated = run_frozen_decision_case(
@@ -1191,6 +1250,62 @@ def test_multiple_broker_orders_share_the_stricter_remaining_intent_claim(
     )
     assert len(allocated.result.candidate_allocation.commitments) == 2
     assert allocated.result.candidate_allocation.rows[0].committed_exposure == 780
+
+
+@pytest.mark.parametrize("failure", ["batch-only", "out-of-sequence"])
+def test_planned_execution_requires_a_separate_replay_and_matching_saved_step(
+    migrated_settings: Settings, failure: str
+) -> None:
+    payload, _ = broker_payload(
+        migrated_settings,
+        review_step=failure != "batch-only",
+        reservation_index=1 if failure == "out-of-sequence" else 0,
+    )
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert report is not None and report.result.candidate_execution is not None
+    fill = report.result.candidate_execution.fills[0]
+    assert fill.classification == "DEVIATION"
+    assert (
+        "STEP_REVIEW_UNPROVEN" if failure == "batch-only" else "SEQUENCE_DEVIATION"
+    ) in fill.reasons
+
+
+def test_combined_orders_above_remaining_quantity_are_execution_deviations(
+    migrated_settings: Settings,
+) -> None:
+    payload, _ = broker_payload(migrated_settings, quantity="0")
+    payload["candidate_execution"]["fills"] = []
+    split_broker_order(migrated_settings, payload, extra_quantity=True)
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert report is not None and report.result.candidate_execution is not None
+    second = report.result.candidate_execution.order_attributions[1]
+    assert second.classification == "DEVIATION"
+    assert "QUANTITY_DEVIATION" in second.reasons
+    assert report.result.candidate_execution.reservations[0].principal == 1050
+
+
+def test_split_orders_reserve_every_minimum_commission_before_capacity_reuse(
+    migrated_settings: Settings,
+) -> None:
+    payload, _ = broker_payload(migrated_settings, minimum_commission="3")
+    split_broker_order(migrated_settings, payload)
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert report is not None and report.result.candidate_execution is not None
+    claim = report.result.candidate_execution.reservations[0]
+    assert claim.purchase_cost == 6
+    later = forward_allocation_payload(migrated_settings, payload)
+    next_report = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert next_report is not None and next_report.result.candidate_allocation is not None
+    assert next_report.result.candidate_allocation.disposition == "PLANNED"
+    assert next_report.result.candidate_allocation.commitments[0].purchase_cost == 6
 
 
 def test_cash_hold_is_released_only_after_funds_and_never_expands_accepted_quantity(

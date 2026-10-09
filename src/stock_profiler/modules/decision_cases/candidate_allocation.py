@@ -481,7 +481,7 @@ def _adjudicate_candidate_allocation(
         frozen_cash = Decimal(0)
         own_account_frozen_cash = Decimal(0)
         broker_quantity = Decimal(0)
-        if (commitment.broker_order_ids or commitment.broker_order_bindings) and not reconciled:
+        if commitment.broker_order_bindings and not reconciled:
             return _blocked(case, source, "UNPROVEN_ORDER_MERGE")
         for key in keys:
             order = broker_orders[key]

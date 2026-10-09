@@ -536,7 +536,7 @@ def _reconcile(
                 claim_principal * reservation.disposal_friction / reservation.principal
             )
             deviated_account = any(order.account_id != reservation.account_id for order in linked)
-            if deviated_account:
+            if linked:
                 actual_cost = Decimal(0)
                 actual_friction = Decimal(0)
                 for order in linked:
@@ -550,7 +550,7 @@ def _reconcile(
                         None,
                     )
                     if route is None:
-                        cost_problems.append("DEVIATED_ACCOUNT_COSTS_UNAVAILABLE")
+                        cost_problems.append("LINKED_ORDER_COSTS_UNAVAILABLE")
                         continue
                     principal = (order.remaining_quantity or order.quantity) * (
                         order.limit_price or reservation.price_cap
@@ -583,13 +583,10 @@ def _reconcile(
                             "broker_order_id": linked[0].order_id
                             if len(linked) == 1 and not deviated_account
                             else None,
-                            "broker_order_ids": tuple(order.order_id for order in linked)
-                            if len(linked) > 1 and not deviated_account
-                            else (),
                             "broker_order_bindings": tuple(
                                 (order.account_id, order.order_id) for order in linked
                             )
-                            if deviated_account
+                            if deviated_account or len(linked) > 1
                             else (),
                             "disposal_friction": disposal_friction,
                             "reconciliation_cash_hold": cash_hold,
@@ -729,6 +726,7 @@ def _classify_order(
         return "UNKNOWN", ("CAUSAL_SOURCE_UNAVAILABLE",)
     if order.submitted_at < datetime.fromisoformat(origin.committed_at):
         return "UNKNOWN", ("CAUSAL_TIME_CONFLICT",)
+    assert origin.result.candidate_confirmation is not None
     deviations = []
     plan = ledger.get_formal_report_for_event(
         origin.case.candidate_confirmation.plan_event_id, connection
@@ -739,7 +737,24 @@ def _classify_order(
         deviations.append("ENTRY_WINDOW_DEVIATION")
     if order.account_id != reservation.account_id:
         deviations.append("ACCOUNT_DEVIATION")
-    if order.quantity > (reservation.quantity or Decimal(0)):
+    command = case.candidate_execution
+    earlier = [
+        row
+        for row in command.orders
+        if row.causal_reservation_id == reservation.commitment_id
+        and (row.submitted_at, row.account_id, row.order_id)
+        < (order.submitted_at, order.account_id, order.order_id)
+    ]
+    consumed = sum(
+        (
+            row.filled_quantity + (row.remaining_quantity or Decimal(0))
+            if row.status == "OPEN"
+            else row.filled_quantity
+            for row in earlier
+        ),
+        Decimal(0),
+    )
+    if order.quantity > max(Decimal(0), (reservation.quantity or Decimal(0)) - consumed):
         deviations.append("QUANTITY_DEVIATION")
     if order.limit_price is None or order.limit_price > (reservation.price_cap or Decimal(0)):
         deviations.append("PRICE_DEVIATION")
@@ -754,14 +769,87 @@ def _classify_order(
         or not case.access_scope.same_scope_as(step.case.access_scope)
         or step.result.candidate_confirmation is None
         or step.result.candidate_confirmation.disposition != "CONFIRMED"
+        or step.decision_event_id == origin.decision_event_id
+        or step.case.candidate_confirmation is None
+        or step.case.candidate_confirmation.operation != "SUBMIT"
         or not any(
             row.commitment_id == reservation.commitment_id
             for row in step.result.candidate_confirmation.reservations
         )
         or datetime.fromisoformat(step.committed_at) > order.submitted_at
+        or any(datetime.fromisoformat(step.committed_at) <= row.submitted_at for row in earlier)
+        or _current_evidence_expired(
+            step.case.candidate_confirmation.model_dump(mode="python"),
+            step.case.candidate_confirmation.revalidation.cutoff_at,
+            order.submitted_at,
+        )
     ):
         deviations.append("STEP_REVIEW_UNPROVEN")
-    return ("DEVIATION" if deviations else "PLANNED"), tuple(deviations)
+    proof = ledger.get_decision_event(command.position_event_id or "", connection)
+    assert proof is not None and proof.result.position is not None
+    entries = {
+        (row.account_id, row.entry_id): row
+        for row in proof.result.position.snapshot.authoritative_ledger
+    }
+    previous_fills = [
+        entries[(row.account_id, row.entry_id)]
+        for row in command.fills
+        if entries[(row.account_id, row.entry_id)].occurred_at < order.submitted_at
+    ]
+    if (
+        step is not None
+        and step.case.candidate_confirmation is not None
+        and any(
+            row.occurred_at > step.case.candidate_confirmation.revalidation.cutoff_at
+            for row in previous_fills
+        )
+    ):
+        deviations.append("STEP_REVIEW_UNPROVEN")
+    accepted = {
+        row.security_id
+        for row in origin.result.candidate_confirmation.choices
+        if row.choice == "ACCEPT"
+    }
+    sequence = [
+        security
+        for security in plan.result.candidate_allocation.purchase_sequence
+        if security in accepted
+    ]
+    before = (
+        sequence[: sequence.index(order.security_id)] if order.security_id in sequence else sequence
+    )
+    for security in before:
+        intended = [
+            row
+            for row in reservations
+            if row.security_id == security
+            and any(
+                row.commitment_id == r.commitment_id
+                for r in origin.result.candidate_confirmation.reservations
+            )
+        ]
+        required = sum((row.quantity or Decimal(0) for row in intended), Decimal(0))
+        intended_ids = {row.commitment_id for row in intended}
+        order_ids = {
+            (row.account_id, row.order_id)
+            for row in command.orders
+            if row.causal_reservation_id in intended_ids
+            and row.security_id == security
+            and row.submitted_at >= datetime.fromisoformat(origin.committed_at)
+        }
+        filled_before = sum(
+            (
+                entries[(fill.account_id, fill.entry_id)].quantity_delta
+                for fill in command.fills
+                if (fill.account_id, fill.order_id) in order_ids
+                and entries[(fill.account_id, fill.entry_id)].occurred_at < order.submitted_at
+            ),
+            Decimal(0),
+        )
+        if required == 0 or filled_before < required:
+            deviations.append("SEQUENCE_DEVIATION")
+            break
+    return ("DEVIATION" if deviations else "PLANNED"), tuple(dict.fromkeys(deviations))
 
 
 def _broker_problems(

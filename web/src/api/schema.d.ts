@@ -464,11 +464,6 @@ export interface components {
             ][];
             /** Broker Order Id */
             broker_order_id: string | null;
-            /**
-             * Broker Order Ids
-             * @default []
-             */
-            broker_order_ids: string[];
             /** Commitment Id */
             commitment_id: string;
             /** Disposal Friction */
