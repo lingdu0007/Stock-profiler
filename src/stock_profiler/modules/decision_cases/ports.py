@@ -29,6 +29,7 @@ from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
     PositionReconciliationOutcome,
+    ReconciledPositionSnapshot,
 )
 from stock_profiler.modules.qualification.contracts import GovernanceOutcome
 from stock_profiler.modules.research.contracts import (
@@ -254,6 +255,13 @@ class DecisionLedger(Protocol[Transaction]):
 
     def monitoring_inputs_unchanged(
         self, connection: Transaction, access_scope: ResultAccessScope, plan_event_id: str
+    ) -> bool: ...
+
+    def position_snapshot_is_latest(
+        self,
+        connection: Transaction,
+        access_scope: ResultAccessScope,
+        snapshot: ReconciledPositionSnapshot,
     ) -> bool: ...
 
     def pending_candidate_confirmations(

@@ -43,8 +43,8 @@ release list. Release requires a same-scope, uncorrected, fully reconciled
 position event covering the current cutoff after the preceding confirmation.
 Unfinished or unknown orders prevent release. Holdings requiring execution
 attribution also retain their reservation until reconciliation is available.
-An explicit `WITHDRAW` vector contains no accepts and can release a still
-unexecuted reservation after the original entry window closes. Releasing one
+An explicit `WITHDRAW` vector adds no accepts and can release a still
+unexecuted reservation after the original entry window closes or the plan has been corrected. Releasing one
 leg never increases another leg or rewrites the old plan.
 
 Generic report user-fact endpoints permit only viewing of candidate,

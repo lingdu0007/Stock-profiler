@@ -35,6 +35,7 @@ from stock_profiler.modules.decision_cases.candidate_allocation import (
 )
 from stock_profiler.modules.decision_cases.candidate_confirmation import (
     adjudicate_candidate_confirmation,
+    finalize_candidate_confirmation,
 )
 from stock_profiler.modules.decision_cases.domain import (
     FROZEN_REPORT_PROJECTION_CONTRACT_VERSION,
@@ -3877,11 +3878,13 @@ def _commit_framework_result(
     assert framework.output is not None
     commit_observed_at = ledger.observed_at()
     if execution_case.candidate_confirmation is not None:
-        final_confirmation = adjudicate_candidate_confirmation(
+        assert result.candidate_confirmation is not None
+        final_confirmation = finalize_candidate_confirmation(
             execution_case,
+            result.candidate_confirmation,
             ledger,
             connection,
-            business_prerequisite_met=business_result.status == "SUCCEEDED",
+            committed_at=commit_observed_at,
         )
         if final_confirmation != result.candidate_confirmation:
             result = result.model_copy(update={"candidate_confirmation": final_confirmation})

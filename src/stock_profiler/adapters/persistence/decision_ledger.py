@@ -63,6 +63,7 @@ from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
     PositionReconciliationOutcome,
+    ReconciledPositionSnapshot,
 )
 from stock_profiler.modules.position_management.history import (
     authoritative_cash_history,
@@ -457,6 +458,38 @@ class DecisionLedger:
             if fact.case.access_scope is not None
             and fact.case.access_scope.same_scope_as(access_scope)
             and fact.case.candidate_release is not None
+        )
+
+    def position_snapshot_is_latest(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        snapshot: ReconciledPositionSnapshot,
+    ) -> bool:
+        positions = [
+            (fact, position)
+            for fact in self._event_facts(connection, "current position history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and set(fact.case.access_scope.account_ids).intersection(access_scope.account_ids)
+            and (
+                position := fact.result.position
+                or (fact.result.liquidity.position_snapshot if fact.result.liquidity else None)
+            )
+            is not None
+        ]
+        if not positions:
+            return False
+        latest_fact, latest = max(
+            enumerate(positions), key=lambda item: (item[1][1].snapshot.cutoff_at, item[0])
+        )[1]
+        return (
+            latest_fact.corrects_event_id is None
+            and latest.disposition == "RECONCILED"
+            and latest_fact.case.access_scope is not None
+            and latest_fact.case.access_scope.same_scope_as(access_scope)
+            and latest.snapshot == snapshot
         )
 
     def pending_candidate_confirmations(

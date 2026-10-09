@@ -1,7 +1,7 @@
 """Complete confirmation journeys through the frozen case/report seam."""
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from synthetic_candidate_allocation import feasible_payload
@@ -11,13 +11,24 @@ from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 
 
-def confirmation_payload(settings: Settings) -> dict[str, Any]:
+def confirmation_payload(
+    settings: Settings, *, held_topup: bool = False, disposal_friction: str = "0"
+) -> dict[str, Any]:
     payload, _ = feasible_payload(
         settings,
-        candidate_count=2,
+        candidate_count=1 if held_topup else 2,
+        security_id="XQZ-4017" if held_topup else "SYNTH-CANDIDATE",
         cutoff_at="2042-05-19T16:00:00Z",
         qualification_valid_through="2042-05-23T15:00:00Z",
     )
+    for route in payload["candidate_allocation"]["routes"]:
+        route["disposal_friction_ratio"] = disposal_friction
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    if held_topup:
+        command = payload["candidate_allocation"]
+        command["securities"][0]["issuer_id"] = "FICTIONAL-ORBITAL-MOSAIC"
+        command["policy"].update(entry_target_ratio="0.25", neighborhood_ratio="0.29")
+        payload["input"]["candidate_allocation"] = deepcopy(command)
     report = run_frozen_decision_case(
         settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
     ).report
@@ -275,7 +286,12 @@ def test_decline_and_defer_preserve_candidates_and_leave_all_capacity_available(
 
 
 def save_withdrawal_proof(
-    settings: Settings, payload: dict[str, Any], *, open_order: bool = False, unknown: bool = False
+    settings: Settings,
+    payload: dict[str, Any],
+    *,
+    open_order: bool = False,
+    unknown: bool = False,
+    cutoff_at: str = "2042-05-19T16:02:00Z",
 ) -> str:
     from test_position_state_reconciliation import (
         position_case_payload,
@@ -297,7 +313,7 @@ def save_withdrawal_proof(
     assert risk is not None and risk.case.concentration is not None
     snapshot = risk.case.concentration.position_snapshot.model_dump(mode="json")
     snapshot["snapshot_id"] = "synthetic-withdrawal-snapshot"
-    snapshot["cutoff_at"] = "2042-05-19T16:02:00Z"
+    snapshot["cutoff_at"] = cutoff_at
     refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
     if open_order:
         account = snapshot["accounts"][0]
@@ -341,6 +357,7 @@ def test_revision_atomically_preserves_existing_reservations_and_gates_release(
     assert original is not None and original.result.candidate_confirmation is not None
     before = original.result.candidate_confirmation
     revised = revision_payload(payload, original.event_id, choice="DEFER")
+    revised["candidate_confirmation"]["operation"] = "WITHDRAW"
     revised["candidate_confirmation"]["withdrawal_position_event_id"] = save_withdrawal_proof(
         migrated_settings, payload, open_order=proof != "complete", unknown=proof == "unknown"
     )
@@ -620,8 +637,10 @@ def test_new_accept_appends_a_revision_without_replacing_the_original_vector(
     )
 
 
+@pytest.mark.parametrize("proof_cutoff", ["2042-05-19T16:02:00Z", "2042-05-24T16:02:00Z"])
 def test_explicit_withdrawal_appends_release_and_keeps_original_plan_unchanged(
     migrated_settings: Settings,
+    proof_cutoff: str,
 ) -> None:
     payload = confirmation_payload(migrated_settings)
     original = run_frozen_decision_case(
@@ -632,10 +651,12 @@ def test_explicit_withdrawal_appends_release_and_keeps_original_plan_unchanged(
     command = revised["candidate_confirmation"]
     command["operation"] = "WITHDRAW"
     command["choices"][0]["choice"] = "DECLINE"
-    command["withdrawal_position_event_id"] = save_withdrawal_proof(migrated_settings, payload)
+    command["withdrawal_position_event_id"] = save_withdrawal_proof(
+        migrated_settings, payload, cutoff_at=proof_cutoff
+    )
     revised["input"]["candidate_confirmation"] = deepcopy(command)
     report = run_frozen_decision_case(
-        migrated_settings, revised, clock=GovernanceClock("2042-05-19T16:02:00Z")
+        migrated_settings, revised, clock=GovernanceClock(proof_cutoff)
     ).report
     assert report is not None and report.result.candidate_confirmation is not None
     result = report.result.candidate_confirmation
@@ -667,4 +688,260 @@ def test_idempotency_key_cannot_be_rebound_to_different_choices(
             migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
         ).report
         == original
+    )
+
+
+@pytest.mark.parametrize("family", ["market", "correlation"])
+def test_expired_current_evidence_prevents_confirmation_even_with_old_valid_cutoff(
+    migrated_settings: Settings,
+    family: str,
+) -> None:
+    payload = confirmation_payload(migrated_settings)
+    command = payload["candidate_confirmation"]
+    facts = (
+        command["revalidation"]["securities"]
+        if family == "market"
+        else [command["revalidation"]["correlations"]]
+    )
+    for fact in facts:
+        fact["evidence"]["expires_at"] = "2042-05-19T16:00:30Z"
+    payload["input"]["candidate_confirmation"] = deepcopy(command)
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "BLOCKED"
+    assert report.result.candidate_confirmation.reservations == ()
+
+
+def test_optimization_cannot_cross_the_final_confirmation_window(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    from stock_profiler.modules.decision_cases import candidate_confirmation
+
+    payload = confirmation_payload(migrated_settings)
+    clock = GovernanceClock("2042-05-19T16:01:00Z")
+    from stock_profiler.modules.decision_cases.candidate_allocation import (
+        adjudicate_candidate_allocation,
+    )
+
+    original = adjudicate_candidate_allocation
+
+    calls = 0
+
+    def replay(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        result = original(*args, **kwargs)
+        if calls == 1:
+            clock.current = datetime.fromisoformat("2042-05-24T16:01:00+00:00")
+        return result
+
+    monkeypatch.setattr(candidate_confirmation, "adjudicate_candidate_allocation", replay)
+    report = run_frozen_decision_case(migrated_settings, payload, clock=clock).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "BLOCKED"
+    assert report.result.candidate_confirmation.reservations == ()
+
+
+def test_a_corrected_plan_can_release_reservations_with_complete_order_exclusion(
+    migrated_settings: Settings,
+) -> None:
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+    from stock_profiler.bootstrap.decision_cases import correct_default_frozen_decision_case
+
+    payload = confirmation_payload(migrated_settings)
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert original is not None
+    ledger = DecisionLedger(initialize_runtime_storage(migrated_settings).engine)
+    with ledger.serialize_case_execution() as connection:
+        plan = ledger.get_decision_event(
+            payload["candidate_confirmation"]["plan_event_id"], connection
+        )
+    assert plan is not None
+    correction = correct_default_frozen_decision_case(
+        migrated_settings,
+        plan.case.business_identity,
+        clock=GovernanceClock("2042-05-19T16:02:00Z"),
+    )
+    assert correction.report is not None
+    revised = revision_payload(payload, original.event_id, choice="DECLINE")
+    command = revised["candidate_confirmation"]
+    command["operation"] = "WITHDRAW"
+    command["choices"][0]["choice"] = "DECLINE"
+    command["withdrawal_position_event_id"] = save_withdrawal_proof(migrated_settings, payload)
+    revised["input"]["candidate_confirmation"] = deepcopy(command)
+    report = run_frozen_decision_case(
+        migrated_settings, revised, clock=GovernanceClock("2042-05-19T16:02:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "CONFIRMED"
+    assert len(report.result.candidate_confirmation.released_reservation_ids) == 2
+
+
+def test_new_position_facts_block_confirmation_using_older_risk_handoffs(
+    migrated_settings: Settings,
+) -> None:
+    payload = confirmation_payload(migrated_settings)
+    save_withdrawal_proof(migrated_settings, payload, open_order=True)
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:02:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "BLOCKED"
+    assert report.result.candidate_confirmation.reservations == ()
+
+
+def test_narrow_scope_cannot_receive_reservation_details_from_a_wider_portfolio(
+    migrated_settings: Settings,
+) -> None:
+    from synthetic_candidate_workspace import failed_candidate_case
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+    from stock_profiler.modules.decision_cases.domain import (
+        ExternalResult,
+        FrozenDecisionCase,
+        StageResult,
+    )
+
+    payload = confirmation_payload(migrated_settings)
+    accepted = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert accepted is not None
+    ledger = DecisionLedger(initialize_runtime_storage(migrated_settings).engine)
+    narrow_source = cast(dict[str, Any], failed_candidate_case(migrated_settings))
+    narrow_source["access_scope"]["account_ids"] = ["synthetic-account-8029"]
+    narrow_source["input"]["account"]["account_id"] = "synthetic-account-8029"
+    source_case = FrozenDecisionCase.model_validate(narrow_source)
+    ledger.persist_business_mapping_before_framework(source_case)
+    with ledger.serialize_case_execution() as connection:
+        source = ledger.get_formal_report_for_event(
+            payload["candidate_confirmation"]["revalidation"]["candidate_event_id"], connection
+        )
+        assert source is not None
+        fact = ledger.commit_event(
+            connection,
+            case=source_case,
+            framework_run_id=source_case.framework_run_id,
+            result=ExternalResult(
+                outcome_code="CANDIDATES",
+                summary="Synthetic narrowed candidate scope.",
+                key_reasons=(),
+                candidate_release=source.result.candidate_release,
+            ),
+            stage_results=(),
+        )
+        ledger.record_stage_result(
+            connection,
+            case=source_case,
+            framework_run_id=source_case.framework_run_id,
+            decision_event_id=fact.decision_event_id,
+            stage_result=StageResult(
+                phase="BUSINESS_COMMIT", status="SUCCEEDED", gate_results=(), reasons=()
+            ),
+        )
+        ledger.publish_report(connection, fact)
+        ledger.record_stage_result(
+            connection,
+            case=source_case,
+            framework_run_id=source_case.framework_run_id,
+            decision_event_id=fact.decision_event_id,
+            stage_result=StageResult(
+                phase="PUBLICATION", status="SUCCEEDED", gate_results=(), reasons=()
+            ),
+        )
+        assert ledger.get_formal_report_for_event(fact.decision_event_id, connection) is not None
+    later = deepcopy(payload)
+    command = later.pop("candidate_confirmation")
+    later["input"].pop("candidate_confirmation")
+    allocation = command["revalidation"]
+    allocation["candidate_event_id"] = fact.decision_event_id
+    later["candidate_allocation"] = allocation
+    later["input"]["candidate_allocation"] = deepcopy(allocation)
+    later["business_identity"] = "synthetic-narrowed-reservation-probe"
+    later["access_scope"]["account_ids"] = ["synthetic-account-8029"]
+    later["input"]["account"]["account_id"] = "synthetic-account-8029"
+    version = "candidate-allocation.1.0.0"
+    later["version_bundle"].update(
+        case_contract_version=version,
+        host_contract_version=version,
+        report_projection_contract_version=version,
+    )
+    report = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-19T16:02:00Z")
+    ).report
+    assert report is not None and report.result.candidate_allocation is not None
+    assert report.result.candidate_allocation.disposition == "BLOCKED"
+    assert report.result.candidate_allocation.commitments == ()
+
+
+def test_shadow_attempt_cannot_claim_the_user_confirmation_idempotency_key(
+    migrated_settings: Settings,
+) -> None:
+    payload = confirmation_payload(migrated_settings)
+    shadow = deepcopy(payload)
+    shadow["access_scope"]["visibility"] = "SHADOW"
+    result = run_frozen_decision_case(
+        migrated_settings, shadow, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    )
+    assert result.report is None
+    report = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "CONFIRMED"
+
+
+def test_withdrawal_does_not_confuse_unchanged_prior_holdings_with_new_execution(
+    migrated_settings: Settings,
+) -> None:
+    payload = confirmation_payload(migrated_settings, held_topup=True)
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert original is not None and original.result.candidate_confirmation is not None
+    assert original.result.candidate_confirmation.reservations
+    revised = deepcopy(payload)
+    command = revised["candidate_confirmation"]
+    command.update(
+        operation="WITHDRAW",
+        idempotency_key="synthetic-held-withdraw",
+        seen_confirmation_id=original.event_id,
+        withdrawal_position_event_id=save_withdrawal_proof(migrated_settings, payload),
+    )
+    command["choices"][0]["choice"] = "DECLINE"
+    revised["input"]["candidate_confirmation"] = deepcopy(command)
+    report = run_frozen_decision_case(
+        migrated_settings, revised, clock=GovernanceClock("2042-05-19T16:02:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "CONFIRMED"
+    assert report.result.candidate_confirmation.reservations == ()
+
+
+def test_reservation_stress_friction_is_independent_of_ambient_decimal_context(
+    migrated_settings: Settings,
+) -> None:
+    from decimal import Decimal, Inexact, localcontext
+
+    payload = confirmation_payload(migrated_settings, disposal_friction="0.0137")
+    with localcontext() as context:
+        context.prec = 2
+        context.traps[Inexact] = True
+        report = run_frozen_decision_case(
+            migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+        ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    assert report.result.candidate_confirmation.disposition == "CONFIRMED"
+    assert all(
+        row.disposal_friction == Decimal("9.59")
+        for row in report.result.candidate_confirmation.reservations
     )

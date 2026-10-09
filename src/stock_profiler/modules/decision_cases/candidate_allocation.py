@@ -125,6 +125,10 @@ def adjudicate_candidate_allocation(
         if confirmation.plan_id != exclude_confirmation_plan_id
         for row in confirmation.reservations
     }
+    if any(row.account_id not in case.access_scope.account_ids for row in retained.values()):
+        return CandidateAllocationOutcome(
+            disposition="BLOCKED", reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",)
+        )
     supplied = {row.commitment_id: row for row in case.candidate_allocation.commitments}
     if any(
         identity in supplied and supplied[identity] != row for identity, row in retained.items()

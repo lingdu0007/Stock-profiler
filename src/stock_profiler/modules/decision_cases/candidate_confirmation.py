@@ -1,6 +1,7 @@
 """Host-owned batch confirmation, committed with all reservations in one event."""
 
 from datetime import datetime, timedelta
+from decimal import Context, localcontext
 from typing import Any
 
 from stock_profiler.modules.candidate_selection.current_eligibility import (
@@ -39,7 +40,10 @@ def adjudicate_candidate_confirmation(
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("BUSINESS_PREREQUISITE_NOT_MET",)
         )
-    if ledger.get_correction_event(command.plan_event_id, connection) is not None:
+    if (
+        command.operation == "SUBMIT"
+        and ledger.get_correction_event(command.plan_event_id, connection) is not None
+    ):
         return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_SUPERSEDED",))
     plan = source.result.candidate_allocation
     if plan is None or plan.disposition != "PLANNED" or plan.plan_id != command.plan_id:
@@ -64,17 +68,8 @@ def adjudicate_candidate_confirmation(
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("REVALIDATION_AFTER_SUBMISSION",)
         )
-    for row in plan.rows if command.operation == "SUBMIT" else ():
-        member = row.candidate
-        assert plan.correlations is not None
-        calendar_version = plan.correlations.market_calendar_version
-        dates = member.valid_market_dates
-        start = market_session_close_on(dates[0], calendar_version) if dates else None
-        end = market_session_close_on(dates[-1], calendar_version) if dates else None
-        if start is None or end is None or not start - timedelta(hours=7) <= now <= end:
-            return CandidateConfirmationOutcome(
-                disposition="BLOCKED", reasons=("ENTRY_WINDOW_CLOSED",)
-            )
+    if command.operation == "SUBMIT" and not _entry_window_is_open(plan, now):
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("ENTRY_WINDOW_CLOSED",))
     if ledger.pending_candidate_confirmations(connection, scope, command.portfolio_id) - {
         case.business_object_id
     }:
@@ -102,7 +97,14 @@ def adjudicate_candidate_confirmation(
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("COMPLETE_CHOICES_REQUIRED",)
         )
-    if command.operation == "WITHDRAW" and (prior is None or "ACCEPT" in choices.values()):
+    prior_choices = {row.security_id: row.choice for row in prior.choices} if prior else {}
+    if command.operation == "WITHDRAW" and (
+        prior is None
+        or any(
+            choice == "ACCEPT" and prior_choices.get(security) != "ACCEPT"
+            for security, choice in choices.items()
+        )
+    ):
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("WITHDRAWAL_VECTOR_INVALID",)
         )
@@ -148,12 +150,29 @@ def adjudicate_candidate_confirmation(
             return CandidateConfirmationOutcome(
                 disposition="BLOCKED", reasons=("UNFINISHED_ORDER_PREVENTS_RELEASE",)
             )
-        if any(
-            unit.account_id == reservation.account_id
-            and unit.security_id == reservation.security_id
-            and (unit.total_quantity is None or unit.total_quantity > 0)
-            for reservation in released
+        assert plan.position_snapshot is not None
+        original_quantities = {
+            (unit.account_id, unit.security_id): unit.total_quantity
+            for unit in plan.position_snapshot.action_units
+        }
+        current_quantities = {
+            (unit.account_id, unit.security_id): unit.total_quantity
             for unit in snapshot.action_units
+        }
+        if any(
+            entry.account_id == reservation.account_id
+            and entry.security_id == reservation.security_id
+            and entry.entry_type == "FILL"
+            and entry.quantity_delta > 0
+            and entry.occurred_at >= datetime.fromisoformat(prior_fact.committed_at)
+            for reservation in released
+            for entry in snapshot.authoritative_ledger
+        ) or any(
+            current_quantities.get((reservation.account_id, reservation.security_id), 0) is None
+            or original_quantities.get((reservation.account_id, reservation.security_id), 0) is None
+            or current_quantities.get((reservation.account_id, reservation.security_id), 0)
+            != original_quantities.get((reservation.account_id, reservation.security_id), 0)
+            for reservation in released
         ):
             return CandidateConfirmationOutcome(
                 disposition="BLOCKED", reasons=("RESERVATION_RECONCILIATION_REQUIRED",)
@@ -202,6 +221,8 @@ def adjudicate_candidate_confirmation(
         )
         if (
             current.disposition != "PLANNED"
+            or current.position_snapshot is None
+            or not ledger.position_snapshot_is_latest(connection, scope, current.position_snapshot)
             or _structured_rows(current) != _structured_rows(plan)
             or current.capacity_checks != plan.capacity_checks
             or current.purchase_sequence != plan.purchase_sequence
@@ -234,25 +255,26 @@ def adjudicate_candidate_confirmation(
     retained = {
         (row.security_id, row.account_id): row for row in (prior.reservations if prior else ())
     }
-    reservations = tuple(
-        retained.get((row.candidate.security_id, leg.route.account_id))
-        or AllocationCommitment(
-            commitment_id=f"{case.decision_event_id}:{row.candidate.security_id}:{leg.route.account_id}",
-            account_id=leg.route.account_id,
-            security_id=row.candidate.security_id,
-            issuer_id=row.issuer_id,
-            broker_order_id=None,
-            principal=leg.principal,
-            quantity=leg.quantity,
-            price_cap=leg.route.price_cap,
-            purchase_cost=leg.purchase_cost,
-            disposal_friction=leg.principal * leg.route.disposal_friction_ratio,
-            evidence=leg.route.evidence,
+    with localcontext(Context(prec=38)):
+        reservations = tuple(
+            retained.get((row.candidate.security_id, leg.route.account_id))
+            or AllocationCommitment(
+                commitment_id=f"{case.decision_event_id}:{row.candidate.security_id}:{leg.route.account_id}",
+                account_id=leg.route.account_id,
+                security_id=row.candidate.security_id,
+                issuer_id=row.issuer_id,
+                broker_order_id=None,
+                principal=leg.principal,
+                quantity=leg.quantity,
+                price_cap=leg.route.price_cap,
+                purchase_cost=leg.purchase_cost,
+                disposal_friction=leg.principal * leg.route.disposal_friction_ratio,
+                evidence=leg.route.evidence,
+            )
+            for row in plan.rows
+            if choices.get(row.candidate.security_id) == "ACCEPT"
+            for leg in row.legs
         )
-        for row in plan.rows
-        if choices.get(row.candidate.security_id) == "ACCEPT"
-        for leg in row.legs
-    )
     return CandidateConfirmationOutcome(
         disposition="CONFIRMED",
         reasons=(),
@@ -277,3 +299,109 @@ def _structured_rows(plan: CandidateAllocationOutcome) -> tuple[dict[str, Any], 
         )
         for row in plan.rows
     )
+
+
+def finalize_candidate_confirmation(
+    case: FrozenDecisionCase,
+    outcome: CandidateConfirmationOutcome,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    *,
+    committed_at: str,
+) -> CandidateConfirmationOutcome:
+    """Recheck time-sensitive gates after optimization without another long solve."""
+    if outcome.disposition != "CONFIRMED":
+        return outcome
+    command, scope = case.candidate_confirmation, case.access_scope
+    assert command is not None and scope is not None
+    now = datetime.fromisoformat(committed_at)
+    if command.operation == "WITHDRAW":
+        proof = (
+            ledger.get_decision_event(command.withdrawal_position_event_id, connection)
+            if command.withdrawal_position_event_id
+            else None
+        )
+        if outcome.released_reservation_ids and (
+            proof is None
+            or proof.result.position is None
+            or proof.result.position.snapshot.snapshot_evidence.problem_codes(
+                now, require_current_completeness=True
+            )
+        ):
+            return CandidateConfirmationOutcome(
+                disposition="BLOCKED", reasons=("ORDER_EXCLUSION_REQUIRED",)
+            )
+        return outcome
+    source = ledger.get_formal_report_for_event(command.plan_event_id, connection)
+    assert source is not None and source.result.candidate_allocation is not None
+    plan = source.result.candidate_allocation
+    assert plan.risk_budget is not None
+    if not _entry_window_is_open(plan, now):
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("ENTRY_WINDOW_CLOSED",))
+    if not plan.risk_budget.effective_at <= now < plan.risk_budget.expires_at:
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("RISK_BUDGET_EXPIRED",))
+    candidate = ledger.get_decision_event(command.revalidation.candidate_event_id, connection)
+    assert candidate is not None and candidate.result.candidate_release is not None
+    reasons, _, _ = candidate_qualification_eligibility(
+        candidate.result.candidate_release,
+        candidate.case,
+        ledger.governance_history(connection, scope),
+        now,
+    )
+    if reasons:
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=reasons)
+    current_evidence = [command.revalidation.model_dump(mode="python")]
+    for event_id in (
+        command.revalidation.risk_handoff.concentration_event_id,
+        command.revalidation.risk_handoff.stress_event_id,
+        command.revalidation.risk_handoff.liquidity_event_id,
+        command.revalidation.risk_handoff.drawdown_event_id,
+    ):
+        fact = ledger.get_decision_event(event_id, connection)
+        if fact is None:
+            return CandidateConfirmationOutcome(
+                disposition="BLOCKED", reasons=("RISK_HANDOFF_UNAVAILABLE",)
+            )
+        current_evidence.append(fact.case.model_dump(mode="python"))
+    if any(
+        _current_evidence_expired(value, command.revalidation.cutoff_at, now)
+        for value in current_evidence
+    ):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("CURRENT_EVIDENCE_EXPIRED",)
+        )
+    return outcome
+
+
+def _current_evidence_expired(value: Any, cutoff: datetime, now: datetime) -> bool:
+    if isinstance(value, dict):
+        if (
+            value.get("cutoff_at") == cutoff
+            and isinstance(value.get("expires_at"), datetime)
+            and value["expires_at"] < now
+        ):
+            return True
+        return any(_current_evidence_expired(item, cutoff, now) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        return any(_current_evidence_expired(item, cutoff, now) for item in value)
+    return False
+
+
+def _entry_window_is_open(plan: CandidateAllocationOutcome, now: datetime) -> bool:
+    if plan.correlations is None:
+        return False
+    for row in plan.rows:
+        dates = row.candidate.valid_market_dates
+        start = (
+            market_session_close_on(dates[0], plan.correlations.market_calendar_version)
+            if dates
+            else None
+        )
+        end = (
+            market_session_close_on(dates[-1], plan.correlations.market_calendar_version)
+            if dates
+            else None
+        )
+        if start is None or end is None or not start - timedelta(hours=7) <= now <= end:
+            return False
+    return True

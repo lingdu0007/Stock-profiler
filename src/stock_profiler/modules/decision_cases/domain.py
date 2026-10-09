@@ -1458,6 +1458,7 @@ class FrozenDecisionCase(FrozenContract):
                 "business-object",
                 {
                     "owner": self.access_scope.user_id,
+                    "visibility": self.access_scope.visibility,
                     "portfolio": self.candidate_confirmation.portfolio_id,
                     "idempotency_key": self.candidate_confirmation.idempotency_key,
                     "contract": "candidate-confirmation",
