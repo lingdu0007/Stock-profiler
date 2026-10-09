@@ -155,6 +155,7 @@ def feasible_payload(
     capital_state: str | None = None,
     qualification_valid_through: str = "2042-05-22T15:00:00Z",
     seed_qualification: bool = True,
+    cutoff_at: str | None = None,
 ) -> tuple[dict[str, Any], CandidateReleaseOutcome]:
     from test_candidate_allocation import allocation_payload
 
@@ -162,6 +163,7 @@ def feasible_payload(
     risk = risk_handoff_payload(
         settings,
         normal=True,
+        cutoff_at=cutoff_at,
         account_cash=account_cash,
         open_buy=open_buy,
         expected_purchase_fees=expected_purchase_fees,
@@ -178,7 +180,9 @@ def feasible_payload(
     release.update(
         knowledge_cutoff="2042-05-17T15:00:00Z",
         published_at="2042-05-17T15:01:00Z",
-        valid_market_dates=[f"2042-05-{day}" for day in range(18, 23)],
+        valid_market_dates=[
+            f"2042-05-{day}" for day in range(19 if cutoff_at else 18, 24 if cutoff_at else 23)
+        ],
     )
     release["qualification"].update(
         recorded_at="2042-05-17T14:59:00Z", valid_through=qualification_valid_through
@@ -255,7 +259,7 @@ def feasible_payload(
                 "issuer_id": "fictional-new-issuer",
                 "median_turnover": "100000",
                 "turnover_window_sessions": 20,
-                "evidence": position_evidence("synthetic-market"),
+                "evidence": position_evidence("synthetic-market", cutoff_at=risk["cutoff_at"]),
             }
         ],
         routes=[
@@ -277,21 +281,19 @@ def feasible_payload(
                 "disposal_friction_ratio": "0",
                 "version_id": "synthetic-buy-curve",
                 "rule_version": "synthetic-buy-rule",
-                "evidence": position_evidence("synthetic-route"),
+                "evidence": position_evidence("synthetic-route", cutoff_at=risk["cutoff_at"]),
             }
         ],
         correlations={
             "version_id": "synthetic-return-matrix",
             "market_calendar_version": source.market_calendar_version,
             "return_semantics": "DAILY_ADJUSTED",
-            "market_dates": return_market_dates(
-                "2042-05-17T16:00:00Z", source.market_calendar_version
-            ),
+            "market_dates": return_market_dates(risk["cutoff_at"], source.market_calendar_version),
             "returns": {
                 "fictional-new-issuer": [str((i % 3) - 1) for i in range(120)],
                 "FICTIONAL-ORBITAL-MOSAIC": [str((i % 5) - 2) for i in range(120)],
             },
-            "evidence": position_evidence("synthetic-correlation"),
+            "evidence": position_evidence("synthetic-correlation", cutoff_at=risk["cutoff_at"]),
         },
         commitments=[],
     )
@@ -434,6 +436,55 @@ def assert_allocation_preserves_genuine_release(
         member for member in release.members if member.candidate
     )
     assert plan.candidate_conclusion_version == source_report.report_version_id
+    confirmation_case = deepcopy(payload)
+    allocation_command = confirmation_case.pop("candidate_allocation")
+    confirmation_case["input"].pop("candidate_allocation")
+    confirmation_case["business_identity"] = "synthetic-genuine-release-confirmation"
+    confirmation_version = "candidate-confirmation.1.0.0"
+    confirmation_case["version_bundle"].update(
+        case_contract_version=confirmation_version,
+        host_contract_version=confirmation_version,
+        report_projection_contract_version=confirmation_version,
+    )
+    from stock_profiler.modules.portfolio.confirmation_contracts import CandidateConfirmationCommand
+
+    confirmation_case["candidate_confirmation"] = CandidateConfirmationCommand.model_validate(
+        {
+            "contract_version": "1.0.0",
+            "operation": "SUBMIT",
+            "user_id": source_report.access_scope.user_id,
+            "portfolio_id": risk["portfolio_id"],
+            "candidate_batch_id": plan.candidate_batch_id,
+            "plan_event_id": report.event_id,
+            "plan_id": plan.plan_id,
+            "seen_confirmation_id": None,
+            "idempotency_key": "synthetic-genuine-release",
+            "withdrawal_position_event_id": None,
+            "choices": [
+                {"security_id": row.candidate.security_id, "choice": "ACCEPT"}
+                for row in plan.rows
+                if row.principal > 0
+            ],
+            "revalidation": allocation_command,
+        }
+    ).model_dump(mode="json")
+    confirmation_case["input"]["candidate_confirmation"] = deepcopy(
+        confirmation_case["candidate_confirmation"]
+    )
+    confirmed = run_frozen_decision_case(
+        settings, confirmation_case, clock=GovernanceClock("2042-07-01T16:01:00Z")
+    ).report
+    assert confirmed is not None and confirmed.result.candidate_confirmation is not None
+    assert confirmed.result.candidate_confirmation.disposition == "CONFIRMED", (
+        confirmed.result.candidate_confirmation.reasons
+    )
+    assert confirmed.result.candidate_confirmation.reservations
+    assert (
+        run_frozen_decision_case(
+            settings, confirmation_case, clock=GovernanceClock("2042-07-01T16:01:00Z")
+        ).report
+        == confirmed
+    )
     runtime = initialize_runtime_storage(settings)
     ledger = DecisionLedger(runtime.engine)
     with runtime.engine.connect() as connection:

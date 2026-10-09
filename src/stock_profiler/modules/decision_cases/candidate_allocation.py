@@ -109,11 +109,55 @@ def adjudicate_candidate_allocation(
     connection: Transaction,
     *,
     business_prerequisite_met: bool,
+    exclude_confirmation_plan_id: str | None = None,
 ) -> CandidateAllocationOutcome:
+    assert case.candidate_allocation is not None and case.access_scope is not None
+    latest = {}
+    for fact in ledger.candidate_confirmation_history(
+        connection, case.access_scope, case.candidate_allocation.risk_handoff.portfolio_id
+    ):
+        confirmation = fact.result.candidate_confirmation
+        assert confirmation is not None
+        latest[confirmation.plan_id] = confirmation
+    retained = {
+        row.commitment_id: row
+        for confirmation in latest.values()
+        if confirmation.plan_id != exclude_confirmation_plan_id
+        for row in confirmation.reservations
+    }
+    if any(row.account_id not in case.access_scope.account_ids for row in retained.values()):
+        return CandidateAllocationOutcome(
+            disposition="BLOCKED", reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",)
+        )
+    supplied = {row.commitment_id: row for row in case.candidate_allocation.commitments}
+    if any(
+        identity in supplied and supplied[identity] != row for identity, row in retained.items()
+    ):
+        source = ledger.get_formal_report_for_event(
+            case.candidate_allocation.candidate_event_id, connection
+        )
+        if (
+            source is None
+            or source.access_scope is None
+            or not case.access_scope.same_scope_as(source.access_scope)
+            or source.result.candidate_release is None
+        ):
+            return CandidateAllocationOutcome(
+                disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+            )
+        return _blocked(case, source, "RESERVATION_IDENTITY_CONFLICT")
+    command = case.candidate_allocation.model_copy(
+        update={"commitments": tuple({**supplied, **retained}.values())}
+    )
+    case = case.model_copy(update={"candidate_allocation": command})
     with localcontext(Context(prec=38)):
         try:
             return _adjudicate_candidate_allocation(
-                case, ledger, connection, business_prerequisite_met=business_prerequisite_met
+                case,
+                ledger,
+                connection,
+                business_prerequisite_met=business_prerequisite_met,
+                reservation_ids=frozenset(retained),
             )
         except DecimalException:
             assert case.candidate_allocation is not None and case.access_scope is not None
@@ -183,6 +227,7 @@ def _adjudicate_candidate_allocation(
     connection: Transaction,
     *,
     business_prerequisite_met: bool,
+    reservation_ids: frozenset[str],
 ) -> CandidateAllocationOutcome:
     command, scope = case.candidate_allocation, case.access_scope
     assert command is not None and scope is not None
@@ -200,6 +245,10 @@ def _adjudicate_candidate_allocation(
     candidates = tuple(member for member in release.members if member.candidate)
     securities = {row.security_id: row for row in command.securities}
 
+    if ledger.pending_candidate_confirmations(
+        connection, scope, command.risk_handoff.portfolio_id
+    ) - {case.business_object_id}:
+        return _blocked(case, source, "CONFIRMATION_PENDING_RECONCILIATION")
     if not business_prerequisite_met:
         return _blocked(case, source, "BUSINESS_PREREQUISITE_NOT_MET")
     if command.policy is None:
@@ -358,7 +407,8 @@ def _adjudicate_candidate_allocation(
         ):
             return _blocked(case, source, "BUY_COMMITMENT_PRICE_BASIS_UNKNOWN")
         if commitment.account_id not in account_cash or commitment.evidence.problem_codes(
-            command.cutoff_at, require_current_completeness=True
+            command.cutoff_at,
+            require_current_completeness=commitment.commitment_id not in reservation_ids,
         ):
             return _blocked(case, source, "BUY_COMMITMENT_EVIDENCE_FAILED")
         if commitment.broker_order_id is not None:

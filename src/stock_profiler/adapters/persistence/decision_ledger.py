@@ -63,6 +63,7 @@ from stock_profiler.modules.position_management.contracts import (
     AccountCashState,
     AuthoritativeLedgerEntry,
     PositionReconciliationOutcome,
+    ReconciledPositionSnapshot,
 )
 from stock_profiler.modules.position_management.history import (
     authoritative_cash_history,
@@ -457,6 +458,83 @@ class DecisionLedger:
             if fact.case.access_scope is not None
             and fact.case.access_scope.same_scope_as(access_scope)
             and fact.case.candidate_release is not None
+        )
+
+    def position_snapshot_is_latest(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        snapshot: ReconciledPositionSnapshot,
+    ) -> bool:
+        positions = [
+            (fact, position)
+            for fact in self._event_facts(connection, "current position history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and set(fact.case.access_scope.account_ids).intersection(access_scope.account_ids)
+            and (
+                position := fact.result.position
+                or (fact.result.liquidity.position_snapshot if fact.result.liquidity else None)
+            )
+            is not None
+        ]
+        if not positions:
+            return False
+        latest_fact, latest = max(
+            enumerate(positions), key=lambda item: (item[1][1].snapshot.cutoff_at, item[0])
+        )[1]
+        return (
+            latest_fact.corrects_event_id is None
+            and latest.disposition == "RECONCILED"
+            and latest_fact.case.access_scope is not None
+            and latest_fact.case.access_scope.same_scope_as(access_scope)
+            and latest.snapshot == snapshot
+        )
+
+    def pending_candidate_confirmations(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> frozenset[str]:
+        pending = set()
+        for identity in connection.execute(
+            select(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id)
+        ).scalars():
+            mapping = self.get_business_object_mapping(identity, connection)
+            if mapping is None or mapping.case is None:
+                continue
+            case = mapping.case
+            if (
+                case.access_scope is None
+                or case.candidate_confirmation is None
+                or case.access_scope.user_id != access_scope.user_id
+                or case.access_scope.visibility != access_scope.visibility
+                or case.candidate_confirmation.portfolio_id != portfolio_id
+                or self.get_original_decision_event(identity, connection) is not None
+            ):
+                continue
+            stages = self.get_stage_results(identity, connection)
+            commits = [
+                stage
+                for stage in stages
+                if stage.phase in {"BUSINESS_COMMIT", "COMMIT_RECONCILIATION"}
+            ]
+            if commits and commits[-1].status == "UNKNOWN":
+                pending.add(identity)
+        return frozenset(pending)
+
+    def candidate_confirmation_history(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "confirmation history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.candidate_confirmation is not None
+            and fact.case.candidate_confirmation.portfolio_id == portfolio_id
+            and fact.result.candidate_confirmation is not None
+            and fact.result.candidate_confirmation.disposition == "CONFIRMED"
         )
 
     def execution_plan_history(
