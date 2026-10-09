@@ -128,6 +128,9 @@ def adjudicate_candidate_confirmation(
             or not scope.same_scope_as(proof.case.access_scope)
             or proof.result.position is None
             or proof.result.position.disposition != "RECONCILED"
+            or not ledger.position_snapshot_is_latest(
+                connection, scope, proof.result.position.snapshot
+            )
             or not datetime.fromisoformat(prior_fact.committed_at)
             <= proof.result.position.snapshot.cutoff_at
             <= now
@@ -315,15 +318,18 @@ def finalize_candidate_confirmation(
     command, scope = case.candidate_confirmation, case.access_scope
     assert command is not None and scope is not None
     now = datetime.fromisoformat(committed_at)
-    if command.operation == "WITHDRAW":
+    if outcome.released_reservation_ids:
         proof = (
             ledger.get_decision_event(command.withdrawal_position_event_id, connection)
             if command.withdrawal_position_event_id
             else None
         )
-        if outcome.released_reservation_ids and (
+        if (
             proof is None
             or proof.result.position is None
+            or not ledger.position_snapshot_is_latest(
+                connection, scope, proof.result.position.snapshot
+            )
             or proof.result.position.snapshot.snapshot_evidence.problem_codes(
                 now, require_current_completeness=True
             )
@@ -331,6 +337,7 @@ def finalize_candidate_confirmation(
             return CandidateConfirmationOutcome(
                 disposition="BLOCKED", reasons=("ORDER_EXCLUSION_REQUIRED",)
             )
+    if command.operation == "WITHDRAW":
         return outcome
     source = ledger.get_formal_report_for_event(command.plan_event_id, connection)
     assert source is not None and source.result.candidate_allocation is not None

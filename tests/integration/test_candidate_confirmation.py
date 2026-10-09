@@ -292,6 +292,7 @@ def save_withdrawal_proof(
     open_order: bool = False,
     unknown: bool = False,
     cutoff_at: str = "2042-05-19T16:02:00Z",
+    case_identity: str = "withdrawal-proof",
 ) -> str:
     from test_position_state_reconciliation import (
         position_case_payload,
@@ -338,7 +339,7 @@ def save_withdrawal_proof(
         ]
     report = run_frozen_decision_case(
         settings,
-        position_case_payload(settings, "withdrawal-proof", snapshot),
+        position_case_payload(settings, case_identity, snapshot),
         clock=GovernanceClock(snapshot["cutoff_at"]),
     ).report
     assert report is not None
@@ -945,3 +946,37 @@ def test_reservation_stress_friction_is_independent_of_ambient_decimal_context(
         row.disposal_friction == Decimal("9.59")
         for row in report.result.candidate_confirmation.reservations
     )
+
+
+@pytest.mark.parametrize("operation", ["WITHDRAW", "SUBMIT"])
+@pytest.mark.parametrize("unknown", [False, True])
+def test_release_cannot_use_an_older_clean_proof_after_new_order_facts(
+    migrated_settings: Settings, operation: str, unknown: bool
+) -> None:
+    payload = confirmation_payload(migrated_settings)
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert original is not None
+    clean_proof = save_withdrawal_proof(migrated_settings, payload)
+    new_proof = save_withdrawal_proof(
+        migrated_settings,
+        payload,
+        open_order=True,
+        unknown=unknown,
+        case_identity="later-order-proof",
+    )
+    assert new_proof != clean_proof
+    revised = revision_payload(payload, original.event_id, choice="DECLINE")
+    command = revised["candidate_confirmation"]
+    command["operation"] = operation
+    command["withdrawal_position_event_id"] = clean_proof
+    revised["input"]["candidate_confirmation"] = deepcopy(command)
+    report = run_frozen_decision_case(
+        migrated_settings, revised, clock=GovernanceClock("2042-05-19T16:02:00Z")
+    ).report
+    assert report is not None and report.result.candidate_confirmation is not None
+    result = report.result.candidate_confirmation
+    assert result.disposition == "BLOCKED"
+    assert result.released_reservation_ids == ()
+    assert result.reservations == ()
