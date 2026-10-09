@@ -2044,6 +2044,118 @@
         "title": "CandidateBatchDelivery",
         "type": "object"
       },
+      "CandidateChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "enum": ["ACCEPT", "DECLINE", "DEFER"],
+            "title": "Choice",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          }
+        },
+        "required": ["security_id", "choice"],
+        "title": "CandidateChoice",
+        "type": "object"
+      },
+      "CandidateConfirmationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "choices": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateChoice"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "confirmation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Id"
+          },
+          "disposition": {
+            "enum": ["CONFIRMED", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "portfolio_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Id"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "released_reservation_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Released Reservation Ids",
+            "type": "array"
+          },
+          "reservations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationCommitment"
+            },
+            "title": "Reservations",
+            "type": "array"
+          },
+          "supersedes_confirmation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Confirmation Id"
+          }
+        },
+        "required": ["disposition", "reasons"],
+        "title": "CandidateConfirmationOutcome",
+        "type": "object"
+      },
       "CandidateDetailView": {
         "additionalProperties": false,
         "properties": {
@@ -5454,6 +5566,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CandidateAllocationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidate_confirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateConfirmationOutcome"
               },
               {
                 "type": "null"
@@ -13033,6 +13155,7 @@
               "LIQUIDITY_PROTECTION",
               "CANDIDATE_RELEASE",
               "PORTFOLIO_STRESS",
+              "CANDIDATE_CONFIRMATION",
               "CANDIDATE_ALLOCATION",
               "EXECUTION_PLAN",
               "ADJUDICATION_LIFECYCLE",

@@ -312,7 +312,16 @@ class ResultDelivery:
             report = self._read_report(connection, report_id, principal, "USER_FACT")
             if report is None or principal is None:
                 return None
-            if report.result.candidate_release is not None and request.kind != "VIEWED":
+            if (
+                any(
+                    (
+                        report.result.candidate_release,
+                        report.result.candidate_allocation,
+                        report.result.candidate_confirmation,
+                    )
+                )
+                and request.kind != "VIEWED"
+            ):
                 self._deny(connection, report_id, principal, "CANDIDATE_READ_ONLY", "USER_FACT")
                 return None
             fact_id = (

@@ -978,6 +978,55 @@ export interface components {
             /** Valid Through */
             valid_through: string | null;
         };
+        /** CandidateChoice */
+        CandidateChoice: {
+            /**
+             * Choice
+             * @enum {string}
+             */
+            choice: "ACCEPT" | "DECLINE" | "DEFER";
+            /** Security Id */
+            security_id: string;
+        };
+        /** CandidateConfirmationOutcome */
+        CandidateConfirmationOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Choices
+             * @default []
+             */
+            choices: components["schemas"]["CandidateChoice"][];
+            /** Confirmation Id */
+            confirmation_id?: string | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "CONFIRMED" | "BLOCKED";
+            /** Plan Id */
+            plan_id?: string | null;
+            /** Portfolio Id */
+            portfolio_id?: string | null;
+            /** Reasons */
+            reasons: string[];
+            /**
+             * Released Reservation Ids
+             * @default []
+             */
+            released_reservation_ids: string[];
+            /**
+             * Reservations
+             * @default []
+             */
+            reservations: components["schemas"]["AllocationCommitment"][];
+            /** Supersedes Confirmation Id */
+            supersedes_confirmation_id?: string | null;
+        };
         /** CandidateDetailView */
         CandidateDetailView: {
             /** Detail Id */
@@ -2368,6 +2417,7 @@ export interface components {
          */
         ExternalResult: {
             candidate_allocation?: components["schemas"]["CandidateAllocationOutcome"] | null;
+            candidate_confirmation?: components["schemas"]["CandidateConfirmationOutcome"] | null;
             candidate_release?: components["schemas"]["CandidateReleaseOutcome"] | null;
             concentration?: components["schemas"]["ConcentrationOutcome"] | null;
             correction_evidence?: components["schemas"]["CorrectionEvidence"] | null;
@@ -5209,7 +5259,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

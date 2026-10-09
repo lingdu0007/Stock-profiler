@@ -256,6 +256,14 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope, plan_event_id: str
     ) -> bool: ...
 
+    def pending_candidate_confirmations(
+        self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> frozenset[str]: ...
+
+    def candidate_confirmation_history(
+        self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def execution_plan_history(
         self, connection: Transaction, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]: ...

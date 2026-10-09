@@ -459,6 +459,51 @@ class DecisionLedger:
             and fact.case.candidate_release is not None
         )
 
+    def pending_candidate_confirmations(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> frozenset[str]:
+        pending = set()
+        for identity in connection.execute(
+            select(DECISION_CASE_BUSINESS_OBJECTS.c.business_object_id)
+        ).scalars():
+            mapping = self.get_business_object_mapping(identity, connection)
+            if mapping is None or mapping.case is None:
+                continue
+            case = mapping.case
+            if (
+                case.access_scope is None
+                or case.candidate_confirmation is None
+                or case.access_scope.user_id != access_scope.user_id
+                or case.access_scope.visibility != access_scope.visibility
+                or case.candidate_confirmation.portfolio_id != portfolio_id
+                or self.get_original_decision_event(identity, connection) is not None
+            ):
+                continue
+            stages = self.get_stage_results(identity, connection)
+            commits = [
+                stage
+                for stage in stages
+                if stage.phase in {"BUSINESS_COMMIT", "COMMIT_RECONCILIATION"}
+            ]
+            if commits and commits[-1].status == "UNKNOWN":
+                pending.add(identity)
+        return frozenset(pending)
+
+    def candidate_confirmation_history(
+        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "confirmation history unavailable")
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.candidate_confirmation is not None
+            and fact.case.candidate_confirmation.portfolio_id == portfolio_id
+            and fact.result.candidate_confirmation is not None
+            and fact.result.candidate_confirmation.disposition == "CONFIRMED"
+        )
+
     def execution_plan_history(
         self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
     ) -> tuple[DecisionEventFact, ...]:

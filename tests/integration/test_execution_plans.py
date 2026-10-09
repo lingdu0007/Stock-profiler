@@ -237,7 +237,9 @@ def risk_handoff_payload(
             account["account_equity"] = "5000"
     concentration_report = save(concentration)
     assert concentration_report.result.concentration is not None
-    assert concentration_report.result.concentration.disposition == "ASSESSED"
+    assert concentration_report.result.concentration.disposition == "ASSESSED", (
+        concentration_report.result.concentration.reasons
+    )
     position_report = save(position_case_payload(settings, "plan-position", snapshot))
     refs = {"concentration": concentration_report.event_id}
     for name, version, command in (
