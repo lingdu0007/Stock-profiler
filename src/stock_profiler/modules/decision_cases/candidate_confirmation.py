@@ -81,6 +81,12 @@ def adjudicate_candidate_confirmation(
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("PLAN_IDENTITY_CONFLICT",)
         )
+    if command.operation in {"SUBMIT", "REVIEW"} and _allocation_inputs_changed(
+        case, ledger, connection
+    ):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)
+        )
     now = datetime.fromisoformat(ledger.observed_at())
     if command.revalidation.cutoff_at > now:
         return CandidateConfirmationOutcome(
@@ -354,6 +360,31 @@ def _structured_rows(plan: CandidateAllocationOutcome) -> tuple[dict[str, Any], 
     )
 
 
+def _allocation_inputs_changed(
+    case: FrozenDecisionCase,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+) -> bool:
+    """An uncommitted retry must not create facts from superseded frozen inputs."""
+    command, scope = case.candidate_confirmation, case.access_scope
+    assert command is not None and scope is not None
+    latest = next(
+        (
+            fact
+            for fact in reversed(ledger.candidate_allocation_history(connection, scope))
+            if fact.case.candidate_allocation is not None
+            and fact.case.candidate_allocation.candidate_event_id
+            == command.revalidation.candidate_event_id
+        ),
+        None,
+    )
+    return (
+        latest is not None
+        and latest.decision_event_id != command.plan_event_id
+        and latest.case.candidate_allocation != command.revalidation
+    )
+
+
 def finalize_candidate_confirmation(
     case: FrozenDecisionCase,
     outcome: CandidateConfirmationOutcome,
@@ -389,6 +420,10 @@ def finalize_candidate_confirmation(
             )
     if command.operation == "WITHDRAW":
         return outcome
+    if _allocation_inputs_changed(case, ledger, connection):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)
+        )
     source = ledger.get_formal_report_for_event(command.plan_event_id, connection)
     assert source is not None and source.result.candidate_allocation is not None
     plan = source.result.candidate_allocation

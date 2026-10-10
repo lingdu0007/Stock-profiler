@@ -70,6 +70,11 @@ guards remain authoritative across sessions and devices. No command payload is
 persisted in browser storage. An application-level memory owner retains unresolved
 requests across failed refreshes and route navigation. Failed refreshes withdraw current presentation, and
 the local deadline disables new entry actions at the original saved expiry.
+An original-key retry whose business event has not committed rechecks the latest
+saved allocation inputs at adjudication and immediately before commit, including
+when a successful phase result is cached. Changed prices or policy inputs produce
+an `ALLOCATION_INPUT_VERSION_CONFLICT` report without reservations. An event that
+already committed continues to replay its original report exactly.
 
 User execution declarations are explicitly pending reconciliation. Read-only
 execution reports separately display authoritative orders, fills, attribution,

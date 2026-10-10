@@ -283,10 +283,12 @@ def test_changed_policy_review_permanently_stops_new_actions_on_the_old_plan(
 
 
 @pytest.mark.parametrize("fault", ["before", "after"])
+@pytest.mark.parametrize("change", [None, "price", "policy"])
 def test_workspace_submission_recovers_the_original_commit_without_a_new_reservation(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
     fault: str,
+    change: str | None,
 ) -> None:
     from typing import Any
 
@@ -327,6 +329,31 @@ def test_workspace_submission_recovers_the_original_commit_without_a_new_reserva
         attempt = submit_candidate_command(
             migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:01:00Z")
         )
+    if change is not None:
+        from copy import deepcopy
+
+        from stock_profiler.bootstrap.decision_cases import run_frozen_decision_case
+
+        newer = deepcopy(payload)
+        allocation = newer.pop("candidate_confirmation")["revalidation"]
+        newer["input"].pop("candidate_confirmation")
+        if change == "price":
+            allocation["routes"][0]["price_cap"] = "11"
+        else:
+            allocation["policy"]["entry_target_ratio"] = "0.14"
+        newer["candidate_allocation"] = allocation
+        newer["input"]["candidate_allocation"] = deepcopy(allocation)
+        newer["business_identity"] = "synthetic-workspace:changed-input-during-recovery"
+        for field in (
+            "case_contract_version",
+            "host_contract_version",
+            "report_projection_contract_version",
+        ):
+            newer["version_bundle"][field] = "candidate-allocation.1.0.0"
+        latest = run_frozen_decision_case(
+            migrated_settings, newer, clock=GovernanceClock("2042-05-19T16:01:30Z")
+        ).report
+        assert latest is not None
     recovered = submit_candidate_command(
         migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:02:00Z")
     )
@@ -334,11 +361,17 @@ def test_workspace_submission_recovers_the_original_commit_without_a_new_reserva
     assert (
         recovered.report is not None and recovered.report.result.candidate_confirmation is not None
     )
-    assert [
-        row.principal for row in recovered.report.result.candidate_confirmation.reservations
-    ] == [700, 700]
+    confirmation = recovered.report.result.candidate_confirmation
+    if fault == "before" and change is not None:
+        assert confirmation.disposition == "BLOCKED"
+        assert confirmation.reasons == ("ALLOCATION_INPUT_VERSION_CONFLICT",)
+        assert confirmation.reservations == ()
+    else:
+        assert confirmation.disposition == "CONFIRMED"
+        assert [row.principal for row in confirmation.reservations] == [700, 700]
     final = ResultDelivery.from_settings(migrated_settings).candidate_workspace(principal)
-    assert final is not None and len(final.allocations[0].confirmations) == 1
+    assert final is not None
+    assert final.allocations[0].confirmations == (recovered.report,)
     changed = dict(
         request,
         choices=[
