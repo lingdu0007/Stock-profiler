@@ -255,10 +255,12 @@ def adjudicate_candidate_allocation(
             or original.result.candidate_allocation.candidate_event_id != command.candidate_event_id
         ):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED", reasons=("REPLANNING_SOURCE_UNAVAILABLE",)
             )
         if saved_allocation_inputs_changed(case, ledger, connection):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED",
                 reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",),
                 candidate_event_id=command.candidate_event_id,
@@ -269,6 +271,7 @@ def adjudicate_candidate_allocation(
             original.result.candidate_allocation, datetime.fromisoformat(ledger.observed_at())
         ):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED",
                 reasons=("REPLANNING_WINDOW_CLOSED",),
                 replaces_plan_event_id=command.replaces_plan_event_id,
@@ -311,6 +314,7 @@ def adjudicate_candidate_allocation(
     )
     if any(row.account_id not in case.access_scope.account_ids for row in retained.values()):
         return CandidateAllocationOutcome(
+            contract_version=command.contract_version,
             disposition="BLOCKED", reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",)
         )
     supplied = {row.commitment_id: row for row in case.candidate_allocation.commitments}
@@ -327,6 +331,7 @@ def adjudicate_candidate_allocation(
             or source.result.candidate_release is None
         ):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
             )
         return _blocked(case, source, "RESERVATION_IDENTITY_CONFLICT")
@@ -397,6 +402,7 @@ def adjudicate_candidate_allocation(
                 or source.result.candidate_release is None
             ):
                 return CandidateAllocationOutcome(
+                    contract_version=command.contract_version,
                     disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
                 )
             return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
@@ -467,6 +473,7 @@ def _adjudicate_candidate_allocation(
         or source.result.candidate_release is None
     ):
         return CandidateAllocationOutcome(
+            contract_version=command.contract_version,
             disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
         )
     release = source.result.candidate_release

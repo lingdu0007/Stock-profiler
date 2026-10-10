@@ -88,6 +88,17 @@ def test_missing_scoped_qualification_cannot_open_an_envelope(migrated_settings:
     assert plan.total_principal == 0 and not plan.actionable
 
 
+def test_missing_handoff_retains_the_requested_allocation_contract(migrated_settings: Settings) -> None:
+    payload = beta_payload(migrated_settings)
+    payload["candidate_allocation"]["candidate_event_id"] = "synthetic-unavailable-candidate"
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.disposition == "BLOCKED" and plan.total_principal == 0
+    assert plan.contract_version == "2.0.0"
+
+
 def test_unretained_qualification_identifiers_cannot_authorize(migrated_settings: Settings) -> None:
     from test_scoped_qualification import version
 
