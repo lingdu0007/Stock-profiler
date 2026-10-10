@@ -27,11 +27,16 @@ def execution_payload(
     alternate_account_route: bool = False,
     review_step: bool = True,
     minimum_commission: str = "0",
+    confirmation_case: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Any]:
-    payload = confirmation_payload(
-        settings,
-        alternate_account_route=alternate_account_route,
-        minimum_commission=minimum_commission,
+    payload = (
+        deepcopy(confirmation_case)
+        if confirmation_case is not None
+        else confirmation_payload(
+            settings,
+            alternate_account_route=alternate_account_route,
+            minimum_commission=minimum_commission,
+        )
     )
     for row in payload["candidate_confirmation"]["choices"]:
         row["choice"] = choice
@@ -148,6 +153,7 @@ def broker_payload(
     review_step: bool = True,
     reservation_index: int = 0,
     minimum_commission: str = "0",
+    confirmation_case: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Any]:
     from test_position_state_reconciliation import (
         position_case_payload,
@@ -163,6 +169,7 @@ def broker_payload(
         alternate_account_route=broker_account_id is not None,
         review_step=review_step,
         minimum_commission=minimum_commission,
+        confirmation_case=confirmation_case,
     )
     ledger = DecisionLedger(initialize_runtime_storage(settings).engine)
     with ledger.serialize_case_execution() as connection:

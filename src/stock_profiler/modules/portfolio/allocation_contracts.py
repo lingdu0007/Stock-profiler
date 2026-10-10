@@ -14,6 +14,10 @@ from stock_profiler.modules.position_management.contracts import (
     ReconciledPositionSnapshot,
 )
 from stock_profiler.modules.position_management.execution_contracts import ExecutionPlanCommand
+from stock_profiler.modules.qualification.beta_contracts import (
+    BetaEnvelopeCommand,
+    BetaEnvelopeOutcome,
+)
 
 
 class AllocationPolicy(PositionContract):
@@ -111,7 +115,8 @@ class AllocationCorrelations(PositionContract):
 
 
 class CandidateAllocationCommand(PositionContract):
-    contract_version: Literal["1.0.0"]
+    contract_version: Literal["1.0.0", "2.0.0"]
+    beta: BetaEnvelopeCommand | None = Field(default=None, exclude_if=lambda v: v is None)
     operation: Literal["CANDIDATE_ALLOCATION"]
     replaces_plan_event_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
     replanning_reason: Literal["FACTS_CHANGED", "POLICY_CHANGED", "USER_COUNTERPROPOSAL"] | None = (
@@ -128,6 +133,8 @@ class CandidateAllocationCommand(PositionContract):
 
     @model_validator(mode="after")
     def distinct_inputs(self) -> "CandidateAllocationCommand":
+        if (self.contract_version == "2.0.0") != (self.beta is not None):
+            raise ValueError("the envelope requires the version 2 allocation contract")
         if (self.replaces_plan_event_id is None) != (self.replanning_reason is None):
             raise ValueError("replanning requires the original plan and trigger reason")
         if self.cutoff_at != self.risk_handoff.cutoff_at:
@@ -201,7 +208,8 @@ class CandidateAllocationRow(PositionContract):
 
 
 class CandidateAllocationOutcome(PositionContract):
-    contract_version: Literal["1.0.0"] = "1.0.0"
+    beta: BetaEnvelopeOutcome | None = Field(default=None, exclude_if=lambda v: v is None)
+    contract_version: Literal["1.0.0", "2.0.0"] = "1.0.0"
     disposition: Literal["BLOCKED", "PLANNED", "AWAITING_PRICE_CAP"]
     reasons: tuple[str, ...]
     rows: tuple[CandidateAllocationRow, ...] = ()

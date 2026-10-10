@@ -783,6 +783,79 @@ export interface components {
             /** Substitute Basis Digest */
             substitute_basis_digest: string;
         };
+        /** BetaEnvelopeOutcome */
+        BetaEnvelopeOutcome: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /** Activation Id */
+            activation_id: string;
+            /** Capacity */
+            capacity: string;
+            /** Committed Exposure */
+            committed_exposure: string;
+            /**
+             * Evidence Scope
+             * @default D0_SYNTHETIC_CONTRACT_ONLY
+             * @constant
+             */
+            evidence_scope: "D0_SYNTHETIC_CONTRACT_ONLY";
+            /** Net Liquidation Equity */
+            net_liquidation_equity: string;
+            /** Normal Feasible Capacity */
+            normal_feasible_capacity: string;
+            operations?: components["schemas"]["BetaOperations"] | null;
+            /**
+             * Permission Envelope
+             * @enum {string}
+             */
+            permission_envelope: "INITIAL" | "EXPANDED";
+            /** Qualification Decision Ids */
+            qualification_decision_ids: string[];
+            /** Ratio */
+            ratio: string;
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+        };
+        /** BetaMetric */
+        BetaMetric: {
+            /** Completed */
+            completed: number;
+            /** Rate */
+            rate: string | null;
+            /** Required */
+            required: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASSED" | "FAILED" | "NOT_APPLICABLE";
+        };
+        /** BetaOperations */
+        BetaOperations: {
+            /** Consecutive Core Failure */
+            consecutive_core_failure: boolean;
+            /** Metrics */
+            metrics: {
+                [key: string]: components["schemas"]["BetaMetric"];
+            };
+            /** Missing Months */
+            missing_months: string[];
+            /** Passed */
+            passed: boolean;
+            /** Plan Months */
+            plan_months: string[];
+            /** Safety Failures */
+            safety_failures: string[];
+            /** Window Complete */
+            window_complete: boolean;
+        };
         /** BrokerExecutionOrder */
         BrokerExecutionOrder: {
             /** Account Id */
@@ -1005,6 +1078,7 @@ export interface components {
              * @constant
              */
             actionable: false;
+            beta?: components["schemas"]["BetaEnvelopeOutcome"] | null;
             /** Candidate Batch Id */
             candidate_batch_id?: string | null;
             /** Candidate Conclusion Version */
@@ -1024,9 +1098,9 @@ export interface components {
             /**
              * Contract Version
              * @default 1.0.0
-             * @constant
+             * @enum {string}
              */
-            contract_version: "1.0.0";
+            contract_version: "1.0.0" | "2.0.0";
             correlations?: components["schemas"]["AllocationCorrelations"] | null;
             /**
              * Discrete Objectives

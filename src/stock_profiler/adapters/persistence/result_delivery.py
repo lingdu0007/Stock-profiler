@@ -47,6 +47,7 @@ from stock_profiler.modules.delivery.monitoring_workspace import (
     project_workspace,
 )
 from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
+from stock_profiler.modules.qualification.beta import envelope_decision, qualification_reasons
 
 
 class ResultDelivery:
@@ -127,6 +128,33 @@ class ResultDelivery:
                 if (event := self._ledger.get_decision_event(report.event_id, connection))
                 is not None
             )
+            plan_stops = {}
+            for source in sources:
+                command = source.case.candidate_allocation
+                scope = source.case.access_scope
+                if command is None or command.beta is None or scope is None:
+                    continue
+                stops = qualification_reasons(
+                    command.beta,
+                    self._ledger.governance_history(connection, scope),
+                    workspace.observed_at,
+                    evidence_cutoff=command.cutoff_at,
+                )
+                envelope, observation_reasons, _, enabled = envelope_decision(
+                    command.beta,
+                    workspace.observed_at,
+                    self._ledger.governance_history(connection, scope),
+                    evidence_cutoff=command.cutoff_at,
+                )
+                saved = source.report.result.candidate_allocation
+                if (
+                    not enabled
+                    or saved is None
+                    or saved.beta is None
+                    or saved.beta.permission_envelope != envelope
+                ):
+                    stops += observation_reasons or ("BETA_PERMISSION_CHANGED",)
+                plan_stops[source.report.event_id] = stops
             return workspace.model_copy(
                 update={
                     "allocations": project_allocations(
@@ -136,6 +164,7 @@ class ResultDelivery:
                             item.event_id: item.status_reasons if item.status != "CURRENT" else ()
                             for item in workspace.releases
                         },
+                        plan_stops,
                     ),
                     "commands_permitted": principal is not None
                     and "CANDIDATE_COMMAND" in principal.permissions,

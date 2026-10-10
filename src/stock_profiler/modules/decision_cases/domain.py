@@ -127,6 +127,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "8.2.0",
         "drawdown.1.0.0",
         "candidate-allocation.1.0.0",
+        "candidate-allocation.2.0.0",
         "candidate-confirmation.1.0.0",
         "candidate-execution.1.0.0",
         "execution.1.0.0",
@@ -158,6 +159,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("8.1.0", "8.1.0"),
         ("8.2.0", "8.2.0"),
         ("candidate-allocation.1.0.0", "candidate-allocation.1.0.0"),
+        ("candidate-allocation.2.0.0", "candidate-allocation.2.0.0"),
         ("candidate-confirmation.1.0.0", "candidate-confirmation.1.0.0"),
         ("candidate-execution.1.0.0", "candidate-execution.1.0.0"),
         ("execution.1.0.0", "execution.1.0.0"),
@@ -1092,15 +1094,18 @@ class FrozenDecisionCase(FrozenContract):
             != self.candidate_confirmation.model_dump(mode="json")
         ):
             raise ValueError("candidate confirmation must bind frozen input and cutoff")
-        allocation_governed = (
-            self.version_bundle.case_contract_version == "candidate-allocation.1.0.0"
-        )
+        allocation_governed = self.version_bundle.case_contract_version in {
+            "candidate-allocation.1.0.0",
+            "candidate-allocation.2.0.0",
+        }
         if allocation_governed != (
             self.candidate_allocation is not None
         ) or allocation_governed != ("candidate_allocation" in self.input):
             raise ValueError("candidate allocation requires its own frozen contract")
         if self.candidate_allocation is not None and (
-            self.candidate_allocation.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            self.version_bundle.case_contract_version
+            != f"candidate-allocation.{self.candidate_allocation.contract_version}"
+            or self.candidate_allocation.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
             or self.input.get("candidate_allocation")
             != self.candidate_allocation.model_dump(mode="json")
         ):
