@@ -1440,6 +1440,188 @@
         "title": "BasisSubstitutionCheck",
         "type": "object"
       },
+      "BetaEnvelopeOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "activation_id": {
+            "title": "Activation Id",
+            "type": "string"
+          },
+          "capacity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Capacity",
+            "type": "string"
+          },
+          "committed_exposure": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Exposure",
+            "type": "string"
+          },
+          "evidence_scope": {
+            "const": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "default": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "title": "Evidence Scope",
+            "type": "string"
+          },
+          "net_liquidation_equity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Liquidation Equity",
+            "type": "string"
+          },
+          "normal_feasible_capacity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Normal Feasible Capacity",
+            "type": "string"
+          },
+          "operations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BetaOperations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permission_envelope": {
+            "enum": ["INITIAL", "EXPANDED"],
+            "title": "Permission Envelope",
+            "type": "string"
+          },
+          "qualification_decision_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Qualification Decision Ids",
+            "type": "array"
+          },
+          "ratio": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ratio",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "activation_id",
+          "permission_envelope",
+          "ratio",
+          "net_liquidation_equity",
+          "normal_feasible_capacity",
+          "committed_exposure",
+          "capacity",
+          "qualification_decision_ids"
+        ],
+        "title": "BetaEnvelopeOutcome",
+        "type": "object"
+      },
+      "BetaMetric": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "required": {
+            "title": "Required",
+            "type": "integer"
+          },
+          "status": {
+            "enum": ["PASSED", "FAILED", "NOT_APPLICABLE"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["required", "completed", "rate", "status"],
+        "title": "BetaMetric",
+        "type": "object"
+      },
+      "BetaOperations": {
+        "additionalProperties": false,
+        "properties": {
+          "consecutive_core_failure": {
+            "title": "Consecutive Core Failure",
+            "type": "boolean"
+          },
+          "daily_window_complete": {
+            "default": false,
+            "title": "Daily Window Complete",
+            "type": "boolean"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BetaMetric"
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "missing_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Months",
+            "type": "array"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "plan_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Plan Months",
+            "type": "array"
+          },
+          "safety_failures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Safety Failures",
+            "type": "array"
+          },
+          "window_complete": {
+            "title": "Window Complete",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plan_months",
+          "missing_months",
+          "window_complete",
+          "metrics",
+          "consecutive_core_failure",
+          "safety_failures",
+          "passed"
+        ],
+        "title": "BetaOperations",
+        "type": "object"
+      },
       "BrokerExecutionOrder": {
         "additionalProperties": false,
         "properties": {
@@ -2004,6 +2186,16 @@
             "title": "Actionable",
             "type": "boolean"
           },
+          "beta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BetaEnvelopeOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "candidate_batch_id": {
             "anyOf": [
               {
@@ -2054,8 +2246,8 @@
             "type": "array"
           },
           "contract_version": {
-            "const": "1.0.0",
             "default": "1.0.0",
+            "enum": ["1.0.0", "2.0.0"],
             "title": "Contract Version",
             "type": "string"
           },

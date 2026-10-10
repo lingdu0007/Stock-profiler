@@ -16,6 +16,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS as USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.domain import (
     FormalReport,
     FrozenDecisionCase,
@@ -127,6 +128,20 @@ class ResultDelivery:
                 if (event := self._ledger.get_decision_event(report.event_id, connection))
                 is not None
             )
+            plan_stops = {}
+            for source in sources:
+                command = source.case.candidate_allocation
+                scope = source.case.access_scope
+                if command is None or command.beta is None or scope is None:
+                    continue
+                saved = source.report.result.candidate_allocation
+                plan_stops[source.report.event_id] = saved_beta_permission_reasons(
+                    source.case,
+                    saved.beta if saved else None,
+                    self._ledger,
+                    connection,
+                    workspace.observed_at,
+                )
             return workspace.model_copy(
                 update={
                     "allocations": project_allocations(
@@ -136,6 +151,7 @@ class ResultDelivery:
                             item.event_id: item.status_reasons if item.status != "CURRENT" else ()
                             for item in workspace.releases
                         },
+                        plan_stops,
                     ),
                     "commands_permitted": principal is not None
                     and "CANDIDATE_COMMAND" in principal.permissions,

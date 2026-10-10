@@ -1,6 +1,7 @@
 """Host-owned allocation from saved candidates and authoritative risk handoffs."""
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from decimal import Context, Decimal, DecimalException, localcontext
 
@@ -8,6 +9,7 @@ from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
 from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
@@ -30,12 +32,21 @@ from stock_profiler.modules.portfolio.allocation_solver import (
     discrete_principal_ceiling,
 )
 from stock_profiler.modules.portfolio.allocation_window import entry_window_is_open
+from stock_profiler.modules.portfolio.beta_exposure import retained_acquired_quantity
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+from stock_profiler.modules.position_management.contracts import ReconciledPositionSnapshot
+from stock_profiler.modules.qualification.beta import (
+    envelope_decision,
+    observation_history_reasons,
+    qualification_reasons,
+)
+from stock_profiler.modules.qualification.beta_contracts import BetaEnvelopeOutcome
 
 _REASON_ORDER = (
     "COMPLETE_PORTFOLIO_REQUIRED",
     "ACTIVE_RISK_BUDGET_REQUIRED",
     "NEW_EXPOSURE_BLOCKED",
+    "BETA_CAPACITY_EXHAUSTED",
     "CASH_CAPACITY_EXHAUSTED",
     "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
     "STRESS_CAPACITY_EXHAUSTED",
@@ -84,6 +95,21 @@ def finalize_candidate_allocation(
 ) -> CandidateAllocationOutcome:
     command = case.candidate_allocation
     assert command is not None
+    if outcome.disposition == "PLANNED" and command.beta is not None:
+        assert case.access_scope is not None
+        now = datetime.fromisoformat(committed_at)
+        reasons = saved_beta_permission_reasons(case, outcome.beta, ledger, connection, now)
+        if reasons:
+            source = ledger.get_formal_report_for_event(command.candidate_event_id, connection)
+            assert source is not None
+            blocked = _blocked(case, source, reasons)
+            return blocked.model_copy(
+                update={
+                    "beta": outcome.beta.model_copy(update={"capacity": Decimal(0)})
+                    if outcome.beta is not None
+                    else None
+                }
+            )
     if command.replaces_plan_event_id is None or outcome.disposition != "PLANNED":
         return outcome
     if saved_allocation_inputs_changed(case, ledger, connection):
@@ -157,6 +183,58 @@ def _correlated(left: tuple[Decimal, ...], right: tuple[Decimal, ...], ceiling: 
     return covariance > 0 and covariance**2 > ceiling**2 * left_variance * right_variance
 
 
+def _held_beta_exposure(
+    case: FrozenDecisionCase,
+    snapshot: ReconciledPositionSnapshot,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+) -> Decimal:
+    """Carry acquired exposure across batches and confirmation successors.
+
+    Broker fills establish acquisition; fresh reconciled quantities and prices
+    establish remaining exposure. Relabelling an activation cannot erase either.
+    """
+    assert case.access_scope is not None and case.candidate_allocation is not None
+    portfolio = case.candidate_allocation.risk_handoff.portfolio_id
+    plans = {
+        fact.result.candidate_allocation.plan_id
+        for fact in ledger.candidate_allocation_history(connection, case.access_scope)
+        if fact.result.candidate_allocation is not None
+        and fact.result.candidate_allocation.beta is not None
+        and fact.result.candidate_allocation.risk_handoff is not None
+        and fact.result.candidate_allocation.risk_handoff.portfolio_id == portfolio
+    }
+    latest = {}
+    for fact in ledger.candidate_execution_history(connection, case.access_scope, portfolio):
+        execution = fact.result.candidate_execution
+        assert execution is not None
+        if execution.plan_id in plans:
+            latest[execution.plan_id] = execution
+    acquisitions: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(dict)
+    for execution in latest.values():
+        for fill in execution.fills:
+            if fill.reservation_id is not None and fill.classification != "UNKNOWN":
+                key = (fill.account_id, fill.security_id)
+                acquisitions[key][fill.entry_id] = (
+                    acquisitions[key].get(fill.entry_id, Decimal(0)) + fill.quantity
+                )
+    total = Decimal(0)
+    for unit in snapshot.action_units:
+        key = (unit.account_id, unit.security_id)
+        if not acquisitions[key]:
+            continue
+        entries = tuple(
+            entry
+            for entry in snapshot.authoritative_ledger
+            if (entry.account_id, entry.security_id) == key
+        )
+        remaining = retained_acquired_quantity(
+            entries, acquisitions[key], unit.total_quantity or Decimal(0)
+        )
+        total += remaining * (unit.market_price or Decimal(0))
+    return total
+
+
 def adjudicate_candidate_allocation(
     case: FrozenDecisionCase,
     ledger: DecisionLedger[Transaction],
@@ -177,10 +255,13 @@ def adjudicate_candidate_allocation(
             or original.result.candidate_allocation.candidate_event_id != command.candidate_event_id
         ):
             return CandidateAllocationOutcome(
-                disposition="BLOCKED", reasons=("REPLANNING_SOURCE_UNAVAILABLE",)
+                contract_version=command.contract_version,
+                disposition="BLOCKED",
+                reasons=("REPLANNING_SOURCE_UNAVAILABLE",),
             )
         if saved_allocation_inputs_changed(case, ledger, connection):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED",
                 reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",),
                 candidate_event_id=command.candidate_event_id,
@@ -191,6 +272,7 @@ def adjudicate_candidate_allocation(
             original.result.candidate_allocation, datetime.fromisoformat(ledger.observed_at())
         ):
             return CandidateAllocationOutcome(
+                contract_version=command.contract_version,
                 disposition="BLOCKED",
                 reasons=("REPLANNING_WINDOW_CLOSED",),
                 replaces_plan_event_id=command.replaces_plan_event_id,
@@ -233,7 +315,9 @@ def adjudicate_candidate_allocation(
     )
     if any(row.account_id not in case.access_scope.account_ids for row in retained.values()):
         return CandidateAllocationOutcome(
-            disposition="BLOCKED", reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",)
+            contract_version=command.contract_version,
+            disposition="BLOCKED",
+            reasons=("CONFIRMATION_HISTORY_SCOPE_INCOMPLETE",),
         )
     supplied = {row.commitment_id: row for row in case.candidate_allocation.commitments}
     if any(
@@ -249,7 +333,9 @@ def adjudicate_candidate_allocation(
             or source.result.candidate_release is None
         ):
             return CandidateAllocationOutcome(
-                disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+                contract_version=command.contract_version,
+                disposition="BLOCKED",
+                reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",),
             )
         return _blocked(case, source, "RESERVATION_IDENTITY_CONFLICT")
     command = case.candidate_allocation.model_copy(
@@ -319,7 +405,9 @@ def adjudicate_candidate_allocation(
                 or source.result.candidate_release is None
             ):
                 return CandidateAllocationOutcome(
-                    disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+                    contract_version=command.contract_version,
+                    disposition="BLOCKED",
+                    reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",),
                 )
             return _blocked(case, source, "ALLOCATION_OPTIMUM_UNAVAILABLE")
 
@@ -336,6 +424,7 @@ def _blocked(
     securities = {row.security_id: row for row in command.securities}
     reasons = _ordered_reasons((reason,) if isinstance(reason, str) else reason)
     return CandidateAllocationOutcome(
+        contract_version=command.contract_version,
         disposition="BLOCKED",
         reasons=reasons,
         eligibility_evidence_ids=evidence_ids,
@@ -388,7 +477,9 @@ def _adjudicate_candidate_allocation(
         or source.result.candidate_release is None
     ):
         return CandidateAllocationOutcome(
-            disposition="BLOCKED", reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",)
+            contract_version=command.contract_version,
+            disposition="BLOCKED",
+            reasons=("CANDIDATE_HANDOFF_UNAVAILABLE",),
         )
     release = source.result.candidate_release
     candidates = tuple(member for member in release.members if member.candidate)
@@ -400,6 +491,35 @@ def _adjudicate_candidate_allocation(
         return _blocked(case, source, "CONFIRMATION_PENDING_RECONCILIATION")
     if not business_prerequisite_met:
         return _blocked(case, source, "BUSINESS_PREREQUISITE_NOT_MET")
+    if command.beta is not None:
+        if (
+            scope.visibility != "USER"
+            or command.beta.scope.market_state != release.market_state
+            or command.beta.scope.portfolio_scope != command.risk_handoff.portfolio_id
+            or command.beta.scope.user_id != scope.user_id
+            or set(command.beta.scope.account_ids) != set(scope.account_ids)
+        ):
+            return _blocked(case, source, "BETA_SCOPE_MISMATCH")
+        beta_reasons = qualification_reasons(
+            command.beta,
+            ledger.governance_history(connection, scope),
+            datetime.fromisoformat(ledger.observed_at()),
+            evidence_cutoff=command.cutoff_at,
+        )
+        if beta_reasons:
+            return _blocked(case, source, beta_reasons)
+        history_reasons = observation_history_reasons(
+            command.beta,
+            tuple(
+                fact.case.candidate_allocation.beta
+                for fact in ledger.candidate_allocation_history(connection, scope)
+                if fact.case.candidate_allocation is not None
+                and fact.case.candidate_allocation.beta is not None
+            ),
+            command.cutoff_at,
+        )
+        if history_reasons:
+            return _blocked(case, source, history_reasons)
     if command.policy is None:
         return _blocked(case, source, "ALLOCATION_POLICY_REQUIRED")
     policy = command.policy
@@ -509,6 +629,10 @@ def _adjudicate_candidate_allocation(
     ):
         return _blocked(case, source, "NEW_EXPOSURE_BLOCKED")
     snapshot = liquidity.position_snapshot.snapshot
+    if command.beta is not None and {row.account_type for row in snapshot.cash_states} != {
+        command.beta.scope.account_type
+    }:
+        return _blocked(case, source, "BETA_ACCOUNT_TYPE_MISMATCH")
     equity, cash = liquidity.net_liquidation_equity, liquidity.deployable_purchase_cash
     assert equity is not None and cash is not None
     liquidity_fact = ledger.get_original_decision_event(
@@ -799,7 +923,58 @@ def _adjudicate_candidate_allocation(
         shock=stress.calculation_policy.shock_ratio,
         capacities=tuple(capacities),
     )
+    beta_outcome = None
     try:
+        if command.beta is not None:
+            normal_continuous = continuous_allocation(problem)
+            if awaiting:
+                normal_capacity = sum(normal_continuous.principals, Decimal(0))
+            else:
+                normal_discrete = discrete_allocation(problem, normal_continuous.principals)
+                normal_capacity = sum(
+                    (
+                        quantity * (route.price_cap or Decimal(0))
+                        for route, quantity in zip(routes, normal_discrete.quantities, strict=True)
+                    ),
+                    Decimal(0),
+                )
+            committed_beta = sum(
+                (item.principal for item in command.commitments), Decimal(0)
+            ) + _held_beta_exposure(case, snapshot, ledger, connection)
+            envelope, beta_reasons, operations, enabled = envelope_decision(
+                command.beta,
+                datetime.fromisoformat(ledger.observed_at()),
+                ledger.governance_history(connection, scope),
+                evidence_cutoff=command.cutoff_at,
+            )
+            ratio = (
+                command.beta.policy.expanded_ratio
+                if envelope == "EXPANDED"
+                else command.beta.policy.initial_ratio
+            )
+            beta_capacity = (
+                min(max(Decimal(0), equity * ratio - committed_beta), normal_capacity)
+                if enabled
+                else Decimal(0)
+            )
+            beta_outcome = BetaEnvelopeOutcome(
+                activation_id=command.beta.activation_id,
+                permission_envelope=envelope,
+                reasons=beta_reasons,
+                operations=operations,
+                ratio=ratio,
+                net_liquidation_equity=equity,
+                normal_feasible_capacity=normal_capacity,
+                committed_exposure=committed_beta,
+                capacity=beta_capacity,
+                qualification_decision_ids=tuple(
+                    item.decision_id for item in command.beta.qualification_bindings
+                ),
+            )
+            capacities.append(
+                Capacity(tuple(range(len(candidates))), beta_capacity, "BETA_CAPACITY_EXHAUSTED")
+            )
+            problem = replace(problem, capacities=tuple(capacities))
         continuous_solution = continuous_allocation(problem)
         continuous = continuous_solution.principals
         if not capacity_is_feasible(problem, continuous, continuous_solution.route_principals):
@@ -1039,6 +1214,8 @@ def _adjudicate_candidate_allocation(
         ),
     )
     return CandidateAllocationOutcome(
+        beta=beta_outcome,
+        contract_version=command.contract_version,
         disposition="AWAITING_PRICE_CAP" if awaiting else "PLANNED",
         reasons=("PRICE_CAP_REQUIRED",) if awaiting else (),
         rows=tuple(rows),

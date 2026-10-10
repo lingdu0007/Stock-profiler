@@ -38,6 +38,7 @@ def project_allocations(
     sources: tuple[AllocationWorkspaceSource, ...],
     now: datetime,
     candidate_stops: dict[str, tuple[str, ...]] | None = None,
+    plan_stops: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[AllocationWorkspaceView, ...]:
     views = []
     for source in sources:
@@ -94,6 +95,8 @@ def project_allocations(
             reasons += ("ENTRY_WINDOW_CLOSED",)
         if plan.disposition != "PLANNED":
             reasons += plan.reasons or ("PLAN_NOT_CONFIRMABLE",)
+        if plan_stops is not None:
+            reasons += plan_stops.get(report.event_id, ())
         if candidate_stops is not None:
             reasons += candidate_stops.get(
                 plan.candidate_event_id or "", ("CANDIDATE_UNAVAILABLE",)

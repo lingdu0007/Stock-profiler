@@ -40,6 +40,51 @@ export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
         />
         <Record label="Suggested sequence" value={plan.purchase_sequence.join(", ")} />
       </dl>
+      {plan.beta && (
+        <section aria-label="Saved coverage envelope">
+          <h3>Saved coverage envelope</h3>
+          <p>Synthetic contract evidence; real activation is unavailable.</p>
+          <dl className="record-list">
+            <Record label="Envelope identity" value={plan.beta.activation_id} />
+            <Record label="Permission envelope" value={plan.beta.permission_envelope} />
+            <Record label="Coverage ratio" value={String(plan.beta.ratio)} />
+            <Record
+              label="Portfolio net liquidation equity"
+              value={String(plan.beta.net_liquidation_equity)}
+            />
+            <Record
+              label="Normal feasible capacity"
+              value={String(plan.beta.normal_feasible_capacity)}
+            />
+            <Record
+              label="Coverage already committed"
+              value={String(plan.beta.committed_exposure)}
+            />
+            <Record label="Available coverage" value={String(plan.beta.capacity)} />
+            <Record
+              label="Qualification decisions"
+              value={plan.beta.qualification_decision_ids.join(", ")}
+            />
+          </dl>
+          <p className="stage-reasons">{plan.beta.reasons.join(", ")}</p>
+          {plan.beta.operations && (
+            <div>
+              <p>Planned months: {plan.beta.operations.plan_months.join(", ")}</p>
+              <p>Missing months: {plan.beta.operations.missing_months.join(", ") || "None"}</p>
+              <p>
+                Consecutive core failure: {String(plan.beta.operations.consecutive_core_failure)}
+              </p>
+              <p>Safety failures: {plan.beta.operations.safety_failures.join(", ") || "None"}</p>
+              {Object.entries(plan.beta.operations.metrics).map(([name, metric]) => (
+                <p key={name}>
+                  {name}: {metric.status}; {metric.completed}/{metric.required}; rate{" "}
+                  {metric.rate ?? "Not applicable"}
+                </p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       <p>
         Replanning source: {plan.replaces_plan_event_id ?? "Original plan"} · Trigger:{" "}
         {plan.replanning_reason ?? "None"}

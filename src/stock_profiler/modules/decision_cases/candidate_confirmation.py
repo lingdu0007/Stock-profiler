@@ -8,6 +8,7 @@ from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
 from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.candidate_allocation import (
     adjudicate_candidate_allocation,
 )
@@ -230,6 +231,19 @@ def adjudicate_candidate_confirmation(
                 disposition="BLOCKED", reasons=("RESERVATION_RECONCILIATION_REQUIRED",)
             )
     if command.operation in {"SUBMIT", "REVIEW"}:
+        saved = ledger.get_decision_event(command.plan_event_id, connection)
+        assert saved is not None and saved.case.candidate_allocation is not None
+        original_beta = saved.case.candidate_allocation.beta
+        current_beta = command.revalidation.beta
+        if (original_beta is None) != (current_beta is None) or (
+            original_beta is not None
+            and current_beta is not None
+            and original_beta.model_dump(exclude={"observations"})
+            != current_beta.model_dump(exclude={"observations"})
+        ):
+            return CandidateConfirmationOutcome(
+                disposition="BLOCKED", reasons=("BETA_BINDING_CHANGED",)
+            )
         authorization_history = ledger.portfolio_authorization_history(
             connection,
             scope,
@@ -273,6 +287,7 @@ def adjudicate_candidate_confirmation(
         )
         if (
             current.disposition != "PLANNED"
+            or current.beta != plan.beta
             or current.policy != plan.policy
             or current.position_snapshot is None
             or not ledger.position_snapshot_is_latest(connection, scope, current.position_snapshot)
@@ -396,6 +411,14 @@ def finalize_candidate_confirmation(
             )
     if command.operation == "WITHDRAW":
         return outcome
+    if command.revalidation.beta is not None:
+        saved = ledger.get_formal_report_for_event(command.plan_event_id, connection)
+        assert saved is not None and saved.result.candidate_allocation is not None
+        reasons = saved_beta_permission_reasons(
+            case, saved.result.candidate_allocation.beta, ledger, connection, now
+        )
+        if reasons:
+            return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=reasons)
     if saved_allocation_inputs_changed(case, ledger, connection):
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)
