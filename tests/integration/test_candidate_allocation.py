@@ -80,7 +80,7 @@ def test_allocation_reaches_issuer_target_and_keeps_the_remainder_as_cash(
             principal=AccessPrincipal(
                 user_id="stock-profiler-single-user",
                 account_ids=("synthetic-account-4017", "synthetic-account-8029"),
-                permissions=("REPORT_READ",),
+                permissions=("REPORT_READ", "CANDIDATE_ALLOCATION"),
             ),
         )
         == report

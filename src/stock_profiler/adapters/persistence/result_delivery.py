@@ -16,13 +16,21 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS as USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock
-from stock_profiler.modules.decision_cases.domain import FormalReport, StageResult
+from stock_profiler.modules.decision_cases.domain import (
+    FormalReport,
+    FrozenDecisionCase,
+    StageResult,
+)
 from stock_profiler.modules.decision_cases.monitoring_confirmation import confirmation_permitted
 from stock_profiler.modules.delivery.access import (
     SINGLE_USER_ID,
     AccessAuditFact,
     AccessPrincipal,
     read_denial,
+)
+from stock_profiler.modules.delivery.allocation_workspace import (
+    AllocationWorkspaceSource,
+    project_allocations,
 )
 from stock_profiler.modules.delivery.candidate_notifications import prepare_candidate_reminder
 from stock_profiler.modules.delivery.candidate_reminder_contracts import (
@@ -56,6 +64,17 @@ class ResultDelivery:
         with self._engine.begin() as connection:
             return self._read_report(connection, report_id, principal)
 
+    def saved_command_case(self, identity: str) -> FrozenDecisionCase | None:
+        return self._ledger.get_frozen_case_by_identity(identity)
+
+    def report_input_case(self, event_id: str) -> FrozenDecisionCase | None:
+        with self._engine.begin() as connection:
+            event = self._ledger.get_decision_event(event_id, connection)
+            return event.case if event is not None else None
+
+    def observed_at(self) -> str:
+        return self._ledger.observed_at()
+
     def monitoring_workspace(self, principal: AccessPrincipal | None) -> MonitoringWorkspace | None:
         with self._engine.begin() as connection:
             reason = read_denial(principal, principal.account_ids if principal is not None else ())
@@ -84,9 +103,43 @@ class ResultDelivery:
             if reason is not None:
                 self._deny(connection, "candidates", principal, reason, "REPORT_READ")
                 return None
-            return project_candidate_workspace(
+            workspace = project_candidate_workspace(
                 self._candidate_sources(connection, principal),
                 datetime.fromisoformat(self._ledger.observed_at()),
+            )
+            reports = (
+                tuple(
+                    report
+                    for identity in self._ledger.candidate_allocation_report_ids(connection)
+                    if (
+                        report := self._read_report(
+                            connection, identity, principal, "CANDIDATE_ALLOCATION"
+                        )
+                    )
+                    is not None
+                )
+                if principal is not None and "CANDIDATE_ALLOCATION" in principal.permissions
+                else ()
+            )
+            sources = tuple(
+                AllocationWorkspaceSource(report=report, case=event.case)
+                for report in reports
+                if (event := self._ledger.get_decision_event(report.event_id, connection))
+                is not None
+            )
+            return workspace.model_copy(
+                update={
+                    "allocations": project_allocations(
+                        sources,
+                        workspace.observed_at,
+                        {
+                            item.event_id: item.status_reasons if item.status != "CURRENT" else ()
+                            for item in workspace.releases
+                        },
+                    ),
+                    "commands_permitted": principal is not None
+                    and "CANDIDATE_COMMAND" in principal.permissions,
+                }
             )
 
     def _candidate_sources(
@@ -272,6 +325,25 @@ class ResultDelivery:
         account_id = account.get("account_id") if isinstance(account, dict) else None
         accounts = (account_id,) if isinstance(account_id, str) else ()
         scope = event.case.access_scope if event is not None else None
+        if report is not None and any(
+            (
+                report.result.candidate_allocation,
+                report.result.candidate_confirmation,
+                report.result.candidate_execution,
+            )
+        ):
+            allocation_denial = read_denial(
+                principal,
+                scope.account_ids if scope is not None else accounts,
+                owner_id=scope.user_id if scope is not None else SINGLE_USER_ID,
+                shadow=scope is not None and scope.visibility == "SHADOW",
+                permission="CANDIDATE_ALLOCATION",
+            )
+            if allocation_denial is not None:
+                self._deny(
+                    connection, report_id, principal, allocation_denial, "CANDIDATE_ALLOCATION"
+                )
+                return None
         reason = read_denial(
             principal,
             scope.account_ids if scope is not None else accounts,

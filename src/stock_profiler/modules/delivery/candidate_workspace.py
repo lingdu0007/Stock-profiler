@@ -17,6 +17,7 @@ from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
 from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
+from stock_profiler.modules.delivery.allocation_workspace import AllocationWorkspaceView
 from stock_profiler.modules.delivery.candidate_reminder_contracts import CandidateReminderRecord
 from stock_profiler.modules.portfolio.market_calendar import (
     synthetic_market_calendar,
@@ -82,6 +83,8 @@ class CandidateWorkspace(CandidateDeliveryContract):
     releases: tuple[CandidateReleaseView, ...] = ()
     current_report_ids: tuple[str, ...] = ()
     details: tuple[CandidateDetailView, ...] = ()
+    allocations: tuple[AllocationWorkspaceView, ...] = ()
+    commands_permitted: bool = False
 
 
 def candidate_detail_id(report_id: str, research_id: str) -> str:

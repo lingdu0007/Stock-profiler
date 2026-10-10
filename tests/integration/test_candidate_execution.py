@@ -1064,7 +1064,7 @@ def test_generic_user_fact_cannot_change_a_candidate_execution_report(
     principal = AccessPrincipal(
         user_id=report.access_scope.user_id,
         account_ids=report.access_scope.account_ids,
-        permissions=("REPORT_READ", "USER_FACT"),
+        permissions=("REPORT_READ", "USER_FACT", "CANDIDATE_ALLOCATION"),
     )
     delivery = ResultDelivery.from_settings(migrated_settings)
     assert (

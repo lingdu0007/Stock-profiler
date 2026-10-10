@@ -399,3 +399,29 @@ a {
   min-height: 40px;
   max-width: 100%;
 }
+
+.allocation-workspace {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.allocation-workspace label {
+  display: grid;
+  gap: 6px;
+  margin-block: 12px;
+  max-width: 100%;
+}
+
+.allocation-workspace select,
+.allocation-workspace input {
+  min-height: 44px;
+  max-width: 100%;
+  width: 100%;
+}
+
+.allocation-workspace button {
+  min-height: 44px;
+  margin: 6px;
+  max-width: 100%;
+  white-space: normal;
+}

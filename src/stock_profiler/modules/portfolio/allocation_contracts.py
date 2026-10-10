@@ -113,6 +113,10 @@ class AllocationCorrelations(PositionContract):
 class CandidateAllocationCommand(PositionContract):
     contract_version: Literal["1.0.0"]
     operation: Literal["CANDIDATE_ALLOCATION"]
+    replaces_plan_event_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    replanning_reason: Literal["FACTS_CHANGED", "POLICY_CHANGED", "USER_COUNTERPROPOSAL"] | None = (
+        Field(default=None, exclude_if=lambda v: v is None)
+    )
     cutoff_at: AwareDatetime
     risk_handoff: ExecutionPlanCommand
     candidate_event_id: str = Field(min_length=1)
@@ -124,6 +128,8 @@ class CandidateAllocationCommand(PositionContract):
 
     @model_validator(mode="after")
     def distinct_inputs(self) -> "CandidateAllocationCommand":
+        if (self.replaces_plan_event_id is None) != (self.replanning_reason is None):
+            raise ValueError("replanning requires the original plan and trigger reason")
         if self.cutoff_at != self.risk_handoff.cutoff_at:
             raise ValueError("allocation and risk cutoff must match")
         for identities in (
@@ -201,6 +207,8 @@ class CandidateAllocationOutcome(PositionContract):
     rows: tuple[CandidateAllocationRow, ...] = ()
     actionable: Literal[False] = False
     plan_id: str | None = None
+    replaces_plan_event_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    replanning_reason: str | None = Field(default=None, exclude_if=lambda v: v is None)
     formed_at: AwareDatetime | None = None
     candidate_event_id: str | None = None
     candidate_batch_id: str | None = None

@@ -934,6 +934,101 @@
         "title": "AllocationSecurity",
         "type": "object"
       },
+      "AllocationWorkspaceView": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation": {
+            "$ref": "#/components/schemas/CandidateAllocationOutcome"
+          },
+          "confirmations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FormalReport"
+            },
+            "title": "Confirmations",
+            "type": "array"
+          },
+          "executions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FormalReport"
+            },
+            "title": "Executions",
+            "type": "array"
+          },
+          "latest_input_report_version_id": {
+            "title": "Latest Input Report Version Id",
+            "type": "string"
+          },
+          "new_actions_permitted": {
+            "title": "New Actions Permitted",
+            "type": "boolean"
+          },
+          "plan_event_id": {
+            "title": "Plan Event Id",
+            "type": "string"
+          },
+          "plan_report": {
+            "$ref": "#/components/schemas/FormalReport"
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "reviews": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FormalReport"
+            },
+            "title": "Reviews",
+            "type": "array"
+          },
+          "stop_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Stop Reasons",
+            "type": "array"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_through": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Through"
+          }
+        },
+        "required": [
+          "plan_event_id",
+          "report_version_id",
+          "plan_report",
+          "allocation",
+          "latest_input_report_version_id",
+          "valid_from",
+          "valid_through",
+          "new_actions_permitted"
+        ],
+        "title": "AllocationWorkspaceView",
+        "type": "object"
+      },
       "AttributedFill": {
         "additionalProperties": false,
         "properties": {
@@ -1485,6 +1580,35 @@
           "evidence"
         ],
         "title": "BrokerExecutionOrder",
+        "type": "object"
+      },
+      "BusinessLifecycle": {
+        "additionalProperties": false,
+        "description": "Expose a lifecycle state only together with the phase that owns it.",
+        "properties": {
+          "owner": {
+            "enum": ["ADJUDICATION", "VALIDITY", "EXECUTION", "COMMIT_RECONCILIATION"],
+            "title": "Owner",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "ADJUDICATION_LIFECYCLE",
+              "VALIDITY_LIFECYCLE",
+              "EXECUTION_LIFECYCLE",
+              "COMMIT_RECONCILIATION"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["PENDING", "EXPIRED", "EXECUTION_BLOCKED", "UNKNOWN"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["owner", "phase", "status"],
+        "title": "BusinessLifecycle",
         "type": "object"
       },
       "CalibratedMember": {
@@ -2051,6 +2175,28 @@
             ],
             "title": "Remaining Cash"
           },
+          "replaces_plan_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Plan Event Id"
+          },
+          "replanning_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replanning Reason"
+          },
           "risk_budget": {
             "anyOf": [
               {
@@ -2392,7 +2538,7 @@
             "title": "Confirmation Id"
           },
           "disposition": {
-            "enum": ["CONFIRMED", "BLOCKED"],
+            "enum": ["CONFIRMED", "REVALIDATED", "BLOCKED"],
             "title": "Disposition",
             "type": "string"
           },
@@ -3314,6 +3460,19 @@
       "CandidateWorkspace": {
         "additionalProperties": false,
         "properties": {
+          "allocations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AllocationWorkspaceView"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "commands_permitted": {
+            "default": false,
+            "title": "Commands Permitted",
+            "type": "boolean"
+          },
           "current_report_ids": {
             "default": [],
             "items": {
@@ -3346,6 +3505,105 @@
         },
         "required": ["observed_at"],
         "title": "CandidateWorkspace",
+        "type": "object"
+      },
+      "CandidateWorkspaceCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CandidateChoice"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "declaration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "input_report_version_id": {
+            "minLength": 1,
+            "title": "Input Report Version Id",
+            "type": "string"
+          },
+          "operation": {
+            "enum": ["CONFIRM", "REVIEW", "REVIEW_STEP", "DECLARE", "REPLAN", "WITHDRAW"],
+            "title": "Operation",
+            "type": "string"
+          },
+          "plan_report_version_id": {
+            "minLength": 1,
+            "title": "Plan Report Version Id",
+            "type": "string"
+          },
+          "seen_confirmation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Confirmation Id"
+          },
+          "seen_execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Execution Id"
+          },
+          "trigger_reason": {
+            "anyOf": [
+              {
+                "enum": ["FACTS_CHANGED", "POLICY_CHANGED", "USER_COUNTERPROPOSAL"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Reason"
+          },
+          "withdrawal_position_report_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawal Position Report Version Id"
+          }
+        },
+        "required": [
+          "operation",
+          "plan_report_version_id",
+          "input_report_version_id",
+          "seen_confirmation_id",
+          "seen_execution_id",
+          "idempotency_key"
+        ],
+        "title": "CandidateWorkspaceCommand",
         "type": "object"
       },
       "CapabilityVersion": {
@@ -4230,6 +4488,105 @@
         },
         "required": ["obligation_id", "amount", "purpose", "latest_usable_at", "target_account_id"],
         "title": "DatedCashObligation",
+        "type": "object"
+      },
+      "DecisionCaseExecution": {
+        "additionalProperties": false,
+        "description": "The three status boundaries the CLI and delivery surface must distinguish.",
+        "properties": {
+          "business_commit_status": {
+            "enum": ["NOT_ATTEMPTED", "FAILED", "COMMITTED", "UNKNOWN"],
+            "title": "Business Commit Status",
+            "type": "string"
+          },
+          "business_lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BusinessLifecycle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "business_object_id": {
+            "title": "Business Object Id",
+            "type": "string"
+          },
+          "business_result_status": {
+            "anyOf": [
+              {
+                "enum": ["SUCCEEDED", "REJECTED", "ABSTAINED", "FAILED"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Result Status"
+          },
+          "decision_event_id": {
+            "title": "Decision Event Id",
+            "type": "string"
+          },
+          "framework_run_id": {
+            "title": "Framework Run Id",
+            "type": "string"
+          },
+          "framework_run_status": {
+            "enum": [
+              "CREATED",
+              "RUNNING",
+              "WAITING",
+              "SUCCEEDED",
+              "REJECTED",
+              "FAILED",
+              "CANCELLED"
+            ],
+            "title": "Framework Run Status",
+            "type": "string"
+          },
+          "publication_status": {
+            "enum": ["PUBLISHED", "FAILED", "CLOSED"],
+            "title": "Publication Status",
+            "type": "string"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormalReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "report_version_id": {
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "stage_results": {
+            "items": {
+              "$ref": "#/components/schemas/StageResult"
+            },
+            "title": "Stage Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "business_object_id",
+          "framework_run_id",
+          "decision_event_id",
+          "report_version_id",
+          "framework_run_status",
+          "business_result_status",
+          "business_lifecycle",
+          "business_commit_status",
+          "publication_status",
+          "report",
+          "stage_results"
+        ],
+        "title": "DecisionCaseExecution",
         "type": "object"
       },
       "DecisionCaseVersionBundle": {
@@ -15660,6 +16017,94 @@
           }
         },
         "summary": "Candidate Workspace"
+      }
+    },
+    "/api/v1/candidates/commands": {
+      "post": {
+        "operationId": "candidate_command_api_v1_candidates_commands_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "__Host-stock_profiler_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "  Host-Stock Profiler Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateWorkspaceCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionCaseExecution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpaqueRequestErrorDto"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Candidate Command"
       }
     },
     "/api/v1/diagnostics/safety-capabilities": {

@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation } from "react-router";
 
 import { ApiResponseError, fetchCandidateWorkspace, type CandidateWorkspace } from "./api/client";
 import { CandidateMemberEvidence } from "./CandidateReleaseEvidence";
+import { AllocationWorkspace } from "./AllocationWorkspace";
 import { ReportRecord as Record } from "./ReportRecord";
 
 type Release = CandidateWorkspace["releases"][number];
@@ -284,6 +285,18 @@ export function CandidatePage() {
           </>
         )
       )}
+      {data?.allocations
+        ?.filter(
+          (view) => !release || view.allocation.candidate_batch_id === release.release.batch_id
+        )
+        .map((view) => (
+          <AllocationWorkspace
+            key={view.plan_event_id}
+            view={view}
+            commandsPermitted={data.commands_permitted ?? false}
+            refresh={() => query.refetch()}
+          />
+        ))}
     </section>
   );
 }

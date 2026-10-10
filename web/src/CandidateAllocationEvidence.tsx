@@ -40,6 +40,50 @@ export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
         />
         <Record label="Suggested sequence" value={plan.purchase_sequence.join(", ")} />
       </dl>
+      <p>
+        Replanning source: {plan.replaces_plan_event_id ?? "Original plan"} · Trigger:{" "}
+        {plan.replanning_reason ?? "None"}
+      </p>
+      {(plan.capacity_checks ?? []).length > 0 && (
+        <div className="table-scroll">
+          <table aria-label="Saved capacity margins">
+            <thead>
+              <tr>
+                <th>Capacity gate</th>
+                <th>Account / securities</th>
+                <th>Already committed</th>
+                <th>Available before</th>
+                <th>Remaining after plan</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.capacity_checks?.map((check) => (
+                <tr key={check.gate_id}>
+                  <td>{check.gate_id}</td>
+                  <td>
+                    {check.account_id ?? "Portfolio"} / {check.security_ids.join(", ")}
+                  </td>
+                  <td>{check.committed_margin}</td>
+                  <td>{check.available_before}</td>
+                  <td>{check.remaining_after_plan}</td>
+                  <td>{check.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p>
+        Position facts cutoff: {plan.position_snapshot?.cutoff_at ?? "Unknown"} · Price / route
+        freshness:{" "}
+        {plan.routes
+          ?.map(
+            (route) =>
+              `${route.account_id}: ${route.evidence.cutoff_at} to ${route.evidence.expires_at ?? "Unknown"}`
+          )
+          .join("; ") || "Unknown"}
+      </p>
       {plan.rows.map((row) => (
         <div
           className="portfolio-subsection"
@@ -70,26 +114,28 @@ export function CandidateAllocationEvidence({ plan }: { plan: Allocation }) {
             </p>
           ))}
           {(row.comparisons ?? []).length > 0 && (
-            <table aria-label={`Allocation priority for ${row.candidate.security_id}`}>
-              <thead>
-                <tr>
-                  <th>Criterion</th>
-                  <th>Selected plan</th>
-                  <th>Plan covering this candidate</th>
-                  <th>Comparison</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(row.comparisons ?? []).map((entry) => (
-                  <tr key={entry.criterion}>
-                    <td>{entry.criterion}</td>
-                    <td>{entry.selected_value.join(", ")}</td>
-                    <td>{entry.alternative_value?.join(", ") ?? "Infeasible"}</td>
-                    <td>{entry.relation}</td>
+            <div className="table-scroll">
+              <table aria-label={`Allocation priority for ${row.candidate.security_id}`}>
+                <thead>
+                  <tr>
+                    <th>Criterion</th>
+                    <th>Selected plan</th>
+                    <th>Plan covering this candidate</th>
+                    <th>Comparison</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(row.comparisons ?? []).map((entry) => (
+                    <tr key={entry.criterion}>
+                      <td>{entry.criterion}</td>
+                      <td>{entry.selected_value.join(", ")}</td>
+                      <td>{entry.alternative_value?.join(", ") ?? "Infeasible"}</td>
+                      <td>{entry.relation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {row.legs.map((leg) => (
             <dl className="record-list" key={leg.route.account_id}>

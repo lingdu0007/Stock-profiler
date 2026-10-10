@@ -1,12 +1,13 @@
 """Host-owned batch confirmation, committed with all reservations in one event."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Context, localcontext
 from typing import Any
 
 from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
+from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
 from stock_profiler.modules.decision_cases.candidate_allocation import (
     adjudicate_candidate_allocation,
 )
@@ -16,8 +17,10 @@ from stock_profiler.modules.portfolio.allocation_contracts import (
     AllocationCommitment,
     CandidateAllocationOutcome,
 )
+from stock_profiler.modules.portfolio.allocation_window import (
+    entry_window_is_open as _entry_window_is_open,
+)
 from stock_profiler.modules.portfolio.confirmation_contracts import CandidateConfirmationOutcome
-from stock_profiler.modules.portfolio.market_calendar import market_session_close_on
 
 
 def adjudicate_candidate_confirmation(
@@ -36,12 +39,29 @@ def adjudicate_candidate_confirmation(
         or not scope.same_scope_as(source.access_scope)
     ):
         return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_UNAVAILABLE",))
+    if command.operation in {"SUBMIT", "REVIEW"} and any(
+        fact.result.candidate_allocation is not None
+        and fact.result.candidate_allocation.disposition == "PLANNED"
+        and fact.result.candidate_allocation.replaces_plan_event_id == command.plan_event_id
+        for fact in ledger.candidate_allocation_history(connection, scope)
+    ):
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_SUPERSEDED",))
+    if command.operation in {"SUBMIT", "REVIEW"} and any(
+        fact.case.candidate_confirmation is not None
+        and fact.case.candidate_confirmation.plan_event_id == command.plan_event_id
+        and fact.result.candidate_confirmation is not None
+        and "PLAN_CHANGED" in fact.result.candidate_confirmation.reasons
+        for fact in ledger.candidate_confirmation_history(
+            connection, scope, command.portfolio_id, include_blocked=True
+        )
+    ):
+        return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_INVALIDATED",))
     if not business_prerequisite_met:
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("BUSINESS_PREREQUISITE_NOT_MET",)
         )
     if (
-        command.operation == "SUBMIT"
+        command.operation in {"SUBMIT", "REVIEW"}
         and ledger.get_correction_event(command.plan_event_id, connection) is not None
     ):
         return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_SUPERSEDED",))
@@ -58,17 +78,22 @@ def adjudicate_candidate_confirmation(
         or command.portfolio_id != command.revalidation.risk_handoff.portfolio_id
         or command.candidate_batch_id != plan.candidate_batch_id
         or command.revalidation.candidate_event_id != plan.candidate_event_id
-        or command.revalidation.policy != plan.policy
     ):
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("PLAN_IDENTITY_CONFLICT",)
+        )
+    if command.operation in {"SUBMIT", "REVIEW"} and saved_allocation_inputs_changed(
+        case, ledger, connection
+    ):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)
         )
     now = datetime.fromisoformat(ledger.observed_at())
     if command.revalidation.cutoff_at > now:
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("REVALIDATION_AFTER_SUBMISSION",)
         )
-    if command.operation == "SUBMIT" and not _entry_window_is_open(plan, now):
+    if command.operation in {"SUBMIT", "REVIEW"} and not _entry_window_is_open(plan, now):
         return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("ENTRY_WINDOW_CLOSED",))
     if ledger.pending_candidate_confirmations(connection, scope, command.portfolio_id) - {
         case.business_object_id
@@ -90,6 +115,23 @@ def adjudicate_candidate_confirmation(
     if command.seen_confirmation_id != (prior.confirmation_id if prior else None):
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("CONFIRMATION_VERSION_CONFLICT",)
+        )
+    execution = next(
+        (
+            fact.result.candidate_execution
+            for fact in reversed(
+                ledger.candidate_execution_history(connection, scope, command.portfolio_id)
+            )
+            if fact.result.candidate_execution is not None
+            and fact.result.candidate_execution.plan_id == plan.plan_id
+        ),
+        None,
+    )
+    if command.seen_execution is not None and command.seen_execution.execution_id != (
+        execution.execution_id if execution else None
+    ):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("EXECUTION_VERSION_CONFLICT",)
         )
     choices = {row.security_id: row.choice for row in command.choices}
     required = {row.candidate.security_id for row in plan.rows if row.principal > 0}
@@ -114,6 +156,13 @@ def adjudicate_candidate_confirmation(
         if choices[reservation.security_id] != "ACCEPT"
     )
     if released:
+        if ledger.pending_candidate_executions(connection, scope, command.portfolio_id) or (
+            execution is not None
+            and (execution.disposition != "RECONCILED" or execution.unresolved_order_keys)
+        ):
+            return CandidateConfirmationOutcome(
+                disposition="BLOCKED", reasons=("EXECUTION_RECONCILIATION_REQUIRED",)
+            )
         assert prior_fact is not None
         proof = (
             ledger.get_decision_event(command.withdrawal_position_event_id, connection)
@@ -180,7 +229,7 @@ def adjudicate_candidate_confirmation(
             return CandidateConfirmationOutcome(
                 disposition="BLOCKED", reasons=("RESERVATION_RECONCILIATION_REQUIRED",)
             )
-    if command.operation == "SUBMIT":
+    if command.operation in {"SUBMIT", "REVIEW"}:
         authorization_history = ledger.portfolio_authorization_history(
             connection,
             scope,
@@ -224,6 +273,7 @@ def adjudicate_candidate_confirmation(
         )
         if (
             current.disposition != "PLANNED"
+            or current.policy != plan.policy
             or current.position_snapshot is None
             or not ledger.position_snapshot_is_latest(connection, scope, current.position_snapshot)
             or _structured_rows(current) != _structured_rows(plan)
@@ -255,6 +305,13 @@ def adjudicate_candidate_confirmation(
             or not plan.risk_budget.effective_at <= now < plan.risk_budget.expires_at
         ):
             return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=("PLAN_CHANGED",))
+    if command.operation == "REVIEW":
+        return CandidateConfirmationOutcome(
+            disposition="REVALIDATED",
+            reasons=(),
+            plan_id=plan.plan_id,
+            portfolio_id=command.portfolio_id,
+        )
     retained = {
         (row.security_id, row.account_id): row for row in (prior.reservations if prior else ())
     }
@@ -313,7 +370,7 @@ def finalize_candidate_confirmation(
     committed_at: str,
 ) -> CandidateConfirmationOutcome:
     """Recheck time-sensitive gates after optimization without another long solve."""
-    if outcome.disposition != "CONFIRMED":
+    if outcome.disposition not in {"CONFIRMED", "REVALIDATED"}:
         return outcome
     command, scope = case.candidate_confirmation, case.access_scope
     assert command is not None and scope is not None
@@ -339,6 +396,10 @@ def finalize_candidate_confirmation(
             )
     if command.operation == "WITHDRAW":
         return outcome
+    if saved_allocation_inputs_changed(case, ledger, connection):
+        return CandidateConfirmationOutcome(
+            disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)
+        )
     source = ledger.get_formal_report_for_event(command.plan_event_id, connection)
     assert source is not None and source.result.candidate_allocation is not None
     plan = source.result.candidate_allocation
@@ -392,23 +453,3 @@ def _current_evidence_expired(value: Any, cutoff: datetime, now: datetime) -> bo
     if isinstance(value, (tuple, list)):
         return any(_current_evidence_expired(item, cutoff, now) for item in value)
     return False
-
-
-def _entry_window_is_open(plan: CandidateAllocationOutcome, now: datetime) -> bool:
-    if plan.correlations is None:
-        return False
-    for row in plan.rows:
-        dates = row.candidate.valid_market_dates
-        start = (
-            market_session_close_on(dates[0], plan.correlations.market_calendar_version)
-            if dates
-            else None
-        )
-        end = (
-            market_session_close_on(dates[-1], plan.correlations.market_calendar_version)
-            if dates
-            else None
-        )
-        if start is None or end is None or not start - timedelta(hours=7) <= now <= end:
-            return False
-    return True

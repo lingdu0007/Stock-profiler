@@ -5,11 +5,13 @@ from decimal import Context, Decimal, DecimalException, localcontext
 
 from stock_profiler.modules.decision_cases.candidate_confirmation import (
     _current_evidence_expired,
-    _entry_window_is_open,
 )
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
 from stock_profiler.modules.portfolio.allocation_contracts import AllocationCommitment
+from stock_profiler.modules.portfolio.allocation_window import (
+    entry_window_is_open as _entry_window_is_open,
+)
 from stock_profiler.modules.portfolio.confirmation_contracts import CandidateConfirmationOutcome
 from stock_profiler.modules.portfolio.execution_contracts import (
     AttributedFill,

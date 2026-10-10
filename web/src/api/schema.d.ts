@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/candidates/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Candidate Command */
+        post: operations["candidate_command_api_v1_candidates_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/diagnostics/safety-capabilities": {
         parameters: {
             query?: never;
@@ -573,6 +590,43 @@ export interface components {
              */
             turnover_window_sessions: 20;
         };
+        /** AllocationWorkspaceView */
+        AllocationWorkspaceView: {
+            allocation: components["schemas"]["CandidateAllocationOutcome"];
+            /**
+             * Confirmations
+             * @default []
+             */
+            confirmations: components["schemas"]["FormalReport"][];
+            /**
+             * Executions
+             * @default []
+             */
+            executions: components["schemas"]["FormalReport"][];
+            /** Latest Input Report Version Id */
+            latest_input_report_version_id: string;
+            /** New Actions Permitted */
+            new_actions_permitted: boolean;
+            /** Plan Event Id */
+            plan_event_id: string;
+            plan_report: components["schemas"]["FormalReport"];
+            /** Report Version Id */
+            report_version_id: string;
+            /**
+             * Reviews
+             * @default []
+             */
+            reviews: components["schemas"]["FormalReport"][];
+            /**
+             * Stop Reasons
+             * @default []
+             */
+            stop_reasons: string[];
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid Through */
+            valid_through: string | null;
+        };
         /** AttributedFill */
         AttributedFill: {
             /** Account Id */
@@ -771,6 +825,27 @@ export interface components {
              * Format: date-time
              */
             submitted_at: string;
+        };
+        /**
+         * BusinessLifecycle
+         * @description Expose a lifecycle state only together with the phase that owns it.
+         */
+        BusinessLifecycle: {
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "ADJUDICATION" | "VALIDITY" | "EXECUTION" | "COMMIT_RECONCILIATION";
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN";
         };
         /** CalibratedMember */
         CalibratedMember: {
@@ -985,6 +1060,10 @@ export interface components {
             reasons: string[];
             /** Remaining Cash */
             remaining_cash?: string | null;
+            /** Replaces Plan Event Id */
+            replaces_plan_event_id?: string | null;
+            /** Replanning Reason */
+            replanning_reason?: string | null;
             risk_budget?: components["schemas"]["PersonalRiskBudget"] | null;
             /** Risk Budget Version Id */
             risk_budget_version_id?: string | null;
@@ -1117,7 +1196,7 @@ export interface components {
              * Disposition
              * @enum {string}
              */
-            disposition: "CONFIRMED" | "BLOCKED";
+            disposition: "CONFIRMED" | "REVALIDATED" | "BLOCKED";
             /** Plan Id */
             plan_id?: string | null;
             /** Portfolio Id */
@@ -1473,6 +1552,16 @@ export interface components {
         /** CandidateWorkspace */
         CandidateWorkspace: {
             /**
+             * Allocations
+             * @default []
+             */
+            allocations: components["schemas"]["AllocationWorkspaceView"][];
+            /**
+             * Commands Permitted
+             * @default false
+             */
+            commands_permitted: boolean;
+            /**
              * Current Report Ids
              * @default []
              */
@@ -1492,6 +1581,34 @@ export interface components {
              * @default []
              */
             releases: components["schemas"]["CandidateReleaseView"][];
+        };
+        /** CandidateWorkspaceCommand */
+        CandidateWorkspaceCommand: {
+            /**
+             * Choices
+             * @default []
+             */
+            choices: components["schemas"]["CandidateChoice"][];
+            declaration?: components["schemas"]["ExecutionDeclaration"] | null;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Input Report Version Id */
+            input_report_version_id: string;
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "CONFIRM" | "REVIEW" | "REVIEW_STEP" | "DECLARE" | "REPLAN" | "WITHDRAW";
+            /** Plan Report Version Id */
+            plan_report_version_id: string;
+            /** Seen Confirmation Id */
+            seen_confirmation_id: string | null;
+            /** Seen Execution Id */
+            seen_execution_id: string | null;
+            /** Trigger Reason */
+            trigger_reason?: ("FACTS_CHANGED" | "POLICY_CHANGED" | "USER_COUNTERPROPOSAL") | null;
+            /** Withdrawal Position Report Version Id */
+            withdrawal_position_report_version_id?: string | null;
         };
         /** CapabilityVersion */
         CapabilityVersion: {
@@ -1864,6 +1981,41 @@ export interface components {
             purpose: string;
             /** Target Account Id */
             target_account_id: string;
+        };
+        /**
+         * DecisionCaseExecution
+         * @description The three status boundaries the CLI and delivery surface must distinguish.
+         */
+        DecisionCaseExecution: {
+            /**
+             * Business Commit Status
+             * @enum {string}
+             */
+            business_commit_status: "NOT_ATTEMPTED" | "FAILED" | "COMMITTED" | "UNKNOWN";
+            business_lifecycle: components["schemas"]["BusinessLifecycle"] | null;
+            /** Business Object Id */
+            business_object_id: string;
+            /** Business Result Status */
+            business_result_status: ("SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED") | null;
+            /** Decision Event Id */
+            decision_event_id: string;
+            /** Framework Run Id */
+            framework_run_id: string;
+            /**
+             * Framework Run Status
+             * @enum {string}
+             */
+            framework_run_status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "FAILED" | "CANCELLED";
+            /**
+             * Publication Status
+             * @enum {string}
+             */
+            publication_status: "PUBLISHED" | "FAILED" | "CLOSED";
+            report: components["schemas"]["FormalReport"] | null;
+            /** Report Version Id */
+            report_version_id: string;
+            /** Stage Results */
+            stage_results: components["schemas"]["StageResult"][];
         };
         /**
          * DecisionCaseVersionBundle
@@ -6363,6 +6515,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CandidateWorkspace"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpaqueRequestErrorDto"];
+                };
+            };
+        };
+    };
+    candidate_command_api_v1_candidates_commands_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                origin?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-stock_profiler_session"?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateWorkspaceCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionCaseExecution"];
                 };
             };
             /** @description Unprocessable Entity */
