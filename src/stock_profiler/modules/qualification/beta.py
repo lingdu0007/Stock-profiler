@@ -109,7 +109,27 @@ def observation_history_reasons(
             if command.observations
             else {}
         )
+        from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+
+        calendar = synthetic_market_calendar(
+            command.observations.market_calendar_version
+            if command.observations
+            else prior.observations.market_calendar_version
+        )
+        daily_window = (
+            {
+                session.closed_at
+                for session in calendar.recent_completed_sessions(
+                    now, command.policy.position_day_count
+                )
+            }
+            if calendar
+            else None
+        )
         for day in prior.observations.days:
+            hard_failure = day.p0p1_missing or day.safety_failures
+            if not hard_failure and daily_window is not None and day.closed_at not in daily_window:
+                continue
             if not (
                 day.p0p1_missing
                 or day.safety_failures

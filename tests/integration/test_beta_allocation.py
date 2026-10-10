@@ -993,6 +993,75 @@ def test_daily_audit_uses_all_twenty_planned_days(migrated_settings: Settings) -
     assert metric.required == 20 and metric.completed == 19 and str(metric.rate) == "0.95"
 
 
+def test_tolerated_daily_failure_can_age_out_without_erasing_its_report(
+    migrated_settings: Settings,
+) -> None:
+    payload = qualified_beta_payload(migrated_settings, cutoff_at="2042-05-19T16:00:00Z")
+    beta = payload["candidate_allocation"]["beta"]
+    beta["observations"] = expansion_observations(payload)
+    beta["observations"]["days"][0]["pipeline_completed"] = False
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    original = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert original is not None and original.result.candidate_allocation is not None
+    assert original.result.candidate_allocation.total_principal == 300
+    from test_candidate_execution import forward_allocation_payload
+    from test_position_state_reconciliation import (
+        position_case_payload,
+        refresh_current_position_evidence,
+    )
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    with ledger.serialize_case_execution() as connection:
+        risk = ledger.get_decision_event(
+            payload["candidate_allocation"]["risk_handoff"]["concentration_event_id"], connection
+        )
+    assert risk is not None and risk.case.concentration is not None
+    snapshot = risk.case.concentration.position_snapshot.model_dump(mode="json")
+    snapshot.update(
+        snapshot_id="synthetic-rolled-window-position", cutoff_at="2042-05-20T16:00:00Z"
+    )
+    refresh_current_position_evidence(snapshot, snapshot["cutoff_at"])
+    proof = run_frozen_decision_case(
+        migrated_settings,
+        position_case_payload(migrated_settings, "rolled-window", snapshot),
+        clock=GovernanceClock(snapshot["cutoff_at"]),
+    ).report
+    assert proof is not None
+    later = forward_allocation_payload(
+        migrated_settings,
+        {
+            "candidate_execution": {
+                "plan_event_id": original.event_id,
+                "position_event_id": proof.event_id,
+                "cutoff_at": snapshot["cutoff_at"],
+            }
+        },
+    )
+    later["candidate_allocation"]["beta"]["observations"] = expansion_observations(later)
+    from synthetic_candidate_allocation import return_market_dates
+
+    correlations = later["candidate_allocation"]["correlations"]
+    correlations["market_dates"] = return_market_dates(
+        snapshot["cutoff_at"], correlations["market_calendar_version"]
+    )
+    later["input"]["candidate_allocation"] = deepcopy(later["candidate_allocation"])
+    updated = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock("2042-05-20T16:01:00Z")
+    ).report
+    assert updated is not None and updated.result.candidate_allocation is not None
+    assert updated.result.candidate_allocation.total_principal == 300, (
+        updated.result.candidate_allocation.reasons,
+        updated.result.candidate_allocation.rows,
+    )
+    with ledger.serialize_case_execution() as connection:
+        retained = ledger.get_formal_report_for_event(original.event_id, connection)
+    assert retained == original
+
+
 def test_month_end_before_activation_is_not_a_clean_beta_month(migrated_settings: Settings) -> None:
     payload = qualified_beta_payload(migrated_settings)
     beta = payload["candidate_allocation"]["beta"]
