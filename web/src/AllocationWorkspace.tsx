@@ -76,7 +76,9 @@ export function AllocationWorkspace({
   );
   const allowed = commandsPermitted && view.new_actions_permitted && open && !busy && !anyPending;
   const canDeclare = commandsPermitted && Boolean(confirmation) && !busy && !anyPending;
-  const reconciliationClosed = !view.stop_reasons.some((reason) => reason.startsWith("EXECUTION_"));
+  const replanningPermitted = view.stop_reasons.every((reason) =>
+    ["PLAN_CHANGED", "PLAN_INVALIDATED", "PRICE_CAP_REQUIRED"].includes(reason)
+  );
   const reviewed =
     review?.identity === identity &&
     review.report.result.candidate_confirmation?.disposition === "REVALIDATED";
@@ -208,7 +210,7 @@ export function AllocationWorkspace({
             </select>
           </label>
           <button
-            disabled={!commandsPermitted || !open || !reconciliationClosed || busy || anyPending}
+            disabled={!commandsPermitted || !open || !replanningPermitted || busy || anyPending}
             onClick={() => command("REPLAN", { trigger_reason: trigger })}
           >
             Replan within original window

@@ -284,11 +284,13 @@ def test_changed_policy_review_permanently_stops_new_actions_on_the_old_plan(
 
 @pytest.mark.parametrize("fault", ["before", "after"])
 @pytest.mark.parametrize("change", [None, "price", "policy"])
-def test_workspace_submission_recovers_the_original_commit_without_a_new_reservation(
+@pytest.mark.parametrize("operation", ["CONFIRM", "REPLAN"])
+def test_workspace_submission_recovers_original_identity_without_stale_new_facts(
     migrated_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
     fault: str,
     change: str | None,
+    operation: str,
 ) -> None:
     from typing import Any
 
@@ -307,14 +309,15 @@ def test_workspace_submission_recovers_the_original_commit_without_a_new_reserva
     )
     workspace = ResultDelivery.from_settings(migrated_settings).candidate_workspace(principal)
     assert workspace is not None
-    request = {
-        "operation": "CONFIRM",
+    request: dict[str, Any] = {
+        "operation": operation,
         "plan_report_version_id": workspace.allocations[0].report_version_id,
         "input_report_version_id": workspace.allocations[0].report_version_id,
         "seen_confirmation_id": None,
         "seen_execution_id": None,
         "idempotency_key": "synthetic-workspace-uncertain-confirm",
-        "choices": payload["candidate_confirmation"]["choices"],
+        "choices": payload["candidate_confirmation"]["choices"] if operation == "CONFIRM" else [],
+        "trigger_reason": "FACTS_CHANGED" if operation == "REPLAN" else None,
     }
     original = DecisionLedger.commit_event
 
@@ -358,26 +361,56 @@ def test_workspace_submission_recovers_the_original_commit_without_a_new_reserva
         migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:02:00Z")
     )
     assert recovered.framework_run_id == attempt.framework_run_id
-    assert (
-        recovered.report is not None and recovered.report.result.candidate_confirmation is not None
-    )
-    confirmation = recovered.report.result.candidate_confirmation
-    if fault == "before" and change is not None:
-        assert confirmation.disposition == "BLOCKED"
-        assert confirmation.reasons == ("ALLOCATION_INPUT_VERSION_CONFLICT",)
-        assert confirmation.reservations == ()
+    assert recovered.report is not None
+    stale = fault == "before" and change is not None
+    if operation == "CONFIRM":
+        confirmation = recovered.report.result.candidate_confirmation
+        assert confirmation is not None
+        if stale:
+            assert confirmation.disposition == "BLOCKED"
+            assert confirmation.reasons == ("ALLOCATION_INPUT_VERSION_CONFLICT",)
+            assert confirmation.reservations == ()
+        else:
+            assert confirmation.disposition == "CONFIRMED"
+            assert [row.principal for row in confirmation.reservations] == [700, 700]
     else:
-        assert confirmation.disposition == "CONFIRMED"
-        assert [row.principal for row in confirmation.reservations] == [700, 700]
+        replacement = recovered.report.result.candidate_allocation
+        assert replacement is not None
+        assert replacement.disposition == ("BLOCKED" if stale else "PLANNED")
+        assert replacement.replaces_plan_event_id == workspace.allocations[0].plan_event_id
+        if stale:
+            assert replacement.reasons == ("ALLOCATION_INPUT_VERSION_CONFLICT",)
+        assert recovered.report.result.candidate_confirmation is None
     final = ResultDelivery.from_settings(migrated_settings).candidate_workspace(principal)
     assert final is not None
-    assert final.allocations[0].confirmations == (recovered.report,)
+    assert final.allocations[0].confirmations == (
+        (recovered.report,) if operation == "CONFIRM" else ()
+    )
+    if operation == "REPLAN" and stale:
+        assert latest is not None
+        assert final.allocations[0].latest_input_report_version_id == latest.report_version_id
+        review = submit_candidate_command(
+            migrated_settings,
+            principal,
+            dict(
+                request,
+                operation="REVIEW",
+                trigger_reason=None,
+                input_report_version_id=latest.report_version_id,
+                idempotency_key="synthetic-review-after-rejected-replanning-recovery",
+            ),
+            clock=GovernanceClock("2042-05-19T16:02:00Z"),
+        ).report
+        assert review is not None and review.result.candidate_confirmation is not None
+        assert review.result.candidate_confirmation.reasons == ("PLAN_CHANGED",)
     changed = dict(
         request,
         choices=[
             {"security_id": row["security_id"], "choice": "DEFER"} for row in request["choices"]
         ],
     )
+    if operation == "REPLAN":
+        changed["trigger_reason"] = "POLICY_CHANGED"
     with pytest.raises(ValueError, match="idempotency payload conflict"):
         submit_candidate_command(migrated_settings, principal, changed)
 
@@ -639,3 +672,105 @@ def test_replan_rechecks_the_original_window_at_the_commit_boundary(
     assert result is not None and result.result.candidate_allocation is not None
     assert result.result.candidate_allocation.disposition == "BLOCKED"
     assert result.result.candidate_allocation.reasons == ("REPLANNING_WINDOW_CLOSED",)
+
+
+@pytest.mark.parametrize("status", ["SUSPENDED", "REVOKED"])
+@pytest.mark.parametrize("boundary", ["submit", "retry", "commit", "committed-replay"])
+def test_replanning_uses_current_qualification_until_the_plan_is_committed(
+    migrated_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    boundary: str,
+) -> None:
+    from datetime import datetime
+
+    from synthetic_candidate_allocation import save_qualification_prior
+
+    from stock_profiler.adapters.persistence.decision_ledger import DecisionLedger
+    from stock_profiler.bootstrap.candidate_workspace import submit_candidate_command
+    from stock_profiler.modules.decision_cases.ports import DecisionEventCommitError
+
+    payload = confirmation_payload(migrated_settings)
+    principal = AccessPrincipal(
+        user_id=payload["access_scope"]["user_id"],
+        account_ids=tuple(payload["access_scope"]["account_ids"]),
+        permissions=("REPORT_READ", "CANDIDATE_ALLOCATION", "CANDIDATE_COMMAND"),
+    )
+    workspace = ResultDelivery.from_settings(migrated_settings).candidate_workspace(principal)
+    assert workspace is not None
+    request = {
+        "operation": "REPLAN",
+        "plan_report_version_id": workspace.allocations[0].report_version_id,
+        "input_report_version_id": workspace.allocations[0].report_version_id,
+        "seen_confirmation_id": None,
+        "seen_execution_id": None,
+        "idempotency_key": "synthetic-replan-current-qualification",
+        "trigger_reason": "FACTS_CHANGED",
+    }
+    first = None
+    if boundary in {"retry", "committed-replay"}:
+        with monkeypatch.context() as patch:
+            if boundary == "retry":
+
+                def fail_commit(self: DecisionLedger, *args: Any, **kwargs: Any) -> Any:
+                    raise DecisionEventCommitError("Synthetic rollback before qualification change")
+
+                patch.setattr(DecisionLedger, "commit_event", fail_commit)
+            first = submit_candidate_command(
+                migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:01:00Z")
+            )
+    ledger = DecisionLedger.from_settings(migrated_settings)
+    with ledger.serialize_case_execution() as connection:
+        candidate = ledger.get_decision_event(
+            payload["candidate_confirmation"]["revalidation"]["candidate_event_id"], connection
+        )
+        assert candidate is not None and candidate.case.access_scope is not None
+        previous = ledger.governance_history(connection, candidate.case.access_scope)[
+            -1
+        ].qualification
+        assert previous is not None
+    invalid = previous.model_copy(
+        update={
+            "decision_id": "synthetic-replanning-qualification-invalidation",
+            "previous_decision_id": previous.decision_id,
+            "status": status,
+            "cause": "AUTHORIZATION_REVOKED",
+            "recorded_at": datetime.fromisoformat("2042-05-19T16:01:30Z"),
+        }
+    )
+    save_qualification_prior(migrated_settings, candidate.case, invalid)
+    clock = GovernanceClock("2042-05-19T16:02:00Z")
+    if boundary == "commit":
+        clock.current = GovernanceClock("2042-05-19T16:01:00Z").current
+        original = DecisionLedger.record_stage_result
+
+        def record(self: DecisionLedger, *args: Any, **kwargs: Any) -> Any:
+            result = original(self, *args, **kwargs)
+            if kwargs["stage_result"].phase == "CANDIDATE_ALLOCATION":
+                clock.current = GovernanceClock("2042-05-19T16:02:00Z").current
+            return result
+
+        monkeypatch.setattr(DecisionLedger, "record_stage_result", record)
+    result = submit_candidate_command(migrated_settings, principal, request, clock=clock)
+    assert result.report is not None and result.report.result.candidate_allocation is not None
+    if first is not None:
+        assert result.framework_run_id == first.framework_run_id
+    if boundary == "committed-replay":
+        assert first is not None and result.report == first.report
+        assert result.report.result.candidate_allocation.disposition == "PLANNED"
+    else:
+        assert result.report.result.candidate_allocation.disposition == "BLOCKED"
+        assert result.report.result.candidate_allocation.reasons == (
+            "RELEASE_QUALIFICATION_INVALIDATED",
+            status,
+            "AUTHORIZATION_REVOKED",
+        )
+        assert result.report.result.candidate_allocation.eligibility_evidence_ids == (
+            invalid.decision_id,
+        )
+    view = ResultDelivery.from_settings(migrated_settings, clock=clock).candidate_workspace(
+        principal
+    )
+    assert view is not None
+    assert not view.allocations[0].new_actions_permitted
+    assert "RELEASE_QUALIFICATION_INVALIDATED" in view.allocations[0].stop_reasons

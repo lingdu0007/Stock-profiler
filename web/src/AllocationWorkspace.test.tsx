@@ -14,6 +14,51 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
 });
 
+it.each(["RELEASE_QUALIFICATION_INVALIDATED", "CURRENT_QUALIFICATION_UNAVAILABLE"])(
+  "stops replanning when current candidate eligibility fails: %s",
+  async (reason) => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2042-05-19T16:01:00Z"));
+    const workspace = structuredClone(fixture.workspace) as unknown as CandidateWorkspace;
+    workspace.allocations[0].new_actions_permitted = false;
+    workspace.allocations[0].stop_reasons = [reason];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(workspace), {
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    );
+    window.history.pushState({}, "", "/candidates");
+    render(<App />);
+    expect(
+      await screen.findByRole("button", { name: "Replan within original window" })
+    ).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Read original allocation report" })).toBeVisible();
+  }
+);
+
+it("allows replanning from changed inputs while current candidate eligibility remains valid", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2042-05-19T16:01:00Z"));
+  const workspace = structuredClone(fixture.workspace) as unknown as CandidateWorkspace;
+  workspace.allocations[0].new_actions_permitted = false;
+  workspace.allocations[0].stop_reasons = ["PLAN_CHANGED"];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(workspace), {
+        headers: { "Content-Type": "application/json" }
+      })
+    )
+  );
+  window.history.pushState({}, "", "/candidates");
+  render(<App />);
+  expect(
+    await screen.findByRole("button", { name: "Replan within original window" })
+  ).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Confirm complete batch" })).toBeDisabled();
+});
+
 it("withdraws new actions at the original deadline while retaining saved evidence", async () => {
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2042-05-24T16:01:00Z"));
   vi.stubGlobal(

@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
 from stock_profiler.modules.portfolio.allocation_contracts import CandidateAllocationOutcome
+from stock_profiler.modules.portfolio.allocation_inputs import is_allocation_input_source
 from stock_profiler.modules.portfolio.allocation_window import allocation_entry_window
 
 
@@ -75,6 +76,9 @@ def project_allocations(
             for item in sources
             if item.case.candidate_allocation is not None
             and item.case.candidate_allocation.candidate_event_id == plan.candidate_event_id
+            and is_allocation_input_source(
+                item.case.candidate_allocation, item.report.result.candidate_allocation
+            )
         )
         start, end = allocation_entry_window(plan)
         reasons = tuple(

@@ -7,6 +7,7 @@ from decimal import Context, Decimal, DecimalException, localcontext
 from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
+from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
 from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
@@ -85,6 +86,10 @@ def finalize_candidate_allocation(
     assert command is not None
     if command.replaces_plan_event_id is None or outcome.disposition != "PLANNED":
         return outcome
+    if saved_allocation_inputs_changed(case, ledger, connection):
+        return outcome.model_copy(
+            update={"disposition": "BLOCKED", "reasons": ("ALLOCATION_INPUT_VERSION_CONFLICT",)}
+        )
     source = ledger.get_formal_report_for_event(command.replaces_plan_event_id, connection)
     if (
         source is None
@@ -95,6 +100,27 @@ def finalize_candidate_allocation(
     ):
         return outcome.model_copy(
             update={"disposition": "BLOCKED", "reasons": ("REPLANNING_WINDOW_CLOSED",)}
+        )
+    candidate = ledger.get_formal_report_for_event(command.candidate_event_id, connection)
+    original = ledger.get_decision_event(command.candidate_event_id, connection)
+    assert case.access_scope is not None
+    if candidate is None or candidate.result.candidate_release is None or original is None:
+        return outcome.model_copy(
+            update={"disposition": "BLOCKED", "reasons": ("CANDIDATE_HANDOFF_UNAVAILABLE",)}
+        )
+    reasons, evidence_ids, _ = candidate_qualification_eligibility(
+        candidate.result.candidate_release,
+        original.case,
+        ledger.governance_history(connection, case.access_scope),
+        datetime.fromisoformat(committed_at),
+    )
+    if reasons:
+        return outcome.model_copy(
+            update={
+                "disposition": "BLOCKED",
+                "reasons": reasons,
+                "eligibility_evidence_ids": evidence_ids,
+            }
         )
     return outcome
 
@@ -152,6 +178,14 @@ def adjudicate_candidate_allocation(
         ):
             return CandidateAllocationOutcome(
                 disposition="BLOCKED", reasons=("REPLANNING_SOURCE_UNAVAILABLE",)
+            )
+        if saved_allocation_inputs_changed(case, ledger, connection):
+            return CandidateAllocationOutcome(
+                disposition="BLOCKED",
+                reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",),
+                candidate_event_id=command.candidate_event_id,
+                replaces_plan_event_id=command.replaces_plan_event_id,
+                replanning_reason=command.replanning_reason,
             )
         if not entry_window_is_open(
             original.result.candidate_allocation, datetime.fromisoformat(ledger.observed_at())
@@ -392,7 +426,9 @@ def _adjudicate_candidate_allocation(
         release,
         original.case,
         ledger.governance_history(connection, scope),
-        command.cutoff_at,
+        datetime.fromisoformat(ledger.observed_at())
+        if command.replaces_plan_event_id is not None
+        else command.cutoff_at,
     )
     if eligibility_reasons:
         return _blocked(case, source, eligibility_reasons, eligibility_ids)

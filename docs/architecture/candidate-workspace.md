@@ -70,11 +70,21 @@ guards remain authoritative across sessions and devices. No command payload is
 persisted in browser storage. An application-level memory owner retains unresolved
 requests across failed refreshes and route navigation. Failed refreshes withdraw current presentation, and
 the local deadline disables new entry actions at the original saved expiry.
-An original-key retry whose business event has not committed rechecks the latest
+An original-key confirmation or replanning retry whose business event has not committed rechecks the latest
 saved allocation inputs at adjudication and immediately before commit, including
 when a successful phase result is cached. Changed prices or policy inputs produce
 an `ALLOCATION_INPUT_VERSION_CONFLICT` report without reservations. An event that
-already committed continues to replay its original report exactly.
+already committed continues to replay its original report exactly. Rejected
+derived replanning attempts remain in report history and cannot replace the latest
+accepted allocation inputs. Replanning lineage is compared separately from the
+price, policy and evidence inputs it references.
+New replacement plans also require current retained candidate qualification,
+checked at adjudication and immediately before commit. A suspension or revocation
+after the saved input cutoff stops replanning. Historical initial allocations
+retain their original cutoff semantics, and committed replacement reports remain
+available for exact replay. The browser stops replanning for current candidate or
+execution stops while allowing changed inputs to request a replacement within the
+original window.
 
 User execution declarations are explicitly pending reconciliation. Read-only
 execution reports separately display authoritative orders, fills, attribution,
