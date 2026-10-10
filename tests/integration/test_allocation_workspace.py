@@ -1,5 +1,7 @@
 """Synthetic saved-plan journeys through the authenticated delivery seam."""
 
+from typing import Any
+
 import pytest
 from test_candidate_confirmation import confirmation_payload
 from test_scoped_qualification import GovernanceClock
@@ -231,7 +233,7 @@ def test_changed_policy_review_permanently_stops_new_actions_on_the_old_plan(
         migrated_settings, newer, clock=GovernanceClock("2042-05-19T16:01:00Z")
     ).report
     assert inputs is not None
-    request = {
+    request: dict[str, Any] = {
         "operation": "REVIEW",
         "plan_report_version_id": original_id,
         "input_report_version_id": inputs.report_version_id,
@@ -256,6 +258,28 @@ def test_changed_policy_review_permanently_stops_new_actions_on_the_old_plan(
     assert stopped is not None and stopped.result.candidate_confirmation is not None
     assert stopped.result.candidate_confirmation.reasons == ("PLAN_INVALIDATED",)
     assert stopped.result.candidate_confirmation.reservations == ()
+    request.update(
+        operation="REPLAN",
+        trigger_reason="FACTS_CHANGED",
+        choices=[],
+        idempotency_key="synthetic-obsolete-replanning-input",
+    )
+    with pytest.raises(ValueError, match="input version conflict"):
+        submit_candidate_command(
+            migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:01:00Z")
+        )
+    request.update(
+        input_report_version_id=inputs.report_version_id,
+        idempotency_key="synthetic-current-replanning-input",
+    )
+    replacement = submit_candidate_command(
+        migrated_settings, principal, request, clock=GovernanceClock("2042-05-19T16:01:00Z")
+    ).report
+    assert replacement is not None and replacement.result.candidate_allocation is not None
+    assert inputs.result.candidate_allocation is not None
+    assert (
+        replacement.result.candidate_allocation.policy == inputs.result.candidate_allocation.policy
+    )
 
 
 @pytest.mark.parametrize("fault", ["before", "after"])
@@ -416,6 +440,7 @@ def test_replanning_binds_original_plan_and_never_extends_its_window(
     assert stopped is not None and stopped.result.candidate_confirmation is not None
     assert stopped.result.candidate_confirmation.reasons == ("PLAN_SUPERSEDED",)
     request["idempotency_key"] = "synthetic-replan-after-expiry"
+    request["input_report_version_id"] = replanned.report_version_id
     expired = submit_candidate_command(
         migrated_settings, principal, request, clock=GovernanceClock("2042-05-24T16:01:00Z")
     ).report

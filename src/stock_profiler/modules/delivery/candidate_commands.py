@@ -94,9 +94,12 @@ def resolve_candidate_command(
     )
     if view is None:
         raise ValueError("request is not permitted")
-    if request.input_report_version_id != view.latest_input_report_version_id and not any(
-        reason in {"PLAN_INVALIDATED", "PLAN_CHANGED", "PLAN_SUPERSEDED"}
-        for reason in view.stop_reasons
+    if request.input_report_version_id != view.latest_input_report_version_id and (
+        request.operation == "REPLAN"
+        or not any(
+            reason in {"PLAN_INVALIDATED", "PLAN_CHANGED", "PLAN_SUPERSEDED"}
+            for reason in view.stop_reasons
+        )
     ):
         raise ValueError("input version conflict")
     confirmations = tuple(
@@ -182,22 +185,7 @@ def prepare_candidate_command(
             seen_execution_id=request.seen_execution_id,
             declaration=declaration,
         )
-        payload = input_case.model_dump(mode="json")
-        payload.pop("candidate_allocation")
-        payload["input"].pop("candidate_allocation")
-        payload["case_id"] = request.request_fingerprint
-        payload["candidate_execution"] = command_execution.model_dump(mode="json")
-        payload["input"]["candidate_execution"] = payload["candidate_execution"]
-        payload["business_identity"] = request.business_identity
-        payload["knowledge_cutoff"] = now.isoformat()
-        payload["report_generated_at"] = now.isoformat()
-        for field in (
-            "case_contract_version",
-            "host_contract_version",
-            "report_projection_contract_version",
-        ):
-            payload["version_bundle"][field] = "candidate-execution.1.0.0"
-        return FrozenDecisionCase.model_validate(payload)
+        return _case_with_command(input_case, request, command_execution, now, knowledge_cutoff=now)
     if request.operation in {"CONFIRM", "WITHDRAW"} and not request.choices:
         raise ValueError("complete explicit choices required")
     if request.operation == "REVIEW_STEP" and confirmation_report is None:
@@ -237,15 +225,32 @@ def prepare_candidate_command(
         choices=choices,
         revalidation=allocation,
     )
+    return _case_with_command(input_case, request, command, now)
+
+
+def _case_with_command(
+    input_case: FrozenDecisionCase,
+    request: CandidateWorkspaceCommand,
+    command: CandidateConfirmationCommand | CandidateExecutionCommand,
+    now: datetime,
+    *,
+    knowledge_cutoff: datetime | None = None,
+) -> FrozenDecisionCase:
+    command_name, version = (
+        ("candidate_execution", "candidate-execution.1.0.0")
+        if isinstance(command, CandidateExecutionCommand)
+        else ("candidate_confirmation", "candidate-confirmation.1.0.0")
+    )
     payload = input_case.model_dump(mode="json")
     payload.pop("candidate_allocation")
     payload["input"].pop("candidate_allocation")
+    payload[command_name] = command.model_dump(mode="json")
+    payload["input"][command_name] = payload[command_name]
     payload["case_id"] = request.request_fingerprint
-    payload["candidate_confirmation"] = command.model_dump(mode="json")
-    payload["input"]["candidate_confirmation"] = payload["candidate_confirmation"]
     payload["business_identity"] = request.business_identity
     payload["report_generated_at"] = now.isoformat()
-    version = "candidate-confirmation.1.0.0"
+    if knowledge_cutoff is not None:
+        payload["knowledge_cutoff"] = knowledge_cutoff.isoformat()
     for field in (
         "case_contract_version",
         "host_contract_version",

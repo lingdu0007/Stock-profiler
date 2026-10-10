@@ -11,6 +11,7 @@ import {
 import { CandidateAllocationEvidence } from "./CandidateAllocationEvidence";
 import { CandidateConfirmationEvidence } from "./CandidateConfirmationEvidence";
 import { CandidateExecutionEvidence } from "./CandidateExecutionEvidence";
+import { useCandidateSubmission } from "./candidate-submissions";
 
 type View = NonNullable<CandidateWorkspace["allocations"]>[number];
 type Choice = "ACCEPT" | "DECLINE" | "DEFER";
@@ -49,7 +50,7 @@ export function AllocationWorkspace({
     return () => window.clearInterval(timer);
   }, []);
   const [draft, setDraft] = useState<Record<string, Choice>>({});
-  const [pending, setPending] = useState<CandidateWorkspaceCommand | null>(null);
+  const { pending, anyPending, setPending } = useCandidateSubmission(view.plan_event_id);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [review, setReview] = useState<{ identity: string; report: FormalReport } | null>(null);
@@ -73,7 +74,8 @@ export function AllocationWorkspace({
     Date.parse(view.valid_from) <= now &&
     now <= Date.parse(view.valid_through)
   );
-  const allowed = commandsPermitted && view.new_actions_permitted && open && !busy && !pending;
+  const allowed = commandsPermitted && view.new_actions_permitted && open && !busy && !anyPending;
+  const canDeclare = commandsPermitted && Boolean(confirmation) && !busy && !anyPending;
   const reconciliationClosed = !view.stop_reasons.some((reason) => reason.startsWith("EXECUTION_"));
   const reviewed =
     review?.identity === identity &&
@@ -196,7 +198,7 @@ export function AllocationWorkspace({
           <label>
             Replanning trigger
             <select
-              disabled={busy || Boolean(pending)}
+              disabled={busy || anyPending}
               value={trigger}
               onChange={(event) => setTrigger(event.target.value as typeof trigger)}
             >
@@ -206,9 +208,7 @@ export function AllocationWorkspace({
             </select>
           </label>
           <button
-            disabled={
-              !commandsPermitted || !open || !reconciliationClosed || busy || Boolean(pending)
-            }
+            disabled={!commandsPermitted || !open || !reconciliationClosed || busy || anyPending}
             onClick={() => command("REPLAN", { trigger_reason: trigger })}
           >
             Replan within original window
@@ -223,7 +223,7 @@ export function AllocationWorkspace({
                 Declared security
                 <select
                   value={security}
-                  disabled={!allowed}
+                  disabled={!canDeclare}
                   onChange={(event) => setSecurity(event.target.value)}
                 >
                   <option value="">Select an accepted security</option>
@@ -238,7 +238,7 @@ export function AllocationWorkspace({
                 Declared status
                 <select
                   value={status}
-                  disabled={!allowed}
+                  disabled={!canDeclare}
                   onChange={(event) => setStatus(event.target.value as typeof status)}
                 >
                   {[
@@ -257,12 +257,12 @@ export function AllocationWorkspace({
                 Broker order reference (optional)
                 <input
                   value={order}
-                  disabled={!allowed}
+                  disabled={!canDeclare}
                   onChange={(event) => setOrder(event.target.value)}
                 />
               </label>
               <button
-                disabled={!allowed || !security}
+                disabled={!canDeclare || !security}
                 onClick={() =>
                   command("DECLARE", {
                     declaration: {
@@ -280,12 +280,12 @@ export function AllocationWorkspace({
                 Saved authoritative order exclusion report
                 <input
                   value={proof}
-                  disabled={busy || Boolean(pending)}
+                  disabled={busy || anyPending}
                   onChange={(event) => setProof(event.target.value)}
                 />
               </label>
               <button
-                disabled={busy || Boolean(pending) || !proof || !rows.length}
+                disabled={busy || anyPending || !proof || !rows.length}
                 onClick={() =>
                   command("WITHDRAW", { choices, withdrawal_position_report_version_id: proof })
                 }

@@ -26,6 +26,7 @@ import { LiquidityEvidence } from "./LiquidityEvidence";
 import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 import { CandidateExecutionEvidence } from "./CandidateExecutionEvidence";
 import { CandidateConfirmationEvidence } from "./CandidateConfirmationEvidence";
+import { CandidateSubmissionContext, type CandidateSubmissions } from "./candidate-submissions";
 import { CandidateAllocationEvidence } from "./CandidateAllocationEvidence";
 import { MonitoringPage, MonitoringEvidence } from "./MonitoringPage";
 import { UniverseEvidence } from "./UniverseEvidence";
@@ -1180,34 +1181,37 @@ function safeReturnPath(value: string | null): string {
 
 export function App() {
   const [queryClient] = useState(createQueryClient);
+  const [requests, setRequests] = useState<CandidateSubmissions>({});
 
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<VersionDiagnostics />} />
-          <Route
-            path="/monitoring/*"
-            element={
-              <Shell>
-                <MonitoringPage />
-              </Shell>
-            }
-          />
-          <Route
-            path="/candidates/*"
-            element={
-              <Shell>
-                <CandidatePage />
-              </Shell>
-            }
-          />
-          <Route path="/reports/:reportVersionId" element={<ReportPage />} />
-          <Route path="/sign-in" element={<SignInPage />} />
-          <Route path="/enroll" element={<EnrollmentPage />} />
-          <Route path="*" element={<Navigate replace to="/" />} />
-        </Routes>
-      </BrowserRouter>
+      <CandidateSubmissionContext.Provider value={{ requests, setRequests }}>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<VersionDiagnostics />} />
+            <Route
+              path="/monitoring/*"
+              element={
+                <Shell>
+                  <MonitoringPage />
+                </Shell>
+              }
+            />
+            <Route
+              path="/candidates/*"
+              element={
+                <Shell>
+                  <CandidatePage />
+                </Shell>
+              }
+            />
+            <Route path="/reports/:reportVersionId" element={<ReportPage />} />
+            <Route path="/sign-in" element={<SignInPage />} />
+            <Route path="/enroll" element={<EnrollmentPage />} />
+            <Route path="*" element={<Navigate replace to="/" />} />
+          </Routes>
+        </BrowserRouter>
+      </CandidateSubmissionContext.Provider>
     </QueryClientProvider>
   );
 }

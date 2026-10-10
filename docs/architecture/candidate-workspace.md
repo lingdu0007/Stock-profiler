@@ -50,7 +50,8 @@ saved input report, the seen confirmation and execution versions, and an
 idempotency key. The host resolves inputs from its own ledger. The browser cannot
 submit portfolio snapshots, risk handoffs, price caps, broker facts or reservation
 amounts. The normal frozen-case runner validates provenance, serializes decisions,
-and atomically saves outcomes and formal reports. Framework Runs remain execution
+and atomically commits outcomes and reservations, followed by separately
+recoverable report publication. Framework Runs remain execution
 mechanics without business authority.
 
 A read-only policy review produces a saved `REVALIDATED` or blocked report without
@@ -66,13 +67,16 @@ policy review before enabling confirmation. A response without a report or a los
 response keeps the exact original request in memory for reconciliation. It blocks
 new submissions until that request resolves; host commit recovery and uncertainty
 guards remain authoritative across sessions and devices. No command payload is
-persisted in browser storage. Failed refreshes withdraw current presentation, and
+persisted in browser storage. An application-level memory owner retains unresolved
+requests across failed refreshes and route navigation. Failed refreshes withdraw current presentation, and
 the local deadline disables new entry actions at the original saved expiry.
 
 User execution declarations are explicitly pending reconciliation. Read-only
 execution reports separately display authoritative orders, fills, attribution,
 deviations, unknown identities, residual commitments, causal releases and terminal
-outcomes. Withdrawal references a saved authoritative order-exclusion report;
+outcomes. Further pending declarations remain available after the entry window
+closes or while broker reconciliation is outstanding; they never release capacity.
+Withdrawal references a saved authoritative order-exclusion report;
 unclosed execution facts and unknown orders retain capacity. Only host broker
 reconciliation can establish execution or release facts. Released capacity never
 expands a different candidate automatically. This surface provides no order

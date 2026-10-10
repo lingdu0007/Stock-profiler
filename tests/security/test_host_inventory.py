@@ -55,6 +55,7 @@ def test_inventory_is_the_exact_registered_http_and_cli_surface(
             "/api/v1/auth/session",
             "/api/v1/monitoring",
             "/api/v1/candidates",
+            "/api/v1/candidates/commands",
             "/api/v1/reports/{report_version_id}",
             "/api/v1/reports/{report_version_id}/facts",
             "/api/v1/reports/{report_version_id}/facts",
@@ -85,6 +86,7 @@ def test_inventory_is_the_exact_registered_http_and_cli_surface(
         "/api/v1/auth/session": {"DELETE"},
         "/api/v1/monitoring": {"GET"},
         "/api/v1/candidates": {"GET"},
+        "/api/v1/candidates/commands": {"POST"},
         "/api/v1/reports/{report_version_id}": {"GET"},
         "/api/v1/reports/{report_version_id}/facts": {"GET", "POST"},
     }
