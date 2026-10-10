@@ -553,7 +553,7 @@ def test_draft_and_generic_delivery_actions_cannot_save_confirmation(
     principal = AccessPrincipal(
         user_id=case.access_scope.user_id,
         account_ids=case.access_scope.account_ids,
-        permissions=("REPORT_READ", "USER_FACT"),
+        permissions=("REPORT_READ", "USER_FACT", "CANDIDATE_ALLOCATION"),
     )
     ledger = DecisionLedger(initialize_runtime_storage(migrated_settings).engine)
     with ledger.serialize_case_execution() as connection:

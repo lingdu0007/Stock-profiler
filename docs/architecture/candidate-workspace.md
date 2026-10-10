@@ -30,8 +30,53 @@ members retain their own reasons and do not become candidates through projection
 
 B1 exposes release and detail reading, plus an optional viewing fact. The shared
 user-fact boundary rejects candidate acknowledgement, confirmation and execution
-declarations. No candidate UI control creates a choice, capacity reservation,
-account route, personal quantity or order capability.
+declarations. Personalized allocation, confirmation and execution reports require
+the independent `CANDIDATE_ALLOCATION` host grant, including generic report deep
+links and viewing facts. B1 reading alone does not expose a personal plan.
+
+## Personal allocation and execution
+
+The same authenticated view projects each saved allocation beside its original
+candidate batch. Allocation, policy review, complete batch choice, confirmation,
+reservation and execution histories retain their own event and report identities.
+Account routes, legal quantities, confirmed price caps, full/partial/zero reasons,
+capacity margins and evidence clocks come from the saved plan. There is no combined
+status that overwrites candidate qualification or broker facts.
+
+`POST /api/v1/candidates/commands` requires the independent `CANDIDATE_COMMAND`
+grant, the existing account scope, exact Origin, CSRF token and recent passkey
+verification. Its narrow intent contract references an original plan report, a
+saved input report, the seen confirmation and execution versions, and an
+idempotency key. The host resolves inputs from its own ledger. The browser cannot
+submit portfolio snapshots, risk handoffs, price caps, broker facts or reservation
+amounts. The normal frozen-case runner validates provenance, serializes decisions,
+and atomically saves outcomes and formal reports. Framework Runs remain execution
+mechanics without business authority.
+
+A read-only policy review produces a saved `REVALIDATED` or blocked report without
+forming choices or reservations. Confirmation and each next execution-step review
+replay the complete allocation policy. A structured plan change permanently stops
+new actions on the old plan; presenting its old inputs again cannot revive it.
+Replanning records the original plan event and explicit trigger, keeps the original
+candidate window, and forms no inherited confirmation. A successful replacement
+stops the old plan while preserving its reports and outstanding commitments.
+
+The browser keeps a complete choice draft separate from saved facts and displays
+policy review before enabling confirmation. A response without a report or a lost
+response keeps the exact original request in memory for reconciliation. It blocks
+new submissions until that request resolves; host commit recovery and uncertainty
+guards remain authoritative across sessions and devices. No command payload is
+persisted in browser storage. Failed refreshes withdraw current presentation, and
+the local deadline disables new entry actions at the original saved expiry.
+
+User execution declarations are explicitly pending reconciliation. Read-only
+execution reports separately display authoritative orders, fills, attribution,
+deviations, unknown identities, residual commitments, causal releases and terminal
+outcomes. Withdrawal references a saved authoritative order-exclusion report;
+unclosed execution facts and unknown orders retain capacity. Only host broker
+reconciliation can establish execution or release facts. Released capacity never
+expands a different candidate automatically. This surface provides no order
+generation, broker prefill or broker write capability.
 
 The browser rechecks eligibility on candidate-view navigation and window focus,
 and refreshes an open view every minute. A local absolute-expiry guard withdraws
@@ -78,5 +123,9 @@ authentication, correction history, qualification changes, action isolation,
 monthly budgets and append-only routing. Unit tests check window and reminder
 eligibility, idempotency, quiet deferral, channel fallback and withdrawal routing.
 Browser and Playwright tests cover release/detail/history navigation at desktop
-and mobile widths with independent synthetic responses. These contracts do not
+and mobile widths with independent synthetic responses, plus complete batch
+intent, policy review, immutable allocation reports and original-key recovery.
+Host journeys exercise scope grants, policy changes, original-window replanning,
+pending declarations, authoritative withdrawal and interrupted atomic commits.
+These contracts do not
 establish real qualification, personal activation or notification-provider health.

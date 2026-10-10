@@ -32,6 +32,7 @@ from stock_profiler.modules.candidate_selection.selection import freeze_selectio
 from stock_profiler.modules.candidate_selection.universe import freeze_universe
 from stock_profiler.modules.decision_cases.candidate_allocation import (
     adjudicate_candidate_allocation,
+    finalize_candidate_allocation,
 )
 from stock_profiler.modules.decision_cases.candidate_confirmation import (
     adjudicate_candidate_confirmation,
@@ -3451,7 +3452,9 @@ def _commit_framework_result(
                 result = result.model_copy(update={"candidate_confirmation": confirmation})
                 confirmation_result = StageResult(
                     phase="CANDIDATE_CONFIRMATION",
-                    status="SUCCEEDED" if confirmation.disposition == "CONFIRMED" else "REJECTED",
+                    status="SUCCEEDED"
+                    if confirmation.disposition in {"CONFIRMED", "REVALIDATED"}
+                    else "REJECTED",
                     gate_results=(),
                     reasons=confirmation.reasons,
                 )
@@ -3915,6 +3918,37 @@ def _commit_framework_result(
         )
     assert framework.output is not None
     commit_observed_at = ledger.observed_at()
+    if execution_case.candidate_allocation is not None:
+        assert result.candidate_allocation is not None
+        final_allocation = finalize_candidate_allocation(
+            execution_case,
+            result.candidate_allocation,
+            ledger,
+            connection,
+            committed_at=commit_observed_at,
+        )
+        if final_allocation != result.candidate_allocation:
+            result = result.model_copy(update={"candidate_allocation": final_allocation})
+            allocation_stage = StageResult(
+                phase="CANDIDATE_ALLOCATION",
+                status="REJECTED",
+                gate_results=(),
+                reasons=final_allocation.reasons,
+            )
+            ledger.record_stage_result(
+                connection,
+                case=execution_case,
+                stage_result=allocation_stage,
+                framework_run_id=execution_case.framework_run_id,
+                allow_repeated_occurrence=True,
+            )
+            stage_results_before_commit = ledger.get_stage_results(
+                execution_case.business_object_id, connection
+            )
+            current_stage_results_before_commit = (
+                *current_stage_results_before_commit,
+                allocation_stage,
+            )
     if execution_case.candidate_execution is not None:
         assert result.candidate_execution is not None
         final_execution = finalize_candidate_execution(
@@ -3959,7 +3993,9 @@ def _commit_framework_result(
             result = result.model_copy(update={"candidate_confirmation": final_confirmation})
             confirmation_result = StageResult(
                 phase="CANDIDATE_CONFIRMATION",
-                status="SUCCEEDED" if final_confirmation.disposition == "CONFIRMED" else "REJECTED",
+                status="SUCCEEDED"
+                if final_confirmation.disposition in {"CONFIRMED", "REVALIDATED"}
+                else "REJECTED",
                 gate_results=(),
                 reasons=final_confirmation.reasons,
             )

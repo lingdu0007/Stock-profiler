@@ -1,6 +1,7 @@
 """Host-owned allocation from saved candidates and authoritative risk handoffs."""
 
 from collections import defaultdict
+from datetime import datetime
 from decimal import Context, Decimal, DecimalException, localcontext
 
 from stock_profiler.modules.candidate_selection.current_eligibility import (
@@ -27,6 +28,7 @@ from stock_profiler.modules.portfolio.allocation_solver import (
     discrete_allocation,
     discrete_principal_ceiling,
 )
+from stock_profiler.modules.portfolio.allocation_window import entry_window_is_open
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 
 _REASON_ORDER = (
@@ -71,6 +73,32 @@ def _ordered_reasons(reasons: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+def finalize_candidate_allocation(
+    case: FrozenDecisionCase,
+    outcome: CandidateAllocationOutcome,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    *,
+    committed_at: str,
+) -> CandidateAllocationOutcome:
+    command = case.candidate_allocation
+    assert command is not None
+    if command.replaces_plan_event_id is None or outcome.disposition != "PLANNED":
+        return outcome
+    source = ledger.get_formal_report_for_event(command.replaces_plan_event_id, connection)
+    if (
+        source is None
+        or source.result.candidate_allocation is None
+        or not entry_window_is_open(
+            source.result.candidate_allocation, datetime.fromisoformat(committed_at)
+        )
+    ):
+        return outcome.model_copy(
+            update={"disposition": "BLOCKED", "reasons": ("REPLANNING_WINDOW_CLOSED",)}
+        )
+    return outcome
+
+
 def _capacity_binding(problem: AllocationProblem, check: AllocationCapacityCheck) -> bool:
     """Explain a binding gate despite downward truncation of its monetary proposal.
 
@@ -112,6 +140,28 @@ def adjudicate_candidate_allocation(
     exclude_confirmation_plan_id: str | None = None,
 ) -> CandidateAllocationOutcome:
     assert case.candidate_allocation is not None and case.access_scope is not None
+    command = case.candidate_allocation
+    if command.replaces_plan_event_id is not None:
+        original = ledger.get_formal_report_for_event(command.replaces_plan_event_id, connection)
+        if (
+            original is None
+            or original.access_scope is None
+            or not case.access_scope.same_scope_as(original.access_scope)
+            or original.result.candidate_allocation is None
+            or original.result.candidate_allocation.candidate_event_id != command.candidate_event_id
+        ):
+            return CandidateAllocationOutcome(
+                disposition="BLOCKED", reasons=("REPLANNING_SOURCE_UNAVAILABLE",)
+            )
+        if not entry_window_is_open(
+            original.result.candidate_allocation, datetime.fromisoformat(ledger.observed_at())
+        ):
+            return CandidateAllocationOutcome(
+                disposition="BLOCKED",
+                reasons=("REPLANNING_WINDOW_CLOSED",),
+                replaces_plan_event_id=command.replaces_plan_event_id,
+                replanning_reason=command.replanning_reason,
+            )
     latest = {}
     for fact in ledger.candidate_confirmation_history(
         connection, case.access_scope, case.candidate_allocation.risk_handoff.portfolio_id
@@ -209,13 +259,19 @@ def adjudicate_candidate_allocation(
                 return _blocked(case, source, "EXECUTION_POSITION_NOT_RECONCILED")
     with localcontext(Context(prec=38)):
         try:
-            return _adjudicate_candidate_allocation(
+            result = _adjudicate_candidate_allocation(
                 case,
                 ledger,
                 connection,
                 business_prerequisite_met=business_prerequisite_met,
                 reservation_ids=frozenset(retained),
                 execution_reservation_ids=execution_reservation_ids,
+            )
+            return result.model_copy(
+                update={
+                    "replaces_plan_event_id": command.replaces_plan_event_id,
+                    "replanning_reason": command.replanning_reason,
+                }
             )
         except DecimalException:
             assert case.candidate_allocation is not None and case.access_scope is not None

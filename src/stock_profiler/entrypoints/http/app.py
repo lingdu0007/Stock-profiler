@@ -18,13 +18,15 @@ from stock_profiler.adapters.authentication.passkeys import (
 )
 from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
 from stock_profiler.adapters.persistence.runtime_ownership import initialize_runtime_storage
+from stock_profiler.bootstrap.candidate_workspace import submit_candidate_command
 from stock_profiler.bootstrap.decision_cases import get_formal_report
 from stock_profiler.bootstrap.settings import Settings, load_settings
 from stock_profiler.foundation.clock import Clock
 from stock_profiler.foundation.logging import log_operational_event
 from stock_profiler.foundation.versioning import build_version_bundle
-from stock_profiler.modules.decision_cases.domain import FormalReport
+from stock_profiler.modules.decision_cases.domain import DecisionCaseExecution, FormalReport
 from stock_profiler.modules.delivery.access import SINGLE_USER_ID, AccessPrincipal
+from stock_profiler.modules.delivery.candidate_commands import CandidateWorkspaceCommand
 from stock_profiler.modules.delivery.candidate_workspace import CandidateWorkspace
 from stock_profiler.modules.delivery.monitoring_workspace import MonitoringWorkspace
 from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
@@ -408,6 +410,30 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         if workspace is None:
             raise HTTPException(status_code=404, detail="candidates unavailable")
         return workspace
+
+    @app.post("/api/v1/candidates/commands", response_model=DecisionCaseExecution)
+    def candidate_command(
+        request: CandidateWorkspaceCommand,
+        session_token: Annotated[str | None, Cookie(alias="__Host-stock_profiler_session")] = None,
+        csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+        origin: str | None = Header(default=None),
+    ) -> DecisionCaseExecution:
+        delivery = ResultDelivery.from_settings(app_settings, clock=clock)
+        try:
+            if origin != app_settings.auth_origin:
+                raise AuthenticationError("origin is not authorized")
+            authenticator().require_mutable_session(session_token, csrf_token)
+            authenticator().require_session(session_token, require_recent_reauthentication=True)
+        except AuthenticationError as error:
+            delivery.record_capability_denial(request.plan_report_version_id, "HTTP")
+            raise HTTPException(status_code=403, detail="request is not permitted") from error
+        try:
+            return submit_candidate_command(
+                app_settings, report_principal(), request.model_dump(mode="json"), clock=clock
+            )
+        except ValueError as error:
+            delivery.record_capability_denial(request.plan_report_version_id, "HTTP")
+            raise HTTPException(status_code=409, detail="request is not permitted") from error
 
     @app.get("/api/v1/monitoring", response_model=MonitoringWorkspace)
     def monitoring_workspace(

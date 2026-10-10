@@ -522,8 +522,24 @@ class DecisionLedger:
                 pending.add(identity)
         return frozenset(pending)
 
+    def candidate_allocation_history(
+        self, connection: Connection, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(connection, "allocation history unavailable")
+            if fact.case.access_scope is not None
+            and access_scope.same_scope_as(fact.case.access_scope)
+            and fact.result.candidate_allocation is not None
+        )
+
     def candidate_confirmation_history(
-        self, connection: Connection, access_scope: ResultAccessScope, portfolio_id: str
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        *,
+        include_blocked: bool = False,
     ) -> tuple[DecisionEventFact, ...]:
         return tuple(
             fact
@@ -534,7 +550,7 @@ class DecisionLedger:
             and fact.case.candidate_confirmation is not None
             and fact.case.candidate_confirmation.portfolio_id == portfolio_id
             and fact.result.candidate_confirmation is not None
-            and fact.result.candidate_confirmation.disposition == "CONFIRMED"
+            and (include_blocked or fact.result.candidate_confirmation.disposition == "CONFIRMED")
         )
 
     def candidate_execution_history(
@@ -720,6 +736,28 @@ class DecisionLedger:
             ).scalars()
             if (report := self.get_formal_report(report_id, connection)) is not None
             and report.result.candidate_release is not None
+        )
+
+    def candidate_allocation_report_ids(self, connection: Connection) -> tuple[str, ...]:
+        """Inventory of saved personal facts; callers authorize every report."""
+        return tuple(
+            report_id
+            for report_id in connection.execute(
+                select(FORMAL_REPORTS.c.report_version_id)
+                .join(
+                    DECISION_EVENTS,
+                    FORMAL_REPORTS.c.decision_event_id == DECISION_EVENTS.c.decision_event_id,
+                )
+                .order_by(DECISION_EVENTS.c.event_sequence)
+            ).scalars()
+            if (report := self.get_formal_report(report_id, connection)) is not None
+            and any(
+                (
+                    report.result.candidate_allocation,
+                    report.result.candidate_confirmation,
+                    report.result.candidate_execution,
+                )
+            )
         )
 
     def concentration_history(

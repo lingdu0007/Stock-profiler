@@ -22,6 +22,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.bootstrap.decision_cases import run_default_frozen_decision_case
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.entrypoints.http.app import create_app
+from stock_profiler.foundation.clock import Clock
 
 ORIGIN = "https://localhost"
 BOOTSTRAP_TOKEN = "bootstrap-token-for-synthetic-test"
@@ -258,7 +259,7 @@ def test_unregistered_http_order_capabilities_are_opaque_and_audited(
 
 
 def _authenticated_client_with_csrf(
-    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch
+    migrated_settings: Settings, monkeypatch: pytest.MonkeyPatch, *, clock: Clock | None = None
 ) -> tuple[TestClient, str]:
     settings = _auth_settings(migrated_settings)
     credential_id = bytes_to_base64url(b"synthetic-passkey-credential")
@@ -274,9 +275,9 @@ def _authenticated_client_with_csrf(
         "stock_profiler.adapters.authentication.passkeys.verify_authentication_response",
         lambda **_: SimpleNamespace(new_sign_count=2),
     )
-    client = TestClient(create_app(settings), base_url=ORIGIN)
+    client = TestClient(create_app(settings, clock=clock), base_url=ORIGIN)
     grant_id = PasskeyAuthenticator(
-        initialize_runtime_storage(settings).engine, settings
+        initialize_runtime_storage(settings).engine, settings, clock=clock
     ).create_host_console_grant(HostGrantPurpose.BOOTSTRAP)
     registration = client.post(
         "/api/v1/auth/passkeys/registration/options",

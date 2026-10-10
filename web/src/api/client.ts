@@ -21,6 +21,33 @@ export type FormalReport = components["schemas"]["FormalReport"];
 export type VersionBundle = components["schemas"]["VersionDiagnosticDto"];
 export type MonitoringWorkspace = components["schemas"]["MonitoringWorkspace"];
 export type CandidateWorkspace = components["schemas"]["CandidateWorkspace"];
+export type CandidateWorkspaceCommand = components["schemas"]["CandidateWorkspaceCommand"];
+
+export async function submitCandidateCommand(request: CandidateWorkspaceCommand) {
+  const { data, response } = await client.POST("/api/v1/candidates/commands", {
+    params: { header: { "X-CSRF-Token": csrfToken(), origin: window.location.origin } },
+    body: request
+  });
+  if (!data) throw new ApiResponseError(response.status);
+  return data;
+}
+
+export async function reauthenticateCandidateSession(): Promise<void> {
+  const params = { header: { "X-CSRF-Token": csrfToken(), origin: window.location.origin } };
+  const options = await client.POST("/api/v1/auth/passkeys/reauthentication/options", { params });
+  if (!options.data) throw new ApiResponseError(options.response.status);
+  const credential = await startAuthentication({
+    optionsJSON: options.data.options as unknown as PublicKeyCredentialRequestOptionsJSON
+  });
+  const verification = await client.POST("/api/v1/auth/passkeys/reauthentication/verify", {
+    params,
+    body: {
+      challenge_id: options.data.challenge_id,
+      credential: credential as unknown as Record<string, unknown>
+    }
+  });
+  if (!verification.data) throw new ApiResponseError(verification.response.status);
+}
 
 export async function fetchCandidateWorkspace(): Promise<CandidateWorkspace> {
   const { data, response } = await client.GET("/api/v1/candidates");

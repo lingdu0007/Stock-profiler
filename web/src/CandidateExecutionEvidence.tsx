@@ -22,6 +22,30 @@ export function CandidateExecutionEvidence({ execution }: { execution: Execution
           value={(execution.released_reservation_ids ?? []).join(", ") || "None"}
         />
       </dl>
+      <p>
+        Unresolved order identities:{" "}
+        {execution.unresolved_order_keys?.map((key) => key.join(" / ")).join(", ") || "None"}
+      </p>
+      {(execution.orders ?? []).map((row) => (
+        <dl className="record-list" key={`${row.account_id}:${row.order_id}`}>
+          <Record
+            label="Authoritative broker order"
+            value={`${row.account_id} / ${row.order_id}`}
+          />
+          <Record
+            label="Order security / side / status"
+            value={`${row.security_id} / ${row.side} / ${row.status}`}
+          />
+          <Record
+            label="Ordered / filled / remaining quantity"
+            value={`${row.quantity} / ${row.filled_quantity} / ${row.remaining_quantity ?? "Unknown"}`}
+          />
+          <Record
+            label="Submitted at / causal reservation / step review"
+            value={`${row.submitted_at} / ${row.causal_reservation_id ?? "Unassociated"} / ${row.step_confirmation_id ?? "Unavailable"}`}
+          />
+        </dl>
+      ))}
       {(execution.declarations ?? []).length > 0 && (
         <div className="portfolio-subsection">
           <h3>User declarations awaiting reconciliation</h3>

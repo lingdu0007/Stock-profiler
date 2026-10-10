@@ -1,0 +1,3149 @@
+{
+  "synthetic": true,
+  "generator_version": "allocation-workspace.1",
+  "seed": 26,
+  "workspace": {
+    "observed_at": "2042-05-19T16:01:00Z",
+    "releases": [
+      {
+        "report_version_id": "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708",
+        "event_id": "decision-event-e9c32267bee6313c9e83c79d973894c489718b217d936ad52a5c490a98994a42",
+        "business_object_id": "business-object-7fb600f1db3d090be45afba0f1d4918027c1a6808677505c1518a19d50548bda",
+        "plan_month": "2042-05",
+        "knowledge_cutoff": "2042-05-17T16:00:00Z",
+        "generated_at": "2042-05-17T15:01:00Z",
+        "committed_at": "2042-05-17T15:01:00Z",
+        "published_at": "2042-05-17T15:01:00Z",
+        "valid_from": "2042-05-19T08:00:00Z",
+        "valid_through": "2042-05-23T15:00:00Z",
+        "final_reminder_before": "2042-05-23T08:00:00Z",
+        "status": "CURRENT",
+        "status_reasons": [
+          "SYNTHETIC_CANDIDATE"
+        ],
+        "status_evidence_ids": [
+          "synthetic-workspace-qualification"
+        ],
+        "withdrawal_evidence_ids": [],
+        "frozen_pool_count": null,
+        "research_completed_count": null,
+        "current_qualification_status": "VALID",
+        "corrects_report_id": null,
+        "superseded_by_report_id": null,
+        "detail_ids": [
+          "candidate-detail-137a4c30e8c8e0ab8600952559d7b9adb11c7f00515e3019b3cb94e9026ce4bd",
+          "candidate-detail-10de5d03ac2041c23f04466323a2d0017d15e1057a72002733f3fc1238573a0e"
+        ],
+        "reminders": [],
+        "release": {
+          "batch_id": "synthetic-candidate-batch",
+          "disposition": "CANDIDATES",
+          "knowledge_cutoff": "2042-05-17T15:00:00Z",
+          "published_at": "2042-05-17T15:01:00Z",
+          "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+          "capability_version": "synthetic-candidate-v1",
+          "research_object_id": "synthetic-research-business",
+          "research_event_id": "synthetic-research-event",
+          "market_calendar_version": "synthetic-market-calendar-v2",
+          "market_state": "BULL",
+          "qualification": {
+            "market_state": "BULL",
+            "status": "VALID",
+            "qualification_id": "synthetic-workspace-qualification",
+            "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+            "capability_version": "synthetic-candidate-v1",
+            "market_calendar_version": "synthetic-market-calendar-v2",
+            "recorded_at": "2042-05-17T14:59:00Z",
+            "current_status_recorded_at": null,
+            "valid_through": "2042-05-23T15:00:00Z"
+          },
+          "calibration": null,
+          "members": [
+            {
+              "security_id": "SYNTH-CANDIDATE",
+              "research_id": "synthetic-research-workspace",
+              "raw_success_score": "2.7",
+              "calibrated_probability": "0.85",
+              "candidate": true,
+              "risk_status": "ACCEPTED",
+              "risk_gates": [
+                {
+                  "gate_id": "INDEPENDENT_RISK",
+                  "status": "PASSED"
+                }
+              ],
+              "risk_reasons": [
+                "SYNTHETIC_ACCEPTED"
+              ],
+              "market_state_qualified": true,
+              "market_state_qualification_status": "VALID",
+              "data_complete": true,
+              "thesis": "Invented synthetic research thesis.",
+              "principal_risks": [
+                "Invented synthetic risk."
+              ],
+              "evidence_freshness": "AT_CUTOFF",
+              "evidence_clocks": [
+                {
+                  "evidence_id": "synthetic-evidence-workspace",
+                  "effective_at": null,
+                  "source_published_at": "2042-06-30T06:00:00Z",
+                  "acquired_at": "2042-06-30T07:00:00Z",
+                  "validated_at": "2042-06-30T08:00:00Z",
+                  "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                }
+              ],
+              "valid_market_dates": [
+                "2042-05-19",
+                "2042-05-20",
+                "2042-05-21",
+                "2042-05-22",
+                "2042-05-23"
+              ],
+              "reasons": [
+                "SYNTHETIC_CANDIDATE"
+              ]
+            },
+            {
+              "security_id": "SYNTH-CANDIDATE-1",
+              "research_id": "synthetic-research-1",
+              "raw_success_score": "2.7",
+              "calibrated_probability": "0.85",
+              "candidate": true,
+              "risk_status": "ACCEPTED",
+              "risk_gates": [
+                {
+                  "gate_id": "INDEPENDENT_RISK",
+                  "status": "PASSED"
+                }
+              ],
+              "risk_reasons": [
+                "SYNTHETIC_ACCEPTED"
+              ],
+              "market_state_qualified": true,
+              "market_state_qualification_status": "VALID",
+              "data_complete": true,
+              "thesis": "Invented synthetic research thesis.",
+              "principal_risks": [
+                "Invented synthetic risk."
+              ],
+              "evidence_freshness": "AT_CUTOFF",
+              "evidence_clocks": [
+                {
+                  "evidence_id": "synthetic-evidence-workspace",
+                  "effective_at": null,
+                  "source_published_at": "2042-06-30T06:00:00Z",
+                  "acquired_at": "2042-06-30T07:00:00Z",
+                  "validated_at": "2042-06-30T08:00:00Z",
+                  "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                }
+              ],
+              "valid_market_dates": [
+                "2042-05-19",
+                "2042-05-20",
+                "2042-05-21",
+                "2042-05-22",
+                "2042-05-23"
+              ],
+              "reasons": [
+                "SYNTHETIC_CANDIDATE"
+              ]
+            }
+          ],
+          "population": {
+            "valid_monthly": true,
+            "recommendation_coverage_denominator": true,
+            "recommendation_coverage_pass": true,
+            "availability_failure": null
+          },
+          "valid_market_dates": [
+            "2042-05-19",
+            "2042-05-20",
+            "2042-05-21",
+            "2042-05-22",
+            "2042-05-23"
+          ],
+          "reasons": [
+            "SYNTHETIC_CANDIDATE"
+          ],
+          "availability_failure": null,
+          "actionable": false
+        }
+      }
+    ],
+    "current_report_ids": [
+      "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708"
+    ],
+    "details": [
+      {
+        "detail_id": "candidate-detail-137a4c30e8c8e0ab8600952559d7b9adb11c7f00515e3019b3cb94e9026ce4bd",
+        "report_version_id": "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708",
+        "event_id": "decision-event-e9c32267bee6313c9e83c79d973894c489718b217d936ad52a5c490a98994a42",
+        "member": {
+          "security_id": "SYNTH-CANDIDATE",
+          "research_id": "synthetic-research-workspace",
+          "raw_success_score": "2.7",
+          "calibrated_probability": "0.85",
+          "candidate": true,
+          "risk_status": "ACCEPTED",
+          "risk_gates": [
+            {
+              "gate_id": "INDEPENDENT_RISK",
+              "status": "PASSED"
+            }
+          ],
+          "risk_reasons": [
+            "SYNTHETIC_ACCEPTED"
+          ],
+          "market_state_qualified": true,
+          "market_state_qualification_status": "VALID",
+          "data_complete": true,
+          "thesis": "Invented synthetic research thesis.",
+          "principal_risks": [
+            "Invented synthetic risk."
+          ],
+          "evidence_freshness": "AT_CUTOFF",
+          "evidence_clocks": [
+            {
+              "evidence_id": "synthetic-evidence-workspace",
+              "effective_at": null,
+              "source_published_at": "2042-06-30T06:00:00Z",
+              "acquired_at": "2042-06-30T07:00:00Z",
+              "validated_at": "2042-06-30T08:00:00Z",
+              "knowledge_cutoff": "2042-06-30T16:00:00Z"
+            }
+          ],
+          "valid_market_dates": [
+            "2042-05-19",
+            "2042-05-20",
+            "2042-05-21",
+            "2042-05-22",
+            "2042-05-23"
+          ],
+          "reasons": [
+            "SYNTHETIC_CANDIDATE"
+          ]
+        },
+        "status": "CURRENT",
+        "status_reasons": [
+          "SYNTHETIC_CANDIDATE"
+        ]
+      },
+      {
+        "detail_id": "candidate-detail-10de5d03ac2041c23f04466323a2d0017d15e1057a72002733f3fc1238573a0e",
+        "report_version_id": "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708",
+        "event_id": "decision-event-e9c32267bee6313c9e83c79d973894c489718b217d936ad52a5c490a98994a42",
+        "member": {
+          "security_id": "SYNTH-CANDIDATE-1",
+          "research_id": "synthetic-research-1",
+          "raw_success_score": "2.7",
+          "calibrated_probability": "0.85",
+          "candidate": true,
+          "risk_status": "ACCEPTED",
+          "risk_gates": [
+            {
+              "gate_id": "INDEPENDENT_RISK",
+              "status": "PASSED"
+            }
+          ],
+          "risk_reasons": [
+            "SYNTHETIC_ACCEPTED"
+          ],
+          "market_state_qualified": true,
+          "market_state_qualification_status": "VALID",
+          "data_complete": true,
+          "thesis": "Invented synthetic research thesis.",
+          "principal_risks": [
+            "Invented synthetic risk."
+          ],
+          "evidence_freshness": "AT_CUTOFF",
+          "evidence_clocks": [
+            {
+              "evidence_id": "synthetic-evidence-workspace",
+              "effective_at": null,
+              "source_published_at": "2042-06-30T06:00:00Z",
+              "acquired_at": "2042-06-30T07:00:00Z",
+              "validated_at": "2042-06-30T08:00:00Z",
+              "knowledge_cutoff": "2042-06-30T16:00:00Z"
+            }
+          ],
+          "valid_market_dates": [
+            "2042-05-19",
+            "2042-05-20",
+            "2042-05-21",
+            "2042-05-22",
+            "2042-05-23"
+          ],
+          "reasons": [
+            "SYNTHETIC_CANDIDATE"
+          ]
+        },
+        "status": "CURRENT",
+        "status_reasons": [
+          "SYNTHETIC_CANDIDATE"
+        ]
+      }
+    ],
+    "allocations": [
+      {
+        "plan_event_id": "decision-event-dae1807e3740bfb819a6f1136c5ed3f12e485fe7aa2ea2e01bde145a9d3f7910",
+        "report_version_id": "report-version-4f9d3f58555b1fec9803ee9bb93e65920c2f7b371278746a4ebb01d6ab49f010",
+        "plan_report": {
+          "report_version_id": "report-version-4f9d3f58555b1fec9803ee9bb93e65920c2f7b371278746a4ebb01d6ab49f010",
+          "event_id": "decision-event-dae1807e3740bfb819a6f1136c5ed3f12e485fe7aa2ea2e01bde145a9d3f7910",
+          "business_object_id": "business-object-e81ac569835f6717605cb626ad02cf320a5c873335240f5c3631de0d2b7247d4",
+          "framework_run_id": "framework-run-a90f271ed132b4bd47c1211074758f0092b56f9e4ac17e4359d91e2c20ffe132",
+          "case_id": "d0-position-state-execution-plan",
+          "synthetic": true,
+          "qualification_scope": "D0_SYNTHETIC_CONTRACT_ONLY",
+          "generated_at": "2042-05-17T16:01:00Z",
+          "knowledge_cutoff": "2042-05-19T16:00:00Z",
+          "evidence_clock": {
+            "fact_effective_at": "2042-05-17T15:00:00Z",
+            "source_published_at": "2042-05-17T15:12:00Z",
+            "acquired_at": "2042-05-17T15:16:00Z",
+            "validated_at": "2042-05-17T15:18:00Z"
+          },
+          "version_bundle": {
+            "case_contract_version": "candidate-allocation.1.0.0",
+            "host_contract_version": "candidate-allocation.1.0.0",
+            "host_application_version": "0.1.0.dev0",
+            "host_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent_definition_id": "synthetic-frozen-decision-case",
+            "agent_definition_version": "2.0.0",
+            "model_adapter_id": "m-agent-deterministic-model-adapter",
+            "routing_policy_version": "d0-single-definition-route-v1",
+            "output_contract_version": "1.0.0",
+            "report_projection_contract_version": "candidate-allocation.1.0.0",
+            "m_agent_version": "0.5.1",
+            "m_agent_wheel_url": "https://github.com/lingdu0007/M-Agent/releases/download/v0.5.1/m_agent-0.5.1-py3-none-any.whl",
+            "m_agent_wheel_sha256": "7528e768c36890d4005c90f2f24a97ae96714b96f8d8c5655542e6289004fbaa",
+            "m_agent_release_commit": "99dd386b6f2c93645334ec81c9791f3b0333d597"
+          },
+          "result": {
+            "outcome_code": "SYNTHETIC_REVIEW_COMPLETE",
+            "summary": "Synthetic D0 decision case completed under the frozen contract.",
+            "key_reasons": [
+              "All required fictional evidence records are present.",
+              "The output is D0 synthetic evidence and is not a recommendation."
+            ],
+            "candidate_allocation": {
+              "contract_version": "1.0.0",
+              "disposition": "PLANNED",
+              "reasons": [],
+              "rows": [
+                {
+                  "candidate": {
+                    "security_id": "SYNTH-CANDIDATE",
+                    "research_id": "synthetic-research-workspace",
+                    "raw_success_score": "2.7",
+                    "calibrated_probability": "0.85",
+                    "candidate": true,
+                    "risk_status": "ACCEPTED",
+                    "risk_gates": [
+                      {
+                        "gate_id": "INDEPENDENT_RISK",
+                        "status": "PASSED"
+                      }
+                    ],
+                    "risk_reasons": [
+                      "SYNTHETIC_ACCEPTED"
+                    ],
+                    "market_state_qualified": true,
+                    "market_state_qualification_status": "VALID",
+                    "data_complete": true,
+                    "thesis": "Invented synthetic research thesis.",
+                    "principal_risks": [
+                      "Invented synthetic risk."
+                    ],
+                    "evidence_freshness": "AT_CUTOFF",
+                    "evidence_clocks": [
+                      {
+                        "evidence_id": "synthetic-evidence-workspace",
+                        "effective_at": null,
+                        "source_published_at": "2042-06-30T06:00:00Z",
+                        "acquired_at": "2042-06-30T07:00:00Z",
+                        "validated_at": "2042-06-30T08:00:00Z",
+                        "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                      }
+                    ],
+                    "valid_market_dates": [
+                      "2042-05-19",
+                      "2042-05-20",
+                      "2042-05-21",
+                      "2042-05-22",
+                      "2042-05-23"
+                    ],
+                    "reasons": [
+                      "SYNTHETIC_CANDIDATE"
+                    ]
+                  },
+                  "issuer_id": "fictional-new-issuer",
+                  "committed_exposure": "0",
+                  "target_gap": "700.00",
+                  "continuous_principal": "700.000000",
+                  "principal": "700",
+                  "outcome": "FULLY_ALLOCATED",
+                  "reasons": [],
+                  "primary_reason": null,
+                  "comparisons": [],
+                  "route_failures": [],
+                  "legs": [
+                    {
+                      "route": {
+                        "security_id": "SYNTH-CANDIDATE",
+                        "account_id": "synthetic-account-4017",
+                        "permission": true,
+                        "price_cap": "10",
+                        "price_cap_confirmed": true,
+                        "current_price": "10",
+                        "price_tick": "1",
+                        "minimum_price": "1",
+                        "maximum_price": "100",
+                        "minimum_quantity": "10",
+                        "quantity_increment": "10",
+                        "commission_ratio": "0",
+                        "minimum_commission": "0",
+                        "other_cost_ratio": "0",
+                        "disposal_friction_ratio": "0",
+                        "version_id": "synthetic-buy-curve",
+                        "rule_version": "synthetic-buy-rule",
+                        "evidence": {
+                          "source": "synthetic-route",
+                          "source_version": "synthetic-broker-schema-v1",
+                          "business_effective_at": "2042-05-19T15:00:00Z",
+                          "source_observed_at": "2042-05-19T15:10:00Z",
+                          "locally_acquired_at": "2042-05-19T15:14:00Z",
+                          "validated_at": "2042-05-19T15:18:00Z",
+                          "cutoff_at": "2042-05-19T16:00:00Z",
+                          "complete_through_at": "2042-05-19T16:00:00Z",
+                          "expires_at": null
+                        }
+                      },
+                      "quantity": "70",
+                      "principal": "700",
+                      "purchase_cost": "0"
+                    }
+                  ]
+                },
+                {
+                  "candidate": {
+                    "security_id": "SYNTH-CANDIDATE-1",
+                    "research_id": "synthetic-research-1",
+                    "raw_success_score": "2.7",
+                    "calibrated_probability": "0.85",
+                    "candidate": true,
+                    "risk_status": "ACCEPTED",
+                    "risk_gates": [
+                      {
+                        "gate_id": "INDEPENDENT_RISK",
+                        "status": "PASSED"
+                      }
+                    ],
+                    "risk_reasons": [
+                      "SYNTHETIC_ACCEPTED"
+                    ],
+                    "market_state_qualified": true,
+                    "market_state_qualification_status": "VALID",
+                    "data_complete": true,
+                    "thesis": "Invented synthetic research thesis.",
+                    "principal_risks": [
+                      "Invented synthetic risk."
+                    ],
+                    "evidence_freshness": "AT_CUTOFF",
+                    "evidence_clocks": [
+                      {
+                        "evidence_id": "synthetic-evidence-workspace",
+                        "effective_at": null,
+                        "source_published_at": "2042-06-30T06:00:00Z",
+                        "acquired_at": "2042-06-30T07:00:00Z",
+                        "validated_at": "2042-06-30T08:00:00Z",
+                        "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                      }
+                    ],
+                    "valid_market_dates": [
+                      "2042-05-19",
+                      "2042-05-20",
+                      "2042-05-21",
+                      "2042-05-22",
+                      "2042-05-23"
+                    ],
+                    "reasons": [
+                      "SYNTHETIC_CANDIDATE"
+                    ]
+                  },
+                  "issuer_id": "fictional-new-issuer-1",
+                  "committed_exposure": "0",
+                  "target_gap": "700.00",
+                  "continuous_principal": "700.000000",
+                  "principal": "700",
+                  "outcome": "FULLY_ALLOCATED",
+                  "reasons": [],
+                  "primary_reason": null,
+                  "comparisons": [],
+                  "route_failures": [],
+                  "legs": [
+                    {
+                      "route": {
+                        "security_id": "SYNTH-CANDIDATE-1",
+                        "account_id": "synthetic-account-4017",
+                        "permission": true,
+                        "price_cap": "10",
+                        "price_cap_confirmed": true,
+                        "current_price": "10",
+                        "price_tick": "1",
+                        "minimum_price": "1",
+                        "maximum_price": "100",
+                        "minimum_quantity": "10",
+                        "quantity_increment": "10",
+                        "commission_ratio": "0",
+                        "minimum_commission": "0",
+                        "other_cost_ratio": "0",
+                        "disposal_friction_ratio": "0",
+                        "version_id": "synthetic-buy-curve",
+                        "rule_version": "synthetic-buy-rule",
+                        "evidence": {
+                          "source": "synthetic-route",
+                          "source_version": "synthetic-broker-schema-v1",
+                          "business_effective_at": "2042-05-19T15:00:00Z",
+                          "source_observed_at": "2042-05-19T15:10:00Z",
+                          "locally_acquired_at": "2042-05-19T15:14:00Z",
+                          "validated_at": "2042-05-19T15:18:00Z",
+                          "cutoff_at": "2042-05-19T16:00:00Z",
+                          "complete_through_at": "2042-05-19T16:00:00Z",
+                          "expires_at": null
+                        }
+                      },
+                      "quantity": "70",
+                      "principal": "700",
+                      "purchase_cost": "0"
+                    }
+                  ]
+                }
+              ],
+              "actionable": false,
+              "plan_id": "decision-event-dae1807e3740bfb819a6f1136c5ed3f12e485fe7aa2ea2e01bde145a9d3f7910",
+              "formed_at": "2042-05-19T16:00:00Z",
+              "candidate_event_id": "decision-event-e9c32267bee6313c9e83c79d973894c489718b217d936ad52a5c490a98994a42",
+              "candidate_batch_id": "synthetic-candidate-batch",
+              "candidate_conclusion_version": "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708",
+              "policy": {
+                "synthetic": true,
+                "generator_version": "allocation-policy-v1",
+                "seed": 2323,
+                "version_id": "synthetic-allocation-policy",
+                "entry_target_ratio": "0.07",
+                "correlation_ceiling": "0.85",
+                "neighborhood_ratio": "0.24",
+                "turnover_ratio": "0.02",
+                "correlation_window": 120
+              },
+              "position_snapshot_id": "synthetic-position-snapshot-alpha",
+              "position_snapshot": {
+                "snapshot_id": "synthetic-position-snapshot-alpha",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "valuation_currency": "XSP",
+                "snapshot_source": "synthetic-position-snapshot-manifest",
+                "evidence_clock": {
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z"
+                },
+                "snapshot_evidence": {
+                  "source": "synthetic-position-snapshot-manifest",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "total_account_equity": "10000",
+                "action_units": [
+                  {
+                    "account_id": "synthetic-account-4017",
+                    "account_type": "SIMULATED_CASH",
+                    "currency": "XSP",
+                    "position_id": "synthetic-position-4017-xqz",
+                    "origin": "EXTERNAL",
+                    "lifecycle_id": "synthetic-lifecycle-4017-xqz",
+                    "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                    "security_id": "XQZ-4017",
+                    "total_quantity": "100",
+                    "broker_sellable_quantity": "100",
+                    "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                    "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+                    "unsettled_quantity": "0",
+                    "frozen_quantity": "0",
+                    "restricted_quantity": "0",
+                    "open_sell_order_quantity": "0",
+                    "reported_cost_basis": "900",
+                    "market_price": "10",
+                    "exact_statistical_action_quantity": "100",
+                    "exact_quantity_status": "AVAILABLE",
+                    "reasons": [],
+                    "position_evidence": {
+                      "source": "synthetic-broker-4017-position",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  },
+                  {
+                    "account_id": "synthetic-account-8029",
+                    "account_type": "SIMULATED_CASH",
+                    "currency": "XSP",
+                    "position_id": "synthetic-position-8029-xqz",
+                    "origin": "EXTERNAL",
+                    "lifecycle_id": "synthetic-lifecycle-8029-xqz",
+                    "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                    "security_id": "XQZ-4017",
+                    "total_quantity": "100",
+                    "broker_sellable_quantity": "100",
+                    "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                    "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+                    "unsettled_quantity": "0",
+                    "frozen_quantity": "0",
+                    "restricted_quantity": "0",
+                    "open_sell_order_quantity": "0",
+                    "reported_cost_basis": "900",
+                    "market_price": "10",
+                    "exact_statistical_action_quantity": "100",
+                    "exact_quantity_status": "AVAILABLE",
+                    "reasons": [],
+                    "position_evidence": {
+                      "source": "synthetic-broker-8029-position",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  }
+                ],
+                "issuer_exposures": [
+                  {
+                    "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                    "valuation_currency": "XSP",
+                    "account_ids": [
+                      "synthetic-account-4017",
+                      "synthetic-account-8029"
+                    ],
+                    "current_market_exposure": "2000"
+                  }
+                ],
+                "cash_states": [
+                  {
+                    "account_id": "synthetic-account-4017",
+                    "account_type": "SIMULATED_CASH",
+                    "currency": "XSP",
+                    "account_evidence": {
+                      "source": "synthetic-broker-4017-snapshot",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "account_equity": "9000",
+                    "account_equity_evidence": {
+                      "source": "synthetic-broker-4017-equity",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
+                    "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                    "opening_ledger_cash": "8900",
+                    "opening_ledger_cash_evidence": {
+                      "source": "synthetic-broker-4017-opening-cash",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "ledger_cash": "8000",
+                    "trading_cash": "8000",
+                    "transferable_cash": "8000",
+                    "frozen_cash": "0",
+                    "receivable_cash": "0",
+                    "payable_cash": "0",
+                    "cash_state_evidence": {
+                      "source": "synthetic-broker-4017-cash",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  },
+                  {
+                    "account_id": "synthetic-account-8029",
+                    "account_type": "SIMULATED_CASH",
+                    "currency": "XSP",
+                    "account_evidence": {
+                      "source": "synthetic-broker-8029-snapshot",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "account_equity": "1000",
+                    "account_equity_evidence": {
+                      "source": "synthetic-broker-8029-equity",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
+                    "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                    "opening_ledger_cash": "900",
+                    "opening_ledger_cash_evidence": {
+                      "source": "synthetic-broker-8029-opening-cash",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "ledger_cash": "0",
+                    "trading_cash": "0",
+                    "transferable_cash": "0",
+                    "frozen_cash": "0",
+                    "receivable_cash": "0",
+                    "payable_cash": "0",
+                    "cash_state_evidence": {
+                      "source": "synthetic-broker-8029-cash",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  }
+                ],
+                "unfinished_orders": [],
+                "execution_restrictions": [],
+                "authoritative_ledger": [
+                  {
+                    "entry_id": "synthetic-fill-4017-xqz",
+                    "entry_type": "FILL",
+                    "security_id": "XQZ-4017",
+                    "quantity_delta": "100",
+                    "cost_basis_delta": "900",
+                    "cash_delta": "-900",
+                    "occurred_at": "2042-05-16T15:00:00Z",
+                    "corrects_entry_id": null,
+                    "correction_reason": null,
+                    "evidence": {
+                      "source": "synthetic-broker-4017-fill",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-17T15:00:00Z",
+                      "source_observed_at": "2042-05-17T15:10:00Z",
+                      "locally_acquired_at": "2042-05-17T15:14:00Z",
+                      "validated_at": "2042-05-17T15:18:00Z",
+                      "cutoff_at": "2042-05-17T16:00:00Z",
+                      "complete_through_at": "2042-05-17T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "account_id": "synthetic-account-4017"
+                  },
+                  {
+                    "entry_id": "synthetic-fill-8029-xqz",
+                    "entry_type": "FILL",
+                    "security_id": "XQZ-4017",
+                    "quantity_delta": "100",
+                    "cost_basis_delta": "900",
+                    "cash_delta": "-900",
+                    "occurred_at": "2042-05-16T15:00:00Z",
+                    "corrects_entry_id": null,
+                    "correction_reason": null,
+                    "evidence": {
+                      "source": "synthetic-broker-8029-fill",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-17T15:00:00Z",
+                      "source_observed_at": "2042-05-17T15:10:00Z",
+                      "locally_acquired_at": "2042-05-17T15:14:00Z",
+                      "validated_at": "2042-05-17T15:18:00Z",
+                      "cutoff_at": "2042-05-17T16:00:00Z",
+                      "complete_through_at": "2042-05-17T16:00:00Z",
+                      "expires_at": null
+                    },
+                    "account_id": "synthetic-account-8029"
+                  }
+                ],
+                "user_annotations": []
+              },
+              "risk_budget": {
+                "contract_version": "1.0.0",
+                "version_id": "synthetic-risk-budget-alpha",
+                "action_policy_version_id": "synthetic-action-policy-alpha",
+                "synthetic": true,
+                "generator_version": "portfolio-authorization/1",
+                "seed": 6101,
+                "effective_at": "2042-05-17T16:00:00Z",
+                "expires_at": "2042-11-17T16:00:00Z",
+                "concentration": {
+                  "target_ratio": "0.30",
+                  "hard_ratio": "0.40"
+                },
+                "stress": {
+                  "target_ratio": "0.14",
+                  "hard_ratio": "0.18"
+                },
+                "cash": {
+                  "target_ratio": "0.39",
+                  "hard_ratio": "0.23"
+                },
+                "drawdown": {
+                  "caution_ratio": "0.11",
+                  "defensive_ratio": "0.16",
+                  "preservation_ratio": "0.21"
+                },
+                "downside_grid": [
+                  "0.04",
+                  "0.09",
+                  "0.23"
+                ],
+                "protection_floor": {
+                  "new_exposure_blocked": true,
+                  "retained_directions": [
+                    "REDUCE",
+                    "EXIT"
+                  ]
+                },
+                "stress_calculation": {
+                  "contract_version": "1.0.0",
+                  "version_id": "synthetic-gross-stress-v1",
+                  "horizon_market_days": 20,
+                  "shock_ratio": "0.23",
+                  "disposal_friction_ratio": "0",
+                  "registered_at": "2042-05-16T16:00:00Z"
+                }
+              },
+              "risk_budget_version_id": "synthetic-risk-budget-alpha",
+              "total_principal": "1400",
+              "remaining_cash": "2700.00",
+              "risk_handoff": {
+                "contract_version": "1.0.0",
+                "operation": "EXECUTION_PLAN",
+                "portfolio_id": "synthetic-decision-portfolio-alpha",
+                "authorization_id": "decision-event-ce5a312abfbe6b8a6942bd3e9de9a9fb7c1a7727619a7eea91c695a6b0f48d19",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "concentration_event_id": "decision-event-d85acc4aac4d8f49f218f3c1862a3e99a5afbfce395e1f58367084a9530bdf64",
+                "stress_event_id": "decision-event-6601113de29132a5b682017e4414123fd6614c35b2a0decb2fa297087da8c2a8",
+                "liquidity_event_id": "decision-event-a3f8fb123596a4b7094248d165d634c6df915a79b3e146372908edfb0393623e",
+                "drawdown_event_id": "decision-event-bf78653794dad9d59be6bf44d58e9630b4b295adbcbc160b8b33c32a9257768f",
+                "routes": [],
+                "established_targets": []
+              },
+              "correlations": {
+                "version_id": "synthetic-return-matrix",
+                "market_calendar_version": "synthetic-market-calendar-v2",
+                "return_semantics": "DAILY_ADJUSTED",
+                "market_dates": [
+                  "2041-12-03",
+                  "2041-12-04",
+                  "2041-12-05",
+                  "2041-12-06",
+                  "2041-12-09",
+                  "2041-12-10",
+                  "2041-12-11",
+                  "2041-12-12",
+                  "2041-12-13",
+                  "2041-12-16",
+                  "2041-12-17",
+                  "2041-12-18",
+                  "2041-12-19",
+                  "2041-12-20",
+                  "2041-12-23",
+                  "2041-12-24",
+                  "2041-12-25",
+                  "2041-12-26",
+                  "2041-12-27",
+                  "2041-12-30",
+                  "2041-12-31",
+                  "2042-01-01",
+                  "2042-01-02",
+                  "2042-01-03",
+                  "2042-01-06",
+                  "2042-01-07",
+                  "2042-01-08",
+                  "2042-01-09",
+                  "2042-01-10",
+                  "2042-01-13",
+                  "2042-01-14",
+                  "2042-01-15",
+                  "2042-01-16",
+                  "2042-01-17",
+                  "2042-01-20",
+                  "2042-01-21",
+                  "2042-01-22",
+                  "2042-01-23",
+                  "2042-01-24",
+                  "2042-01-27",
+                  "2042-01-28",
+                  "2042-01-29",
+                  "2042-01-30",
+                  "2042-01-31",
+                  "2042-02-03",
+                  "2042-02-04",
+                  "2042-02-05",
+                  "2042-02-06",
+                  "2042-02-07",
+                  "2042-02-10",
+                  "2042-02-11",
+                  "2042-02-12",
+                  "2042-02-13",
+                  "2042-02-14",
+                  "2042-02-17",
+                  "2042-02-18",
+                  "2042-02-19",
+                  "2042-02-20",
+                  "2042-02-21",
+                  "2042-02-24",
+                  "2042-02-25",
+                  "2042-02-26",
+                  "2042-02-27",
+                  "2042-02-28",
+                  "2042-03-03",
+                  "2042-03-04",
+                  "2042-03-05",
+                  "2042-03-06",
+                  "2042-03-07",
+                  "2042-03-10",
+                  "2042-03-11",
+                  "2042-03-12",
+                  "2042-03-13",
+                  "2042-03-14",
+                  "2042-03-17",
+                  "2042-03-18",
+                  "2042-03-19",
+                  "2042-03-20",
+                  "2042-03-21",
+                  "2042-03-24",
+                  "2042-03-25",
+                  "2042-03-26",
+                  "2042-03-27",
+                  "2042-03-28",
+                  "2042-03-31",
+                  "2042-04-01",
+                  "2042-04-02",
+                  "2042-04-03",
+                  "2042-04-04",
+                  "2042-04-07",
+                  "2042-04-08",
+                  "2042-04-09",
+                  "2042-04-10",
+                  "2042-04-11",
+                  "2042-04-14",
+                  "2042-04-15",
+                  "2042-04-16",
+                  "2042-04-17",
+                  "2042-04-18",
+                  "2042-04-21",
+                  "2042-04-22",
+                  "2042-04-23",
+                  "2042-04-24",
+                  "2042-04-25",
+                  "2042-04-28",
+                  "2042-04-29",
+                  "2042-04-30",
+                  "2042-05-01",
+                  "2042-05-02",
+                  "2042-05-05",
+                  "2042-05-06",
+                  "2042-05-07",
+                  "2042-05-08",
+                  "2042-05-09",
+                  "2042-05-12",
+                  "2042-05-13",
+                  "2042-05-14",
+                  "2042-05-15",
+                  "2042-05-16",
+                  "2042-05-19"
+                ],
+                "returns": {
+                  "FICTIONAL-ORBITAL-MOSAIC": [
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2",
+                    "-2",
+                    "-1",
+                    "0",
+                    "1",
+                    "2"
+                  ],
+                  "fictional-new-issuer": [
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1"
+                  ],
+                  "fictional-new-issuer-1": [
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1",
+                    "-1",
+                    "0",
+                    "1"
+                  ]
+                },
+                "evidence": {
+                  "source": "synthetic-correlation",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                }
+              },
+              "commitments": [],
+              "securities": [
+                {
+                  "security_id": "SYNTH-CANDIDATE",
+                  "issuer_id": "fictional-new-issuer",
+                  "median_turnover": "100000",
+                  "turnover_window_sessions": 20,
+                  "evidence": {
+                    "source": "synthetic-market",
+                    "source_version": "synthetic-broker-schema-v1",
+                    "business_effective_at": "2042-05-19T15:00:00Z",
+                    "source_observed_at": "2042-05-19T15:10:00Z",
+                    "locally_acquired_at": "2042-05-19T15:14:00Z",
+                    "validated_at": "2042-05-19T15:18:00Z",
+                    "cutoff_at": "2042-05-19T16:00:00Z",
+                    "complete_through_at": "2042-05-19T16:00:00Z",
+                    "expires_at": null
+                  }
+                },
+                {
+                  "security_id": "SYNTH-CANDIDATE-1",
+                  "issuer_id": "fictional-new-issuer-1",
+                  "median_turnover": "100000",
+                  "turnover_window_sessions": 20,
+                  "evidence": {
+                    "source": "synthetic-market",
+                    "source_version": "synthetic-broker-schema-v1",
+                    "business_effective_at": "2042-05-19T15:00:00Z",
+                    "source_observed_at": "2042-05-19T15:10:00Z",
+                    "locally_acquired_at": "2042-05-19T15:14:00Z",
+                    "validated_at": "2042-05-19T15:18:00Z",
+                    "cutoff_at": "2042-05-19T16:00:00Z",
+                    "complete_through_at": "2042-05-19T16:00:00Z",
+                    "expires_at": null
+                  }
+                }
+              ],
+              "routes": [
+                {
+                  "security_id": "SYNTH-CANDIDATE",
+                  "account_id": "synthetic-account-4017",
+                  "permission": true,
+                  "price_cap": "10",
+                  "price_cap_confirmed": true,
+                  "current_price": "10",
+                  "price_tick": "1",
+                  "minimum_price": "1",
+                  "maximum_price": "100",
+                  "minimum_quantity": "10",
+                  "quantity_increment": "10",
+                  "commission_ratio": "0",
+                  "minimum_commission": "0",
+                  "other_cost_ratio": "0",
+                  "disposal_friction_ratio": "0",
+                  "version_id": "synthetic-buy-curve",
+                  "rule_version": "synthetic-buy-rule",
+                  "evidence": {
+                    "source": "synthetic-route",
+                    "source_version": "synthetic-broker-schema-v1",
+                    "business_effective_at": "2042-05-19T15:00:00Z",
+                    "source_observed_at": "2042-05-19T15:10:00Z",
+                    "locally_acquired_at": "2042-05-19T15:14:00Z",
+                    "validated_at": "2042-05-19T15:18:00Z",
+                    "cutoff_at": "2042-05-19T16:00:00Z",
+                    "complete_through_at": "2042-05-19T16:00:00Z",
+                    "expires_at": null
+                  }
+                },
+                {
+                  "security_id": "SYNTH-CANDIDATE-1",
+                  "account_id": "synthetic-account-4017",
+                  "permission": true,
+                  "price_cap": "10",
+                  "price_cap_confirmed": true,
+                  "current_price": "10",
+                  "price_tick": "1",
+                  "minimum_price": "1",
+                  "maximum_price": "100",
+                  "minimum_quantity": "10",
+                  "quantity_increment": "10",
+                  "commission_ratio": "0",
+                  "minimum_commission": "0",
+                  "other_cost_ratio": "0",
+                  "disposal_friction_ratio": "0",
+                  "version_id": "synthetic-buy-curve",
+                  "rule_version": "synthetic-buy-rule",
+                  "evidence": {
+                    "source": "synthetic-route",
+                    "source_version": "synthetic-broker-schema-v1",
+                    "business_effective_at": "2042-05-19T15:00:00Z",
+                    "source_observed_at": "2042-05-19T15:10:00Z",
+                    "locally_acquired_at": "2042-05-19T15:14:00Z",
+                    "validated_at": "2042-05-19T15:18:00Z",
+                    "cutoff_at": "2042-05-19T16:00:00Z",
+                    "complete_through_at": "2042-05-19T16:00:00Z",
+                    "expires_at": null
+                  }
+                }
+              ],
+              "purchase_sequence": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "eligibility_evidence_ids": [
+                "synthetic-workspace-qualification"
+              ],
+              "discrete_objectives": [
+                [
+                  "2"
+                ],
+                [
+                  "1",
+                  "1"
+                ],
+                [
+                  "1400"
+                ],
+                [
+                  "0.85",
+                  "0.85"
+                ],
+                [
+                  "0"
+                ],
+                [
+                  "2"
+                ],
+                [
+                  "700",
+                  "700"
+                ]
+              ],
+              "capacity_checks": [
+                {
+                  "gate_id": "global:cash",
+                  "reason": "CASH_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE",
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "4100.00",
+                  "available_before": "4100.00",
+                  "remaining_after_continuous": "2700.000000",
+                  "remaining_after_plan": "2700.00"
+                },
+                {
+                  "gate_id": "global:stress",
+                  "reason": "STRESS_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE",
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "940.00",
+                  "available_before": "940.00",
+                  "remaining_after_continuous": "618.00000000",
+                  "remaining_after_plan": "618.00"
+                },
+                {
+                  "gate_id": "capacity:0",
+                  "reason": "ENTRY_TARGET_REACHED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "700.00",
+                  "available_before": "700.00",
+                  "remaining_after_continuous": "0.000000",
+                  "remaining_after_plan": "0.00"
+                },
+                {
+                  "gate_id": "capacity:1",
+                  "reason": "ISSUER_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "3000.00",
+                  "available_before": "3000.00",
+                  "remaining_after_continuous": "2300.000000",
+                  "remaining_after_plan": "2300.00"
+                },
+                {
+                  "gate_id": "capacity:2",
+                  "reason": "ENTRY_TARGET_REACHED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "700.00",
+                  "available_before": "700.00",
+                  "remaining_after_continuous": "0.000000",
+                  "remaining_after_plan": "0.00"
+                },
+                {
+                  "gate_id": "capacity:3",
+                  "reason": "ISSUER_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "3000.00",
+                  "available_before": "3000.00",
+                  "remaining_after_continuous": "2300.000000",
+                  "remaining_after_plan": "2300.00"
+                },
+                {
+                  "gate_id": "capacity:4",
+                  "reason": "CORRELATION_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE",
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "2400.00",
+                  "available_before": "2400.00",
+                  "remaining_after_continuous": "1000.000000",
+                  "remaining_after_plan": "1000.00"
+                },
+                {
+                  "gate_id": "capacity:5",
+                  "reason": "CORRELATION_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE",
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "2400.00",
+                  "available_before": "2400.00",
+                  "remaining_after_continuous": "1000.000000",
+                  "remaining_after_plan": "1000.00"
+                },
+                {
+                  "gate_id": "capacity:6",
+                  "reason": "LIQUIDITY_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "2000.00",
+                  "available_before": "2000.00",
+                  "remaining_after_continuous": "1300.000000",
+                  "remaining_after_plan": "1300.00"
+                },
+                {
+                  "gate_id": "capacity:7",
+                  "reason": "LIQUIDITY_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": null,
+                  "committed_margin": "2000.00",
+                  "available_before": "2000.00",
+                  "remaining_after_continuous": "1300.000000",
+                  "remaining_after_plan": "1300.00"
+                },
+                {
+                  "gate_id": "account:synthetic-account-4017",
+                  "reason": "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+                  "security_ids": [
+                    "SYNTH-CANDIDATE",
+                    "SYNTH-CANDIDATE-1"
+                  ],
+                  "account_id": "synthetic-account-4017",
+                  "committed_margin": "8000",
+                  "available_before": "8000",
+                  "remaining_after_continuous": "6600.000000",
+                  "remaining_after_plan": "6600"
+                },
+                {
+                  "gate_id": "account:synthetic-account-8029",
+                  "reason": "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+                  "security_ids": [],
+                  "account_id": "synthetic-account-8029",
+                  "committed_margin": "0",
+                  "available_before": "0",
+                  "remaining_after_continuous": "0",
+                  "remaining_after_plan": "0"
+                }
+              ]
+            }
+          },
+          "stage_results": [
+            {
+              "phase": "FRAMEWORK_RUN",
+              "status": "CREATED",
+              "gate_results": [
+                {
+                  "gate_id": "RUN_CREATED",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [
+                "FRAMEWORK_RUN_CREATED"
+              ],
+              "availability_failure": null
+            },
+            {
+              "phase": "FRAMEWORK_RUN",
+              "status": "RUNNING",
+              "gate_results": [
+                {
+                  "gate_id": "RUN_ACTIVE",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [
+                "FRAMEWORK_RUN_STARTED"
+              ],
+              "availability_failure": null
+            },
+            {
+              "phase": "FRAMEWORK_RUN",
+              "status": "SUCCEEDED",
+              "gate_results": [
+                {
+                  "gate_id": "RUN_TERMINAL",
+                  "status": "PASSED"
+                },
+                {
+                  "gate_id": "FRAMEWORK_EXECUTION",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [
+                "FRAMEWORK_RUN_SUCCEEDED"
+              ],
+              "availability_failure": null
+            },
+            {
+              "phase": "HOST_VALIDATION",
+              "status": "SUCCEEDED",
+              "gate_results": [
+                {
+                  "gate_id": "OUTPUT_CONTRACT",
+                  "status": "PASSED"
+                },
+                {
+                  "gate_id": "FROZEN_RESULT_MATCH",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [
+                "All required fictional evidence records are present.",
+                "The output is D0 synthetic evidence and is not a recommendation."
+              ],
+              "availability_failure": null
+            },
+            {
+              "phase": "BUSINESS_DECISION",
+              "status": "SUCCEEDED",
+              "gate_results": [
+                {
+                  "gate_id": "OUTPUT_CONTRACT",
+                  "status": "PASSED"
+                },
+                {
+                  "gate_id": "DECISION_ACCEPTED",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [
+                "All required fictional evidence records are present.",
+                "The output is D0 synthetic evidence and is not a recommendation."
+              ],
+              "availability_failure": null
+            },
+            {
+              "phase": "CANDIDATE_ALLOCATION",
+              "status": "SUCCEEDED",
+              "gate_results": [],
+              "reasons": [],
+              "availability_failure": null
+            },
+            {
+              "phase": "BUSINESS_COMMIT",
+              "status": "SUCCEEDED",
+              "gate_results": [
+                {
+                  "gate_id": "HOST_RESULT_SAVED",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [],
+              "availability_failure": null
+            },
+            {
+              "phase": "PUBLICATION",
+              "status": "SUCCEEDED",
+              "gate_results": [
+                {
+                  "gate_id": "EVENT_COMMITTED",
+                  "status": "PASSED"
+                }
+              ],
+              "reasons": [],
+              "availability_failure": null
+            }
+          ],
+          "corrects_event_id": null,
+          "access_scope": {
+            "contract_version": "1.0.0",
+            "user_id": "stock-profiler-single-user",
+            "account_ids": [
+              "synthetic-account-4017",
+              "synthetic-account-8029"
+            ],
+            "visibility": "USER"
+          }
+        },
+        "allocation": {
+          "contract_version": "1.0.0",
+          "disposition": "PLANNED",
+          "reasons": [],
+          "rows": [
+            {
+              "candidate": {
+                "security_id": "SYNTH-CANDIDATE",
+                "research_id": "synthetic-research-workspace",
+                "raw_success_score": "2.7",
+                "calibrated_probability": "0.85",
+                "candidate": true,
+                "risk_status": "ACCEPTED",
+                "risk_gates": [
+                  {
+                    "gate_id": "INDEPENDENT_RISK",
+                    "status": "PASSED"
+                  }
+                ],
+                "risk_reasons": [
+                  "SYNTHETIC_ACCEPTED"
+                ],
+                "market_state_qualified": true,
+                "market_state_qualification_status": "VALID",
+                "data_complete": true,
+                "thesis": "Invented synthetic research thesis.",
+                "principal_risks": [
+                  "Invented synthetic risk."
+                ],
+                "evidence_freshness": "AT_CUTOFF",
+                "evidence_clocks": [
+                  {
+                    "evidence_id": "synthetic-evidence-workspace",
+                    "effective_at": null,
+                    "source_published_at": "2042-06-30T06:00:00Z",
+                    "acquired_at": "2042-06-30T07:00:00Z",
+                    "validated_at": "2042-06-30T08:00:00Z",
+                    "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                  }
+                ],
+                "valid_market_dates": [
+                  "2042-05-19",
+                  "2042-05-20",
+                  "2042-05-21",
+                  "2042-05-22",
+                  "2042-05-23"
+                ],
+                "reasons": [
+                  "SYNTHETIC_CANDIDATE"
+                ]
+              },
+              "issuer_id": "fictional-new-issuer",
+              "committed_exposure": "0",
+              "target_gap": "700.00",
+              "continuous_principal": "700.000000",
+              "principal": "700",
+              "outcome": "FULLY_ALLOCATED",
+              "reasons": [],
+              "primary_reason": null,
+              "comparisons": [],
+              "route_failures": [],
+              "legs": [
+                {
+                  "route": {
+                    "security_id": "SYNTH-CANDIDATE",
+                    "account_id": "synthetic-account-4017",
+                    "permission": true,
+                    "price_cap": "10",
+                    "price_cap_confirmed": true,
+                    "current_price": "10",
+                    "price_tick": "1",
+                    "minimum_price": "1",
+                    "maximum_price": "100",
+                    "minimum_quantity": "10",
+                    "quantity_increment": "10",
+                    "commission_ratio": "0",
+                    "minimum_commission": "0",
+                    "other_cost_ratio": "0",
+                    "disposal_friction_ratio": "0",
+                    "version_id": "synthetic-buy-curve",
+                    "rule_version": "synthetic-buy-rule",
+                    "evidence": {
+                      "source": "synthetic-route",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  },
+                  "quantity": "70",
+                  "principal": "700",
+                  "purchase_cost": "0"
+                }
+              ]
+            },
+            {
+              "candidate": {
+                "security_id": "SYNTH-CANDIDATE-1",
+                "research_id": "synthetic-research-1",
+                "raw_success_score": "2.7",
+                "calibrated_probability": "0.85",
+                "candidate": true,
+                "risk_status": "ACCEPTED",
+                "risk_gates": [
+                  {
+                    "gate_id": "INDEPENDENT_RISK",
+                    "status": "PASSED"
+                  }
+                ],
+                "risk_reasons": [
+                  "SYNTHETIC_ACCEPTED"
+                ],
+                "market_state_qualified": true,
+                "market_state_qualification_status": "VALID",
+                "data_complete": true,
+                "thesis": "Invented synthetic research thesis.",
+                "principal_risks": [
+                  "Invented synthetic risk."
+                ],
+                "evidence_freshness": "AT_CUTOFF",
+                "evidence_clocks": [
+                  {
+                    "evidence_id": "synthetic-evidence-workspace",
+                    "effective_at": null,
+                    "source_published_at": "2042-06-30T06:00:00Z",
+                    "acquired_at": "2042-06-30T07:00:00Z",
+                    "validated_at": "2042-06-30T08:00:00Z",
+                    "knowledge_cutoff": "2042-06-30T16:00:00Z"
+                  }
+                ],
+                "valid_market_dates": [
+                  "2042-05-19",
+                  "2042-05-20",
+                  "2042-05-21",
+                  "2042-05-22",
+                  "2042-05-23"
+                ],
+                "reasons": [
+                  "SYNTHETIC_CANDIDATE"
+                ]
+              },
+              "issuer_id": "fictional-new-issuer-1",
+              "committed_exposure": "0",
+              "target_gap": "700.00",
+              "continuous_principal": "700.000000",
+              "principal": "700",
+              "outcome": "FULLY_ALLOCATED",
+              "reasons": [],
+              "primary_reason": null,
+              "comparisons": [],
+              "route_failures": [],
+              "legs": [
+                {
+                  "route": {
+                    "security_id": "SYNTH-CANDIDATE-1",
+                    "account_id": "synthetic-account-4017",
+                    "permission": true,
+                    "price_cap": "10",
+                    "price_cap_confirmed": true,
+                    "current_price": "10",
+                    "price_tick": "1",
+                    "minimum_price": "1",
+                    "maximum_price": "100",
+                    "minimum_quantity": "10",
+                    "quantity_increment": "10",
+                    "commission_ratio": "0",
+                    "minimum_commission": "0",
+                    "other_cost_ratio": "0",
+                    "disposal_friction_ratio": "0",
+                    "version_id": "synthetic-buy-curve",
+                    "rule_version": "synthetic-buy-rule",
+                    "evidence": {
+                      "source": "synthetic-route",
+                      "source_version": "synthetic-broker-schema-v1",
+                      "business_effective_at": "2042-05-19T15:00:00Z",
+                      "source_observed_at": "2042-05-19T15:10:00Z",
+                      "locally_acquired_at": "2042-05-19T15:14:00Z",
+                      "validated_at": "2042-05-19T15:18:00Z",
+                      "cutoff_at": "2042-05-19T16:00:00Z",
+                      "complete_through_at": "2042-05-19T16:00:00Z",
+                      "expires_at": null
+                    }
+                  },
+                  "quantity": "70",
+                  "principal": "700",
+                  "purchase_cost": "0"
+                }
+              ]
+            }
+          ],
+          "actionable": false,
+          "plan_id": "decision-event-dae1807e3740bfb819a6f1136c5ed3f12e485fe7aa2ea2e01bde145a9d3f7910",
+          "formed_at": "2042-05-19T16:00:00Z",
+          "candidate_event_id": "decision-event-e9c32267bee6313c9e83c79d973894c489718b217d936ad52a5c490a98994a42",
+          "candidate_batch_id": "synthetic-candidate-batch",
+          "candidate_conclusion_version": "report-version-61def4655c239683b5ec37eb7f1b743d3ad060b0e22813d2673d39795c67d708",
+          "policy": {
+            "synthetic": true,
+            "generator_version": "allocation-policy-v1",
+            "seed": 2323,
+            "version_id": "synthetic-allocation-policy",
+            "entry_target_ratio": "0.07",
+            "correlation_ceiling": "0.85",
+            "neighborhood_ratio": "0.24",
+            "turnover_ratio": "0.02",
+            "correlation_window": 120
+          },
+          "position_snapshot_id": "synthetic-position-snapshot-alpha",
+          "position_snapshot": {
+            "snapshot_id": "synthetic-position-snapshot-alpha",
+            "cutoff_at": "2042-05-19T16:00:00Z",
+            "valuation_currency": "XSP",
+            "snapshot_source": "synthetic-position-snapshot-manifest",
+            "evidence_clock": {
+              "business_effective_at": "2042-05-19T15:00:00Z",
+              "source_observed_at": "2042-05-19T15:10:00Z",
+              "locally_acquired_at": "2042-05-19T15:14:00Z",
+              "validated_at": "2042-05-19T15:18:00Z"
+            },
+            "snapshot_evidence": {
+              "source": "synthetic-position-snapshot-manifest",
+              "source_version": "synthetic-broker-schema-v1",
+              "business_effective_at": "2042-05-19T15:00:00Z",
+              "source_observed_at": "2042-05-19T15:10:00Z",
+              "locally_acquired_at": "2042-05-19T15:14:00Z",
+              "validated_at": "2042-05-19T15:18:00Z",
+              "cutoff_at": "2042-05-19T16:00:00Z",
+              "complete_through_at": "2042-05-19T16:00:00Z",
+              "expires_at": null
+            },
+            "total_account_equity": "10000",
+            "action_units": [
+              {
+                "account_id": "synthetic-account-4017",
+                "account_type": "SIMULATED_CASH",
+                "currency": "XSP",
+                "position_id": "synthetic-position-4017-xqz",
+                "origin": "EXTERNAL",
+                "lifecycle_id": "synthetic-lifecycle-4017-xqz",
+                "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                "security_id": "XQZ-4017",
+                "total_quantity": "100",
+                "broker_sellable_quantity": "100",
+                "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+                "unsettled_quantity": "0",
+                "frozen_quantity": "0",
+                "restricted_quantity": "0",
+                "open_sell_order_quantity": "0",
+                "reported_cost_basis": "900",
+                "market_price": "10",
+                "exact_statistical_action_quantity": "100",
+                "exact_quantity_status": "AVAILABLE",
+                "reasons": [],
+                "position_evidence": {
+                  "source": "synthetic-broker-4017-position",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                }
+              },
+              {
+                "account_id": "synthetic-account-8029",
+                "account_type": "SIMULATED_CASH",
+                "currency": "XSP",
+                "position_id": "synthetic-position-8029-xqz",
+                "origin": "EXTERNAL",
+                "lifecycle_id": "synthetic-lifecycle-8029-xqz",
+                "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                "security_id": "XQZ-4017",
+                "total_quantity": "100",
+                "broker_sellable_quantity": "100",
+                "sellable_quantity_semantics": "BROKER_FINAL_SELLABLE",
+                "encumbrance_quantity_semantics": "OVERLAPPING_NON_SELLABLE",
+                "unsettled_quantity": "0",
+                "frozen_quantity": "0",
+                "restricted_quantity": "0",
+                "open_sell_order_quantity": "0",
+                "reported_cost_basis": "900",
+                "market_price": "10",
+                "exact_statistical_action_quantity": "100",
+                "exact_quantity_status": "AVAILABLE",
+                "reasons": [],
+                "position_evidence": {
+                  "source": "synthetic-broker-8029-position",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                }
+              }
+            ],
+            "issuer_exposures": [
+              {
+                "issuer_id": "FICTIONAL-ORBITAL-MOSAIC",
+                "valuation_currency": "XSP",
+                "account_ids": [
+                  "synthetic-account-4017",
+                  "synthetic-account-8029"
+                ],
+                "current_market_exposure": "2000"
+              }
+            ],
+            "cash_states": [
+              {
+                "account_id": "synthetic-account-4017",
+                "account_type": "SIMULATED_CASH",
+                "currency": "XSP",
+                "account_evidence": {
+                  "source": "synthetic-broker-4017-snapshot",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "account_equity": "9000",
+                "account_equity_evidence": {
+                  "source": "synthetic-broker-4017-equity",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
+                "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                "opening_ledger_cash": "8900",
+                "opening_ledger_cash_evidence": {
+                  "source": "synthetic-broker-4017-opening-cash",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "ledger_cash": "8000",
+                "trading_cash": "8000",
+                "transferable_cash": "8000",
+                "frozen_cash": "0",
+                "receivable_cash": "0",
+                "payable_cash": "0",
+                "cash_state_evidence": {
+                  "source": "synthetic-broker-4017-cash",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                }
+              },
+              {
+                "account_id": "synthetic-account-8029",
+                "account_type": "SIMULATED_CASH",
+                "currency": "XSP",
+                "account_evidence": {
+                  "source": "synthetic-broker-8029-snapshot",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "account_equity": "1000",
+                "account_equity_evidence": {
+                  "source": "synthetic-broker-8029-equity",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "cash_availability_semantics": "BROKER_FINAL_CASH_LAYERS",
+                "ledger_cash_semantics": "OPENING_BALANCE_PLUS_AUTHORITATIVE_LEDGER",
+                "opening_ledger_cash": "900",
+                "opening_ledger_cash_evidence": {
+                  "source": "synthetic-broker-8029-opening-cash",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                },
+                "ledger_cash": "0",
+                "trading_cash": "0",
+                "transferable_cash": "0",
+                "frozen_cash": "0",
+                "receivable_cash": "0",
+                "payable_cash": "0",
+                "cash_state_evidence": {
+                  "source": "synthetic-broker-8029-cash",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-19T15:00:00Z",
+                  "source_observed_at": "2042-05-19T15:10:00Z",
+                  "locally_acquired_at": "2042-05-19T15:14:00Z",
+                  "validated_at": "2042-05-19T15:18:00Z",
+                  "cutoff_at": "2042-05-19T16:00:00Z",
+                  "complete_through_at": "2042-05-19T16:00:00Z",
+                  "expires_at": null
+                }
+              }
+            ],
+            "unfinished_orders": [],
+            "execution_restrictions": [],
+            "authoritative_ledger": [
+              {
+                "entry_id": "synthetic-fill-4017-xqz",
+                "entry_type": "FILL",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "100",
+                "cost_basis_delta": "900",
+                "cash_delta": "-900",
+                "occurred_at": "2042-05-16T15:00:00Z",
+                "corrects_entry_id": null,
+                "correction_reason": null,
+                "evidence": {
+                  "source": "synthetic-broker-4017-fill",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-17T15:00:00Z",
+                  "source_observed_at": "2042-05-17T15:10:00Z",
+                  "locally_acquired_at": "2042-05-17T15:14:00Z",
+                  "validated_at": "2042-05-17T15:18:00Z",
+                  "cutoff_at": "2042-05-17T16:00:00Z",
+                  "complete_through_at": "2042-05-17T16:00:00Z",
+                  "expires_at": null
+                },
+                "account_id": "synthetic-account-4017"
+              },
+              {
+                "entry_id": "synthetic-fill-8029-xqz",
+                "entry_type": "FILL",
+                "security_id": "XQZ-4017",
+                "quantity_delta": "100",
+                "cost_basis_delta": "900",
+                "cash_delta": "-900",
+                "occurred_at": "2042-05-16T15:00:00Z",
+                "corrects_entry_id": null,
+                "correction_reason": null,
+                "evidence": {
+                  "source": "synthetic-broker-8029-fill",
+                  "source_version": "synthetic-broker-schema-v1",
+                  "business_effective_at": "2042-05-17T15:00:00Z",
+                  "source_observed_at": "2042-05-17T15:10:00Z",
+                  "locally_acquired_at": "2042-05-17T15:14:00Z",
+                  "validated_at": "2042-05-17T15:18:00Z",
+                  "cutoff_at": "2042-05-17T16:00:00Z",
+                  "complete_through_at": "2042-05-17T16:00:00Z",
+                  "expires_at": null
+                },
+                "account_id": "synthetic-account-8029"
+              }
+            ],
+            "user_annotations": []
+          },
+          "risk_budget": {
+            "contract_version": "1.0.0",
+            "version_id": "synthetic-risk-budget-alpha",
+            "action_policy_version_id": "synthetic-action-policy-alpha",
+            "synthetic": true,
+            "generator_version": "portfolio-authorization/1",
+            "seed": 6101,
+            "effective_at": "2042-05-17T16:00:00Z",
+            "expires_at": "2042-11-17T16:00:00Z",
+            "concentration": {
+              "target_ratio": "0.30",
+              "hard_ratio": "0.40"
+            },
+            "stress": {
+              "target_ratio": "0.14",
+              "hard_ratio": "0.18"
+            },
+            "cash": {
+              "target_ratio": "0.39",
+              "hard_ratio": "0.23"
+            },
+            "drawdown": {
+              "caution_ratio": "0.11",
+              "defensive_ratio": "0.16",
+              "preservation_ratio": "0.21"
+            },
+            "downside_grid": [
+              "0.04",
+              "0.09",
+              "0.23"
+            ],
+            "protection_floor": {
+              "new_exposure_blocked": true,
+              "retained_directions": [
+                "REDUCE",
+                "EXIT"
+              ]
+            },
+            "stress_calculation": {
+              "contract_version": "1.0.0",
+              "version_id": "synthetic-gross-stress-v1",
+              "horizon_market_days": 20,
+              "shock_ratio": "0.23",
+              "disposal_friction_ratio": "0",
+              "registered_at": "2042-05-16T16:00:00Z"
+            }
+          },
+          "risk_budget_version_id": "synthetic-risk-budget-alpha",
+          "total_principal": "1400",
+          "remaining_cash": "2700.00",
+          "risk_handoff": {
+            "contract_version": "1.0.0",
+            "operation": "EXECUTION_PLAN",
+            "portfolio_id": "synthetic-decision-portfolio-alpha",
+            "authorization_id": "decision-event-ce5a312abfbe6b8a6942bd3e9de9a9fb7c1a7727619a7eea91c695a6b0f48d19",
+            "cutoff_at": "2042-05-19T16:00:00Z",
+            "concentration_event_id": "decision-event-d85acc4aac4d8f49f218f3c1862a3e99a5afbfce395e1f58367084a9530bdf64",
+            "stress_event_id": "decision-event-6601113de29132a5b682017e4414123fd6614c35b2a0decb2fa297087da8c2a8",
+            "liquidity_event_id": "decision-event-a3f8fb123596a4b7094248d165d634c6df915a79b3e146372908edfb0393623e",
+            "drawdown_event_id": "decision-event-bf78653794dad9d59be6bf44d58e9630b4b295adbcbc160b8b33c32a9257768f",
+            "routes": [],
+            "established_targets": []
+          },
+          "correlations": {
+            "version_id": "synthetic-return-matrix",
+            "market_calendar_version": "synthetic-market-calendar-v2",
+            "return_semantics": "DAILY_ADJUSTED",
+            "market_dates": [
+              "2041-12-03",
+              "2041-12-04",
+              "2041-12-05",
+              "2041-12-06",
+              "2041-12-09",
+              "2041-12-10",
+              "2041-12-11",
+              "2041-12-12",
+              "2041-12-13",
+              "2041-12-16",
+              "2041-12-17",
+              "2041-12-18",
+              "2041-12-19",
+              "2041-12-20",
+              "2041-12-23",
+              "2041-12-24",
+              "2041-12-25",
+              "2041-12-26",
+              "2041-12-27",
+              "2041-12-30",
+              "2041-12-31",
+              "2042-01-01",
+              "2042-01-02",
+              "2042-01-03",
+              "2042-01-06",
+              "2042-01-07",
+              "2042-01-08",
+              "2042-01-09",
+              "2042-01-10",
+              "2042-01-13",
+              "2042-01-14",
+              "2042-01-15",
+              "2042-01-16",
+              "2042-01-17",
+              "2042-01-20",
+              "2042-01-21",
+              "2042-01-22",
+              "2042-01-23",
+              "2042-01-24",
+              "2042-01-27",
+              "2042-01-28",
+              "2042-01-29",
+              "2042-01-30",
+              "2042-01-31",
+              "2042-02-03",
+              "2042-02-04",
+              "2042-02-05",
+              "2042-02-06",
+              "2042-02-07",
+              "2042-02-10",
+              "2042-02-11",
+              "2042-02-12",
+              "2042-02-13",
+              "2042-02-14",
+              "2042-02-17",
+              "2042-02-18",
+              "2042-02-19",
+              "2042-02-20",
+              "2042-02-21",
+              "2042-02-24",
+              "2042-02-25",
+              "2042-02-26",
+              "2042-02-27",
+              "2042-02-28",
+              "2042-03-03",
+              "2042-03-04",
+              "2042-03-05",
+              "2042-03-06",
+              "2042-03-07",
+              "2042-03-10",
+              "2042-03-11",
+              "2042-03-12",
+              "2042-03-13",
+              "2042-03-14",
+              "2042-03-17",
+              "2042-03-18",
+              "2042-03-19",
+              "2042-03-20",
+              "2042-03-21",
+              "2042-03-24",
+              "2042-03-25",
+              "2042-03-26",
+              "2042-03-27",
+              "2042-03-28",
+              "2042-03-31",
+              "2042-04-01",
+              "2042-04-02",
+              "2042-04-03",
+              "2042-04-04",
+              "2042-04-07",
+              "2042-04-08",
+              "2042-04-09",
+              "2042-04-10",
+              "2042-04-11",
+              "2042-04-14",
+              "2042-04-15",
+              "2042-04-16",
+              "2042-04-17",
+              "2042-04-18",
+              "2042-04-21",
+              "2042-04-22",
+              "2042-04-23",
+              "2042-04-24",
+              "2042-04-25",
+              "2042-04-28",
+              "2042-04-29",
+              "2042-04-30",
+              "2042-05-01",
+              "2042-05-02",
+              "2042-05-05",
+              "2042-05-06",
+              "2042-05-07",
+              "2042-05-08",
+              "2042-05-09",
+              "2042-05-12",
+              "2042-05-13",
+              "2042-05-14",
+              "2042-05-15",
+              "2042-05-16",
+              "2042-05-19"
+            ],
+            "returns": {
+              "FICTIONAL-ORBITAL-MOSAIC": [
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2",
+                "-2",
+                "-1",
+                "0",
+                "1",
+                "2"
+              ],
+              "fictional-new-issuer": [
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1"
+              ],
+              "fictional-new-issuer-1": [
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1",
+                "-1",
+                "0",
+                "1"
+              ]
+            },
+            "evidence": {
+              "source": "synthetic-correlation",
+              "source_version": "synthetic-broker-schema-v1",
+              "business_effective_at": "2042-05-19T15:00:00Z",
+              "source_observed_at": "2042-05-19T15:10:00Z",
+              "locally_acquired_at": "2042-05-19T15:14:00Z",
+              "validated_at": "2042-05-19T15:18:00Z",
+              "cutoff_at": "2042-05-19T16:00:00Z",
+              "complete_through_at": "2042-05-19T16:00:00Z",
+              "expires_at": null
+            }
+          },
+          "commitments": [],
+          "securities": [
+            {
+              "security_id": "SYNTH-CANDIDATE",
+              "issuer_id": "fictional-new-issuer",
+              "median_turnover": "100000",
+              "turnover_window_sessions": 20,
+              "evidence": {
+                "source": "synthetic-market",
+                "source_version": "synthetic-broker-schema-v1",
+                "business_effective_at": "2042-05-19T15:00:00Z",
+                "source_observed_at": "2042-05-19T15:10:00Z",
+                "locally_acquired_at": "2042-05-19T15:14:00Z",
+                "validated_at": "2042-05-19T15:18:00Z",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "complete_through_at": "2042-05-19T16:00:00Z",
+                "expires_at": null
+              }
+            },
+            {
+              "security_id": "SYNTH-CANDIDATE-1",
+              "issuer_id": "fictional-new-issuer-1",
+              "median_turnover": "100000",
+              "turnover_window_sessions": 20,
+              "evidence": {
+                "source": "synthetic-market",
+                "source_version": "synthetic-broker-schema-v1",
+                "business_effective_at": "2042-05-19T15:00:00Z",
+                "source_observed_at": "2042-05-19T15:10:00Z",
+                "locally_acquired_at": "2042-05-19T15:14:00Z",
+                "validated_at": "2042-05-19T15:18:00Z",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "complete_through_at": "2042-05-19T16:00:00Z",
+                "expires_at": null
+              }
+            }
+          ],
+          "routes": [
+            {
+              "security_id": "SYNTH-CANDIDATE",
+              "account_id": "synthetic-account-4017",
+              "permission": true,
+              "price_cap": "10",
+              "price_cap_confirmed": true,
+              "current_price": "10",
+              "price_tick": "1",
+              "minimum_price": "1",
+              "maximum_price": "100",
+              "minimum_quantity": "10",
+              "quantity_increment": "10",
+              "commission_ratio": "0",
+              "minimum_commission": "0",
+              "other_cost_ratio": "0",
+              "disposal_friction_ratio": "0",
+              "version_id": "synthetic-buy-curve",
+              "rule_version": "synthetic-buy-rule",
+              "evidence": {
+                "source": "synthetic-route",
+                "source_version": "synthetic-broker-schema-v1",
+                "business_effective_at": "2042-05-19T15:00:00Z",
+                "source_observed_at": "2042-05-19T15:10:00Z",
+                "locally_acquired_at": "2042-05-19T15:14:00Z",
+                "validated_at": "2042-05-19T15:18:00Z",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "complete_through_at": "2042-05-19T16:00:00Z",
+                "expires_at": null
+              }
+            },
+            {
+              "security_id": "SYNTH-CANDIDATE-1",
+              "account_id": "synthetic-account-4017",
+              "permission": true,
+              "price_cap": "10",
+              "price_cap_confirmed": true,
+              "current_price": "10",
+              "price_tick": "1",
+              "minimum_price": "1",
+              "maximum_price": "100",
+              "minimum_quantity": "10",
+              "quantity_increment": "10",
+              "commission_ratio": "0",
+              "minimum_commission": "0",
+              "other_cost_ratio": "0",
+              "disposal_friction_ratio": "0",
+              "version_id": "synthetic-buy-curve",
+              "rule_version": "synthetic-buy-rule",
+              "evidence": {
+                "source": "synthetic-route",
+                "source_version": "synthetic-broker-schema-v1",
+                "business_effective_at": "2042-05-19T15:00:00Z",
+                "source_observed_at": "2042-05-19T15:10:00Z",
+                "locally_acquired_at": "2042-05-19T15:14:00Z",
+                "validated_at": "2042-05-19T15:18:00Z",
+                "cutoff_at": "2042-05-19T16:00:00Z",
+                "complete_through_at": "2042-05-19T16:00:00Z",
+                "expires_at": null
+              }
+            }
+          ],
+          "purchase_sequence": [
+            "SYNTH-CANDIDATE",
+            "SYNTH-CANDIDATE-1"
+          ],
+          "eligibility_evidence_ids": [
+            "synthetic-workspace-qualification"
+          ],
+          "discrete_objectives": [
+            [
+              "2"
+            ],
+            [
+              "1",
+              "1"
+            ],
+            [
+              "1400"
+            ],
+            [
+              "0.85",
+              "0.85"
+            ],
+            [
+              "0"
+            ],
+            [
+              "2"
+            ],
+            [
+              "700",
+              "700"
+            ]
+          ],
+          "capacity_checks": [
+            {
+              "gate_id": "global:cash",
+              "reason": "CASH_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "4100.00",
+              "available_before": "4100.00",
+              "remaining_after_continuous": "2700.000000",
+              "remaining_after_plan": "2700.00"
+            },
+            {
+              "gate_id": "global:stress",
+              "reason": "STRESS_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "940.00",
+              "available_before": "940.00",
+              "remaining_after_continuous": "618.00000000",
+              "remaining_after_plan": "618.00"
+            },
+            {
+              "gate_id": "capacity:0",
+              "reason": "ENTRY_TARGET_REACHED",
+              "security_ids": [
+                "SYNTH-CANDIDATE"
+              ],
+              "account_id": null,
+              "committed_margin": "700.00",
+              "available_before": "700.00",
+              "remaining_after_continuous": "0.000000",
+              "remaining_after_plan": "0.00"
+            },
+            {
+              "gate_id": "capacity:1",
+              "reason": "ISSUER_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE"
+              ],
+              "account_id": null,
+              "committed_margin": "3000.00",
+              "available_before": "3000.00",
+              "remaining_after_continuous": "2300.000000",
+              "remaining_after_plan": "2300.00"
+            },
+            {
+              "gate_id": "capacity:2",
+              "reason": "ENTRY_TARGET_REACHED",
+              "security_ids": [
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "700.00",
+              "available_before": "700.00",
+              "remaining_after_continuous": "0.000000",
+              "remaining_after_plan": "0.00"
+            },
+            {
+              "gate_id": "capacity:3",
+              "reason": "ISSUER_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "3000.00",
+              "available_before": "3000.00",
+              "remaining_after_continuous": "2300.000000",
+              "remaining_after_plan": "2300.00"
+            },
+            {
+              "gate_id": "capacity:4",
+              "reason": "CORRELATION_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "2400.00",
+              "available_before": "2400.00",
+              "remaining_after_continuous": "1000.000000",
+              "remaining_after_plan": "1000.00"
+            },
+            {
+              "gate_id": "capacity:5",
+              "reason": "CORRELATION_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "2400.00",
+              "available_before": "2400.00",
+              "remaining_after_continuous": "1000.000000",
+              "remaining_after_plan": "1000.00"
+            },
+            {
+              "gate_id": "capacity:6",
+              "reason": "LIQUIDITY_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE"
+              ],
+              "account_id": null,
+              "committed_margin": "2000.00",
+              "available_before": "2000.00",
+              "remaining_after_continuous": "1300.000000",
+              "remaining_after_plan": "1300.00"
+            },
+            {
+              "gate_id": "capacity:7",
+              "reason": "LIQUIDITY_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": null,
+              "committed_margin": "2000.00",
+              "available_before": "2000.00",
+              "remaining_after_continuous": "1300.000000",
+              "remaining_after_plan": "1300.00"
+            },
+            {
+              "gate_id": "account:synthetic-account-4017",
+              "reason": "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+              "security_ids": [
+                "SYNTH-CANDIDATE",
+                "SYNTH-CANDIDATE-1"
+              ],
+              "account_id": "synthetic-account-4017",
+              "committed_margin": "8000",
+              "available_before": "8000",
+              "remaining_after_continuous": "6600.000000",
+              "remaining_after_plan": "6600"
+            },
+            {
+              "gate_id": "account:synthetic-account-8029",
+              "reason": "ACCOUNT_CASH_CAPACITY_EXHAUSTED",
+              "security_ids": [],
+              "account_id": "synthetic-account-8029",
+              "committed_margin": "0",
+              "available_before": "0",
+              "remaining_after_continuous": "0",
+              "remaining_after_plan": "0"
+            }
+          ]
+        },
+        "latest_input_report_version_id": "report-version-4f9d3f58555b1fec9803ee9bb93e65920c2f7b371278746a4ebb01d6ab49f010",
+        "valid_from": "2042-05-19T08:00:00Z",
+        "valid_through": "2042-05-23T15:00:00Z",
+        "new_actions_permitted": true,
+        "stop_reasons": [],
+        "reviews": [],
+        "confirmations": [],
+        "executions": []
+      }
+    ],
+    "commands_permitted": true
+  }
+}

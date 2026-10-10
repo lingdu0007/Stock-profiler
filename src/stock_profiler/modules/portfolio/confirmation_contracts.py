@@ -16,15 +16,22 @@ class CandidateChoice(PositionContract):
     choice: Literal["ACCEPT", "DECLINE", "DEFER"]
 
 
+class SeenCandidateExecution(PositionContract):
+    execution_id: str | None
+
+
 class CandidateConfirmationCommand(PositionContract):
     contract_version: Literal["1.0.0"]
-    operation: Literal["SUBMIT", "WITHDRAW"]
+    operation: Literal["SUBMIT", "WITHDRAW", "REVIEW"]
     user_id: str = Field(min_length=1)
     portfolio_id: str = Field(min_length=1)
     candidate_batch_id: str = Field(min_length=1)
     plan_event_id: str = Field(min_length=1)
     plan_id: str = Field(min_length=1)
     seen_confirmation_id: str | None
+    seen_execution: SeenCandidateExecution | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
     idempotency_key: str = Field(min_length=1)
     withdrawal_position_event_id: str | None
     choices: tuple[CandidateChoice, ...]
@@ -32,7 +39,7 @@ class CandidateConfirmationCommand(PositionContract):
 
 
 class CandidateConfirmationOutcome(PositionContract):
-    disposition: Literal["CONFIRMED", "BLOCKED"]
+    disposition: Literal["CONFIRMED", "REVALIDATED", "BLOCKED"]
     reasons: tuple[str, ...]
     confirmation_id: str | None = None
     plan_id: str | None = None
