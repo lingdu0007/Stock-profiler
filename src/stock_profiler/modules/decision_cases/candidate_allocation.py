@@ -9,6 +9,7 @@ from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
 from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
@@ -31,6 +32,7 @@ from stock_profiler.modules.portfolio.allocation_solver import (
     discrete_principal_ceiling,
 )
 from stock_profiler.modules.portfolio.allocation_window import entry_window_is_open
+from stock_profiler.modules.portfolio.beta_exposure import retained_acquired_quantity
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
 from stock_profiler.modules.position_management.contracts import ReconciledPositionSnapshot
 from stock_profiler.modules.qualification.beta import (
@@ -96,29 +98,11 @@ def finalize_candidate_allocation(
     if outcome.disposition == "PLANNED" and command.beta is not None:
         assert case.access_scope is not None
         now = datetime.fromisoformat(committed_at)
-        reasons = qualification_reasons(
-            command.beta,
-            ledger.governance_history(connection, case.access_scope),
-            now,
-            evidence_cutoff=command.cutoff_at,
-        )
-        envelope, observation_reasons, _, enabled = envelope_decision(
-            command.beta,
-            now,
-            ledger.governance_history(connection, case.access_scope),
-            evidence_cutoff=command.cutoff_at,
-        )
-        if (
-            reasons
-            or not enabled
-            or outcome.beta is None
-            or envelope != outcome.beta.permission_envelope
-        ):
+        reasons = saved_beta_permission_reasons(case, outcome.beta, ledger, connection, now)
+        if reasons:
             source = ledger.get_formal_report_for_event(command.candidate_event_id, connection)
             assert source is not None
-            blocked = _blocked(
-                case, source, reasons or observation_reasons or ("BETA_PERMISSION_CHANGED",)
-            )
+            blocked = _blocked(case, source, reasons)
             return blocked.model_copy(
                 update={
                     "beta": outcome.beta.model_copy(update={"capacity": Decimal(0)})
@@ -226,50 +210,27 @@ def _held_beta_exposure(
         assert execution is not None
         if execution.plan_id in plans:
             latest[execution.plan_id] = execution
-    quantities: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
-    fill_ids: dict[tuple[str, str], set[str]] = defaultdict(set)
+    acquisitions: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(dict)
     for execution in latest.values():
         for fill in execution.fills:
             if fill.reservation_id is not None and fill.classification != "UNKNOWN":
                 key = (fill.account_id, fill.security_id)
-                quantities[key] += fill.intent_quantity
-                fill_ids[key].add(fill.entry_id)
+                acquisitions[key][fill.entry_id] = (
+                    acquisitions[key].get(fill.entry_id, Decimal(0)) + fill.quantity
+                )
     total = Decimal(0)
     for unit in snapshot.action_units:
         key = (unit.account_id, unit.security_id)
-        acquired = quantities[key]
-        if acquired <= 0:
+        if not acquisitions[key]:
             continue
         entries = tuple(
             entry
             for entry in snapshot.authoritative_ledger
             if (entry.account_id, entry.security_id) == key
         )
-        first = min(
-            (entry.occurred_at for entry in entries if entry.entry_id in fill_ids[key]),
-            default=None,
+        remaining = retained_acquired_quantity(
+            entries, acquisitions[key], unit.total_quantity or Decimal(0)
         )
-        disposed = sum(
-            (
-                -entry.quantity_delta
-                for entry in entries
-                if first is not None
-                and entry.occurred_at > first
-                and entry.entry_type == "FILL"
-                and entry.quantity_delta < 0
-                and entry.corrects_entry_id is None
-            ),
-            Decimal(0),
-        )
-        remaining = min(unit.total_quantity or Decimal(0), max(Decimal(0), acquired - disposed))
-        # An un-attributed corporate action cannot relax an acquired claim.
-        if any(
-            entry.entry_type == "CORPORATE_ACTION"
-            and first is not None
-            and entry.occurred_at >= first
-            for entry in entries
-        ):
-            remaining = unit.total_quantity or Decimal(0)
         total += remaining * (unit.market_price or Decimal(0))
     return total
 

@@ -243,7 +243,9 @@ def expansion_observations(payload: dict[str, Any]) -> dict[str, Any]:
     beta = payload["candidate_allocation"]["beta"]
     calendar = synthetic_market_calendar("synthetic-calendar-v1")
     assert calendar is not None
-    days = calendar.recent_completed_sessions(datetime(2042, 5, 17, 16, tzinfo=UTC), 20)
+    days = calendar.recent_completed_sessions(
+        datetime.fromisoformat(payload["knowledge_cutoff"]), 20
+    )
     months = [f"{2040 + (4 + i) // 12:04d}-{(4 + i) % 12 + 1:02d}" for i in range(24)]
     month_closes = {}
     for month in months:
@@ -268,7 +270,7 @@ def expansion_observations(payload: dict[str, Any]) -> dict[str, Any]:
         "simulated_origin": "REAL_TIME",
         "activated_at": "2042-02-01T00:00:00Z",
         "registered_at": "2040-04-01T00:00:00Z",
-        "available_at": "2042-05-17T16:00:00Z",
+        "available_at": payload["knowledge_cutoff"],
         "plan_months": months,
         "months": [
             {
@@ -325,7 +327,7 @@ def expansion_observations(payload: dict[str, Any]) -> dict[str, Any]:
             }
         ],
         "expansion_confirmed": True,
-        "effective_at": "2042-05-17T16:00:00Z",
+        "effective_at": payload["knowledge_cutoff"],
     }
 
     return BetaObservations.model_validate(result).model_dump(mode="json")
@@ -680,6 +682,40 @@ def test_filled_beta_exposure_and_retained_orders_share_one_total_envelope(
     assert plan.rows[0].candidate.candidate
 
 
+def test_linked_excess_fill_is_retained_as_acquired_beta_exposure(
+    migrated_settings: Settings,
+) -> None:
+    from test_candidate_execution import (
+        broker_payload,
+        forward_allocation_payload,
+        freeze_execution,
+    )
+
+    payload, _ = broker_payload(
+        migrated_settings,
+        quantity="30",
+        price="10",
+        terminal=True,
+        confirmation_case=beta_confirmation_payload(migrated_settings),
+    )
+    payload["candidate_execution"]["orders"][0]["quantity"] = "30"
+    freeze_execution(payload)
+    execution = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert execution is not None and execution.result.candidate_execution is not None
+    assert execution.result.candidate_execution.fills, execution.result.candidate_execution.reasons
+    assert execution.result.candidate_execution.fills[0].external_quantity == 10
+    later = forward_allocation_payload(migrated_settings, payload)
+    report = run_frozen_decision_case(
+        migrated_settings, later, clock=GovernanceClock(payload["knowledge_cutoff"])
+    ).report
+    assert report is not None and report.result.candidate_allocation is not None
+    plan = report.result.candidate_allocation
+    assert plan.beta is not None and plan.beta.committed_exposure == 400
+    assert plan.total_principal == 0
+
+
 def suspend_beta_dependency(settings: Settings, payload: dict[str, Any]) -> None:
     from datetime import datetime
 
@@ -923,7 +959,9 @@ def test_no_trade_terminal_needs_only_applicable_reconciliation(
     payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
     report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
     assert report is not None and report.result.candidate_allocation is not None
-    assert report.result.candidate_allocation.total_principal == 600
+    assert report.result.candidate_allocation.total_principal == 300
+    assert report.result.candidate_allocation.beta is not None
+    assert report.result.candidate_allocation.beta.permission_envelope == "INITIAL"
 
 
 def test_position_delivery_allows_one_failure_but_never_a_missing_p0p1(
@@ -939,6 +977,20 @@ def test_position_delivery_allows_one_failure_but_never_a_missing_p0p1(
     report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
     assert report is not None and report.result.candidate_allocation is not None
     assert report.result.candidate_allocation.total_principal == 600
+
+
+def test_daily_audit_uses_all_twenty_planned_days(migrated_settings: Settings) -> None:
+    payload = qualified_beta_payload(migrated_settings)
+    beta = payload["candidate_allocation"]["beta"]
+    beta["observations"] = expansion_observations(payload)
+    beta["observations"]["days"][0]["pipeline_completed"] = False
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    result = report.result.candidate_allocation.beta
+    assert result is not None and result.operations is not None
+    metric = result.operations.metrics["daily_pipeline"]
+    assert metric.required == 20 and metric.completed == 19 and str(metric.rate) == "0.95"
 
 
 def test_month_end_before_activation_is_not_a_clean_beta_month(migrated_settings: Settings) -> None:
@@ -1032,6 +1084,64 @@ def test_missing_p0p1_closes_initial_capacity_and_cannot_be_omitted(
     later = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
     assert later is not None and later.result.candidate_allocation is not None
     assert later.result.candidate_allocation.total_principal == 0
+
+
+@pytest.mark.parametrize("relabel", ["activation_id", "simulated_origin"])
+def test_relabeling_observation_cannot_bypass_saved_safety_failure(
+    migrated_settings: Settings, relabel: str
+) -> None:
+    payload = qualified_beta_payload(migrated_settings)
+    beta = payload["candidate_allocation"]["beta"]
+    beta["observations"] = expansion_observations(payload)
+    beta["observations"]["months"][0]["safety_failures"] = ["SYNTHETIC_ATOMICITY_FAILURE"]
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock())
+    payload["business_identity"] += ":relabel"
+    beta["observations"][relabel] = "REPLAY" if relabel == "simulated_origin" else "other"
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    later = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert later is not None and later.result.candidate_allocation is not None
+    assert later.result.candidate_allocation.total_principal == 0
+
+
+def test_failed_daily_window_closes_initial_coverage(migrated_settings: Settings) -> None:
+    payload = qualified_beta_payload(migrated_settings)
+    beta = payload["candidate_allocation"]["beta"]
+    beta["observations"] = expansion_observations(payload)
+    for day in beta["observations"]["days"]:
+        day["pipeline_completed"] = False
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    report = run_frozen_decision_case(migrated_settings, payload, clock=GovernanceClock()).report
+    assert report is not None and report.result.candidate_allocation is not None
+    assert report.result.candidate_allocation.total_principal == 0
+
+
+def test_saved_plan_permission_observes_a_later_scope_safety_failure(
+    migrated_settings: Settings,
+) -> None:
+    from stock_profiler.adapters.persistence.result_delivery import ResultDelivery
+    from stock_profiler.modules.delivery.access import AccessPrincipal
+
+    payload = qualified_beta_payload(migrated_settings, cutoff_at="2042-05-19T16:00:00Z")
+    clock = GovernanceClock("2042-05-19T16:01:00Z")
+    run_frozen_decision_case(migrated_settings, payload, clock=clock)
+    reader = AccessPrincipal(
+        user_id=payload["access_scope"]["user_id"],
+        account_ids=tuple(payload["access_scope"]["account_ids"]),
+        permissions=("REPORT_READ", "CANDIDATE_ALLOCATION", "CANDIDATE_COMMAND"),
+    )
+    delivery = ResultDelivery.from_settings(migrated_settings, clock=clock)
+    before = delivery.candidate_workspace(reader)
+    assert before is not None and before.allocations[0].new_actions_permitted
+    payload["business_identity"] += ":new-safety-failure"
+    beta = payload["candidate_allocation"]["beta"]
+    beta["observations"] = expansion_observations(payload)
+    beta["observations"]["months"][0]["safety_failures"] = ["SYNTHETIC_IDENTITY_FAILURE"]
+    payload["input"]["candidate_allocation"] = deepcopy(payload["candidate_allocation"])
+    run_frozen_decision_case(migrated_settings, payload, clock=clock)
+    after = delivery.candidate_workspace(reader)
+    assert after is not None and not after.allocations[0].new_actions_permitted
+    assert after.allocations[0].plan_report == before.allocations[0].plan_report
 
 
 @pytest.mark.parametrize(

@@ -841,6 +841,11 @@ export interface components {
         BetaOperations: {
             /** Consecutive Core Failure */
             consecutive_core_failure: boolean;
+            /**
+             * Daily Window Complete
+             * @default false
+             */
+            daily_window_complete: boolean;
             /** Metrics */
             metrics: {
                 [key: string]: components["schemas"]["BetaMetric"];

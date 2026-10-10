@@ -162,6 +162,7 @@ class BetaOperations(GovernanceContract):
     plan_months: tuple[str, ...]
     missing_months: tuple[str, ...]
     window_complete: bool
+    daily_window_complete: bool = False
     metrics: dict[str, BetaMetric]
     consecutive_core_failure: bool
     safety_failures: tuple[str, ...]

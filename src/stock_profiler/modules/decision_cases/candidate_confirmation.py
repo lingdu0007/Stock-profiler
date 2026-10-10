@@ -8,6 +8,7 @@ from stock_profiler.modules.candidate_selection.current_eligibility import (
     candidate_qualification_eligibility,
 )
 from stock_profiler.modules.decision_cases.allocation_inputs import saved_allocation_inputs_changed
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.candidate_allocation import (
     adjudicate_candidate_allocation,
 )
@@ -21,7 +22,6 @@ from stock_profiler.modules.portfolio.allocation_window import (
     entry_window_is_open as _entry_window_is_open,
 )
 from stock_profiler.modules.portfolio.confirmation_contracts import CandidateConfirmationOutcome
-from stock_profiler.modules.qualification.beta import envelope_decision, qualification_reasons
 
 
 def adjudicate_candidate_confirmation(
@@ -412,27 +412,13 @@ def finalize_candidate_confirmation(
     if command.operation == "WITHDRAW":
         return outcome
     if command.revalidation.beta is not None:
-        beta = command.revalidation.beta
-        reasons = qualification_reasons(
-            beta,
-            ledger.governance_history(connection, scope),
-            now,
-            evidence_cutoff=command.revalidation.cutoff_at,
-        )
-        envelope, observation_reasons, _, enabled = envelope_decision(
-            beta,
-            now,
-            ledger.governance_history(connection, scope),
-            evidence_cutoff=command.revalidation.cutoff_at,
-        )
         saved = ledger.get_formal_report_for_event(command.plan_event_id, connection)
         assert saved is not None and saved.result.candidate_allocation is not None
-        plan_beta = saved.result.candidate_allocation.beta
-        if reasons or not enabled or plan_beta is None or envelope != plan_beta.permission_envelope:
-            return CandidateConfirmationOutcome(
-                disposition="BLOCKED",
-                reasons=reasons or observation_reasons or ("BETA_PERMISSION_CHANGED",),
-            )
+        reasons = saved_beta_permission_reasons(
+            case, saved.result.candidate_allocation.beta, ledger, connection, now
+        )
+        if reasons:
+            return CandidateConfirmationOutcome(disposition="BLOCKED", reasons=reasons)
     if saved_allocation_inputs_changed(case, ledger, connection):
         return CandidateConfirmationOutcome(
             disposition="BLOCKED", reasons=("ALLOCATION_INPUT_VERSION_CONFLICT",)

@@ -16,6 +16,7 @@ from stock_profiler.adapters.persistence.runtime_ownership import initialize_run
 from stock_profiler.adapters.persistence.user_fact_storage import USER_FACTS as USER_FACTS
 from stock_profiler.bootstrap.settings import Settings
 from stock_profiler.foundation.clock import Clock
+from stock_profiler.modules.decision_cases.beta_permission import saved_beta_permission_reasons
 from stock_profiler.modules.decision_cases.domain import (
     FormalReport,
     FrozenDecisionCase,
@@ -47,7 +48,6 @@ from stock_profiler.modules.delivery.monitoring_workspace import (
     project_workspace,
 )
 from stock_profiler.modules.delivery.user_facts import UserFact, UserFactRequest
-from stock_profiler.modules.qualification.beta import envelope_decision, qualification_reasons
 
 
 class ResultDelivery:
@@ -134,27 +134,14 @@ class ResultDelivery:
                 scope = source.case.access_scope
                 if command is None or command.beta is None or scope is None:
                     continue
-                stops = qualification_reasons(
-                    command.beta,
-                    self._ledger.governance_history(connection, scope),
-                    workspace.observed_at,
-                    evidence_cutoff=command.cutoff_at,
-                )
-                envelope, observation_reasons, _, enabled = envelope_decision(
-                    command.beta,
-                    workspace.observed_at,
-                    self._ledger.governance_history(connection, scope),
-                    evidence_cutoff=command.cutoff_at,
-                )
                 saved = source.report.result.candidate_allocation
-                if (
-                    not enabled
-                    or saved is None
-                    or saved.beta is None
-                    or saved.beta.permission_envelope != envelope
-                ):
-                    stops += observation_reasons or ("BETA_PERMISSION_CHANGED",)
-                plan_stops[source.report.event_id] = stops
+                plan_stops[source.report.event_id] = saved_beta_permission_reasons(
+                    source.case,
+                    saved.beta if saved else None,
+                    self._ledger,
+                    connection,
+                    workspace.observed_at,
+                )
             return workspace.model_copy(
                 update={
                     "allocations": project_allocations(

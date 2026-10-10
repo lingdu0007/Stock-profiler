@@ -1568,6 +1568,11 @@
             "title": "Consecutive Core Failure",
             "type": "boolean"
           },
+          "daily_window_complete": {
+            "default": false,
+            "title": "Daily Window Complete",
+            "type": "boolean"
+          },
           "metrics": {
             "additionalProperties": {
               "$ref": "#/components/schemas/BetaMetric"

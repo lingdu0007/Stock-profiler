@@ -96,9 +96,11 @@ def observation_history_reasons(
             continue
         if prior.policy.version_id == command.policy.version_id and prior.policy != command.policy:
             return ("BETA_POLICY_VERSION_CONFLICT",)
-        if prior.policy != command.policy and next(
-            (item for item in prior.qualification_bindings if item.role == "G5"), None
-        ) == next((item for item in command.qualification_bindings if item.role == "G5"), None):
+        if prior.policy != command.policy and any(
+            next((item for item in prior.qualification_bindings if item.role == role), None)
+            == next((item for item in command.qualification_bindings if item.role == role), None)
+            for role in ("G4", "G5")
+        ):
             return ("BETA_POLICY_QUALIFICATION_REQUIRED",)
         if prior.observations is None:
             continue
@@ -108,7 +110,12 @@ def observation_history_reasons(
             else {}
         )
         for day in prior.observations.days:
-            if not (day.p0p1_missing or day.safety_failures):
+            if not (
+                day.p0p1_missing
+                or day.safety_failures
+                or not day.data_completed
+                or not day.pipeline_completed
+            ):
                 continue
             if command.observations is None:
                 return ("BETA_OPERATIONAL_HISTORY_REQUIRED",)
@@ -144,6 +151,7 @@ def observation_history_reasons(
 def operational_audit(command: BetaEnvelopeCommand, now: datetime) -> "BetaOperations":
     from decimal import Decimal
 
+    from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
     from stock_profiler.modules.qualification.beta_contracts import BetaMetric, BetaOperations
 
     observation = command.observations
@@ -190,6 +198,43 @@ def operational_audit(command: BetaEnvelopeCommand, now: datetime) -> "BetaOpera
             if rate >= command.policy.minimum_completion
             else "FAILED",
         )
+    applicable_daily = any(day.system_position_ids for day in observation.days)
+    calendar = synthetic_market_calendar(observation.market_calendar_version)
+    sessions = (
+        calendar.recent_completed_sessions(now, command.policy.position_day_count)
+        if calendar
+        else ()
+    )
+    expected_days = tuple(session.closed_at for session in sessions)
+    days = {day.closed_at: day for day in observation.days}
+    daily_complete = (
+        len(expected_days) == command.policy.position_day_count
+        and observation.plan_days == expected_days
+        and len(days) == len(observation.days) == len(expected_days)
+        and set(days) == set(expected_days)
+    )
+    for name in ("data", "pipeline"):
+        required = command.policy.position_day_count if applicable_daily else 0
+        completed = (
+            sum(
+                bool(getattr(days[day], f"{name}_completed"))
+                for day in expected_days
+                if day in days
+            )
+            if applicable_daily
+            else 0
+        )
+        rate = Decimal(completed) / required if required else None
+        metrics[f"daily_{name}"] = BetaMetric(
+            required=required,
+            completed=completed,
+            rate=rate,
+            status="NOT_APPLICABLE"
+            if rate is None
+            else "PASSED"
+            if rate >= command.policy.minimum_completion
+            else "FAILED",
+        )
     core_failure = [
         month not in months
         or not months[month].data_completed
@@ -208,10 +253,12 @@ def operational_audit(command: BetaEnvelopeCommand, now: datetime) -> "BetaOpera
         plan_months=window,
         missing_months=missing,
         window_complete=complete,
+        daily_window_complete=daily_complete,
         metrics=metrics,
         consecutive_core_failure=consecutive,
         safety_failures=failures,
         passed=complete
+        and (not applicable_daily or daily_complete)
         and not consecutive
         and not failures
         and all(item.status != "FAILED" for item in metrics.values()),
@@ -233,6 +280,25 @@ def envelope_decision(
     requested = command.requested_envelope == "EXPANDED"
     if observation is None:
         return "INITIAL", ("BETA_EXPANSION_OBSERVATION_REQUIRED",) if requested else (), None, True
+    audit = operational_audit(command, now)
+    day_failures = [
+        not day.data_completed or not day.pipeline_completed
+        for day in sorted(observation.days, key=lambda item: item.closed_at)
+    ]
+    daily_failed = bool(observation.days) and (
+        any(
+            sum(getattr(day, f"{name}_completed") for day in observation.days)
+            < len(observation.days) * command.policy.minimum_completion
+            for name in ("data", "pipeline")
+        )
+        or any(a and b for a, b in zip(day_failures, day_failures[1:], strict=False))
+    )
+    if (
+        not audit.passed
+        or daily_failed
+        or any(day.safety_failures or day.p0p1_missing for day in observation.days)
+    ):
+        return "INITIAL", ("BETA_OPERATIONAL_GATE_FAILED",), audit, False
     if (
         not observation.scope.same_scope_as(command.scope)
         or observation.activation_id != command.activation_id
@@ -247,9 +313,6 @@ def envelope_decision(
         or observation.effective_at < observation.available_at
     ):
         return "INITIAL", ("BETA_OBSERVATION_BASIS_MISMATCH",), None, True
-    audit = operational_audit(command, now)
-    if not audit.passed or any(day.safety_failures or day.p0p1_missing for day in observation.days):
-        return "INITIAL", ("BETA_OPERATIONAL_GATE_FAILED",), audit, False
     if not requested:
         return "INITIAL", (), audit, True
     clean_months = planned_months(now, command.policy.clean_month_count)
@@ -316,6 +379,14 @@ def envelope_decision(
     plans = observation.terminal_plans
     terminal = (
         bool(plans)
+        and any(
+            plan.terminal_outcome in {"PARTIALLY_FILLED", "FULLY_FILLED"}
+            and plan.accepted_intents > 0
+            and plan.fill_ids
+            and plan.funds_reconciliation_id
+            and plan.position_reconciliation_id
+            for plan in plans
+        )
         and len({plan.plan_id for plan in plans}) == len(plans)
         and all(
             plan.authoritative

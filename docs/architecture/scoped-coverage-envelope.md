@@ -16,7 +16,7 @@ cutoff. Current expiry and state are checked again immediately before commit.
 The statistical-action binding uses the policy's explicit holding-age domain,
 probability grid, source, target and purpose; another statistical profile cannot
 stand in for it. Changing policy content under one version fails closed, and a
-new policy version requires a new G5 qualification binding.
+new policy version requires new G4 and G5 qualification bindings.
 A qualification decision affects permission; it cannot change an original
 candidate, probability, standard evaluation or record of a user declining to
 trade.
@@ -31,6 +31,9 @@ Retained coverage includes saved reservations, conservatively unmatched
 commitments and acquired exposure traced from broker reconciliation to current
 holdings. A partial fill converts the claim into acquired exposure. Later
 batches or a different permission label cannot reset either part. Proven
+sales consume only coverage acquired by that time, and additive sale corrections
+restore their causal quantities. Excess fills on a linked order also consume
+coverage. Historical sales cannot create credit against subsequent buys. Proven
 terminal release does not grow another accepted row. Normal issuer, account,
 cash, cost, stress, turnover and correlation constraints continue to apply.
 The report displays normal feasible capacity, retained coverage, available
@@ -58,6 +61,10 @@ supplies completion and window parameters; safety failures have no percentage
 allowance. Users do not need to accept a plan or manufacture a fill. A plan
 with no accepted intent needs only its applicable reconciliation, while
 expansion still requires the separate system-position observation window.
+Without an authoritative naturally occurring fill and the associated account
+and position reconciliation, coverage stays at its initial level. A no-trade
+plan can satisfy the terminal-plan requirement alongside a separately reconciled
+traded plan; it cannot establish post-fill accounting on its own.
 
 Confirmation and step review retain the saved envelope binding and replay it
 with the rest of the plan. Changed policy, scope, qualification, quantities or
