@@ -2868,6 +2868,182 @@ export interface components {
             /** Target Quantity */
             target_quantity: string;
         };
+        /** ExitCalibration */
+        ExitCalibration: {
+            /** Band Lower */
+            band_lower: string;
+            /** Band Upper */
+            band_upper: string;
+            /** Calendar Version */
+            calendar_version: string;
+            /** Loss Boundary */
+            loss_boundary: ("0.05" | "0.10" | "0.15" | "0.20") | null;
+            /** Lower Error */
+            lower_error: string;
+            /** Market State */
+            market_state: string;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "D20" | "V60";
+            /** Upper Error */
+            upper_error: string;
+            version: components["schemas"]["CapabilityVersion"];
+        };
+        /** ExitHardGate */
+        ExitHardGate: {
+            /**
+             * Authority
+             * @enum {string}
+             */
+            authority: "DISCLOSURE" | "EXCHANGE";
+            /**
+             * Direction
+             * @default LIQUIDATE
+             * @constant
+             */
+            direction: "LIQUIDATE";
+            /**
+             * Established At
+             * Format: date-time
+             */
+            established_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Gate Id */
+            gate_id: string;
+            /** Source */
+            source: string;
+            /** Thesis Event Id */
+            thesis_event_id: string | null;
+        };
+        /** ExitOutcome */
+        ExitOutcome: {
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "THESIS_REGISTERED" | "ASSESSED" | "NON_ACTIONABLE" | "BLOCKED";
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: components["schemas"]["SecurityEvidence"][];
+            /**
+             * Hard Gates
+             * @default []
+             */
+            hard_gates: components["schemas"]["ExitHardGate"][];
+            /**
+             * Probabilities
+             * @default []
+             */
+            probabilities: components["schemas"]["GuardedExitProbability"][];
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Security Id */
+            security_id?: string | null;
+            /** Standard Price */
+            standard_price?: string | null;
+            /**
+             * Targets
+             * @default []
+             */
+            targets: components["schemas"]["ExitTarget"][];
+            thesis?: components["schemas"]["ExitThesis"] | null;
+            /** Thesis Event Id */
+            thesis_event_id?: string | null;
+        };
+        /** ExitProposition */
+        ExitProposition: {
+            /**
+             * Authority
+             * @enum {string}
+             */
+            authority: "DISCLOSURE" | "EXCHANGE";
+            /** Metric */
+            metric: string;
+            /**
+             * Operator
+             * @enum {string}
+             */
+            operator: "LE" | "GE" | "EQ";
+            /** Proposition Id */
+            proposition_id: string;
+            /** Source */
+            source: string;
+            /** Statement */
+            statement: string;
+            /** Threshold */
+            threshold: string;
+            /**
+             * Trigger Direction
+             * @constant
+             */
+            trigger_direction: "LIQUIDATE";
+        };
+        /** ExitTarget */
+        ExitTarget: {
+            /**
+             * Aggregation
+             * @enum {string}
+             */
+            aggregation: "DAILY_MINIMUM" | "TERMINAL_INCREMENT_VS_EXIT_CASH";
+            /**
+             * Cash Return
+             * @default 0
+             * @constant
+             */
+            cash_return: "0";
+            /**
+             * Market Sessions
+             * @enum {integer}
+             */
+            market_sessions: 20 | 60;
+            /**
+             * Return Basis
+             * @default NET_TOTAL_RETURN
+             * @constant
+             */
+            return_basis: "NET_TOTAL_RETURN";
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "D20" | "V60";
+        };
+        /** ExitThesis */
+        ExitThesis: {
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SYSTEM" | "EXTERNAL";
+            /** Propositions */
+            propositions: components["schemas"]["ExitProposition"][];
+            /**
+             * Registered At
+             * Format: date-time
+             */
+            registered_at: string;
+            /** Security Id */
+            security_id: string;
+            /** Thesis Id */
+            thesis_id: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            /** Version */
+            version: string;
+        };
         /**
          * ExternalResult
          * @description The user-visible result expected from this original synthetic fixture.
@@ -2886,6 +3062,7 @@ export interface components {
              */
             evaluation_registrations: components["schemas"]["EvaluationRegistration"][];
             execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
+            exit_assessment?: components["schemas"]["ExitOutcome"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             historical_probability?: components["schemas"]["HistoricalProbabilityReport"] | null;
             historical_selection?: components["schemas"]["HistoricalSelectionReport"] | null;
@@ -3142,6 +3319,51 @@ export interface components {
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
+        };
+        /** GuardedExitProbability */
+        GuardedExitProbability: {
+            /** Assessment Digest */
+            assessment_digest: string;
+            calibration: components["schemas"]["ExitCalibration"];
+            /** Guarded Lower */
+            guarded_lower: string | null;
+            /** Guarded Upper */
+            guarded_upper: string | null;
+            /** Loss Boundary */
+            loss_boundary: string | null;
+            /** Point */
+            point: string;
+            /**
+             * Produced At
+             * Format: date-time
+             */
+            produced_at: string;
+            /** Qualification Id */
+            qualification_id: string;
+            qualification_scope: components["schemas"]["QualificationScope"];
+            /**
+             * Qualification Status
+             * @enum {string}
+             */
+            qualification_status: "VALID" | "AT_RISK" | "NOT_QUALIFIED";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Security Id */
+            security_id: string;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "D20" | "V60";
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            version: components["schemas"]["CapabilityVersion"];
         };
         /** HistoricalCounts */
         HistoricalCounts: {
@@ -5532,6 +5754,55 @@ export interface components {
             /** Terminal Percentile */
             terminal_percentile: string;
         };
+        /** SecurityEvidence */
+        SecurityEvidence: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Authority
+             * @enum {string}
+             */
+            authority: "DISCLOSURE" | "EXCHANGE" | "MODEL" | "NEWS";
+            /** Complete */
+            complete: boolean;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Family
+             * @enum {string}
+             */
+            family: "SECURITY" | "MARKET" | "RISK";
+            /** Legal Termination */
+            legal_termination: boolean;
+            /** Metric */
+            metric: string;
+            /**
+             * Public At
+             * Format: date-time
+             */
+            public_at: string;
+            /** Security Id */
+            security_id: string;
+            /** Source */
+            source: string;
+            /** Source Version */
+            source_version: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+            /** Value */
+            value: string;
+        };
         /** SelectionIndexEvidence */
         SelectionIndexEvidence: {
             /**
@@ -5717,7 +5988,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_EXECUTION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_EXECUTION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "SECURITY_EXIT_ASSESSMENT" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.

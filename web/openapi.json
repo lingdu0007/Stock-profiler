@@ -6674,6 +6674,377 @@
         "title": "ExecutionTarget",
         "type": "object"
       },
+      "ExitCalibration": {
+        "additionalProperties": false,
+        "properties": {
+          "band_lower": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Band Lower",
+            "type": "string"
+          },
+          "band_upper": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Band Upper",
+            "type": "string"
+          },
+          "calendar_version": {
+            "minLength": 1,
+            "title": "Calendar Version",
+            "type": "string"
+          },
+          "loss_boundary": {
+            "anyOf": [
+              {
+                "enum": ["0.05", "0.10", "0.15", "0.20"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Boundary"
+          },
+          "lower_error": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Error",
+            "type": "string"
+          },
+          "market_state": {
+            "minLength": 1,
+            "title": "Market State",
+            "type": "string"
+          },
+          "target": {
+            "enum": ["D20", "V60"],
+            "title": "Target",
+            "type": "string"
+          },
+          "upper_error": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Error",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "target",
+          "loss_boundary",
+          "market_state",
+          "band_lower",
+          "band_upper",
+          "lower_error",
+          "upper_error",
+          "version",
+          "calendar_version"
+        ],
+        "title": "ExitCalibration",
+        "type": "object"
+      },
+      "ExitHardGate": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "enum": ["DISCLOSURE", "EXCHANGE"],
+            "title": "Authority",
+            "type": "string"
+          },
+          "direction": {
+            "const": "LIQUIDATE",
+            "default": "LIQUIDATE",
+            "title": "Direction",
+            "type": "string"
+          },
+          "established_at": {
+            "format": "date-time",
+            "title": "Established At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "gate_id": {
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "thesis_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thesis Event Id"
+          }
+        },
+        "required": [
+          "gate_id",
+          "evidence_id",
+          "authority",
+          "source",
+          "thesis_event_id",
+          "established_at"
+        ],
+        "title": "ExitHardGate",
+        "type": "object"
+      },
+      "ExitOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": ["THESIS_REGISTERED", "ASSESSED", "NON_ACTIONABLE", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SecurityEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "hard_gates": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitHardGate"
+            },
+            "title": "Hard Gates",
+            "type": "array"
+          },
+          "probabilities": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GuardedExitProbability"
+            },
+            "title": "Probabilities",
+            "type": "array"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "security_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Id"
+          },
+          "standard_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standard Price"
+          },
+          "targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitTarget"
+            },
+            "title": "Targets",
+            "type": "array"
+          },
+          "thesis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitThesis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thesis_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thesis Event Id"
+          }
+        },
+        "required": ["disposition"],
+        "title": "ExitOutcome",
+        "type": "object"
+      },
+      "ExitProposition": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "enum": ["DISCLOSURE", "EXCHANGE"],
+            "title": "Authority",
+            "type": "string"
+          },
+          "metric": {
+            "minLength": 1,
+            "title": "Metric",
+            "type": "string"
+          },
+          "operator": {
+            "enum": ["LE", "GE", "EQ"],
+            "title": "Operator",
+            "type": "string"
+          },
+          "proposition_id": {
+            "minLength": 1,
+            "title": "Proposition Id",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "trigger_direction": {
+            "const": "LIQUIDATE",
+            "title": "Trigger Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposition_id",
+          "statement",
+          "metric",
+          "authority",
+          "source",
+          "operator",
+          "threshold",
+          "trigger_direction"
+        ],
+        "title": "ExitProposition",
+        "type": "object"
+      },
+      "ExitTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "enum": ["DAILY_MINIMUM", "TERMINAL_INCREMENT_VS_EXIT_CASH"],
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "cash_return": {
+            "const": "0",
+            "default": "0",
+            "title": "Cash Return",
+            "type": "string"
+          },
+          "market_sessions": {
+            "enum": [20, 60],
+            "title": "Market Sessions",
+            "type": "integer"
+          },
+          "return_basis": {
+            "const": "NET_TOTAL_RETURN",
+            "default": "NET_TOTAL_RETURN",
+            "title": "Return Basis",
+            "type": "string"
+          },
+          "target": {
+            "enum": ["D20", "V60"],
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": ["target", "market_sessions", "aggregation"],
+        "title": "ExitTarget",
+        "type": "object"
+      },
+      "ExitThesis": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle_id": {
+            "minLength": 1,
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
+          "origin": {
+            "enum": ["SYSTEM", "EXTERNAL"],
+            "title": "Origin",
+            "type": "string"
+          },
+          "propositions": {
+            "items": {
+              "$ref": "#/components/schemas/ExitProposition"
+            },
+            "minItems": 1,
+            "title": "Propositions",
+            "type": "array"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "thesis_id": {
+            "minLength": 1,
+            "title": "Thesis Id",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thesis_id",
+          "version",
+          "security_id",
+          "lifecycle_id",
+          "origin",
+          "registered_at",
+          "valid_until",
+          "propositions"
+        ],
+        "title": "ExitThesis",
+        "type": "object"
+      },
       "ExternalResult": {
         "additionalProperties": false,
         "description": "The user-visible result expected from this original synthetic fixture.",
@@ -6760,6 +7131,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ExecutionPlanOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_assessment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitOutcome"
               },
               {
                 "type": "null"
@@ -7541,6 +7922,118 @@
         },
         "required": ["disposition", "reasons"],
         "title": "GovernanceOutcome",
+        "type": "object"
+      },
+      "GuardedExitProbability": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_digest": {
+            "title": "Assessment Digest",
+            "type": "string"
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/ExitCalibration"
+          },
+          "guarded_lower": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guarded Lower"
+          },
+          "guarded_upper": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guarded Upper"
+          },
+          "loss_boundary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Boundary"
+          },
+          "point": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Point",
+            "type": "string"
+          },
+          "produced_at": {
+            "format": "date-time",
+            "title": "Produced At",
+            "type": "string"
+          },
+          "qualification_id": {
+            "title": "Qualification Id",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "qualification_status": {
+            "enum": ["VALID", "AT_RISK", "NOT_QUALIFIED"],
+            "title": "Qualification Status",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "target": {
+            "enum": ["D20", "V60"],
+            "title": "Target",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "security_id",
+          "assessment_digest",
+          "target",
+          "loss_boundary",
+          "point",
+          "guarded_lower",
+          "guarded_upper",
+          "qualification_status",
+          "qualification_id",
+          "qualification_scope",
+          "version",
+          "produced_at",
+          "valid_until",
+          "calibration"
+        ],
+        "title": "GuardedExitProbability",
         "type": "object"
       },
       "HistoricalCounts": {
@@ -13840,6 +14333,97 @@
         "title": "ScreeningRank",
         "type": "object"
       },
+      "SecurityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "authority": {
+            "enum": ["DISCLOSURE", "EXCHANGE", "MODEL", "NEWS"],
+            "title": "Authority",
+            "type": "string"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "family": {
+            "enum": ["SECURITY", "MARKET", "RISK"],
+            "title": "Family",
+            "type": "string"
+          },
+          "legal_termination": {
+            "title": "Legal Termination",
+            "type": "boolean"
+          },
+          "metric": {
+            "minLength": 1,
+            "title": "Metric",
+            "type": "string"
+          },
+          "public_at": {
+            "format": "date-time",
+            "title": "Public At",
+            "type": "string"
+          },
+          "security_id": {
+            "minLength": 1,
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          },
+          "value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "family",
+          "security_id",
+          "source",
+          "authority",
+          "source_version",
+          "public_at",
+          "acquired_at",
+          "validated_at",
+          "valid_until",
+          "complete",
+          "metric",
+          "value",
+          "legal_termination"
+        ],
+        "title": "SecurityEvidence",
+        "type": "object"
+      },
       "SelectionIndexEvidence": {
         "additionalProperties": false,
         "properties": {
@@ -14285,6 +14869,7 @@
               "CANDIDATE_EXECUTION",
               "CANDIDATE_ALLOCATION",
               "EXECUTION_PLAN",
+              "SECURITY_EXIT_ASSESSMENT",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
