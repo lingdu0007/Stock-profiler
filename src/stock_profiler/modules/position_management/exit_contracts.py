@@ -75,6 +75,8 @@ class ExitCalibration(ExitContract):
 
 
 class ExitPrediction(ExitContract):
+    security_id: str = Field(min_length=1)
+    assessment_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     point: Decimal = Field(ge=0, le=1)
     produced_at: AwareDatetime
     valid_until: AwareDatetime
@@ -84,6 +86,8 @@ class ExitPrediction(ExitContract):
 
 
 class GuardedExitProbability(ExitContract):
+    security_id: str
+    assessment_digest: str
     target: Literal["D20", "V60"]
     loss_boundary: str | None
     point: Decimal

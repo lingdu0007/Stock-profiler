@@ -7927,6 +7927,10 @@
       "GuardedExitProbability": {
         "additionalProperties": false,
         "properties": {
+          "assessment_digest": {
+            "title": "Assessment Digest",
+            "type": "string"
+          },
           "calibration": {
             "$ref": "#/components/schemas/ExitCalibration"
           },
@@ -7995,6 +7999,10 @@
             "title": "Reasons",
             "type": "array"
           },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
           "target": {
             "enum": ["D20", "V60"],
             "title": "Target",
@@ -8010,6 +8018,8 @@
           }
         },
         "required": [
+          "security_id",
+          "assessment_digest",
           "target",
           "loss_boundary",
           "point",

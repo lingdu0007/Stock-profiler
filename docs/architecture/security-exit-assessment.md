@@ -32,6 +32,11 @@ These definitions describe future outcomes; realized future prices are not input
 to a current assessment. This contract consumes frozen predictions and does not
 fit models or generate outcome labels.
 
+Each prediction binds the security and a canonical SHA-256 digest of the complete
+assessment command excluding predictions. That digest includes cutoff, standard
+price, calendar, thesis, market state, board, model version and input evidence.
+Changing the assessment basis invalidates transplanted predictions.
+
 Each probability retains its point, target, loss boundary, directional calibration
 envelope, model version, market state, qualification identity and freshness. The
 host requires the applicable state, board, origin, initial holding-age domain,

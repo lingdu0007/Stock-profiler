@@ -237,6 +237,15 @@ def qualified_assessment(
                 "calibration": artifact,
             }
         )
+    digest = sha256(
+        json.dumps(
+            {key: value for key, value in command.items() if key != "predictions"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    for prediction in command["predictions"]:
+        prediction.update(security_id=command["security_id"], assessment_digest=digest)
     return command
 
 
@@ -268,6 +277,8 @@ def test_independent_qualified_grid_and_hold_value_keep_points_guards_and_proven
     )
     assert down["qualification_status"] == "VALID"
     assert value["version"] == command["version"]
+    assert value["security_id"] == command["security_id"]
+    assert value["assessment_digest"] == command["predictions"][-1]["assessment_digest"]
     assert down["produced_at"] == command["cutoff_at"]
     assert outcome["security_id"] == "XQZ-4017"
     assert outcome["evidence"] == command["evidence"]
@@ -611,3 +622,58 @@ def test_security_assessment_rejects_personal_decision_inputs(
             exit_case(migrated_settings, f"personal-input-{field}", command),
             clock=GovernanceClock(command["cutoff_at"]),
         )
+
+
+@pytest.mark.parametrize("business", ["result-abstained", "result-failed"])
+@pytest.mark.parametrize(
+    "gate", ["LEGAL_TERMINATION", "THESIS_FALSIFIED:synthetic-business-premise"]
+)
+def test_business_non_success_keeps_independent_authoritative_liquidation_gates(
+    migrated_settings: Settings, business: str, gate: str
+) -> None:
+    import json
+    from pathlib import Path
+
+    command = qualified_assessment(migrated_settings)
+    if gate == "LEGAL_TERMINATION":
+        command["evidence"][0]["legal_termination"] = True
+    else:
+        command["evidence"][2]["value"] = "0"
+    payload = exit_case(migrated_settings, f"{business}-{gate}", command)
+    source = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/synthetic/result-families" / f"{business}.json"
+        ).read_text()
+    )
+    payload["input"] = {**source["input"], "exit_assessment": command}
+    payload["expected_external_result"] = source["expected_external_result"]
+    saved = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(command["cutoff_at"])
+    )
+    assert saved.report is not None
+    outcome = saved.report.result.model_dump(mode="json")["exit_assessment"]
+    assert [item["gate_id"] for item in outcome["hard_gates"]] == [gate]
+    assert outcome["disposition"] == "NON_ACTIONABLE"
+    assert "BUSINESS_PREREQUISITE_FAILED" in outcome["reasons"]
+    assert all(item["guarded_lower"] is None for item in outcome["probabilities"])
+
+
+@pytest.mark.parametrize("changed_input", ["standard-price", "risk-evidence"])
+def test_predictions_cannot_be_transplanted_to_another_assessment_basis(
+    migrated_settings: Settings, changed_input: str
+) -> None:
+    command = qualified_assessment(migrated_settings)
+    if changed_input == "standard-price":
+        command["standard_price"] = command["evidence"][1]["value"] = "13"
+    else:
+        command["evidence"][2]["value"] = "2"
+    saved = run_frozen_decision_case(
+        migrated_settings,
+        exit_case(migrated_settings, f"transplanted-{changed_input}", command),
+        clock=GovernanceClock(command["cutoff_at"]),
+    )
+    assert saved.report is not None
+    outcome = saved.report.result.model_dump(mode="json")["exit_assessment"]
+    assert outcome["disposition"] == "NON_ACTIONABLE"
+    assert "PREDICTION_ASSESSMENT_MISMATCH" in outcome["reasons"]
+    assert all(item["guarded_lower"] is None for item in outcome["probabilities"])

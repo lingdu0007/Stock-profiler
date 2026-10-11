@@ -3322,6 +3322,8 @@ export interface components {
         };
         /** GuardedExitProbability */
         GuardedExitProbability: {
+            /** Assessment Digest */
+            assessment_digest: string;
             calibration: components["schemas"]["ExitCalibration"];
             /** Guarded Lower */
             guarded_lower: string | null;
@@ -3349,6 +3351,8 @@ export interface components {
              * @default []
              */
             reasons: string[];
+            /** Security Id */
+            security_id: string;
             /**
              * Target
              * @enum {string}

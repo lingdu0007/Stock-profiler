@@ -32,10 +32,12 @@ def adjudicate_security_exit(
     command = case.exit_assessment
     scope = case.access_scope
     assert command is not None and scope is not None
+    if isinstance(command, SecurityAssessment):
+        return assess_security(
+            case, command, ledger, connection, business_prerequisite_met=business_prerequisite_met
+        )
     if not business_prerequisite_met:
         return ExitOutcome(disposition="BLOCKED", reasons=("BUSINESS_PREREQUISITE_FAILED",))
-    if isinstance(command, SecurityAssessment):
-        return assess_security(case, command, ledger, connection)
     thesis = command.thesis
     history = ledger.security_exit_history(connection, scope, thesis.lifecycle_id)
     if any(fact.result.exit_assessment and fact.result.exit_assessment.thesis for fact in history):
@@ -83,6 +85,8 @@ def assess_security(
     command: SecurityAssessment,
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
+    *,
+    business_prerequisite_met: bool,
 ) -> ExitOutcome:
     scope = case.access_scope
     assert scope is not None
@@ -144,7 +148,7 @@ def assess_security(
                         )
                     )
     probabilities = []
-    reasons: list[str] = []
+    reasons: list[str] = [] if business_prerequisite_met else ["BUSINESS_PREREQUISITE_FAILED"]
     if len(usable) != len(command.evidence) or {e.family for e in usable} != {
         "SECURITY",
         "MARKET",
@@ -159,6 +163,13 @@ def assess_security(
     if thesis is None or thesis.valid_until < command.cutoff_at:
         reasons.append("THESIS_UNAVAILABLE_OR_EXPIRED")
     global_reasons = tuple(reasons)
+    assessment_digest = sha256(
+        json.dumps(
+            command.model_dump(mode="json", exclude={"predictions"}),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     downside = sorted(
         (p for p in command.predictions if p.calibration.target == "D20"),
         key=lambda p: p.calibration.loss_boundary or "",
@@ -170,6 +181,11 @@ def assess_security(
         calibration = prediction.calibration
         qualification_scope = prediction.qualification_scope
         failures = list(global_reasons)
+        if (
+            prediction.security_id != command.security_id
+            or prediction.assessment_digest != assessment_digest
+        ):
+            failures.append("PREDICTION_ASSESSMENT_MISMATCH")
         if prediction.calibration.target == "D20" and incoherent:
             failures.append("DOWNSIDE_GRID_INCOHERENT")
         if (
@@ -226,6 +242,8 @@ def assess_security(
             upper = min(Decimal(1), prediction.point + calibration.upper_error)
         probabilities.append(
             GuardedExitProbability(
+                security_id=prediction.security_id,
+                assessment_digest=prediction.assessment_digest,
                 target=calibration.target,
                 loss_boundary=calibration.loss_boundary,
                 point=prediction.point,
