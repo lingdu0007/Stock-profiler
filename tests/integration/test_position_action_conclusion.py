@@ -648,9 +648,11 @@ def test_actual_partial_sale_repurchase_or_below_target_does_not_reset_anchor(
 
 
 @pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.parametrize("followup_model", ["REDUCE", "HOLD"])
 def test_paid_costs_count_against_first_exit_value_and_do_not_cancel_saved_cap(
     migrated_settings: Settings,
     blocked: bool,
+    followup_model: str,
 ) -> None:
     first_payload = action_payload(
         migrated_settings, points=("0.55", "0.50", "0.30", "0.20", "0.75")
@@ -685,7 +687,9 @@ def test_paid_costs_count_against_first_exit_value_and_do_not_cancel_saved_cap(
         migrated_settings,
         cutoff_at="2042-05-19T16:00:00Z",
         previous=security.report.result.exit_assessment.model_dump(mode="json"),
-        points=("0.55", "0.50", "0.30", "0.20", "0.75"),
+        points=("0.55", "0.50", "0.30", "0.20", "0.75")
+        if followup_model == "REDUCE"
+        else ("0.20", "0.15", "0.10", "0.05", "0.75"),
         snapshot_transform=later_snapshot,
     )
     saved = run_frozen_decision_case(
@@ -700,6 +704,25 @@ def test_paid_costs_count_against_first_exit_value_and_do_not_cancel_saved_cap(
     assert action.direction == "REDUCE" and action.target_quantity == 100
     assert action.cost_anchor == first.report.result.position_action.cost_anchor
     assert action.cost_anchor is not None and action.cost_anchor.market_value == 2000
+
+
+@pytest.mark.parametrize("missing_cost", [False, True])
+def test_first_deterministic_reduction_freezes_cost_anchor_without_statistical_authority(
+    migrated_settings: Settings,
+    missing_cost: bool,
+) -> None:
+    payload = action_payload(migrated_settings, normal=False)
+    if missing_cost:
+        payload["position_action"]["execution"]["routes"][0]["cost_curve"] = None
+    saved = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert saved.report is not None and saved.report.result.position_action is not None
+    action = saved.report.result.position_action
+    assert action.direction == "REDUCE" and action.model_direction is None
+    assert action.anchor is None
+    assert action.cost_anchor is not None and action.cost_anchor.market_value == 2000
+    assert action.cost_anchor.frozen_at.isoformat() == "2042-05-18T16:00:00+00:00"
 
 
 def test_quantity_changing_corporate_action_cannot_reuse_an_unadjusted_anchor(
@@ -750,6 +773,8 @@ def test_quantity_changing_corporate_action_cannot_reuse_an_unadjusted_anchor(
     assert action.model_direction is None
     assert action.execution is not None and action.execution.disposition == "BLOCKED"
     assert "EXECUTION_QUANTITY_BASIS_UNRESOLVED" in action.reasons
+    assert action.execution.targets[0].remaining_gap is None
+    assert action.execution.targets[0].remaining_quantity is None
     assert action.anchor == first.report.result.position_action.anchor
 
 

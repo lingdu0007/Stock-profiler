@@ -1,10 +1,9 @@
 """Compose committed security and personal-risk evidence at the host boundary."""
 
-import json
-from decimal import ROUND_CEILING, Context, Decimal, localcontext
-from hashlib import sha256
+from decimal import Context, Decimal, localcontext
 from typing import Literal
 
+from stock_profiler.modules.decision_cases.action_qualification import check_action_qualification
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
@@ -12,16 +11,15 @@ from stock_profiler.modules.position_management.action_contracts import (
     PositionActionOutcome,
     StatisticalReductionAnchor,
 )
+from stock_profiler.modules.position_management.action_costs import assess_action_costs
+from stock_profiler.modules.position_management.action_policy import assess_statistical_action
+from stock_profiler.modules.position_management.contracts import PositionReconciliationOutcome
 from stock_profiler.modules.position_management.execution_contracts import (
     EstablishedQuantityTarget,
     ExecutionPlanOutcome,
     ExecutionTarget,
 )
 from stock_profiler.modules.position_management.exit_contracts import SecurityAssessment
-from stock_profiler.modules.qualification.service import (
-    current_qualification,
-    qualification_is_current,
-)
 
 
 def adjudicate_position_action(
@@ -99,6 +97,11 @@ def _adjudicate(
             and fact.result.position_action.cost_anchor is not None
         ),
         None,
+    )
+    first_exit_seen = any(
+        fact.result.position_action is not None
+        and fact.result.position_action.direction in {"REDUCE", "EXIT"}
+        for fact in history
     )
     historical_targets = [
         target
@@ -278,7 +281,8 @@ def _adjudicate(
             or ("ESTABLISHED_LIQUIDATION_TARGET",),
             execution=_complete_quantity_gaps(plan, command.security_id, quantity),
             anchor=prior_anchor,
-            cost_anchor=prior_cost_anchor,
+            cost_anchor=prior_cost_anchor
+            or (_new_cost_anchor(case, position) if not first_exit_seen else None),
         )
     stress_report = ledger.get_formal_report_for_event(
         command.execution.stress_event_id, connection
@@ -334,92 +338,19 @@ def _adjudicate(
         for reason in plan.reasons
     ):
         reasons.append("RISK_HANDOFF_UNAVAILABLE")
-    authorizations = ledger.portfolio_authorization_history(
-        connection, scope, command.execution.portfolio_id, case.knowledge_cutoff
+    reasons.extend(
+        check_action_qualification(
+            case,
+            ledger,
+            connection,
+            assessment=assessment,
+            security=security,
+            position=position,
+            grid=grid,
+        )
     )
-    latest = next(
-        (
-            outcome.authorization
-            for outcome in reversed(authorizations)
-            if outcome.authorization is not None
-        ),
-        None,
-    )
-    if (
-        latest is None
-        or latest.authorization_id != command.execution.authorization_id
-        or not latest.evidence_available_by(command.cutoff_at)
-        or latest.proposal.risk_budget.expires_at <= command.cutoff_at
-        or latest.proposal.risk_budget.action_policy_version_id != command.policy.version.version_id
-        or Decimal(grid) not in latest.proposal.risk_budget.downside_grid
-    ):
-        reasons.append("RISK_BUDGET_UNAVAILABLE_OR_EXPIRED")
-
-    qualification = command.qualification_scope
-    record = current_qualification(
-        ledger.governance_history(connection, scope), qualification, command.policy.version
-    )
-    basis = (record.formal_passing_evidence or record.authorization_evidence) if record else None
-    digest = sha256(
-        json.dumps(
-            command.policy.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        ).encode()
-    ).hexdigest()
-    if (
-        qualification.capability != "position-action"
-        or qualification.purpose != "initial-position-action"
-        or qualification.market_state != assessment.market_state
-        or qualification.board != assessment.board
-        or qualification.target != "D20/V60"
-        or qualification.probability_grid != grid
-        or qualification.user_id != scope.user_id
-        or set(qualification.account_ids) != set(scope.account_ids)
-        or qualification.account_type != "SIMULATED_CASH"
-        or qualification.holding_age_domain != "INITIAL"
-        or qualification.portfolio_scope != command.execution.portfolio_id
-        or security.thesis is None
-        or qualification.source != security.thesis.origin
-        or any(u.origin != qualification.source for u in units)
-        or record is None
-        or record.decision_id != command.qualification_id
-        or record.recorded_at > command.cutoff_at
-        or record.evidence.available_at > command.cutoff_at
-        or not qualification_is_current(record, command.cutoff_at)
-        or record.status not in {"VALID", "AT_RISK"}
-        or basis is None
-        or basis.available_at > command.cutoff_at
-        or basis.digest != digest
-        or basis.market_calendar_version != assessment.calendar_version
-    ):
-        reasons.append("ACTION_QUALIFICATION_UNAVAILABLE")
-    down = next(
-        (p for p in security.probabilities if p.target == "D20" and p.loss_boundary == grid),
-        None,
-    )
-    value = next((p for p in security.probabilities if p.target == "V60"), None)
-    direction: Literal["HOLD", "REDUCE", "EXIT"] | None = None
-    if (
-        business_prerequisite_met
-        and not reasons
-        and value is not None
-        and value.guarded_upper is not None
-        and value.guarded_lower is not None
-    ):
-        if value.guarded_upper <= command.policy.value_denied_upper:
-            direction = "EXIT"
-        elif (
-            down is not None
-            and down.guarded_lower is not None
-            and (down.guarded_lower >= command.policy.downside_risky_lower)
-        ):
-            direction = "REDUCE"
-        elif (
-            down is not None
-            and down.guarded_upper is not None
-            and down.guarded_upper <= command.policy.downside_safe_upper
-            and value.guarded_lower >= command.policy.value_established_lower
-        ):
-            direction = "HOLD"
+    statistical = assess_statistical_action(command.policy, security.probabilities, grid)
+    direction = statistical.direction if business_prerequisite_met and not reasons else None
     anchor = None
     target = quantity if direction == "HOLD" else Decimal(0) if direction == "EXIT" else None
     if direction == "REDUCE":
@@ -455,95 +386,16 @@ def _adjudicate(
     model_direction = direction
     if not business_prerequisite_met:
         reasons.append("BUSINESS_PREREQUISITE_FAILED")
-    if direction is None and (
-        down is None
-        or value is None
-        or down.guarded_upper is None
-        or down.guarded_lower is None
-        or value.guarded_upper is None
-        or value.guarded_lower is None
-    ):
+    if direction is None and statistical.evidence_missing:
         reasons.append("STATISTICAL_EVIDENCE_UNAVAILABLE")
-    cost_failure = False
-    outside = False
-    route_map = {(r.account_id, r.security_id): r for r in command.execution.routes}
-    for unit in units:
-        route = route_map.get((unit.account_id, unit.security_id))
-        curve = route.cost_curve if route is not None else None
-        if curve is None or curve.evidence.problem_codes(
-            command.cutoff_at, require_current_completeness=True
-        ):
-            cost_failure = True
-            continue
-        rate = (
-            curve.commission_ratio
-            + curve.trading_fee_ratio
-            + curve.settlement_fee_ratio
-            + curve.tax_ratio
-            + curve.slippage_ratio
-            + curve.market_impact_ratio
-        )
-        outside = outside or (
-            rate > command.policy.maximum_cost_ratio
-            or curve.minimum_commission > command.policy.maximum_minimum_commission
-            or any(
-                lot.tax_per_share > command.policy.maximum_dividend_tax_per_share
-                for lot in curve.dividend_lots
-            )
-        )
-    accrued_cost = sum(
-        (
-            -entry.cash_delta
-            for entry in position.snapshot.authoritative_ledger
-            if entry.security_id == command.security_id
-            and entry.entry_type == "FEE"
-            and prior_cost_anchor is not None
-            and entry.occurred_at > prior_cost_anchor.frozen_at
-        ),
-        Decimal(0),
+    cost = assess_action_costs(
+        command,
+        position,
+        plan,
+        cost_anchor=prior_cost_anchor,
+        first_exit_seen=first_exit_seen,
     )
-    planned_cost = sum(
-        (leg.disposal_cost for leg in plan.legs if leg.security_id == command.security_id),
-        Decimal(0),
-    )
-    if plan.disposition == "BLOCKED" and target is not None and quantity > 0 and not cost_failure:
-        # A blocked route is not a zero-cost forecast. Bound the full remaining
-        # target sale using account-local legal quantities, even without bids.
-        required = max(Decimal(0), quantity - target)
-        bound = Decimal(0)
-        for unit in units:
-            route = route_map[(unit.account_id, unit.security_id)]
-            assert route.cost_curve is not None and unit.total_quantity is not None
-            amount = required * unit.total_quantity / quantity
-            if amount:
-                increments = max(Decimal(0), amount - route.minimum_quantity)
-                increments = (increments / route.quantity_increment).to_integral_value(
-                    rounding=ROUND_CEILING
-                )
-                amount = min(
-                    unit.total_quantity,
-                    route.minimum_quantity + increments * route.quantity_increment,
-                )
-            bound += route.cost_curve.cost(amount, unit.market_price or Decimal(0))
-        planned_cost = max(planned_cost, bound)
-    outside = (
-        outside
-        or max(Decimal(0), accrued_cost) + planned_cost
-        > (
-            prior_cost_anchor.market_value
-            if prior_cost_anchor is not None
-            else quantity * (security.standard_price or Decimal(0))
-        )
-        * command.policy.lifecycle_cost_ratio
-    )
-    cost_anchor = prior_cost_anchor
-    if direction in {"REDUCE", "EXIT"} and not cost_failure and not outside:
-        cost_anchor = prior_cost_anchor or StatisticalReductionAnchor(
-            event_id=case.decision_event_id,
-            quantity=quantity,
-            market_value=quantity * (security.standard_price or Decimal(0)),
-            frozen_at=command.cutoff_at,
-        )
+    cost_failure, outside = cost.evidence_failed, cost.outside_envelope
     if cost_failure or outside:
         reasons.append(
             "EXECUTION_COST_EVIDENCE_FAILED" if cost_failure else "STATISTICAL_COST_OUT_OF_SCOPE"
@@ -573,6 +425,9 @@ def _adjudicate(
             target = effective.target_quantity
             direction = "EXIT" if target == 0 else "REDUCE"
         reasons.append("STRICTEST_TARGET_CONJUNCTION")
+    cost_anchor = prior_cost_anchor
+    if direction in {"REDUCE", "EXIT"} and not first_exit_seen:
+        cost_anchor = _new_cost_anchor(case, position)
     if unresolved_basis:
         plan = plan.model_copy(
             update={
@@ -590,7 +445,8 @@ def _adjudicate(
                 ),
             }
         )
-    plan = _complete_quantity_gaps(plan, command.security_id, quantity)
+    else:
+        plan = _complete_quantity_gaps(plan, command.security_id, quantity)
     return PositionActionOutcome(
         disposition="CONCLUDED"
         if direction
@@ -631,6 +487,7 @@ def _complete_quantity_gaps(
     remaining = current - sum(
         (leg.quantity for leg in plan.legs if leg.security_id == security_id), Decimal(0)
     )
+
     return plan.model_copy(
         update={
             "targets": tuple(
@@ -645,4 +502,32 @@ def _complete_quantity_gaps(
                 for target in plan.targets
             )
         }
+    )
+
+
+def _new_cost_anchor(
+    case: FrozenDecisionCase,
+    position: PositionReconciliationOutcome,
+) -> StatisticalReductionAnchor | None:
+    command = case.position_action
+    assert command is not None
+    units = [u for u in position.snapshot.action_units if u.security_id == command.security_id]
+    if (
+        position.disposition != "RECONCILED"
+        or not units
+        or any(u.total_quantity is None or u.market_price is None for u in units)
+    ):
+        return None
+    quantity = sum((u.total_quantity or Decimal(0) for u in units), Decimal(0))
+    market_value = sum(
+        ((u.total_quantity or Decimal(0)) * (u.market_price or Decimal(0)) for u in units),
+        Decimal(0),
+    )
+    if quantity <= 0 or market_value <= 0:
+        return None
+    return StatisticalReductionAnchor(
+        event_id=case.decision_event_id,
+        quantity=quantity,
+        market_value=market_value,
+        frozen_at=command.cutoff_at,
     )

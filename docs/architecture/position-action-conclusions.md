@@ -37,9 +37,11 @@ intermediate combinations abstain. Policy threshold bands must be disjoint.
 Holding uses the reconciled current quantity. The first qualified statistical
 reduction freezes an aggregate quantity anchor across the authorized accounts.
 Later assessments retain that anchor and the strictest saved target through
-partial sales or repurchases. The first qualified statistical exit program also
-freezes a market-value cost anchor. Prices and subsequent quantities do not
-replace its cost denominator.
+partial sales or repurchases. The first exit action, including a deterministic
+risk reduction, freezes a verified market-value cost anchor independently of
+statistical cost authorization. Prices and subsequent quantities do not replace
+its cost denominator. An unknown first-exit value blocks later statistical cost
+use instead of being replaced with a later value.
 
 A quantity-changing corporate action blocks reuse of an unadjusted reduction
 anchor. The host retains the frozen facts and reports the unresolved quantity
