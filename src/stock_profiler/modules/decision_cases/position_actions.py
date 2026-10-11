@@ -150,6 +150,20 @@ def _adjudicate(
     position_report = ledger.get_formal_report_for_event(
         command.execution.concentration_event_id, connection
     )
+    position = (
+        position_report.result.position
+        if position_report is not None
+        and position_report.access_scope is not None
+        and scope.same_scope_as(position_report.access_scope)
+        else None
+    )
+    if (
+        missing.direction in {"REDUCE", "EXIT"}
+        and not first_exit_seen
+        and position is not None
+        and position.snapshot.cutoff_at == command.cutoff_at
+    ):
+        missing = missing.model_copy(update={"cost_anchor": _new_cost_anchor(case, position)})
     if (
         report is None
         or report.access_scope is None
@@ -167,13 +181,6 @@ def _adjudicate(
         or assessment.cutoff_at != command.cutoff_at
     ):
         return missing
-    position = (
-        position_report.result.position
-        if position_report is not None
-        and position_report.access_scope is not None
-        and scope.same_scope_as(position_report.access_scope)
-        else None
-    )
     if (
         position is None
         or position.snapshot.cutoff_at != command.cutoff_at

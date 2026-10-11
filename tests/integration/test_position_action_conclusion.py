@@ -280,6 +280,9 @@ def test_missing_security_or_position_handoff_preserves_independent_hard_target(
     assert action.execution is not None and action.execution.disposition == "BLOCKED"
     if gate:
         assert action.current_quantity is None
+        assert action.cost_anchor is None
+    else:
+        assert action.cost_anchor is not None and action.cost_anchor.market_value == 2000
 
 
 @pytest.mark.parametrize("kind", ["SUSPENSION", "LIMIT_DOWN", "NO_BIDS", "SELLABLE_SHORTFALL"])
