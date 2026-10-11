@@ -95,6 +95,7 @@ from stock_profiler.modules.decision_cases.ports import (
     ResearchMemberRunResult,
     Transaction,
 )
+from stock_profiler.modules.decision_cases.position_actions import adjudicate_position_action
 from stock_profiler.modules.decision_cases.prospective import (
     InvalidProspectiveRequest,
     assess_prospective,
@@ -3109,6 +3110,7 @@ def _commit_framework_result(
     candidate_execution_result: StageResult | None = None
     confirmation_result: StageResult | None = None
     allocation_result: StageResult | None = None
+    position_action_result: StageResult | None = None
     exit_assessment_result: StageResult | None = None
     execution_plan_result: StageResult | None = None
     candidate_release_result: StageResult | None = None
@@ -3482,6 +3484,26 @@ def _commit_framework_result(
                     status="REJECTED" if plan.disposition == "BLOCKED" else "SUCCEEDED",
                     gate_results=(),
                     reasons=plan.reasons,
+                )
+            if business_result is not None and execution_case.position_action is not None:
+                action = adjudicate_position_action(
+                    execution_case,
+                    ledger,
+                    connection,
+                    business_prerequisite_met=business_result.status == "SUCCEEDED",
+                )
+                result = result.model_copy(update={"position_action": action})
+                position_action_result = StageResult(
+                    phase="POSITION_ACTION",
+                    status="SUCCEEDED"
+                    if action.disposition == "CONCLUDED"
+                    else "FAILED"
+                    if action.disposition == "DATA_OBSERVATION"
+                    else "REJECTED"
+                    if action.disposition == "BLOCKED"
+                    else "ABSTAINED",
+                    gate_results=(),
+                    reasons=action.reasons,
                 )
             if business_result is not None and execution_case.exit_assessment is not None:
                 exit_assessment = adjudicate_security_exit(
@@ -3883,6 +3905,13 @@ def _commit_framework_result(
             stage_result=allocation_result,
             framework_run_id=execution_case.framework_run_id,
         )
+    if position_action_result is not None:
+        ledger.record_stage_result(
+            connection,
+            case=execution_case,
+            stage_result=position_action_result,
+            framework_run_id=execution_case.framework_run_id,
+        )
     if exit_assessment_result is not None:
         ledger.record_stage_result(
             connection,
@@ -3920,6 +3949,7 @@ def _commit_framework_result(
         *((confirmation_result,) if confirmation_result is not None else ()),
         *((allocation_result,) if allocation_result is not None else ()),
         *((execution_plan_result,) if execution_plan_result is not None else ()),
+        *((position_action_result,) if position_action_result is not None else ()),
         *((exit_assessment_result,) if exit_assessment_result is not None else ()),
         *((candidate_release_result,) if candidate_release_result is not None else ()),
     )

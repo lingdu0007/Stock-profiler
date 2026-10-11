@@ -242,6 +242,28 @@ class DecisionLedger:
                 )
         return tuple(failures)
 
+    def position_action_history(
+        self,
+        connection: Connection,
+        access_scope: ResultAccessScope,
+        portfolio_id: str,
+        lifecycle_id: str,
+    ) -> tuple[DecisionEventFact, ...]:
+        return tuple(
+            fact
+            for fact in self._original_event_facts(
+                connection, "position action history unavailable"
+            )
+            if fact.case.access_scope is not None
+            and fact.case.access_scope.user_id == access_scope.user_id
+            and fact.case.access_scope.visibility == access_scope.visibility
+            and fact.case.position_action is not None
+            and fact.case.position_action.execution.portfolio_id == portfolio_id
+            and fact.case.position_action.lifecycle_id == lifecycle_id
+            and fact.result.position_action is not None
+            and fact.result.position_action.disposition == "CONCLUDED"
+        )
+
     def security_exit_history(
         self, connection: Connection, access_scope: ResultAccessScope, lifecycle_id: str
     ) -> tuple[DecisionEventFact, ...]:

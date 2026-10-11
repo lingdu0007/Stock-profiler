@@ -7228,6 +7228,16 @@
               }
             ]
           },
+          "position_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionActionOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "prospective": {
             "anyOf": [
               {
@@ -10645,6 +10655,137 @@
           "new_exposure_blocked"
         ],
         "title": "PortfolioStressOutcome",
+        "type": "object"
+      },
+      "PositionActionOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatisticalReductionAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "buy_authorized": {
+            "const": false,
+            "default": false,
+            "title": "Buy Authorized",
+            "type": "boolean"
+          },
+          "cost_anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatisticalReductionAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Quantity"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": ["HOLD", "REDUCE", "EXIT"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "disposition": {
+            "enum": ["CONCLUDED", "ABSTAINED", "DATA_OBSERVATION", "BLOCKED"],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionPlanOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lifecycle_id": {
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
+          "model_direction": {
+            "anyOf": [
+              {
+                "enum": ["HOLD", "REDUCE", "EXIT"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Direction"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "risk_restored": {
+            "const": false,
+            "default": false,
+            "title": "Risk Restored",
+            "type": "boolean"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "selected_grid": {
+            "anyOf": [
+              {
+                "enum": ["0.05", "0.10"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Grid"
+          },
+          "target_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Quantity"
+          }
+        },
+        "required": ["disposition", "security_id", "lifecycle_id"],
+        "title": "PositionActionOutcome",
         "type": "object"
       },
       "PositionActionUnit": {
@@ -14870,6 +15011,7 @@
               "CANDIDATE_ALLOCATION",
               "EXECUTION_PLAN",
               "SECURITY_EXIT_ASSESSMENT",
+              "POSITION_ACTION",
               "ADJUDICATION_LIFECYCLE",
               "VALIDITY_LIFECYCLE",
               "EXECUTION_LIFECYCLE",
@@ -15061,6 +15203,33 @@
           "delivery"
         ],
         "title": "StandardOutcomeReport",
+        "type": "object"
+      },
+      "StatisticalReductionAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "title": "Frozen At",
+            "type": "string"
+          },
+          "market_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Market Value",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          }
+        },
+        "required": ["event_id", "quantity", "market_value", "frozen_at"],
+        "title": "StatisticalReductionAnchor",
         "type": "object"
       },
       "StressCalculationPolicy": {
