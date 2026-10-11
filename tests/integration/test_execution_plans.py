@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -90,8 +91,15 @@ def risk_handoff_payload(
     single_account: bool = False,
     cutoff_at: str | None = None,
     user_id: str = "stock-profiler-single-user",
+    identity_suffix: str = "",
+    snapshot_transform: Callable[[dict[str, Any]], None] | None = None,
+    downside_grid: tuple[str, ...] | None = None,
+    previous_capital: str | None = None,
 ) -> dict[str, Any]:
     def save(payload: dict[str, Any]) -> FormalReport:
+        if identity_suffix and "portfolio" not in payload:
+            payload["case_id"] += identity_suffix
+            payload["business_identity"] += identity_suffix
         payload["access_scope"]["user_id"] = user_id
         if "portfolio" in payload and "confirmation" in payload["portfolio"]:
             payload["portfolio"]["confirmation"]["user_id"] = user_id
@@ -133,6 +141,10 @@ def risk_handoff_payload(
             for key in ("stress_calculation", "downside_grid")
         }
     )
+    if downside_grid is not None:
+        authorization_payload["portfolio"]["proposal"]["risk_budget"]["downside_grid"] = list(
+            downside_grid
+        )
     authorization = save(authorization_payload)
     concentration = concentration_payload(
         settings, authorization.event_id, quantity="100", identity="plan-concentration"
@@ -235,6 +247,8 @@ def risk_handoff_payload(
                 opening_ledger_cash="4500", ledger_cash="0", trading_cash="0", transferable_cash="0"
             )
             account["account_equity"] = "5000"
+    if snapshot_transform is not None:
+        snapshot_transform(snapshot)
     concentration_report = save(concentration)
     assert concentration_report.result.concentration is not None
     assert concentration_report.result.concentration.disposition == "ASSESSED", (
@@ -315,12 +329,12 @@ def risk_handoff_payload(
             settings,
             "plan-capital",
             {
-                "operation": "OPEN",
+                "operation": "OBSERVE" if previous_capital is not None else "OPEN",
                 "contract_version": "1.0.0",
                 "portfolio_id": "synthetic-decision-portfolio-alpha",
                 "authorization_id": authorization.event_id,
                 "epoch_id": "synthetic-plan-capital",
-                "previous_decision_id": None,
+                "previous_decision_id": previous_capital,
                 "cutoff_at": "2042-05-17T16:00:00Z" if opening_position else snapshot["cutoff_at"],
                 "valuation": {
                     "position_event_id": opening_position.event_id

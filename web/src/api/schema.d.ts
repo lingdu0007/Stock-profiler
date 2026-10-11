@@ -3074,6 +3074,7 @@ export interface components {
             outcome_code: string;
             portfolio?: components["schemas"]["PortfolioAuthorizationOutcome"] | null;
             position?: components["schemas"]["PositionReconciliationOutcome"] | null;
+            position_action?: components["schemas"]["PositionActionOutcome"] | null;
             prospective?: components["schemas"]["CycleReport"] | null;
             research?: components["schemas"]["ResearchOutcome"] | null;
             selection?: components["schemas"]["SelectionOutcome"] | null;
@@ -4381,6 +4382,48 @@ export interface components {
             state: "NORMAL" | "BUFFER" | "HARD_BREACH" | "UNKNOWN";
             /** Stress Ratio */
             stress_ratio?: string | null;
+        };
+        /** PositionActionOutcome */
+        PositionActionOutcome: {
+            anchor?: components["schemas"]["StatisticalReductionAnchor"] | null;
+            /**
+             * Buy Authorized
+             * @default false
+             * @constant
+             */
+            buy_authorized: false;
+            cost_anchor?: components["schemas"]["StatisticalReductionAnchor"] | null;
+            /** Current Quantity */
+            current_quantity?: string | null;
+            /** Direction */
+            direction?: ("HOLD" | "REDUCE" | "EXIT") | null;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "CONCLUDED" | "ABSTAINED" | "DATA_OBSERVATION" | "BLOCKED";
+            execution?: components["schemas"]["ExecutionPlanOutcome"] | null;
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /** Model Direction */
+            model_direction?: ("HOLD" | "REDUCE" | "EXIT") | null;
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /**
+             * Risk Restored
+             * @default false
+             * @constant
+             */
+            risk_restored: false;
+            /** Security Id */
+            security_id: string;
+            /** Selected Grid */
+            selected_grid?: ("0.05" | "0.10") | null;
+            /** Target Quantity */
+            target_quantity?: string | null;
         };
         /**
          * PositionActionUnit
@@ -5988,7 +6031,7 @@ export interface components {
              * Phase
              * @enum {string}
              */
-            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_EXECUTION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "SECURITY_EXIT_ASSESSMENT" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
+            phase: "FRAMEWORK_RUN" | "RISK_FRAMEWORK_RUN" | "AUXILIARY_RUN_RESERVATION" | "HOST_VALIDATION" | "BUSINESS_DECISION" | "QUALIFICATION" | "PORTFOLIO_AUTHORIZATION" | "POSITION_RECONCILIATION" | "ISSUER_CONCENTRATION" | "DRAWDOWN_PROTECTION" | "LIQUIDITY_PROTECTION" | "CANDIDATE_RELEASE" | "PORTFOLIO_STRESS" | "CANDIDATE_CONFIRMATION" | "CANDIDATE_EXECUTION" | "CANDIDATE_ALLOCATION" | "EXECUTION_PLAN" | "SECURITY_EXIT_ASSESSMENT" | "POSITION_ACTION" | "ADJUDICATION_LIFECYCLE" | "VALIDITY_LIFECYCLE" | "EXECUTION_LIFECYCLE" | "COMMIT_RECONCILIATION" | "BUSINESS_COMMIT" | "PUBLICATION" | "NOTIFICATION" | "CORRECTION" | "RESEARCH" | "RAW_SCORE" | "RISK_VETO";
             /**
              * Raw Score Payloads
              * @description Immutable raw-score payloads saved with a successful RAW_SCORE stage.
@@ -6042,6 +6085,20 @@ export interface components {
             report_version: number;
             /** Selection Event Id */
             selection_event_id: string | null;
+        };
+        /** StatisticalReductionAnchor */
+        StatisticalReductionAnchor: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Frozen At
+             * Format: date-time
+             */
+            frozen_at: string;
+            /** Market Value */
+            market_value: string;
+            /** Quantity */
+            quantity: string;
         };
         /**
          * StressCalculationPolicy

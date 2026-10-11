@@ -93,12 +93,14 @@ def test_first_management_freezes_forward_only_thesis_and_replays_report(
     )
 
 
-def assessment(settings: Settings) -> dict[str, Any]:
-    command = registration(settings)
+def assessment(
+    settings: Settings, *, thesis_registration: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    command = thesis_registration or registration(settings)
     saved = run_frozen_decision_case(
         settings,
         exit_case(settings, "register", command),
-        clock=GovernanceClock("2042-05-17T16:00:00Z"),
+        clock=GovernanceClock(command["cutoff_at"]),
     )
     assert saved.report is not None
     return {
@@ -173,14 +175,24 @@ def test_missing_models_preserves_security_non_actionable_result_and_target_defi
 
 
 def qualified_assessment(
-    settings: Settings, *, qualification_source: str = "EXTERNAL"
+    settings: Settings,
+    *,
+    qualification_source: str = "EXTERNAL",
+    thesis_registration: dict[str, Any] | None = None,
+    standard_price: str = "12",
+    frozen_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     import json
     from hashlib import sha256
 
     from test_scoped_qualification import qualification_command, version
 
-    command = assessment(settings)
+    command = frozen_assessment or assessment(settings, thesis_registration=thesis_registration)
+    command["standard_price"] = command["evidence"][1]["value"] = standard_price
+    if thesis_registration is not None:
+        for evidence in command["evidence"]:
+            for clock in ("public_at", "acquired_at", "validated_at"):
+                evidence[clock] = command["cutoff_at"]
     model = version(settings, "synthetic-exit-model-v1")
     command["version"] = model
     for target, loss, point in [
