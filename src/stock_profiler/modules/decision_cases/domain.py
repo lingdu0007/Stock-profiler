@@ -83,6 +83,11 @@ from stock_profiler.modules.position_management.execution_contracts import (
     ExecutionPlanCommand,
     ExecutionPlanOutcome,
 )
+from stock_profiler.modules.position_management.exit_contracts import (
+    ExitOutcome,
+    SecurityAssessment,
+    ThesisRegistration,
+)
 from stock_profiler.modules.prospective.contracts import CycleCommand, CycleReport
 from stock_profiler.modules.qualification.contracts import (
     GovernanceCommand,
@@ -131,6 +136,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "candidate-confirmation.1.0.0",
         "candidate-execution.1.0.0",
         "execution.1.0.0",
+        "security-exit.1.0.0",
         "monitoring.1.0.0",
         "universe.1.0.0",
         "selection.1.0.0",
@@ -163,6 +169,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("candidate-confirmation.1.0.0", "candidate-confirmation.1.0.0"),
         ("candidate-execution.1.0.0", "candidate-execution.1.0.0"),
         ("execution.1.0.0", "execution.1.0.0"),
+        ("security-exit.1.0.0", "security-exit.1.0.0"),
         ("monitoring.1.0.0", "monitoring.1.0.0"),
         ("universe.1.0.0", "universe.1.0.0"),
         ("selection.1.0.0", "selection.1.0.0"),
@@ -308,6 +315,9 @@ class ExternalResult(FrozenContract):
     monitoring: MonitoringOutcome | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    exit_assessment: ExitOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     research: ResearchOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
@@ -355,6 +365,7 @@ StagePhase = Literal[
     "CANDIDATE_EXECUTION",
     "CANDIDATE_ALLOCATION",
     "EXECUTION_PLAN",
+    "SECURITY_EXIT_ASSESSMENT",
     "ADJUDICATION_LIFECYCLE",
     "VALIDITY_LIFECYCLE",
     "EXECUTION_LIFECYCLE",
@@ -421,6 +432,7 @@ _STAGE_STATUS_BY_PHASE: dict[str, frozenset[str]] = {
     "CANDIDATE_EXECUTION": frozenset({"SUCCEEDED", "REJECTED"}),
     "CANDIDATE_ALLOCATION": frozenset({"SUCCEEDED", "REJECTED"}),
     "EXECUTION_PLAN": frozenset({"SUCCEEDED", "REJECTED"}),
+    "SECURITY_EXIT_ASSESSMENT": _BUSINESS_RESULT_STATUSES,
     "ADJUDICATION_LIFECYCLE": frozenset({"PENDING", "UNKNOWN"}),
     "VALIDITY_LIFECYCLE": frozenset({"EXPIRED", "UNKNOWN"}),
     "EXECUTION_LIFECYCLE": frozenset({"EXECUTION_BLOCKED", "UNKNOWN"}),
@@ -997,6 +1009,9 @@ class FrozenDecisionCase(FrozenContract):
         default=None, exclude_if=lambda value: value is None
     )
     research: ResearchCommand | None = Field(default=None, exclude_if=lambda value: value is None)
+    exit_assessment: ThesisRegistration | SecurityAssessment | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     recovery_framework_run_id: str | None = Field(default=None, exclude=True)
     access_scope: ResultAccessScope | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -1061,6 +1076,16 @@ class FrozenDecisionCase(FrozenContract):
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
+        exit_governed = self.version_bundle.case_contract_version == "security-exit.1.0.0"
+        if exit_governed != (self.exit_assessment is not None) or exit_governed != (
+            "exit_assessment" in self.input
+        ):
+            raise ValueError("security exit requires its own frozen contract")
+        if self.exit_assessment is not None and (
+            self.exit_assessment.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("exit_assessment") != self.exit_assessment.model_dump(mode="json")
+        ):
+            raise ValueError("security exit must bind frozen input and cutoff")
         scoped = self.version_bundle.case_contract_version in _SCOPED_CASE_CONTRACT_VERSIONS
         governed = self.version_bundle.case_contract_version in {"4.0.0", "5.0.0"}
         portfolio_governed = self.version_bundle.case_contract_version == "6.0.0"
@@ -1244,7 +1269,8 @@ class FrozenDecisionCase(FrozenContract):
         liquidity_governed = self.version_bundle.case_contract_version == "8.2.0"
         stress_governed = self.version_bundle.case_contract_version == "8.0.0"
         host_command_case = (
-            governed
+            exit_governed
+            or governed
             or portfolio_governed
             or position_governed
             or concentration_governed
@@ -1281,6 +1307,7 @@ class FrozenDecisionCase(FrozenContract):
             sum(
                 command is not None
                 for command in (
+                    self.exit_assessment,
                     self.governance,
                     self.portfolio,
                     self.position,
@@ -1319,7 +1346,8 @@ class FrozenDecisionCase(FrozenContract):
         if host_command_case and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
             raise ValueError("host-command cases require a timezone-aware knowledge cutoff")
         if (
-            self.expected_external_result.governance is not None
+            self.expected_external_result.exit_assessment is not None
+            or self.expected_external_result.governance is not None
             or self.expected_external_result.portfolio is not None
             or self.expected_external_result.position is not None
             or self.expected_external_result.concentration is not None
@@ -2109,6 +2137,7 @@ def synthetic_outcome_code_from_input(
         return "RESEARCH_FROZEN"
     input_without_scenario = dict(value)
     outcome_code = input_without_scenario.pop("scenario", "SYNTHETIC_REVIEW_COMPLETE")
+    input_without_scenario.pop("exit_assessment", None)
     input_without_scenario.pop("candidate_execution", None)
     input_without_scenario.pop("candidate_confirmation", None)
     input_without_scenario.pop("candidate_allocation", None)
