@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from stock_profiler.modules.delivery.user_facts import UserFact
+from stock_profiler.modules.position_management.action_contracts import PositionActionOutcome
 from stock_profiler.modules.position_management.contracts import (
     PositionActionUnit,
     PositionEvidence,
@@ -49,7 +51,7 @@ class MonitoringEvidenceStatus(MonitoringContract):
 
 
 class MonitoringCommand(MonitoringContract):
-    contract_version: Literal["1.0.0"]
+    contract_version: Literal["1.0.0", "1.1.0"]
     operation: Literal["MONITOR_ASSESS"]
     portfolio_id: str = Field(min_length=1)
     cutoff_at: AwareDatetime
@@ -76,6 +78,7 @@ class SyntheticNotificationInput(MonitoringContract):
 
 class MonitoringNotification(MonitoringContract):
     notification_id: str
+    attempt_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     case_id: str
     source_event_id: str
     role: Literal["IMMEDIATE", "PERSISTENT"]
@@ -109,12 +112,24 @@ class MonitoringCase(MonitoringContract):
     source_event_id: str
     source_event_ids: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     obligation_ids: tuple[str, ...]
-    priority: Literal["P0", "P1"]
+    priority: Literal["P0", "P1", "P2"]
     plan: ExecutionPlanOutcome | None
     required_targets: tuple[ExecutionTarget, ...] = ()
     quantity_status: Literal["VERIFIED", "UNKNOWN"] = "VERIFIED"
     first_established_at: str
     last_reviewed_at: str
+    conclusion_report_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    direction: Literal["HOLD", "REDUCE", "EXIT"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    target_quantity: Decimal | None = Field(default=None, exclude_if=lambda value: value is None)
+    lifecycle_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    qualification_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    window_start: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    window_end: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    def statistical_window_valid(self, now: datetime) -> bool:
+        return self.priority != "P2" or self.window_end is not None and now < self.window_end
 
 
 class MonitoringFreshness(MonitoringContract):
@@ -145,3 +160,7 @@ class MonitoringOutcome(MonitoringContract):
     user_facts: tuple[UserFact, ...] = ()
     interaction_cutoff_at: str | None = None
     reconciliation: PositionReconciliationOutcome | None = None
+    position_action: PositionActionOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    conclusion_report_id: str | None = Field(default=None, exclude_if=lambda value: value is None)

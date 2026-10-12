@@ -4,6 +4,9 @@ from datetime import datetime
 
 from stock_profiler.modules.decision_cases.domain import FormalReport
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
+from stock_profiler.modules.decision_cases.statistical_monitoring import (
+    statistical_conclusion_current,
+)
 
 
 def confirmation_permitted(
@@ -19,7 +22,7 @@ def confirmation_permitted(
         or not outcome.cases
         or outcome.freshness is None
         or outcome.freshness.next_window_end is None
-        or datetime.fromisoformat(ledger.observed_at()) > outcome.freshness.next_window_end
+        or datetime.fromisoformat(ledger.observed_at()) >= outcome.freshness.next_window_end
         or any(item.plan is None or item.plan.disposition == "BLOCKED" for item in outcome.cases)
         or ledger.get_correction_event(report.event_id, connection) is not None
     ):
@@ -42,6 +45,8 @@ def confirmation_permitted(
     )
     if not assessments or assessments[-1].decision_event_id != report.event_id:
         return False
+    if outcome.position_action is not None:
+        return statistical_conclusion_current(report, ledger, connection)
     plans = ledger.execution_plan_history(connection, report.access_scope, outcome.portfolio_id)
     return (
         bool(plans)

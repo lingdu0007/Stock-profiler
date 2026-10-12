@@ -30,7 +30,21 @@ def adjudicate_position_action(
     business_prerequisite_met: bool,
 ) -> PositionActionOutcome:
     with localcontext(Context(prec=38)):
-        return _adjudicate(case, ledger, connection, business_prerequisite_met)
+        command = case.position_action
+        assert command is not None
+        base_plan = adjudicate_execution_plan(
+            case.model_copy(update={"execution_plan": command.execution}), ledger, connection
+        )
+        outcome = _adjudicate(case, ledger, connection, business_prerequisite_met, base_plan)
+        security = ledger.get_formal_report_for_event(command.security_event_id, connection)
+        protective = (
+            security is not None
+            and security.result.exit_assessment is not None
+            and bool(security.result.exit_assessment.hard_gates)
+        )
+        return outcome.model_copy(
+            update={"deterministic_execution": outcome.execution if protective else base_plan}
+        )
 
 
 def _adjudicate(
@@ -38,6 +52,7 @@ def _adjudicate(
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
     business_prerequisite_met: bool,
+    base_plan: ExecutionPlanOutcome,
 ) -> PositionActionOutcome:
     command = case.position_action
     scope = case.access_scope
@@ -47,9 +62,6 @@ def _adjudicate(
         security_id=command.security_id,
         lifecycle_id=command.lifecycle_id,
         reasons=("ACTION_HANDOFF_UNAVAILABLE",),
-    )
-    base_plan = adjudicate_execution_plan(
-        case.model_copy(update={"execution_plan": command.execution}), ledger, connection
     )
     independent_target = next(
         (

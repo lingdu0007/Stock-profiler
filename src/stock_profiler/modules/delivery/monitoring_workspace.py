@@ -8,6 +8,8 @@ from stock_profiler.modules.delivery.user_facts import UserFact
 
 
 class MonitoringWorkspace(MonitoringContract):
+    observed_at: str | None = None
+    inactive_statistical_case_ids: tuple[str, ...] = ()
     reports: tuple[FormalReport, ...]
     current_report_ids: tuple[str, ...]
     inbox: tuple[MonitoringCase, ...]
@@ -15,7 +17,10 @@ class MonitoringWorkspace(MonitoringContract):
 
 
 def project_workspace(
-    reports: tuple[FormalReport, ...], user_facts: tuple[UserFact, ...]
+    reports: tuple[FormalReport, ...],
+    user_facts: tuple[UserFact, ...],
+    now: datetime | None = None,
+    invalid_statistical_report_ids: tuple[str, ...] = (),
 ) -> MonitoringWorkspace:
     current: dict[str, FormalReport] = {}
     for report in reports:
@@ -38,7 +43,38 @@ def project_workspace(
             ):
                 continue
             current[monitoring.portfolio_id] = report
+    active_ids = (
+        {
+            item.case_id
+            for report in current.values()
+            if report.result.monitoring is not None
+            for item in report.result.monitoring.cases
+            if item.statistical_window_valid(now)
+            and (
+                item.priority != "P2"
+                or report.report_version_id not in invalid_statistical_report_ids
+            )
+        }
+        if now is not None
+        else {
+            item.case_id
+            for report in current.values()
+            if report.result.monitoring is not None
+            for item in report.result.monitoring.cases
+            if item.priority != "P2"
+        }
+    )
     return MonitoringWorkspace(
+        observed_at=now.isoformat() if now else None,
+        inactive_statistical_case_ids=tuple(
+            dict.fromkeys(
+                item.case_id
+                for report in reports
+                if report.result.monitoring is not None
+                for item in report.result.monitoring.cases
+                if item.priority == "P2" and item.case_id not in active_ids
+            )
+        ),
         reports=reports,
         current_report_ids=tuple(report.report_version_id for report in current.values()),
         inbox=tuple(
@@ -46,6 +82,7 @@ def project_workspace(
             for report in current.values()
             if report.result.monitoring is not None
             for item in report.result.monitoring.cases
+            if item.priority != "P2" or item.case_id in active_ids
         ),
         user_facts=user_facts,
     )

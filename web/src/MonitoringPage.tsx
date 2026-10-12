@@ -15,6 +15,27 @@ import { ExecutionPlanEvidence } from "./ExecutionPlanEvidence";
 type Outcome = NonNullable<FormalReport["result"]["monitoring"]>;
 type Case = Outcome["cases"][number];
 
+function useMonitoringWorkspace() {
+  const query = useQuery({
+    queryKey: ["monitoring"],
+    queryFn: fetchMonitoringWorkspace,
+    refetchInterval: 30_000
+  });
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const now = query.data?.observed_at
+    ? new Date(query.data.observed_at).getTime() + Math.max(0, clock - query.dataUpdatedAt)
+    : clock;
+  return { query, now };
+}
+
+function expired(item: Case, now: number): boolean {
+  return item.priority === "P2" && (!item.window_end || new Date(item.window_end).getTime() <= now);
+}
+
 function monitoringTime(value: string | null | undefined): string {
   if (!value) return "Unknown";
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -31,19 +52,55 @@ function monitoringTime(value: string | null | undefined): string {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")} Asia/Shanghai`;
 }
 
-function CaseSummary({ item, reportId }: { item: Case; reportId: string }) {
+function CaseSummary({
+  item,
+  reportId,
+  inactive = false
+}: {
+  item: Case;
+  reportId: string;
+  inactive?: boolean;
+}) {
   return (
     <article className="monitoring-item">
       <div className="monitoring-item-heading">
         <span className={`priority ${item.priority.toLowerCase()}`}>
           <AlertTriangle size={16} aria-hidden="true" /> {item.priority}
         </span>
-        <strong>{item.priority === "P0" ? "Immediate protection" : "Risk remediation"}</strong>
+        <strong>
+          {item.priority === "P0"
+            ? "Immediate protection"
+            : item.priority === "P2"
+              ? "Statistical conclusion"
+              : "Risk remediation"}
+        </strong>
         <Link to={`/reports/${reportId}`} aria-label={`Open ${item.case_id}`}>
           <ArrowUpRight size={18} aria-hidden="true" />
         </Link>
       </div>
-      <p>Deterministic obligation persists</p>
+      <p>
+        {item.priority === "P2"
+          ? inactive
+            ? "Statistical conclusion expired or superseded"
+            : "Valid statistical conclusion"
+          : "Deterministic obligation persists"}
+      </p>
+      {item.conclusion_report_id && (
+        <p>
+          <Link to={`/reports/${item.conclusion_report_id}`}>{item.conclusion_report_id}</Link>
+        </p>
+      )}
+      {item.direction && (
+        <p>
+          {item.direction} / {item.target_quantity ?? "Unknown"}
+        </p>
+      )}
+      {item.priority === "P2" && (
+        <p>
+          {monitoringTime(item.window_start)} to {monitoringTime(item.window_end)}
+        </p>
+      )}
+      {item.qualification_id && <p>Qualification: {item.qualification_id}</p>}
       <dl className="record-list">
         <Fact
           label="Quantity"
@@ -55,7 +112,7 @@ function CaseSummary({ item, reportId }: { item: Case; reportId: string }) {
         {item.required_targets?.map((target) => (
           <Fact
             key={target.security_id}
-            label={`${target.security_id} persistent target`}
+            label={`${target.security_id} ${item.priority === "P2" ? "statistical" : "persistent"} target`}
             value={`${target.direction} / ${target.target_quantity}`}
           />
         ))}
@@ -114,10 +171,18 @@ function MonitoringActions({ report }: { report: FormalReport }) {
     onSuccess: () => void client.invalidateQueries({ queryKey: ["monitoring"] })
   });
   const monitoring = report.result.monitoring;
+  const { query: workspace, now } = useMonitoringWorkspace();
   const canConfirm =
     monitoring?.disposition === "ASSESSED" &&
     monitoring.cases.some(
-      (item) => item.plan?.requires_confirmation && item.plan.disposition !== "BLOCKED"
+      (item) =>
+        item.plan?.requires_confirmation &&
+        item.plan.disposition !== "BLOCKED" &&
+        (item.priority !== "P2" ||
+          (workspace.data?.current_report_ids.includes(report.report_version_id) &&
+            !workspace.data.inactive_statistical_case_ids?.includes(item.case_id) &&
+            item.window_end &&
+            !expired(item, now)))
     );
   return (
     <section className="report-section" aria-label="User facts">
@@ -193,6 +258,7 @@ function MonitoringActions({ report }: { report: FormalReport }) {
 
 export function MonitoringEvidence({ report }: { report: FormalReport }) {
   const outcome = report.result.monitoring;
+  const { query: workspace, now } = useMonitoringWorkspace();
   if (!outcome) return null;
   const freshness = outcome.freshness;
   return (
@@ -243,6 +309,15 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
           </dl>
         </details>
       ))}
+      {workspace.data?.user_facts
+        .filter((fact) => fact.report_version_id === report.report_version_id)
+        .map((fact) => (
+          <p key={fact.fact_id}>
+            {fact.kind}: {fact.choice ?? fact.declaration ?? "Recorded"} |{" "}
+            {monitoringTime(fact.recorded_at)}
+            {fact.reconciliation_status === "PENDING" && " | Authoritative reconciliation pending"}
+          </p>
+        ))}
       {outcome.notification_due_at && (
         <p>Deferred notification due: {monitoringTime(outcome.notification_due_at)}</p>
       )}
@@ -259,8 +334,23 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
           <p>Missing planned daily records: {outcome.missing_daily_dates?.join(", ") || "None"}</p>
         </section>
       )}
+      {outcome.position_action && (
+        <p>
+          {outcome.position_action.disposition}:{" "}
+          {outcome.position_action.direction ?? "No statistical action"}. No purchase authorized.
+        </p>
+      )}
       {outcome.cases.map((item) => (
-        <CaseSummary key={item.case_id} item={item} reportId={report.report_version_id} />
+        <CaseSummary
+          key={item.case_id}
+          item={item}
+          reportId={report.report_version_id}
+          inactive={
+            expired(item, now) ||
+            !workspace.data ||
+            workspace.data.inactive_statistical_case_ids?.includes(item.case_id)
+          }
+        />
       ))}
       {outcome.cases
         .filter(
@@ -305,7 +395,7 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
         </div>
       )}
       {outcome.notifications.map((attempt) => (
-        <div className="report-section" key={attempt.notification_id}>
+        <div className="report-section" key={attempt.attempt_id ?? attempt.notification_id}>
           <h3>
             {attempt.role}: {attempt.result}
           </h3>
@@ -330,7 +420,7 @@ export function MonitoringEvidence({ report }: { report: FormalReport }) {
 
 export function MonitoringPage() {
   const { pathname } = useLocation();
-  const query = useQuery({ queryKey: ["monitoring"], queryFn: fetchMonitoringWorkspace });
+  const { query, now } = useMonitoringWorkspace();
   if (query.error instanceof ApiResponseError && query.error.status === 401) {
     return <Navigate replace to={`/sign-in?next=${encodeURIComponent(pathname)}`} />;
   }
@@ -384,16 +474,18 @@ export function MonitoringPage() {
       ) : inbox ? (
         <>
           {query.data && query.data.inbox.length === 0 && <p>No outstanding monitoring cases.</p>}
-          {query.data?.inbox.map((item) => {
-            const report = current.find((candidate) =>
-              candidate.result.monitoring?.cases.some((entry) => entry.case_id === item.case_id)
-            );
-            return (
-              report && (
-                <CaseSummary key={item.case_id} item={item} reportId={report.report_version_id} />
-              )
-            );
-          })}
+          {query.data?.inbox
+            .filter((item) => !expired(item, now))
+            .map((item) => {
+              const report = current.find((candidate) =>
+                candidate.result.monitoring?.cases.some((entry) => entry.case_id === item.case_id)
+              );
+              return (
+                report && (
+                  <CaseSummary key={item.case_id} item={item} reportId={report.report_version_id} />
+                )
+              );
+            })}
         </>
       ) : (
         current.map((report) => (

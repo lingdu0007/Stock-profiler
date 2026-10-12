@@ -143,6 +143,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "security-exit.1.0.0",
         "position-action.1.0.0",
         "monitoring.1.0.0",
+        "monitoring.1.1.0",
         "universe.1.0.0",
         "selection.1.0.0",
         "research.1.0.0",
@@ -177,6 +178,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("security-exit.1.0.0", "security-exit.1.0.0"),
         ("position-action.1.0.0", "position-action.1.0.0"),
         ("monitoring.1.0.0", "monitoring.1.0.0"),
+        ("monitoring.1.1.0", "monitoring.1.1.0"),
         ("universe.1.0.0", "universe.1.0.0"),
         ("selection.1.0.0", "selection.1.0.0"),
         ("research.1.0.0", "research.1.0.0"),
@@ -1161,7 +1163,10 @@ class FrozenDecisionCase(FrozenContract):
         ):
             raise ValueError("candidate allocation must bind the frozen cutoff and input")
         execution_governed = self.version_bundle.case_contract_version == "execution.1.0.0"
-        monitoring_governed = self.version_bundle.case_contract_version == "monitoring.1.0.0"
+        monitoring_governed = self.version_bundle.case_contract_version in {
+            "monitoring.1.0.0",
+            "monitoring.1.1.0",
+        }
         universe_governed = self.version_bundle.case_contract_version == "universe.1.0.0"
         selection_governed = self.version_bundle.case_contract_version == "selection.1.0.0"
         research_governed = self.version_bundle.case_contract_version == "research.1.0.0"
@@ -1277,6 +1282,8 @@ class FrozenDecisionCase(FrozenContract):
             raise ValueError("monitoring requires its own frozen contract")
         if self.monitoring is not None and (
             self.monitoring.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or f"monitoring.{self.monitoring.contract_version}"
+            != self.version_bundle.case_contract_version
         ):
             raise ValueError("monitoring and frozen cutoff must agree")
         if execution_governed != (self.execution_plan is not None):
