@@ -39,16 +39,29 @@ def statistical_direction(
     return "ABSTAIN"
 
 
+def unlabeled_forecast(forecast: ExitForecast, policy: ExitPolicy) -> ExitDecisionLabel:
+    direction = statistical_direction(forecast, policy)
+    return ExitDecisionLabel(
+        prediction_id=forecast.prediction_id,
+        cutoff_at=forecast.cutoff_at,
+        state=forecast.state,
+        direction=direction,
+        statistical=direction in {"HOLD", "REDUCE", "EXIT"} and not forecast.hard_exit,
+        forecast=forecast,
+    )
+
+
 def evaluate_exit_position(
     position: StandardExitPosition,
     observation: ExitObservation | None,
     policy: ExitPolicy,
     quantity: Decimal,
     cutoff: datetime,
+    frozen_forecasts: tuple[ExitForecast, ...] = (),
 ) -> ExitPositionResult:
     with localcontext(Context(prec=128)):
-        result = _evaluate(position, observation, policy, quantity, cutoff)
-        replay = _evaluate(position, observation, policy, quantity, cutoff)
+        result = _evaluate(position, observation, policy, quantity, cutoff, frozen_forecasts)
+        replay = _evaluate(position, observation, policy, quantity, cutoff, frozen_forecasts)
         return result.model_copy(update={"replay_consistent": result == replay})
 
 
@@ -58,6 +71,7 @@ def _evaluate(
     policy: ExitPolicy,
     quantity: Decimal,
     cutoff: datetime,
+    frozen_forecasts: tuple[ExitForecast, ...] = (),
 ) -> ExitPositionResult:
     base = position.model_dump()
     base["initial_quantity"] = quantity
@@ -68,7 +82,7 @@ def _evaluate(
             **base,
             observation=None,
             policies={},
-            decisions=(),
+            decisions=tuple(unlabeled_forecast(forecast, policy) for forecast in frozen_forecasts),
             missing_reasons=("EXIT_PATH_MISSING",),
         )
     calendar = synthetic_market_calendar(policy.market_calendar_version)
@@ -77,6 +91,8 @@ def _evaluate(
     if observation.available_at > cutoff or observation.effective_at > cutoff:
         raise ValueError("EXIT_EVIDENCE_NOT_AVAILABLE_AT_CUTOFF")
     rows = observation.sessions
+    if any(row.costs != policy.cost_curve for row in rows):
+        raise ValueError("EXIT_COST_CURVE_CHANGED")
     if not rows:
         raise ValueError("EXIT_PATH_EMPTY")
     expected = calendar.recent_completed_sessions(rows[-1].closed_at, 10000)
@@ -88,8 +104,9 @@ def _evaluate(
         or rows[-1].closed_at > observation.effective_at
     ):
         raise ValueError("EXIT_PATH_CALENDAR_INCOMPLETE")
-    forecasts = {item.cutoff_at: item for item in observation.forecasts}
-    if len(forecasts) != len(observation.forecasts) or len(
+    retained_forecasts = frozen_forecasts or observation.forecasts
+    forecasts = {item.cutoff_at: item for item in retained_forecasts}
+    if len({item.cutoff_at for item in observation.forecasts}) != len(observation.forecasts) or len(
         {item.prediction_id for item in observation.forecasts}
     ) != len(observation.forecasts):
         raise ValueError("EXIT_FORECAST_IDENTITY_CONFLICT")
@@ -293,6 +310,12 @@ def _evaluate(
                 }
             )
         )
+    labeled.extend(
+        unlabeled_forecast(forecast, policy)
+        for forecast in retained_forecasts
+        if forecast.cutoff_at not in expected_dates
+    )
+    labeled.sort(key=lambda label: label.cutoff_at)
     due = cutoff >= position.matures_at
     base["current_exposure"] = primary.current_exposure
     base["state"] = (

@@ -6983,6 +6983,14 @@
             "default": 1,
             "title": "Report Version",
             "type": "integer"
+          },
+          "theses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitThesis"
+            },
+            "title": "Theses",
+            "type": "array"
           }
         },
         "required": ["disposition", "policy", "registration_event_id", "cutoff_at"],
@@ -7027,12 +7035,29 @@
           "hard_evidence": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ExitHardFact"
+                "discriminator": {
+                  "mapping": {
+                    "AUTHORITATIVE_DELISTING": "#/components/schemas/ExitHardFact",
+                    "AUTHORITATIVE_TRADING_TERMINATION": "#/components/schemas/ExitHardFact",
+                    "SECURITY_INELIGIBLE": "#/components/schemas/ExitHardFact",
+                    "THESIS_FALSIFIED": "#/components/schemas/ExitThesisFalsification"
+                  },
+                  "propertyName": "reason"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ExitHardFact"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExitThesisFalsification"
+                  }
+                ]
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Hard Evidence"
           },
           "hard_evidence_id": {
             "anyOf": [
@@ -7680,6 +7705,9 @@
             "title": "Continuous Quantile",
             "type": "string"
           },
+          "cost_curve": {
+            "$ref": "#/components/schemas/ExitCostCurve"
+          },
           "cost_version": {
             "minLength": 1,
             "title": "Cost Version",
@@ -7780,6 +7808,7 @@
           "model_version",
           "action_version",
           "cost_version",
+          "cost_curve",
           "baseline_version",
           "loss_grids",
           "selected_grid",
@@ -8218,6 +8247,27 @@
           "propositions"
         ],
         "title": "ExitThesis",
+        "type": "object"
+      },
+      "ExitThesisFalsification": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/SecurityEvidence"
+          },
+          "reason": {
+            "const": "THESIS_FALSIFIED",
+            "title": "Reason",
+            "type": "string"
+          },
+          "thesis_event_id": {
+            "minLength": 1,
+            "title": "Thesis Event Id",
+            "type": "string"
+          }
+        },
+        "required": ["reason", "thesis_event_id", "evidence"],
+        "title": "ExitThesisFalsification",
         "type": "object"
       },
       "ExitWatermark": {

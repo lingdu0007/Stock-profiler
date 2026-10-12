@@ -2993,6 +2993,11 @@ export interface components {
              * @default 1
              */
             report_version: number;
+            /**
+             * Theses
+             * @default []
+             */
+            theses: components["schemas"]["ExitThesis"][];
         };
         /** ExitForecast */
         ExitForecast: {
@@ -3018,7 +3023,8 @@ export interface components {
              * Format: date-time
              */
             frozen_at: string;
-            hard_evidence?: components["schemas"]["ExitHardFact"] | null;
+            /** Hard Evidence */
+            hard_evidence?: (components["schemas"]["ExitHardFact"] | components["schemas"]["ExitThesisFalsification"]) | null;
             /** Hard Evidence Id */
             hard_evidence_id: string | null;
             /** Hard Exit */
@@ -3113,7 +3119,7 @@ export interface components {
              */
             published_at: string;
             /**
-             * Reason
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             reason: "AUTHORITATIVE_DELISTING" | "AUTHORITATIVE_TRADING_TERMINATION" | "SECURITY_INELIGIBLE";
@@ -3289,6 +3295,7 @@ export interface components {
              * @default 0.5
              */
             continuous_quantile: string;
+            cost_curve: components["schemas"]["ExitCostCurve"];
             /** Cost Version */
             cost_version: string;
             /** Denied Value */
@@ -3513,6 +3520,17 @@ export interface components {
             valid_until: string;
             /** Version */
             version: string;
+        };
+        /** ExitThesisFalsification */
+        ExitThesisFalsification: {
+            evidence: components["schemas"]["SecurityEvidence"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            reason: "THESIS_FALSIFIED";
+            /** Thesis Event Id */
+            thesis_event_id: string;
         };
         /** ExitWatermark */
         ExitWatermark: {

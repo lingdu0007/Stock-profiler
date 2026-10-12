@@ -1,15 +1,93 @@
 """Host-owned standard exit history at the existing frozen-case boundary."""
 
+from collections import defaultdict
 from datetime import datetime
 
-from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
+from stock_profiler.modules.decision_cases.domain import DecisionEventFact, FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
+from stock_profiler.modules.decision_cases.security_exit import thesis_falsification_gates
 from stock_profiler.modules.evaluation.contracts import StandardExitPosition
-from stock_profiler.modules.evaluation.exit_contracts import ExitCounts, ExitEvaluationReport
+from stock_profiler.modules.evaluation.exit_contracts import (
+    ExitCounts,
+    ExitEvaluationReport,
+    ExitForecast,
+    ExitThesisFalsification,
+)
 from stock_profiler.modules.evaluation.exit_inference import summarize_exit_history
 from stock_profiler.modules.evaluation.exit_paths import evaluate_exit_position
 from stock_profiler.modules.evaluation.service import validate_evidence_revision
 from stock_profiler.modules.portfolio.market_calendar import synthetic_market_calendar
+
+
+def committed_exit_forecasts(
+    history: tuple[DecisionEventFact, ...], cutoff: datetime
+) -> dict[str, tuple[ExitForecast, ...]]:
+    retained: dict[str, dict[str, ExitForecast]] = defaultdict(dict)
+    for event in history:
+        report = event.result.exit_evaluation
+        command = event.case.exit_evaluation
+        if (
+            report is None
+            or command is None
+            or command.operation != "FREEZE"
+            or report.cutoff_at > cutoff
+            or datetime.fromisoformat(event.committed_at) > cutoff
+        ):
+            continue
+        for item in report.forecast_freezes:
+            retained[item.lifecycle_id][item.forecast.prediction_id] = item.forecast
+    return {
+        identity: tuple(sorted(values.values(), key=lambda item: item.cutoff_at))
+        for identity, values in retained.items()
+    }
+
+
+def verify_thesis_falsification(
+    case: FrozenDecisionCase,
+    forecast: ExitForecast,
+    position: StandardExitPosition,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+) -> None:
+    fact = forecast.hard_evidence
+    if not isinstance(fact, ExitThesisFalsification):
+        return
+    assert case.exit_evaluation is not None and case.access_scope is not None
+    original = ledger.get_decision_event(fact.thesis_event_id, connection)
+    if (
+        original is None
+        or original.corrects_event_id
+        or original.case.access_scope is None
+        or not original.case.access_scope.same_scope_as(case.access_scope)
+        or original.case.exit_evaluation is None
+        or original.case.exit_evaluation.operation != "FREEZE"
+        or original.case.exit_evaluation.registration_event_id
+        != case.exit_evaluation.registration_event_id
+        or original.result.exit_evaluation is None
+        or datetime.fromisoformat(original.committed_at) > forecast.cutoff_at
+    ):
+        raise ValueError("EXIT_THESIS_UNAVAILABLE")
+    thesis = next(
+        (
+            item
+            for item in original.result.exit_evaluation.theses
+            if item.lifecycle_id == position.lifecycle_id
+            and item.security_id == position.security_id
+        ),
+        None,
+    )
+    evidence = fact.evidence
+    if (
+        thesis is None
+        or thesis.origin != "SYSTEM"
+        or not thesis.registered_at < evidence.public_at <= forecast.cutoff_at <= thesis.valid_until
+        or not evidence.usable_at(position.security_id, forecast.cutoff_at)
+    ):
+        raise ValueError("EXIT_THESIS_EVIDENCE_UNAVAILABLE")
+    if not thesis_falsification_gates(
+        thesis, fact.thesis_event_id, (evidence,), forecast.cutoff_at
+    ):
+        raise ValueError("EXIT_THESIS_NOT_FALSIFIED")
 
 
 def assess_exit_evaluation(
@@ -95,6 +173,7 @@ def assess_exit_evaluation(
             for position in event.result.exit_evaluation.positions
             if position.observation is not None
         }
+        frozen_inputs = committed_exit_forecasts(histories, command.cutoff_at)
         evaluated_positions = tuple(
             evaluate_exit_position(
                 position,
@@ -102,6 +181,7 @@ def assess_exit_evaluation(
                 policy,
                 quantities[identity],
                 command.cutoff_at,
+                frozen_inputs.get(identity, ()),
             )
             for identity, position in entries.items()
         )
@@ -158,9 +238,16 @@ def assess_exit_evaluation(
         and event.case.exit_evaluation.registration_event_id == command.registration_event_id
         and event.case.exit_evaluation.source_standard_event_id == command.source_standard_event_id
     )
+    policy_freezes = tuple(
+        event
+        for event in history
+        if event.case.exit_evaluation
+        and event.case.exit_evaluation.operation == "FREEZE"
+        and event.case.exit_evaluation.registration_event_id == command.registration_event_id
+    )
     frozen_predictions = {
         (item.lifecycle_id, item.forecast.prediction_id): item.forecast
-        for event in frozen_events
+        for event in policy_freezes
         if event.result.exit_evaluation
         for item in event.result.exit_evaluation.forecast_freezes
     }
@@ -174,11 +261,34 @@ def assess_exit_evaluation(
         assert calendar is not None
         session = calendar.session_at_or_before(command.cutoff_at)
         positions = {position.lifecycle_id: position for position in standard.exit_positions}
+        saved_theses = {
+            thesis.lifecycle_id
+            for event in policy_freezes
+            if event.result.exit_evaluation
+            for thesis in event.result.exit_evaluation.theses
+        }
+        if len({item.lifecycle_id for item in command.theses}) != len(command.theses):
+            raise ValueError("EXIT_THESIS_IDENTITY_CONFLICT")
+        for thesis in command.theses:
+            member = positions.get(thesis.lifecycle_id)
+            if (
+                member is None
+                or member.security_id != thesis.security_id
+                or thesis.origin != "SYSTEM"
+                or thesis.registered_at != command.cutoff_at
+                or not member.entry_at
+                <= thesis.registered_at
+                < thesis.valid_until
+                <= member.matures_at
+                or thesis.lifecycle_id in saved_theses
+            ):
+                raise ValueError("EXIT_THESIS_NOT_FORWARD_OR_ALREADY_FROZEN")
         for item in command.forecast_freezes:
             freeze_position = positions.get(item.lifecycle_id)
             if freeze_position is None:
                 raise ValueError("EXIT_FORECAST_FOREIGN_LIFECYCLE")
             forecast = item.forecast
+            verify_thesis_falsification(case, forecast, freeze_position, ledger, connection)
             if (
                 session is None
                 or forecast.cutoff_at != session.closed_at
@@ -202,6 +312,7 @@ def assess_exit_evaluation(
             cutoff_at=command.cutoff_at,
             previous_event_id=command.previous_event_id,
             forecast_freezes=command.forecast_freezes,
+            theses=command.theses,
         )
     related = tuple(
         event
@@ -241,7 +352,7 @@ def assess_exit_evaluation(
         raise ValueError("EXIT_POPULATION_MEMBER_REMOVAL")
     frozen_predictions = {
         (item.lifecycle_id, item.forecast.prediction_id): item.forecast
-        for event in frozen_events
+        for event in policy_freezes
         if event.result.exit_evaluation
         and datetime.fromisoformat(event.committed_at) <= command.cutoff_at
         for item in event.result.exit_evaluation.forecast_freezes
@@ -289,6 +400,7 @@ def assess_exit_evaluation(
         if previous
         else None
     )
+    frozen_inputs = committed_exit_forecasts(policy_freezes, command.cutoff_at)
     return ExitEvaluationReport(
         disposition="OBSERVED",
         policy=policy,
@@ -304,6 +416,7 @@ def assess_exit_evaluation(
                 policy,
                 source.case.standard_outcomes.standard_quantity,
                 command.cutoff_at,
+                frozen_inputs.get(position.lifecycle_id, ()),
             )
             for position in positions.values()
         ),

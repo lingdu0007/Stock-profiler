@@ -84,6 +84,13 @@ def exit_policy() -> dict[str, Any]:
         "model_version": "fictional-exit-model/1",
         "action_version": "fictional-exit-action/1",
         "cost_version": "fictional-exit-cost/1",
+        "cost_curve": {
+            "commission_rate": "0",
+            "minimum_commission": "5",
+            "fee_rate": "0",
+            "tax_rate": "0",
+            "slippage_rate": "0",
+        },
         "baseline_version": "fictional-exit-baseline/1",
         "loss_grids": ["0.05", "0.10", "0.15", "0.20"],
         "selected_grid": "0.10",
@@ -456,14 +463,16 @@ def test_many_daily_predictions_remain_one_independent_lifecycle(
     )
 
 
-def evaluate_observed(settings: Settings, observed: Any) -> Any:
+def evaluate_observed(
+    settings: Settings, observed: Any, *, cutoff: str = "2043-04-02T16:00:00Z"
+) -> Any:
     assert observed.report is not None and observed.report.result.exit_evaluation is not None
     command = {
         "operation": "EVALUATE",
         "synthetic": True,
         "generator_version": "fictional-exit/1",
         "seed": 3131,
-        "cutoff_at": "2043-04-02T16:00:00Z",
+        "cutoff_at": cutoff,
         "policy": None,
         "registration_event_id": observed.report.result.exit_evaluation.registration_event_id,
         "source_standard_event_id": None,
@@ -619,6 +628,8 @@ def freeze_predictions(
     observation: dict[str, Any],
     *,
     framework: bool = False,
+    thesis_on_first: bool = False,
+    after_first: Any = None,
 ) -> Any:
     """Seed independent original historical facts; one explicit test uses the full framework."""
     from datetime import datetime
@@ -646,6 +657,30 @@ def freeze_predictions(
                 {"lifecycle_id": observation["lifecycle_id"], "forecast": forecast}
             ],
         }
+        if thesis_on_first and previous is None:
+            command["theses"] = [
+                {
+                    "thesis_id": "fictional-original-thesis",
+                    "version": "fictional-thesis/1",
+                    "security_id": "synthetic-security-00",
+                    "lifecycle_id": observation["lifecycle_id"],
+                    "origin": "SYSTEM",
+                    "registered_at": cutoff,
+                    "valid_until": "2043-01-02T15:00:00Z",
+                    "propositions": [
+                        {
+                            "proposition_id": "fictional-license",
+                            "statement": "Fictional license remains valid.",
+                            "metric": "licensed_operation_count",
+                            "authority": "DISCLOSURE",
+                            "source": "fictional-original-disclosure",
+                            "operator": "LE",
+                            "threshold": "0",
+                            "trigger_direction": "LIQUIDATE",
+                        }
+                    ],
+                }
+            ]
         case = FrozenDecisionCase.model_validate(exit_case(settings, command))
         if framework:
             latest = run_frozen_decision_case(
@@ -678,28 +713,35 @@ def freeze_predictions(
                     stage_results=(),
                 )
             previous = fact.decision_event_id
+        if after_first and forecast is observation["forecasts"][0]:
+            after_first(previous)
     return latest
 
 
-def test_freeze_commits_original_prediction_at_its_current_market_cutoff(
-    migrated_settings: Settings,
-) -> None:
-    registration = register_exit_policy(migrated_settings)
-    payload = standard_entry_case(migrated_settings)
+def frozen_entry_fixture(settings: Settings) -> Any:
+    registration = register_exit_policy(settings)
+    payload = standard_entry_case(settings)
     payload["knowledge_cutoff"] = payload["report_generated_at"] = "2042-07-02T16:00:00Z"
     payload["standard_outcomes"]["cutoff_at"] = payload["knowledge_cutoff"]
     payload["standard_outcomes"]["observations"][0]["terminal"] = None
     bind_outcome_input(payload)
     source = run_frozen_decision_case(
-        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+        settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
     )
     assert source.report is not None and registration.report is not None
     assert source.report.result.standard_outcomes is not None
     identity = source.report.result.standard_outcomes.exit_positions[0].lifecycle_id
     observation = exit_observation(identity, end="2042-07-02T15:00:00Z")
     frozen = freeze_predictions(
-        migrated_settings, registration.report, source.report.event_id, observation, framework=True
+        settings, registration.report, source.report.event_id, observation, framework=True
     )
+    return frozen
+
+
+def test_freeze_commits_original_prediction_at_its_current_market_cutoff(
+    migrated_settings: Settings,
+) -> None:
+    frozen = frozen_entry_fixture(migrated_settings)
     assert frozen.report.result.exit_evaluation.disposition == "FROZEN"
     assert frozen.report.result.exit_evaluation.positions == ()
     assert (
@@ -763,4 +805,123 @@ def test_market_correction_appends_version_and_prior_report_keeps_original_wealt
     )
     assert (
         get_formal_report(original.report_version_id, migrated_settings, principal=foreign) is None
+    )
+
+
+def test_outcome_upload_cannot_change_registered_cost_curve(migrated_settings: Settings) -> None:
+    def cheaper_after_outcome(observation: dict[str, Any]) -> None:
+        observation["sessions"][1]["costs"]["minimum_commission"] = "0"
+
+    with pytest.raises(ValueError, match="EXIT_COST_CURVE_CHANGED"):
+        observe_exit(migrated_settings, mutate=cheaper_after_outcome)
+
+
+def test_pending_lifecycle_keeps_due_labels_from_committed_unobserved_forecasts(
+    migrated_settings: Settings,
+) -> None:
+    frozen = frozen_entry_fixture(migrated_settings)
+    evidence = evaluate_observed(migrated_settings, frozen, cutoff="2042-08-08T16:00:00Z")
+    assert evidence.counts.due == 0 and evidence.counts.immature == 1
+    assert evidence.inference.disposition == "INDETERMINATE"
+    assert any(
+        reason.startswith("FORWARD_LABEL_MISSING:")
+        for reason in evidence.inference.missing_evidence
+    )
+    assert len(evidence.positions[0].decisions) == 1
+
+
+@pytest.mark.parametrize("measurement,accepted", [("0", True), ("1", False)])
+def test_frozen_thesis_falsification_is_verified_before_shared_hard_exit(
+    migrated_settings: Settings, measurement: str, accepted: bool
+) -> None:
+    registration = register_exit_policy(migrated_settings)
+    payload = standard_entry_case(migrated_settings)
+    payload["knowledge_cutoff"] = payload["report_generated_at"] = "2042-07-02T16:00:00Z"
+    payload["standard_outcomes"]["cutoff_at"] = payload["knowledge_cutoff"]
+    payload["standard_outcomes"]["observations"][0]["terminal"] = None
+    bind_outcome_input(payload)
+    source = run_frozen_decision_case(
+        migrated_settings, payload, clock=GovernanceClock(payload["knowledge_cutoff"])
+    )
+    assert (
+        source.report is not None
+        and source.report.result.standard_outcomes is not None
+        and registration.report is not None
+    )
+    observation = exit_observation(
+        source.report.result.standard_outcomes.exit_positions[0].lifecycle_id
+    )
+
+    def falsify(thesis_event_id: str) -> None:
+        forecast = observation["forecasts"][1]
+        fact = {
+            "reason": "THESIS_FALSIFIED",
+            "thesis_event_id": thesis_event_id,
+            "evidence": {
+                "evidence_id": "fictional-later-disclosure",
+                "family": "RISK",
+                "security_id": "synthetic-security-00",
+                "source": "fictional-original-disclosure",
+                "authority": "DISCLOSURE",
+                "source_version": "fictional-disclosure/1",
+                "public_at": forecast["cutoff_at"],
+                "acquired_at": forecast["cutoff_at"],
+                "validated_at": forecast["cutoff_at"],
+                "valid_until": "2042-07-09T15:00:00Z",
+                "complete": True,
+                "metric": "licensed_operation_count",
+                "value": measurement,
+                "legal_termination": False,
+            },
+        }
+        forecast.update(
+            hard_exit=True, hard_evidence_id="fictional-later-disclosure", hard_evidence=fact
+        )
+
+    if not accepted:
+        with pytest.raises(ValueError, match="EXIT_THESIS_NOT_FALSIFIED"):
+            freeze_predictions(
+                migrated_settings,
+                registration.report,
+                source.report.event_id,
+                observation,
+                framework=True,
+                thesis_on_first=True,
+                after_first=falsify,
+            )
+        return
+    freeze_predictions(
+        migrated_settings,
+        registration.report,
+        source.report.event_id,
+        observation,
+        framework=True,
+        thesis_on_first=True,
+        after_first=falsify,
+    )
+    command = {
+        "operation": "OBSERVE",
+        "synthetic": True,
+        "generator_version": "fictional-exit/1",
+        "seed": 3131,
+        "cutoff_at": "2042-07-08T16:00:00Z",
+        "policy": None,
+        "registration_event_id": registration.report.event_id,
+        "source_standard_event_id": source.report.event_id,
+        "previous_event_id": None,
+        "observations": [observation],
+    }
+    saved = run_frozen_decision_case(
+        migrated_settings,
+        exit_case(migrated_settings, command),
+        clock=GovernanceClock(command["cutoff_at"]),
+    )
+    assert saved.report is not None and saved.report.result.exit_evaluation is not None
+    position = saved.report.result.exit_evaluation.positions[0]
+    assert not position.decisions[1].statistical
+    for name in ("PRIMARY", "HARD_ONLY", "FIXED_LOSS", "TRAILING_DRAWDOWN"):
+        assert position.policies[name].current_exposure == 0
+    assert (
+        position.policies["HARD_ONLY"].trades[0].signal_at.isoformat()
+        == "2042-07-03T15:00:00+00:00"
     )

@@ -18,6 +18,13 @@ it("renders missing evidence and independent denominators without action control
       model_version: "fictional-model",
       action_version: "fictional-action",
       cost_version: "fictional-cost",
+      cost_curve: {
+        commission_rate: "0",
+        minimum_commission: "5",
+        fee_rate: "0",
+        tax_rate: "0",
+        slippage_rate: "0"
+      },
       baseline_version: "fictional-baseline",
       loss_grids: [".05", ".10", ".15", ".20"],
       selected_grid: ".10",
@@ -43,6 +50,7 @@ it("renders missing evidence and independent denominators without action control
     counts: { registered: 1, due: 1, evaluable: 0, due_missing: 1, immature: 0 },
     positions: [],
     forecast_freezes: [],
+    theses: [],
     actionable: false,
     authorization_granted: false,
     inference: {

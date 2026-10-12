@@ -1,9 +1,9 @@
 """Frozen preregistration and independent standard exit report contracts."""
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from stock_profiler.modules.candidate_selection.calibrated_candidates import CalibrationDiagnostics
 from stock_profiler.modules.evaluation.contracts import (
@@ -11,6 +11,40 @@ from stock_profiler.modules.evaluation.contracts import (
     OutcomeEvidence,
     StandardExitPosition,
 )
+from stock_profiler.modules.position_management.exit_contracts import ExitThesis, SecurityEvidence
+
+
+class ExitCostCurve(EvaluationContract):
+    commission_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
+    minimum_commission: Decimal = Field(ge=0, allow_inf_nan=False)
+    fee_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
+    tax_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
+    slippage_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
+
+    def charge(self, gross: Decimal) -> Decimal:
+        if gross <= 0:
+            return Decimal(0)
+        return max(self.minimum_commission, gross * self.commission_rate) + gross * (
+            self.fee_rate + self.tax_rate + self.slippage_rate
+        )
+
+
+def canonical_loss_grid(value: Decimal | str) -> str:
+    try:
+        numeric = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError("EXIT_LOSS_GRID_INVALID") from error
+    if numeric not in tuple(map(Decimal, (".05", ".10", ".15", ".20"))):
+        raise ValueError("EXIT_LOSS_GRID_INVALID")
+    return format(numeric, ".2f")
+
+
+def canonical_target(name: str) -> str:
+    if name == "V60":
+        return name
+    if not name.startswith("D20:"):
+        raise ValueError("EXIT_TARGET_INVALID")
+    return "D20:" + canonical_loss_grid(name.split(":", 1)[1])
 
 
 class ExitPolicy(EvaluationContract):
@@ -21,6 +55,7 @@ class ExitPolicy(EvaluationContract):
     model_version: str = Field(min_length=1)
     action_version: str = Field(min_length=1)
     cost_version: str = Field(min_length=1)
+    cost_curve: ExitCostCurve
     baseline_version: str = Field(min_length=1)
     loss_grids: tuple[Decimal, ...]
     selected_grid: Decimal
@@ -37,6 +72,16 @@ class ExitPolicy(EvaluationContract):
     risky_downside: Decimal
     established_value: Decimal
     denied_value: Decimal
+
+    @field_validator("selected_grid")
+    @classmethod
+    def canonical_selected_grid(cls, value: Decimal) -> Decimal:
+        return Decimal(canonical_loss_grid(value))
+
+    @field_validator("loss_grids")
+    @classmethod
+    def canonical_grids(cls, values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
+        return tuple(Decimal(canonical_loss_grid(value)) for value in values)
 
     @model_validator(mode="after")
     def validate_policy(self) -> "ExitPolicy":
@@ -65,21 +110,6 @@ class ExitPolicy(EvaluationContract):
         ) != tuple(map(Decimal, (".20", ".40", ".70", ".30"))):
             raise ValueError("exit action thresholds require a new contract to change")
         return self
-
-
-class ExitCostCurve(EvaluationContract):
-    commission_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
-    minimum_commission: Decimal = Field(ge=0, allow_inf_nan=False)
-    fee_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
-    tax_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
-    slippage_rate: Decimal = Field(ge=0, lt=1, allow_inf_nan=False)
-
-    def charge(self, gross: Decimal) -> Decimal:
-        if gross <= 0:
-            return Decimal(0)
-        return max(self.minimum_commission, gross * self.commission_rate) + gross * (
-            self.fee_rate + self.tax_rate + self.slippage_rate
-        )
 
 
 class ExitSession(EvaluationContract):
@@ -119,6 +149,24 @@ class ExitHardFact(OutcomeEvidence):
     ]
 
 
+class ExitThesisFalsification(EvaluationContract):
+    reason: Literal["THESIS_FALSIFIED"]
+    thesis_event_id: str = Field(min_length=1)
+    evidence: SecurityEvidence
+
+    @property
+    def evidence_id(self) -> str:
+        return self.evidence.evidence_id
+
+    @property
+    def available_at(self) -> AwareDatetime:
+        return max(self.evidence.public_at, self.evidence.acquired_at, self.evidence.validated_at)
+
+    @property
+    def effective_at(self) -> AwareDatetime:
+        return self.evidence.public_at
+
+
 class ExitForecast(EvaluationContract):
     prediction_id: str = Field(min_length=1)
     cutoff_at: AwareDatetime
@@ -135,7 +183,40 @@ class ExitForecast(EvaluationContract):
     quantiles: dict[str, Decimal] = Field(default_factory=dict)
     hard_exit: bool
     hard_evidence_id: str | None
-    hard_evidence: ExitHardFact | None = None
+    hard_evidence: ExitHardFact | ExitThesisFalsification | None = Field(
+        default=None, discriminator="reason"
+    )
+
+    @field_validator("downside")
+    @classmethod
+    def canonical_downside(
+        cls, values: dict[str, GuardedExitProbability]
+    ) -> dict[str, GuardedExitProbability]:
+        result = {canonical_loss_grid(key): value for key, value in values.items()}
+        if len(result) != len(values):
+            raise ValueError("EXIT_DUPLICATE_LOSS_GRID")
+        return result
+
+    @field_validator("baseline_probabilities")
+    @classmethod
+    def canonical_baselines(
+        cls, values: dict[str, dict[str, Decimal]]
+    ) -> dict[str, dict[str, Decimal]]:
+        result = {
+            name: {canonical_target(key): value for key, value in targets.items()}
+            for name, targets in values.items()
+        }
+        if any(len(result[name]) != len(targets) for name, targets in values.items()):
+            raise ValueError("EXIT_DUPLICATE_TARGET")
+        return result
+
+    @field_validator("quantiles")
+    @classmethod
+    def canonical_quantiles(cls, values: dict[str, Decimal]) -> dict[str, Decimal]:
+        result = {canonical_target(key): value for key, value in values.items()}
+        if len(result) != len(values):
+            raise ValueError("EXIT_DUPLICATE_TARGET")
+        return result
 
     @model_validator(mode="after")
     def validate_freeze(self) -> "ExitForecast":
@@ -229,6 +310,7 @@ class ExitEvaluationCommand(EvaluationContract):
     previous_event_id: str | None
     observations: tuple[ExitObservation, ...]
     forecast_freezes: tuple[ExitForecastFreeze, ...] = ()
+    theses: tuple[ExitThesis, ...] = ()
 
     @model_validator(mode="after")
     def validate_operation(self) -> "ExitEvaluationCommand":
@@ -240,6 +322,7 @@ class ExitEvaluationCommand(EvaluationContract):
                 or self.previous_event_id
                 or self.observations
                 or self.forecast_freezes
+                or self.theses
             ):
                 raise ValueError("exit preregistration precedes observed outcomes")
         elif self.policy is not None or not self.registration_event_id:
@@ -251,7 +334,7 @@ class ExitEvaluationCommand(EvaluationContract):
         if self.operation == "FREEZE":
             if not self.forecast_freezes or self.observations:
                 raise ValueError("exit prediction freeze requires forecasts without outcomes")
-        elif self.forecast_freezes:
+        elif self.forecast_freezes or self.theses:
             raise ValueError("exit outcome upload cannot introduce frozen predictions")
         if len({item.lifecycle_id for item in self.observations}) != len(self.observations):
             raise ValueError("duplicate standard exit lifecycle")
@@ -314,6 +397,7 @@ class ExitEvaluationReport(EvaluationContract):
     report_version: int = 1
     positions: tuple[ExitPositionResult, ...] = ()
     forecast_freezes: tuple[ExitForecastFreeze, ...] = ()
+    theses: tuple[ExitThesis, ...] = ()
     counts: ExitCounts | None = None
     inference: ExitInference | None = None
     actionable: Literal[False] = False

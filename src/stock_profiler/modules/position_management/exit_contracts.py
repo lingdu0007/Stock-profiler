@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -60,6 +61,18 @@ class SecurityEvidence(ExitContract):
     metric: str = Field(min_length=1)
     value: Decimal = Field(allow_inf_nan=False)
     legal_termination: bool
+
+    def usable_at(self, security_id: str, cutoff: datetime) -> bool:
+        return (
+            self.security_id == security_id
+            and self.complete
+            and (
+                (self.family in {"SECURITY", "MARKET"} and self.authority == "EXCHANGE")
+                or (self.family == "RISK" and self.authority in {"DISCLOSURE", "EXCHANGE"})
+            )
+            and self.public_at <= self.acquired_at <= self.validated_at <= cutoff
+            and self.valid_until >= cutoff
+        )
 
 
 class ExitCalibration(ExitContract):

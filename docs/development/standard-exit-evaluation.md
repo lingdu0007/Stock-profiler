@@ -14,13 +14,17 @@ attached to that lifecycle; renewal is a separate evaluation and never restores
 sold exposure.
 
 A `REGISTER` commits a complete policy, calendar, model, action, cost and baseline
-version bundle, monthly window, targets, confidence and seed before the entry
+version bundle, concrete cost curve, monthly window, targets, confidence and seed before the entry
 window. `FREEZE` commits predictions for the currently completed market session,
-without outcomes. `OBSERVE` supplies complete session paths and can only use
+without outcomes. It can also register a forward-only SYSTEM exit thesis, whose
+authoritative propositions share the existing security exit falsification rules.
+`OBSERVE` supplies complete session paths and can only use
 those original committed forecasts. Neither late outcome evidence nor an
 authoritative market correction may change, remove or backfill a forecast.
 `EVALUATE` reads the complete scoped retained entry population without accepting
-a caller-selected cohort. New evidence appends a linked report; original saved
+a caller-selected cohort. It joins every original frozen prediction, including
+predictions whose market paths have not arrived, so overdue targets cannot
+disappear before a position reaches six-month maturity. New evidence appends a linked report; original saved
 versions and replay remain stable.
 
 The primary path can only move from full initial exposure to half and then zero.

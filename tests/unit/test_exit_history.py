@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from stock_profiler.modules.evaluation.exit_contracts import (
+    ExitCostCurve,
     ExitDecisionLabel,
     ExitForecast,
     ExitPolicy,
@@ -25,6 +26,13 @@ def policy() -> ExitPolicy:
         model_version="fictional-model/1",
         action_version="fictional-actions/1",
         cost_version="fictional-costs/1",
+        cost_curve=ExitCostCurve(
+            commission_rate=Decimal(0),
+            minimum_commission=Decimal(1),
+            fee_rate=Decimal(0),
+            tax_rate=Decimal(0),
+            slippage_rate=Decimal(0),
+        ),
         baseline_version="fictional-baselines/1",
         loss_grids=tuple(map(Decimal, (".05", ".10", ".15", ".20"))),
         selected_grid=Decimal(".10"),
@@ -193,3 +201,14 @@ def test_empty_months_do_not_create_separate_market_episodes() -> None:
     )
     assert result.watermarks["BULL"].periods == 1
     assert result.disposition == "INSUFFICIENT"
+
+
+@pytest.mark.parametrize("selected", ["0.1", "1E-1", "0.100"])
+def test_equivalent_decimal_grid_encodings_keep_the_same_direction(selected: str) -> None:
+    from stock_profiler.modules.evaluation.exit_paths import statistical_direction
+
+    payload = policy().model_dump(mode="json")
+    payload["selected_grid"] = selected
+    registered = ExitPolicy.model_validate(payload)
+    forecast = synthetic_history()[0].decisions[0].forecast
+    assert statistical_direction(forecast, registered) == "HOLD"
