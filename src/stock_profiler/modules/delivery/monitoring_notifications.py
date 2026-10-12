@@ -20,14 +20,18 @@ def route_synthetic_notifications(
     attempts: list[MonitoringNotification] = []
     now = datetime.fromisoformat(observed_at)
     for item in source.cases:
+        if not item.statistical_window_valid(now):
+            continue
         if request.quiet_until is not None and now < request.quiet_until and item.priority != "P0":
             window = source.freshness.next_window_end if source.freshness is not None else None
-            if window is None or request.quiet_until < window:
+            if item.priority == "P2" or window is None or request.quiet_until < window:
                 continue
         roles: list[tuple[Literal["IMMEDIATE", "PERSISTENT"], ChannelResult]] = [
             ("IMMEDIATE", request.immediate_result)
         ]
-        if item.priority == "P0" or request.immediate_result != "ACCEPTED":
+        if item.priority == "P0" or (
+            item.priority == "P1" and request.immediate_result != "ACCEPTED"
+        ):
             roles.append(("PERSISTENT", request.persistent_result))
         freshness = source.freshness
         window_text = (
@@ -41,7 +45,11 @@ def route_synthetic_notifications(
             ).hexdigest()
             attempts.append(
                 MonitoringNotification(
-                    notification_id=f"monitoring-notification-{identity}",
+                    notification_id="monitoring-message-"
+                    + sha256(f"{item.case_id}\n{role}".encode()).hexdigest()
+                    if item.priority == "P2"
+                    else f"monitoring-notification-{identity}",
+                    attempt_id=f"monitoring-attempt-{identity}" if item.priority == "P2" else None,
                     case_id=item.case_id,
                     source_event_id=item.source_event_id,
                     role=role,

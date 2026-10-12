@@ -3889,10 +3889,16 @@ export interface components {
         MonitoringCase: {
             /** Case Id */
             case_id: string;
+            /** Conclusion Report Id */
+            conclusion_report_id?: string | null;
+            /** Direction */
+            direction?: ("HOLD" | "REDUCE" | "EXIT") | null;
             /** First Established At */
             first_established_at: string;
             /** Last Reviewed At */
             last_reviewed_at: string;
+            /** Lifecycle Id */
+            lifecycle_id?: string | null;
             /** Obligation Ids */
             obligation_ids: string[];
             plan: components["schemas"]["ExecutionPlanOutcome"] | null;
@@ -3900,7 +3906,9 @@ export interface components {
              * Priority
              * @enum {string}
              */
-            priority: "P0" | "P1";
+            priority: "P0" | "P1" | "P2";
+            /** Qualification Id */
+            qualification_id?: string | null;
             /**
              * Quantity Status
              * @default VERIFIED
@@ -3919,6 +3927,12 @@ export interface components {
              * @default []
              */
             source_event_ids: string[];
+            /** Target Quantity */
+            target_quantity?: string | null;
+            /** Window End */
+            window_end?: string | null;
+            /** Window Start */
+            window_start?: string | null;
         };
         /** MonitoringEvidenceStatus */
         MonitoringEvidenceStatus: {
@@ -3970,6 +3984,8 @@ export interface components {
         };
         /** MonitoringNotification */
         MonitoringNotification: {
+            /** Attempt Id */
+            attempt_id?: string | null;
             /** Attempted At */
             attempted_at: string;
             /** Body */
@@ -4011,6 +4027,8 @@ export interface components {
              * @default []
              */
             cases: components["schemas"]["MonitoringCase"][];
+            /** Conclusion Report Id */
+            conclusion_report_id?: string | null;
             /**
              * Disposition
              * @enum {string}
@@ -4043,6 +4061,7 @@ export interface components {
             operations_dates: string[];
             /** Portfolio Id */
             portfolio_id: string;
+            position_action?: components["schemas"]["PositionActionOutcome"] | null;
             /** Reasons */
             reasons: string[];
             reconciliation?: components["schemas"]["PositionReconciliationOutcome"] | null;
@@ -4068,8 +4087,15 @@ export interface components {
         MonitoringWorkspace: {
             /** Current Report Ids */
             current_report_ids: string[];
+            /**
+             * Inactive Statistical Case Ids
+             * @default []
+             */
+            inactive_statistical_case_ids: string[];
             /** Inbox */
             inbox: components["schemas"]["MonitoringCase"][];
+            /** Observed At */
+            observed_at?: string | null;
             /** Reports */
             reports: components["schemas"]["FormalReport"][];
             /** User Facts */
@@ -4395,6 +4421,7 @@ export interface components {
             cost_anchor?: components["schemas"]["StatisticalReductionAnchor"] | null;
             /** Current Quantity */
             current_quantity?: string | null;
+            deterministic_execution?: components["schemas"]["ExecutionPlanOutcome"] | null;
             /** Direction */
             direction?: ("HOLD" | "REDUCE" | "EXIT") | null;
             /**

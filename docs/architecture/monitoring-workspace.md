@@ -59,3 +59,45 @@ and audit reports do not recursively count earlier audit projections.
 and authentication boundaries. Browser tests cover independent facts and
 overview/inbox/archive navigation. The Playwright monitoring workflow checks
 desktop and mobile layouts with independent synthetic responses.
+
+## Versioned Statistical Conclusions
+
+The additive `monitoring.1.1.0` contract can consume a published
+`position-action.1.0.0` report. It preserves the saved action and independent
+deterministic execution plan; monitoring never recalculates a probability,
+quantity, reduction anchor or cost anchor. Effective statistical REDUCE and EXIT
+conclusions receive a P2 case binding the position lifecycle, exact conclusion
+report, qualification, direction, target and next executable window. HOLD,
+ABSTAIN and data observations remain in the ordinary assessment view.
+
+The frozen calendar must match the security assessment's version. The supplied
+next window must follow the original cutoff and fit the original probability
+validity. A conclusion can establish that window once. A subsequent daily or
+validated event assessment needs a newly committed position-action version;
+it cannot rewrap the old conclusion to renew its window. Original reports stay
+immutable. Independent P0/P1 targets retain their own provenance and survive a
+missing or expired statistical window.
+
+Position-action source reports remain readable audit records. A new plan choice
+must use a daily or event monitoring assessment with a bound window, rather than
+confirming the raw source through the generic user-fact route.
+
+The authorized workspace and confirmation boundary revalidate the saved source,
+current qualification and original evidence. At the window's end, P2 leaves the
+inbox and loses confirmation eligibility. The browser advances only its display
+clock, periodically refreshes authorized pointers, and preserves cutoff,
+assessment, publication and user-fact timestamps. A reported execution remains
+pending authoritative reconciliation and cannot renew or discharge a conclusion.
+
+P2 respects quiet hours and uses one immediate route. Its stable message identity
+binds the case and route; individual retries have distinct attempt identities.
+A retry keeps the original case, conclusion and window. Re-keying the same
+conclusion cannot open another reminder chain. A quiet period ending at or after
+expiry leaves no deferred statistical reminder. Lifecycle, notification and
+operations reports retain the exact original conclusion reference. Shadow
+results remain closed at the shared ledger publication and authorization boundary.
+
+`tests/integration/test_statistical_monitoring.py` verifies this delivery seam
+against saved host/M-Agent reports, including mixed deterministic risks,
+confirmation, expiry, quiet hours, supersession and shadow isolation. All channel
+outcomes and inputs remain synthetic; no provider or order capability is added.

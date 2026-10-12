@@ -30,7 +30,69 @@ def adjudicate_position_action(
     business_prerequisite_met: bool,
 ) -> PositionActionOutcome:
     with localcontext(Context(prec=38)):
-        return _adjudicate(case, ledger, connection, business_prerequisite_met)
+        command = case.position_action
+        scope = case.access_scope
+        assert command is not None and scope is not None
+        position = ledger.get_formal_report_for_event(
+            command.execution.concentration_event_id, connection
+        )
+        inherited = []
+        for fact in ledger.position_action_history(
+            connection, scope, command.execution.portfolio_id, command.lifecycle_id
+        ):
+            prior = fact.result.position_action
+            original = fact.case.position_action
+            if (
+                prior is None
+                or original is None
+                or fact.case.access_scope is None
+                or not scope.same_scope_as(fact.case.access_scope)
+                or original.cutoff_at > command.cutoff_at
+                or position is None
+                or position.result.position is None
+            ):
+                continue
+            plan = prior.deterministic_execution
+            if plan is None:
+                prior_security = ledger.get_formal_report_for_event(
+                    original.security_event_id, connection
+                )
+                if (
+                    prior_security is not None
+                    and prior_security.result.exit_assessment is not None
+                    and prior_security.result.exit_assessment.hard_gates
+                ):
+                    plan = prior.execution
+            if plan is not None:
+                for target in plan.targets:
+                    for identity in target.source_obligation_ids:
+                        inherited.append(
+                            EstablishedQuantityTarget(
+                                target_id=identity,
+                                security_id=target.security_id,
+                                target_quantity=target.target_quantity,
+                                direction="EXIT" if target.target_quantity == 0 else "REDUCE",
+                                qualified=True,
+                                policy_version=command.policy.version.version_id,
+                                evidence=position.result.position.snapshot.snapshot_evidence,
+                            )
+                        )
+        deterministic_command = command.execution.model_copy(
+            update={"established_targets": (*command.execution.established_targets, *inherited)}
+        )
+        base_plan = adjudicate_execution_plan(
+            case.model_copy(update={"execution_plan": deterministic_command}), ledger, connection
+        )
+        outcome = _adjudicate(case, ledger, connection, business_prerequisite_met, base_plan)
+        security = ledger.get_formal_report_for_event(command.security_event_id, connection)
+        protective = (
+            security is not None
+            and security.result.exit_assessment is not None
+            and bool(security.result.exit_assessment.hard_gates)
+        )
+        return outcome.model_copy(
+            update={"deterministic_execution": outcome.execution if protective else base_plan}
+        )
 
 
 def _adjudicate(
@@ -38,6 +100,7 @@ def _adjudicate(
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
     business_prerequisite_met: bool,
+    base_plan: ExecutionPlanOutcome,
 ) -> PositionActionOutcome:
     command = case.position_action
     scope = case.access_scope
@@ -47,9 +110,6 @@ def _adjudicate(
         security_id=command.security_id,
         lifecycle_id=command.lifecycle_id,
         reasons=("ACTION_HANDOFF_UNAVAILABLE",),
-    )
-    base_plan = adjudicate_execution_plan(
-        case.model_copy(update={"execution_plan": command.execution}), ledger, connection
     )
     independent_target = next(
         (

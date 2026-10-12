@@ -77,6 +77,9 @@ class PositionActionOutcome(PositionContract):
     reasons: tuple[str, ...] = ()
     buy_authorized: Literal[False] = False
     risk_restored: Literal[False] = False
+    deterministic_execution: ExecutionPlanOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     execution: ExecutionPlanOutcome | None = None
     anchor: StatisticalReductionAnchor | None = None
     cost_anchor: StatisticalReductionAnchor | None = None

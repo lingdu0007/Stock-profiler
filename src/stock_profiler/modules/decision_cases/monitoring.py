@@ -8,6 +8,10 @@ from zoneinfo import ZoneInfo
 
 from stock_profiler.modules.decision_cases.domain import FrozenDecisionCase
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
+from stock_profiler.modules.decision_cases.statistical_monitoring import (
+    project_position_action,
+    statistical_conclusion_current,
+)
 from stock_profiler.modules.delivery.monitoring_contracts import (
     EvidenceFamily,
     MonitoringCase,
@@ -114,7 +118,8 @@ def assess_monitoring(
         if prior.result.monitoring.kind not in {"DAILY_CLOSE", "EVENT_REASSESS"}:
             continue
         for item in prior.result.monitoring.cases:
-            retained[item.case_id] = item
+            if item.priority != "P2":
+                retained[item.case_id] = item
     blocked = blocked.model_copy(
         update={
             "cases": tuple(
@@ -132,6 +137,42 @@ def assess_monitoring(
         return blocked
     if datetime.fromisoformat(source.knowledge_cutoff) > command.cutoff_at:
         return blocked.model_copy(update={"reasons": ("MONITORING_SOURCE_AFTER_CUTOFF",)})
+    if source.result.position_action is not None and command.kind in {
+        "DAILY_CLOSE",
+        "EVENT_REASSESS",
+    }:
+        prerequisite_met = True
+        calendar = command.calendar
+        if calendar is None or calendar.evidence.problem_codes(
+            command.cutoff_at, require_current_completeness=True
+        ):
+            prerequisite_met = False
+            blocked = blocked.model_copy(update={"reasons": ("MONITORING_CALENDAR_UNAVAILABLE",)})
+        elif any(item.status != "VALIDATED" for item in _evidence_status(command)):
+            prerequisite_met = False
+            blocked = blocked.model_copy(
+                update={"reasons": ("MONITORING_EVIDENCE_FAMILY_INCOMPLETE",)}
+            )
+        elif command.kind == "DAILY_CLOSE" and (
+            not calendar.is_trading_day or calendar.close_at > command.cutoff_at
+        ):
+            prerequisite_met = False
+            blocked = blocked.model_copy(update={"reasons": ("MONITORING_CLOSE_NOT_COMPLETED",)})
+        elif command.kind == "EVENT_REASSESS" and (
+            not command.events
+            or any(
+                _EVENT_AUTHORITIES.get(event.kind) != event.authority
+                or event.evidence.problem_codes(
+                    command.cutoff_at, require_current_completeness=True
+                )
+                for event in command.events
+            )
+        ):
+            prerequisite_met = False
+            blocked = blocked.model_copy(update={"reasons": ("MONITORING_EVENT_UNQUALIFIED",)})
+        return project_position_action(
+            case, source, blocked, ledger, connection, prerequisite_met=prerequisite_met
+        )
     if command.kind == "EVENT_REASSESS":
         if not command.events or any(
             _EVENT_AUTHORITIES.get(event.kind) != event.authority
@@ -449,7 +490,37 @@ def assess_monitoring(
             or assessments[-1].decision_event_id != source.event_id
         ):
             return blocked.model_copy(update={"reasons": ("MONITORING_SOURCE_SUPERSEDED",)})
+        if any(
+            item.priority == "P2" for item in monitoring.cases
+        ) and not statistical_conclusion_current(source, ledger, connection):
+            monitoring = monitoring.model_copy(
+                update={
+                    "cases": tuple(item for item in monitoring.cases if item.priority != "P2"),
+                    "reasons": ("MONITORING_CONCLUSION_NOT_CURRENT",),
+                }
+            )
         request = command.notification
+        previous_notifications = tuple(
+            prior
+            for prior in history
+            if prior.case.monitoring is not None
+            and prior.case.monitoring.kind == "NOTIFICATION_RUN"
+            and prior.case.monitoring.source_event_id == source.event_id
+        )
+        if (
+            any(item.priority == "P2" for item in monitoring.cases)
+            and request.attempt_number == 1
+            and previous_notifications
+        ):
+            return monitoring.model_copy(
+                update={
+                    "kind": command.kind,
+                    "notifications": (),
+                    "notification_due_at": None,
+                    "reasons": ("MONITORING_NOTIFICATION_ALREADY_REGISTERED",),
+                    "source_report_ids": (source.report_version_id,),
+                }
+            )
         if request.attempt_number > 1:
             previous_run = next(
                 (
@@ -490,7 +561,14 @@ def assess_monitoring(
         pending_due: list[datetime] = []
         attempted_cases = {attempt.case_id for attempt in attempts}
         if request.quiet_until is not None and any(
-            item.case_id not in attempted_cases for item in monitoring.cases
+            item.case_id not in attempted_cases
+            and item.statistical_window_valid(datetime.fromisoformat(ledger.observed_at()))
+            and (
+                item.priority != "P2"
+                or item.window_end is not None
+                and request.quiet_until < item.window_end
+            )
+            for item in monitoring.cases
         ):
             pending_due.append(request.quiet_until)
         if any(attempt.result != "ACCEPTED" for attempt in attempts):

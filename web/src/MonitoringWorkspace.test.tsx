@@ -12,6 +12,70 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
 });
 
+it("shows expired statistical cases as retained history with their exact conclusion and window", async () => {
+  const item = {
+    case_id: "synthetic-p2-case",
+    source_event_id: "synthetic-action-event",
+    obligation_ids: [],
+    priority: "P2",
+    plan: null,
+    quantity_status: "VERIFIED",
+    first_established_at: "2042-05-18T16:00:00Z",
+    last_reviewed_at: "2042-05-18T16:00:00Z",
+    conclusion_report_id: "synthetic-action-report",
+    direction: "REDUCE",
+    target_quantity: "100",
+    window_start: "2042-05-19T08:00:00Z",
+    window_end: "2042-05-19T16:00:00Z",
+    qualification_id: "synthetic-action-grant"
+  };
+  const report = {
+    ...syntheticReport,
+    result: {
+      ...syntheticReport.result,
+      monitoring: {
+        portfolio_id: "synthetic-portfolio",
+        kind: "DAILY_CLOSE",
+        disposition: "ASSESSED",
+        reasons: [],
+        cases: [item],
+        action_units: [],
+        freshness: null,
+        notifications: [],
+        source_report_ids: []
+      }
+    }
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(
+      async (request: Request) =>
+        new Response(
+          JSON.stringify(
+            request.url.includes("/reports/")
+              ? report
+              : {
+                  reports: [report],
+                  current_report_ids: [report.report_version_id],
+                  inbox: [],
+                  user_facts: [],
+                  inactive_statistical_case_ids: [item.case_id],
+                  observed_at: "2042-05-20T16:00:00Z"
+                }
+          ),
+          { headers: { "Content-Type": "application/json" } }
+        )
+    )
+  );
+  window.history.pushState({}, "", "/monitoring");
+  render(<App />);
+  expect(await screen.findByText("Statistical conclusion expired or superseded")).toBeVisible();
+  expect(screen.getByText("REDUCE / 100")).toBeVisible();
+  expect(screen.getByRole("link", { name: "synthetic-action-report" })).toBeVisible();
+  expect(screen.queryByText("Deterministic obligation persists")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Record plan choice" })).not.toBeInTheDocument();
+});
+
 it.each([true, false])("records complete report views with obligations=%s", async (hasCases) => {
   const item = {
     case_id: "synthetic-monitoring-case",

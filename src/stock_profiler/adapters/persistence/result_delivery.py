@@ -23,6 +23,9 @@ from stock_profiler.modules.decision_cases.domain import (
     StageResult,
 )
 from stock_profiler.modules.decision_cases.monitoring_confirmation import confirmation_permitted
+from stock_profiler.modules.decision_cases.statistical_monitoring import (
+    statistical_conclusion_current,
+)
 from stock_profiler.modules.delivery.access import (
     SINGLE_USER_ID,
     AccessAuditFact,
@@ -96,7 +99,18 @@ class ResultDelivery:
                     .order_by(USER_FACTS.c.sequence)
                 ).scalars()
             )
-            return project_workspace(reports, facts)
+            return project_workspace(
+                reports,
+                facts,
+                datetime.fromisoformat(self._ledger.observed_at()),
+                tuple(
+                    report.report_version_id
+                    for report in reports
+                    if report.result.monitoring is not None
+                    and any(item.priority == "P2" for item in report.result.monitoring.cases)
+                    and not statistical_conclusion_current(report, self._ledger, connection)
+                ),
+            )
 
     def candidate_workspace(self, principal: AccessPrincipal | None) -> CandidateWorkspace | None:
         with self._engine.begin() as connection:

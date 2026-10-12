@@ -9449,6 +9449,29 @@
             "title": "Case Id",
             "type": "string"
           },
+          "conclusion_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conclusion Report Id"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": ["HOLD", "REDUCE", "EXIT"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
           "first_established_at": {
             "title": "First Established At",
             "type": "string"
@@ -9456,6 +9479,17 @@
           "last_reviewed_at": {
             "title": "Last Reviewed At",
             "type": "string"
+          },
+          "lifecycle_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Id"
           },
           "obligation_ids": {
             "items": {
@@ -9475,9 +9509,20 @@
             ]
           },
           "priority": {
-            "enum": ["P0", "P1"],
+            "enum": ["P0", "P1", "P2"],
             "title": "Priority",
             "type": "string"
+          },
+          "qualification_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualification Id"
           },
           "quantity_status": {
             "default": "VERIFIED",
@@ -9504,6 +9549,42 @@
             },
             "title": "Source Event Ids",
             "type": "array"
+          },
+          "target_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Quantity"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
           }
         },
         "required": [
@@ -9643,6 +9724,17 @@
       "MonitoringNotification": {
         "additionalProperties": false,
         "properties": {
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
           "attempted_at": {
             "title": "Attempted At",
             "type": "string"
@@ -9714,6 +9806,17 @@
             },
             "title": "Cases",
             "type": "array"
+          },
+          "conclusion_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conclusion Report Id"
           },
           "disposition": {
             "enum": ["ASSESSED", "BLOCKED"],
@@ -9794,6 +9897,16 @@
             "title": "Portfolio Id",
             "type": "string"
           },
+          "position_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionActionOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reasons": {
             "items": {
               "type": "string"
@@ -9858,12 +9971,31 @@
             "title": "Current Report Ids",
             "type": "array"
           },
+          "inactive_statistical_case_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Inactive Statistical Case Ids",
+            "type": "array"
+          },
           "inbox": {
             "items": {
               "$ref": "#/components/schemas/MonitoringCase"
             },
             "title": "Inbox",
             "type": "array"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
           },
           "reports": {
             "items": {
@@ -10697,6 +10829,16 @@
               }
             ],
             "title": "Current Quantity"
+          },
+          "deterministic_execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionPlanOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "direction": {
             "anyOf": [
