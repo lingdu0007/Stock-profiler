@@ -170,6 +170,20 @@ class CandidateBatchDelivery(EvaluationContract):
     reminders: tuple[CandidateReminderRecord, ...]
 
 
+class StandardExitPosition(EvaluationContract):
+    lifecycle_id: str
+    candidate_evaluation_id: str
+    source_event_id: str
+    security_id: str
+    origin: Literal["SYSTEM"] = "SYSTEM"
+    initial_exposure: Decimal = Decimal(1)
+    current_exposure: Decimal = Decimal(1)
+    entry_at: AwareDatetime
+    entry_price: Decimal
+    matures_at: AwareDatetime
+    state: Literal["PENDING", "UNAVAILABLE", "EVALUABLE"]
+
+
 class StandardOutcomeReport(EvaluationContract):
     contract_version: Literal["1.0.0"] = "1.0.0"
     selection_event_id: str | None
@@ -181,3 +195,6 @@ class StandardOutcomeReport(EvaluationContract):
     previous_report_id: str | None
     report_version: int = Field(ge=1)
     delivery: tuple[CandidateBatchDelivery, ...]
+    exit_positions: tuple[StandardExitPosition, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )

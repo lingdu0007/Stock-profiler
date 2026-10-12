@@ -12,6 +12,7 @@ from stock_profiler.modules.evaluation.contracts import (
     CandidateBatchDelivery,
     EvaluationMember,
     EvaluationRegistration,
+    StandardExitPosition,
     StandardObservation,
     StandardOutcomeReport,
 )
@@ -213,6 +214,23 @@ def assess_standard_outcomes(
             for population in ("SELECTION", "PROBABILITY", "CANDIDATE")
         },
         delivery=tuple(deliveries),
+        exit_positions=tuple(
+            StandardExitPosition(
+                lifecycle_id=f"standard-exit:{member.evaluation_id}",
+                candidate_evaluation_id=member.evaluation_id,
+                source_event_id=member.source_event_id,
+                security_id=member.security_id,
+                entry_at=member.entry_at,
+                entry_price=member.entry_price,
+                matures_at=member.matures_at,
+                state="UNAVAILABLE" if member.matures_at <= command.cutoff_at else "PENDING",
+            )
+            for member in population_members
+            if member.population == "CANDIDATE"
+            and member.entry_at is not None
+            and member.entry_price is not None
+            and not member.entry_expired
+        ),
     )
 
 

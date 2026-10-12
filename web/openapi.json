@@ -6742,6 +6742,598 @@
         "title": "ExitCalibration",
         "type": "object"
       },
+      "ExitCostCurve": {
+        "additionalProperties": false,
+        "properties": {
+          "commission_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Commission Rate",
+            "type": "string"
+          },
+          "fee_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fee Rate",
+            "type": "string"
+          },
+          "minimum_commission": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Commission",
+            "type": "string"
+          },
+          "slippage_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Slippage Rate",
+            "type": "string"
+          },
+          "tax_rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tax Rate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commission_rate",
+          "minimum_commission",
+          "fee_rate",
+          "tax_rate",
+          "slippage_rate"
+        ],
+        "title": "ExitCostCurve",
+        "type": "object"
+      },
+      "ExitCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "due": {
+            "title": "Due",
+            "type": "integer"
+          },
+          "due_missing": {
+            "title": "Due Missing",
+            "type": "integer"
+          },
+          "evaluable": {
+            "title": "Evaluable",
+            "type": "integer"
+          },
+          "immature": {
+            "title": "Immature",
+            "type": "integer"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "integer"
+          }
+        },
+        "required": ["registered", "due", "evaluable", "due_missing", "immature"],
+        "title": "ExitCounts",
+        "type": "object"
+      },
+      "ExitDecisionLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "direction": {
+            "enum": ["HOLD", "REDUCE", "EXIT", "ABSTAIN", "DATA_FAILED"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "downside_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downside Return"
+          },
+          "forecast": {
+            "$ref": "#/components/schemas/ExitForecast"
+          },
+          "prediction_id": {
+            "title": "Prediction Id",
+            "type": "string"
+          },
+          "reversal_without_evidence": {
+            "default": false,
+            "title": "Reversal Without Evidence",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "statistical": {
+            "title": "Statistical",
+            "type": "boolean"
+          },
+          "upside_capture": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upside Capture"
+          },
+          "value_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Return"
+          }
+        },
+        "required": ["prediction_id", "cutoff_at", "state", "direction", "statistical", "forecast"],
+        "title": "ExitDecisionLabel",
+        "type": "object"
+      },
+      "ExitEvaluationReport": {
+        "additionalProperties": false,
+        "properties": {
+          "actionable": {
+            "const": false,
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "authorization_granted": {
+            "const": false,
+            "default": false,
+            "title": "Authorization Granted",
+            "type": "boolean"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "forecast_freezes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitForecastFreeze"
+            },
+            "title": "Forecast Freezes",
+            "type": "array"
+          },
+          "inference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitInference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ExitPolicy"
+          },
+          "positions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitPositionResult"
+            },
+            "title": "Positions",
+            "type": "array"
+          },
+          "previous_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Event Id"
+          },
+          "previous_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Report Id"
+          },
+          "registration_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Event Id"
+          },
+          "report_version": {
+            "default": 1,
+            "title": "Report Version",
+            "type": "integer"
+          },
+          "theses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExitThesis"
+            },
+            "title": "Theses",
+            "type": "array"
+          }
+        },
+        "required": ["disposition", "policy", "registration_event_id", "cutoff_at"],
+        "title": "ExitEvaluationReport",
+        "type": "object"
+      },
+      "ExitForecast": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_probabilities": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Baseline Probabilities",
+            "type": "object"
+          },
+          "cutoff_at": {
+            "format": "date-time",
+            "title": "Cutoff At",
+            "type": "string"
+          },
+          "data_complete": {
+            "title": "Data Complete",
+            "type": "boolean"
+          },
+          "downside": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability"
+            },
+            "title": "Downside",
+            "type": "object"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "title": "Frozen At",
+            "type": "string"
+          },
+          "hard_evidence": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "AUTHORITATIVE_DELISTING": "#/components/schemas/ExitHardFact",
+                    "AUTHORITATIVE_TRADING_TERMINATION": "#/components/schemas/ExitHardFact",
+                    "SECURITY_INELIGIBLE": "#/components/schemas/ExitHardFact",
+                    "THESIS_FALSIFIED": "#/components/schemas/ExitThesisFalsification"
+                  },
+                  "propertyName": "reason"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ExitHardFact"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExitThesisFalsification"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Evidence"
+          },
+          "hard_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Evidence Id"
+          },
+          "hard_exit": {
+            "title": "Hard Exit",
+            "type": "boolean"
+          },
+          "model_version": {
+            "minLength": 1,
+            "title": "Model Version",
+            "type": "string"
+          },
+          "new_evidence_id": {
+            "minLength": 1,
+            "title": "New Evidence Id",
+            "type": "string"
+          },
+          "prediction_id": {
+            "minLength": 1,
+            "title": "Prediction Id",
+            "type": "string"
+          },
+          "qualified_scope": {
+            "title": "Qualified Scope",
+            "type": "boolean"
+          },
+          "quantiles": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Quantiles",
+            "type": "object"
+          },
+          "state": {
+            "enum": ["BULL", "BEAR", "SIDEWAYS"],
+            "title": "State",
+            "type": "string"
+          },
+          "training_watermark_at": {
+            "format": "date-time",
+            "title": "Training Watermark At",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "prediction_id",
+          "cutoff_at",
+          "frozen_at",
+          "training_watermark_at",
+          "model_version",
+          "state",
+          "data_complete",
+          "qualified_scope",
+          "new_evidence_id",
+          "downside",
+          "value",
+          "hard_exit",
+          "hard_evidence_id"
+        ],
+        "title": "ExitForecast",
+        "type": "object"
+      },
+      "ExitForecastFreeze": {
+        "additionalProperties": false,
+        "properties": {
+          "forecast": {
+            "$ref": "#/components/schemas/ExitForecast"
+          },
+          "lifecycle_id": {
+            "minLength": 1,
+            "title": "Lifecycle Id",
+            "type": "string"
+          }
+        },
+        "required": ["lifecycle_id", "forecast"],
+        "title": "ExitForecastFreeze",
+        "type": "object"
+      },
+      "ExitGate": {
+        "additionalProperties": false,
+        "properties": {
+          "applicable": {
+            "default": true,
+            "title": "Applicable",
+            "type": "boolean"
+          },
+          "block_bounds": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Block Bounds",
+            "type": "object"
+          },
+          "bound": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound"
+          },
+          "direction": {
+            "enum": ["LOWER", "UPPER", "EXACT"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "strict": {
+            "title": "Strict",
+            "type": "boolean"
+          },
+          "threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "undefined_resamples": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Undefined Resamples",
+            "type": "object"
+          }
+        },
+        "required": [
+          "estimate",
+          "bound",
+          "direction",
+          "threshold",
+          "strict",
+          "passed",
+          "block_bounds",
+          "undefined_resamples"
+        ],
+        "title": "ExitGate",
+        "type": "object"
+      },
+      "ExitHardFact": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "authority": {
+            "const": "EXCHANGE",
+            "title": "Authority",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "corrects_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Evidence Id"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "AUTHORITATIVE_DELISTING",
+              "AUTHORITATIVE_TRADING_TERMINATION",
+              "SECURITY_INELIGIBLE"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "authority",
+          "source_version",
+          "effective_at",
+          "published_at",
+          "acquired_at",
+          "validated_at",
+          "corrects_evidence_id",
+          "correction_reason",
+          "reason"
+        ],
+        "title": "ExitHardFact",
+        "type": "object"
+      },
       "ExitHardGate": {
         "additionalProperties": false,
         "properties": {
@@ -6796,6 +7388,189 @@
         "title": "ExitHardGate",
         "type": "object"
       },
+      "ExitInference": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CalibrationDiagnostics"
+            },
+            "title": "Diagnostics",
+            "type": "object"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "gates": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ExitGate"
+            },
+            "title": "Gates",
+            "type": "object"
+          },
+          "inference_unit": {
+            "const": "WHOLE_LIFECYCLE_COMMON_ENTRY_MONTH_BLOCKS",
+            "default": "WHOLE_LIFECYCLE_COMMON_ENTRY_MONTH_BLOCKS",
+            "title": "Inference Unit",
+            "type": "string"
+          },
+          "missing_evidence": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Evidence",
+            "type": "array"
+          },
+          "pinball_loss": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Pinball Loss",
+            "type": "object"
+          },
+          "resampling": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Resampling",
+            "type": "object"
+          },
+          "watermarks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ExitWatermark"
+            },
+            "title": "Watermarks",
+            "type": "object"
+          }
+        },
+        "required": [
+          "disposition",
+          "watermarks",
+          "gates",
+          "diagnostics",
+          "pinball_loss",
+          "resampling"
+        ],
+        "title": "ExitInference",
+        "type": "object"
+      },
+      "ExitObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "acquired_at": {
+            "format": "date-time",
+            "title": "Acquired At",
+            "type": "string"
+          },
+          "authority": {
+            "const": "EXCHANGE",
+            "title": "Authority",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "corrects_evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Evidence Id"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "title": "Effective At",
+            "type": "string"
+          },
+          "evidence_id": {
+            "minLength": 1,
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "forecasts": {
+            "items": {
+              "$ref": "#/components/schemas/ExitForecast"
+            },
+            "title": "Forecasts",
+            "type": "array"
+          },
+          "lifecycle_id": {
+            "minLength": 1,
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ExitSession"
+            },
+            "title": "Sessions",
+            "type": "array"
+          },
+          "source_version": {
+            "minLength": 1,
+            "title": "Source Version",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "authority",
+          "source_version",
+          "effective_at",
+          "published_at",
+          "acquired_at",
+          "validated_at",
+          "corrects_evidence_id",
+          "correction_reason",
+          "lifecycle_id",
+          "sessions",
+          "forecasts"
+        ],
+        "title": "ExitObservation",
+        "type": "object"
+      },
       "ExitOutcome": {
         "additionalProperties": false,
         "properties": {
@@ -6823,7 +7598,7 @@
           "probabilities": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/GuardedExitProbability"
+              "$ref": "#/components/schemas/stock_profiler__modules__position_management__exit_contracts__GuardedExitProbability"
             },
             "title": "Probabilities",
             "type": "array"
@@ -6893,6 +7668,374 @@
         "title": "ExitOutcome",
         "type": "object"
       },
+      "ExitPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "action_version": {
+            "minLength": 1,
+            "title": "Action Version",
+            "type": "string"
+          },
+          "baseline_version": {
+            "minLength": 1,
+            "title": "Baseline Version",
+            "type": "string"
+          },
+          "block_lengths": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Block Lengths",
+            "type": "array"
+          },
+          "bootstrap_repetitions": {
+            "maximum": 10000.0,
+            "minimum": 99.0,
+            "title": "Bootstrap Repetitions",
+            "type": "integer"
+          },
+          "confidence": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "continuous_quantile": {
+            "default": "0.5",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Continuous Quantile",
+            "type": "string"
+          },
+          "cost_curve": {
+            "$ref": "#/components/schemas/ExitCostCurve"
+          },
+          "cost_version": {
+            "minLength": 1,
+            "title": "Cost Version",
+            "type": "string"
+          },
+          "denied_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Denied Value",
+            "type": "string"
+          },
+          "end_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "End Month",
+            "type": "string"
+          },
+          "established_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Established Value",
+            "type": "string"
+          },
+          "fixed_exit_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fixed Exit Loss",
+            "type": "string"
+          },
+          "fixed_reduce_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fixed Reduce Loss",
+            "type": "string"
+          },
+          "loss_grids": {
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Loss Grids",
+            "type": "array"
+          },
+          "market_calendar_version": {
+            "minLength": 1,
+            "title": "Market Calendar Version",
+            "type": "string"
+          },
+          "model_version": {
+            "minLength": 1,
+            "title": "Model Version",
+            "type": "string"
+          },
+          "risky_downside": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Risky Downside",
+            "type": "string"
+          },
+          "safe_downside": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Safe Downside",
+            "type": "string"
+          },
+          "selected_grid": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Selected Grid",
+            "type": "string"
+          },
+          "start_month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "title": "Start Month",
+            "type": "string"
+          },
+          "states": {
+            "items": {
+              "enum": ["BULL", "BEAR", "SIDEWAYS"],
+              "type": "string"
+            },
+            "title": "States",
+            "type": "array"
+          },
+          "trailing_exit_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Trailing Exit Loss",
+            "type": "string"
+          },
+          "trailing_reduce_loss": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Trailing Reduce Loss",
+            "type": "string"
+          },
+          "version_id": {
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "start_month",
+          "end_month",
+          "market_calendar_version",
+          "model_version",
+          "action_version",
+          "cost_version",
+          "cost_curve",
+          "baseline_version",
+          "loss_grids",
+          "selected_grid",
+          "states",
+          "bootstrap_repetitions",
+          "confidence",
+          "block_lengths",
+          "fixed_reduce_loss",
+          "fixed_exit_loss",
+          "trailing_reduce_loss",
+          "trailing_exit_loss",
+          "safe_downside",
+          "risky_downside",
+          "established_value",
+          "denied_value"
+        ],
+        "title": "ExitPolicy",
+        "type": "object"
+      },
+      "ExitPolicyPath": {
+        "additionalProperties": false,
+        "properties": {
+          "current_exposure": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Exposure",
+            "type": "string"
+          },
+          "daily_wealth": {
+            "items": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Daily Wealth",
+            "type": "array"
+          },
+          "dates": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "title": "Dates",
+            "type": "array"
+          },
+          "exit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Exit Cost",
+            "type": "string"
+          },
+          "gross_total_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Total Return"
+          },
+          "maximum_drawdown": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Maximum Drawdown",
+            "type": "string"
+          },
+          "net_total_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Total Return"
+          },
+          "pending_target": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Pending Target",
+            "type": "string"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/StandardExitTrade"
+            },
+            "title": "Trades",
+            "type": "array"
+          },
+          "turnover": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Turnover",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_exposure",
+          "pending_target",
+          "trades",
+          "daily_wealth",
+          "dates",
+          "net_total_return",
+          "gross_total_return",
+          "maximum_drawdown",
+          "exit_cost",
+          "turnover"
+        ],
+        "title": "ExitPolicyPath",
+        "type": "object"
+      },
+      "ExitPositionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_evaluation_id": {
+            "title": "Candidate Evaluation Id",
+            "type": "string"
+          },
+          "current_exposure": {
+            "default": "1",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Exposure",
+            "type": "string"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/ExitDecisionLabel"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "entry_at": {
+            "format": "date-time",
+            "title": "Entry At",
+            "type": "string"
+          },
+          "entry_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entry Price",
+            "type": "string"
+          },
+          "initial_exposure": {
+            "default": "1",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Initial Exposure",
+            "type": "string"
+          },
+          "initial_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Initial Quantity",
+            "type": "string"
+          },
+          "lifecycle_id": {
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
+          "matures_at": {
+            "format": "date-time",
+            "title": "Matures At",
+            "type": "string"
+          },
+          "missing_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Reasons",
+            "type": "array"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin": {
+            "const": "SYSTEM",
+            "default": "SYSTEM",
+            "title": "Origin",
+            "type": "string"
+          },
+          "policies": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ExitPolicyPath"
+            },
+            "title": "Policies",
+            "type": "object"
+          },
+          "replay_consistent": {
+            "default": true,
+            "title": "Replay Consistent",
+            "type": "boolean"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["PENDING", "UNAVAILABLE", "EVALUABLE"],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lifecycle_id",
+          "candidate_evaluation_id",
+          "source_event_id",
+          "security_id",
+          "entry_at",
+          "entry_price",
+          "matures_at",
+          "state",
+          "initial_quantity",
+          "observation",
+          "policies",
+          "decisions",
+          "missing_reasons"
+        ],
+        "title": "ExitPositionResult",
+        "type": "object"
+      },
       "ExitProposition": {
         "additionalProperties": false,
         "properties": {
@@ -6948,6 +8091,67 @@
           "trigger_direction"
         ],
         "title": "ExitProposition",
+        "type": "object"
+      },
+      "ExitSession": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "enum": ["SUSPENDED", "LIMIT_DOWN", "NO_BIDS", "RESTRICTED"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
+          "cash_per_initial_share": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cash Per Initial Share",
+            "type": "string"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "costs": {
+            "$ref": "#/components/schemas/ExitCostCurve"
+          },
+          "price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Price",
+            "type": "string"
+          },
+          "quantity_multiplier": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity Multiplier",
+            "type": "string"
+          },
+          "sellable": {
+            "title": "Sellable",
+            "type": "boolean"
+          },
+          "vwap": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vwap",
+            "type": "string"
+          }
+        },
+        "required": [
+          "closed_at",
+          "price",
+          "vwap",
+          "sellable",
+          "blocked_reason",
+          "quantity_multiplier",
+          "cash_per_initial_share",
+          "costs"
+        ],
+        "title": "ExitSession",
         "type": "object"
       },
       "ExitTarget": {
@@ -7043,6 +8247,98 @@
           "propositions"
         ],
         "title": "ExitThesis",
+        "type": "object"
+      },
+      "ExitThesisFalsification": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/SecurityEvidence"
+          },
+          "reason": {
+            "const": "THESIS_FALSIFIED",
+            "title": "Reason",
+            "type": "string"
+          },
+          "thesis_event_id": {
+            "minLength": 1,
+            "title": "Thesis Event Id",
+            "type": "string"
+          }
+        },
+        "required": ["reason", "thesis_event_id", "evidence"],
+        "title": "ExitThesisFalsification",
+        "type": "object"
+      },
+      "ExitWatermark": {
+        "additionalProperties": false,
+        "properties": {
+          "directions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Directions",
+            "type": "object"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "mature_months": {
+            "title": "Mature Months",
+            "type": "integer"
+          },
+          "nonoverlapping_windows": {
+            "title": "Nonoverlapping Windows",
+            "type": "integer"
+          },
+          "periods": {
+            "title": "Periods",
+            "type": "integer"
+          },
+          "position_count": {
+            "title": "Position Count",
+            "type": "integer"
+          },
+          "sufficient": {
+            "title": "Sufficient",
+            "type": "boolean"
+          },
+          "target_events": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Target Events",
+            "type": "object"
+          },
+          "target_nonevents": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Target Nonevents",
+            "type": "object"
+          },
+          "target_positions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Target Positions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "mature_months",
+          "position_count",
+          "nonoverlapping_windows",
+          "periods",
+          "directions",
+          "target_positions",
+          "target_events",
+          "target_nonevents",
+          "sufficient",
+          "disposition"
+        ],
+        "title": "ExitWatermark",
         "type": "object"
       },
       "ExternalResult": {
@@ -7141,6 +8437,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ExitOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_evaluation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitEvaluationReport"
               },
               {
                 "type": "null"
@@ -7932,118 +9238,6 @@
         },
         "required": ["disposition", "reasons"],
         "title": "GovernanceOutcome",
-        "type": "object"
-      },
-      "GuardedExitProbability": {
-        "additionalProperties": false,
-        "properties": {
-          "assessment_digest": {
-            "title": "Assessment Digest",
-            "type": "string"
-          },
-          "calibration": {
-            "$ref": "#/components/schemas/ExitCalibration"
-          },
-          "guarded_lower": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Guarded Lower"
-          },
-          "guarded_upper": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Guarded Upper"
-          },
-          "loss_boundary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Loss Boundary"
-          },
-          "point": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Point",
-            "type": "string"
-          },
-          "produced_at": {
-            "format": "date-time",
-            "title": "Produced At",
-            "type": "string"
-          },
-          "qualification_id": {
-            "title": "Qualification Id",
-            "type": "string"
-          },
-          "qualification_scope": {
-            "$ref": "#/components/schemas/QualificationScope"
-          },
-          "qualification_status": {
-            "enum": ["VALID", "AT_RISK", "NOT_QUALIFIED"],
-            "title": "Qualification Status",
-            "type": "string"
-          },
-          "reasons": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Reasons",
-            "type": "array"
-          },
-          "security_id": {
-            "title": "Security Id",
-            "type": "string"
-          },
-          "target": {
-            "enum": ["D20", "V60"],
-            "title": "Target",
-            "type": "string"
-          },
-          "valid_until": {
-            "format": "date-time",
-            "title": "Valid Until",
-            "type": "string"
-          },
-          "version": {
-            "$ref": "#/components/schemas/CapabilityVersion"
-          }
-        },
-        "required": [
-          "security_id",
-          "assessment_digest",
-          "target",
-          "loss_boundary",
-          "point",
-          "guarded_lower",
-          "guarded_upper",
-          "qualification_status",
-          "qualification_id",
-          "qualification_scope",
-          "version",
-          "produced_at",
-          "valid_until",
-          "calibration"
-        ],
-        "title": "GuardedExitProbability",
         "type": "object"
       },
       "HistoricalCounts": {
@@ -15215,6 +16409,115 @@
         "title": "StageResult",
         "type": "object"
       },
+      "StandardExitPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_evaluation_id": {
+            "title": "Candidate Evaluation Id",
+            "type": "string"
+          },
+          "current_exposure": {
+            "default": "1",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Exposure",
+            "type": "string"
+          },
+          "entry_at": {
+            "format": "date-time",
+            "title": "Entry At",
+            "type": "string"
+          },
+          "entry_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entry Price",
+            "type": "string"
+          },
+          "initial_exposure": {
+            "default": "1",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Initial Exposure",
+            "type": "string"
+          },
+          "lifecycle_id": {
+            "title": "Lifecycle Id",
+            "type": "string"
+          },
+          "matures_at": {
+            "format": "date-time",
+            "title": "Matures At",
+            "type": "string"
+          },
+          "origin": {
+            "const": "SYSTEM",
+            "default": "SYSTEM",
+            "title": "Origin",
+            "type": "string"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": ["PENDING", "UNAVAILABLE", "EVALUABLE"],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lifecycle_id",
+          "candidate_evaluation_id",
+          "source_event_id",
+          "security_id",
+          "entry_at",
+          "entry_price",
+          "matures_at",
+          "state"
+        ],
+        "title": "StandardExitPosition",
+        "type": "object"
+      },
+      "StandardExitTrade": {
+        "additionalProperties": false,
+        "properties": {
+          "costs": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Costs",
+            "type": "string"
+          },
+          "executed_at": {
+            "format": "date-time",
+            "title": "Executed At",
+            "type": "string"
+          },
+          "exposure_sold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Exposure Sold",
+            "type": "string"
+          },
+          "net_proceeds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Proceeds",
+            "type": "string"
+          },
+          "price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Price",
+            "type": "string"
+          },
+          "signal_at": {
+            "format": "date-time",
+            "title": "Signal At",
+            "type": "string"
+          }
+        },
+        "required": ["signal_at", "executed_at", "exposure_sold", "price", "costs", "net_proceeds"],
+        "title": "StandardExitTrade",
+        "type": "object"
+      },
       "StandardObservation": {
         "additionalProperties": false,
         "properties": {
@@ -15278,6 +16581,14 @@
               "$ref": "#/components/schemas/CandidateBatchDelivery"
             },
             "title": "Delivery",
+            "type": "array"
+          },
+          "exit_positions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StandardExitPosition"
+            },
+            "title": "Exit Positions",
             "type": "array"
           },
           "members": {
@@ -16506,6 +17817,141 @@
           "m_agent_release_commit"
         ],
         "title": "VersionDiagnosticDto",
+        "type": "object"
+      },
+      "stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability": {
+        "additionalProperties": false,
+        "properties": {
+          "lower_error": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Lower Error",
+            "type": "string"
+          },
+          "point": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Point",
+            "type": "string"
+          },
+          "upper_error": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Upper Error",
+            "type": "string"
+          }
+        },
+        "required": ["point", "lower_error", "upper_error"],
+        "title": "GuardedExitProbability",
+        "type": "object"
+      },
+      "stock_profiler__modules__position_management__exit_contracts__GuardedExitProbability": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_digest": {
+            "title": "Assessment Digest",
+            "type": "string"
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/ExitCalibration"
+          },
+          "guarded_lower": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guarded Lower"
+          },
+          "guarded_upper": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guarded Upper"
+          },
+          "loss_boundary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Boundary"
+          },
+          "point": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Point",
+            "type": "string"
+          },
+          "produced_at": {
+            "format": "date-time",
+            "title": "Produced At",
+            "type": "string"
+          },
+          "qualification_id": {
+            "title": "Qualification Id",
+            "type": "string"
+          },
+          "qualification_scope": {
+            "$ref": "#/components/schemas/QualificationScope"
+          },
+          "qualification_status": {
+            "enum": ["VALID", "AT_RISK", "NOT_QUALIFIED"],
+            "title": "Qualification Status",
+            "type": "string"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "security_id": {
+            "title": "Security Id",
+            "type": "string"
+          },
+          "target": {
+            "enum": ["D20", "V60"],
+            "title": "Target",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/CapabilityVersion"
+          }
+        },
+        "required": [
+          "security_id",
+          "assessment_digest",
+          "target",
+          "loss_boundary",
+          "point",
+          "guarded_lower",
+          "guarded_upper",
+          "qualification_status",
+          "qualification_id",
+          "qualification_scope",
+          "version",
+          "produced_at",
+          "valid_until",
+          "calibration"
+        ],
+        "title": "GuardedExitProbability",
         "type": "object"
       }
     }

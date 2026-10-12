@@ -93,7 +93,9 @@ def assess_security(
     history = ledger.governance_history(connection, scope)
     thesis, thesis_event_id = resolve_thesis(command, case, ledger, connection)
     hard_gates: list[ExitHardGate] = []
-    visible = tuple(e for e in command.evidence if evidence_usable(e, command))
+    visible = tuple(
+        e for e in command.evidence if e.usable_at(command.security_id, command.cutoff_at)
+    )
     conflicting = {
         (e.family, e.source, e.metric)
         for e in visible
@@ -121,32 +123,9 @@ def assess_security(
                 )
             )
     if thesis is not None:
-        for proposition in thesis.propositions:
-            for evidence in usable:
-                if (
-                    evidence.authority != proposition.authority
-                    or evidence.source != proposition.source
-                    or evidence.metric != proposition.metric
-                    or evidence.public_at < thesis.registered_at
-                    or evidence.public_at > thesis.valid_until
-                ):
-                    continue
-                falsified = {
-                    "LE": evidence.value <= proposition.threshold,
-                    "GE": evidence.value >= proposition.threshold,
-                    "EQ": evidence.value == proposition.threshold,
-                }[proposition.operator]
-                if falsified:
-                    hard_gates.append(
-                        ExitHardGate(
-                            gate_id=f"THESIS_FALSIFIED:{proposition.proposition_id}",
-                            evidence_id=evidence.evidence_id,
-                            authority=proposition.authority,
-                            source=evidence.source,
-                            thesis_event_id=thesis_event_id,
-                            established_at=command.cutoff_at,
-                        )
-                    )
+        hard_gates.extend(
+            thesis_falsification_gates(thesis, thesis_event_id, usable, command.cutoff_at)
+        )
     probabilities = []
     reasons: list[str] = [] if business_prerequisite_met else ["BUSINESS_PREREQUISITE_FAILED"]
     if len(usable) != len(command.evidence) or {e.family for e in usable} != {
@@ -318,14 +297,38 @@ def resolve_thesis(
     return thesis, command.thesis_event_id
 
 
-def evidence_usable(evidence: SecurityEvidence, command: SecurityAssessment) -> bool:
-    return (
-        evidence.security_id == command.security_id
-        and evidence.complete
-        and (
-            (evidence.family in {"SECURITY", "MARKET"} and evidence.authority == "EXCHANGE")
-            or (evidence.family == "RISK" and evidence.authority in {"DISCLOSURE", "EXCHANGE"})
-        )
-        and evidence.public_at <= evidence.acquired_at <= evidence.validated_at <= command.cutoff_at
-        and evidence.valid_until >= command.cutoff_at
-    )
+def thesis_falsification_gates(
+    thesis: ExitThesis,
+    thesis_event_id: str | None,
+    usable: tuple[SecurityEvidence, ...],
+    cutoff: datetime,
+) -> tuple[ExitHardGate, ...]:
+    """Apply the same frozen authoritative proposition rules to every standard path."""
+    hard_gates: list[ExitHardGate] = []
+    for proposition in thesis.propositions:
+        for evidence in usable:
+            if (
+                evidence.authority != proposition.authority
+                or evidence.source != proposition.source
+                or evidence.metric != proposition.metric
+                or evidence.public_at < thesis.registered_at
+                or evidence.public_at > thesis.valid_until
+            ):
+                continue
+            falsified = {
+                "LE": evidence.value <= proposition.threshold,
+                "GE": evidence.value >= proposition.threshold,
+                "EQ": evidence.value == proposition.threshold,
+            }[proposition.operator]
+            if falsified:
+                hard_gates.append(
+                    ExitHardGate(
+                        gate_id=f"THESIS_FALSIFIED:{proposition.proposition_id}",
+                        evidence_id=evidence.evidence_id,
+                        authority=proposition.authority,
+                        source=evidence.source,
+                        thesis_event_id=thesis_event_id,
+                        established_at=cutoff,
+                    )
+                )
+    return tuple(hard_gates)

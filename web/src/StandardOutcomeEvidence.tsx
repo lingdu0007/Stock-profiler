@@ -41,6 +41,12 @@ export function StandardOutcomeEvidence({ outcome }: { outcome: Outcome }) {
           </dl>
         </section>
       ))}
+      {outcome.exit_positions && outcome.exit_positions.length > 0 && (
+        <p>
+          System standard exit lifecycles: {outcome.exit_positions.length}. These positions are
+          independent of actual purchases.
+        </p>
+      )}
       <details className="portfolio-subsection" open>
         <summary>Retained standard evaluation members ({outcome.members.length})</summary>
         {outcome.members.map((member) => (
