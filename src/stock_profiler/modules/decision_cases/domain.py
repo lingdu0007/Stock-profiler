@@ -42,6 +42,10 @@ from stock_profiler.modules.evaluation.contracts import (
     StandardOutcomeCommand,
     StandardOutcomeReport,
 )
+from stock_profiler.modules.evaluation.exit_contracts import (
+    ExitEvaluationCommand,
+    ExitEvaluationReport,
+)
 from stock_profiler.modules.evaluation.historical_contracts import (
     HistoricalSelectionCommand,
     HistoricalSelectionReport,
@@ -149,6 +153,7 @@ _SCOPED_CASE_CONTRACT_VERSIONS = frozenset(
         "research.1.0.0",
         "candidate-release.1.0.0",
         "standard-outcomes.1.0.0",
+        "exit-evaluation.1.0.0",
         "historical-selection.1.0.0",
         "historical-probability.1.0.0",
         "prospective.1.0.0",
@@ -184,6 +189,7 @@ _SUPPORTED_CASE_HOST_CONTRACT_PAIRS = frozenset(
         ("research.1.0.0", "research.1.0.0"),
         ("candidate-release.1.0.0", "candidate-release.1.0.0"),
         ("standard-outcomes.1.0.0", "standard-outcomes.1.0.0"),
+        ("exit-evaluation.1.0.0", "exit-evaluation.1.0.0"),
         ("historical-selection.1.0.0", "historical-selection.1.0.0"),
         ("historical-probability.1.0.0", "historical-probability.1.0.0"),
         ("prospective.1.0.0", "prospective.1.0.0"),
@@ -280,6 +286,9 @@ class ExternalResult(FrozenContract):
         default=None, exclude_if=lambda value: value is None
     )
     historical_selection: HistoricalSelectionReport | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    exit_evaluation: ExitEvaluationReport | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     standard_outcomes: StandardOutcomeReport | None = Field(
@@ -1015,6 +1024,9 @@ class FrozenDecisionCase(FrozenContract):
     historical_selection: HistoricalSelectionCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    exit_evaluation: ExitEvaluationCommand | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     standard_outcomes: StandardOutcomeCommand | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1092,6 +1104,18 @@ class FrozenDecisionCase(FrozenContract):
     @model_validator(mode="after")
     def validate_original_synthetic_contract(self) -> FrozenDecisionCase:
         """Make public fixtures fail closed unless they declare original D0 provenance."""
+        exit_evaluation_governed = (
+            self.version_bundle.case_contract_version == "exit-evaluation.1.0.0"
+        )
+        if exit_evaluation_governed != (
+            self.exit_evaluation is not None
+        ) or exit_evaluation_governed != ("exit_evaluation" in self.input):
+            raise ValueError("exit evaluation requires its own frozen contract")
+        if self.exit_evaluation is not None and (
+            self.exit_evaluation.cutoff_at != datetime.fromisoformat(self.knowledge_cutoff)
+            or self.input.get("exit_evaluation") != self.exit_evaluation.model_dump(mode="json")
+        ):
+            raise ValueError("exit evaluation must bind frozen input and cutoff")
         action_governed = self.version_bundle.case_contract_version == "position-action.1.0.0"
         if action_governed != (self.position_action is not None) or action_governed != (
             "position_action" in self.input
@@ -1301,7 +1325,8 @@ class FrozenDecisionCase(FrozenContract):
         liquidity_governed = self.version_bundle.case_contract_version == "8.2.0"
         stress_governed = self.version_bundle.case_contract_version == "8.0.0"
         host_command_case = (
-            action_governed
+            exit_evaluation_governed
+            or action_governed
             or exit_governed
             or governed
             or portfolio_governed
@@ -1340,6 +1365,7 @@ class FrozenDecisionCase(FrozenContract):
             sum(
                 command is not None
                 for command in (
+                    self.exit_evaluation,
                     self.position_action,
                     self.exit_assessment,
                     self.governance,
@@ -1380,7 +1406,8 @@ class FrozenDecisionCase(FrozenContract):
         if host_command_case and datetime.fromisoformat(self.knowledge_cutoff).tzinfo is None:
             raise ValueError("host-command cases require a timezone-aware knowledge cutoff")
         if (
-            self.expected_external_result.position_action is not None
+            self.expected_external_result.exit_evaluation is not None
+            or self.expected_external_result.position_action is not None
             or self.expected_external_result.exit_assessment is not None
             or self.expected_external_result.governance is not None
             or self.expected_external_result.portfolio is not None
@@ -2177,6 +2204,7 @@ def synthetic_outcome_code_from_input(
     input_without_scenario.pop("candidate_execution", None)
     input_without_scenario.pop("candidate_confirmation", None)
     input_without_scenario.pop("candidate_allocation", None)
+    input_without_scenario.pop("exit_evaluation", None)
     input_without_scenario.pop("standard_outcomes", None)
     input_without_scenario.pop("historical_probability", None)
     input_without_scenario.pop("prospective", None)

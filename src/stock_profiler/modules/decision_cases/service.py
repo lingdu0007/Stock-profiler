@@ -70,6 +70,7 @@ from stock_profiler.modules.decision_cases.domain import (
     research_member_run_id,
 )
 from stock_profiler.modules.decision_cases.execution_plans import adjudicate_execution_plan
+from stock_profiler.modules.decision_cases.exit_evaluation import assess_exit_evaluation
 from stock_profiler.modules.decision_cases.frozen_case import load_frozen_correction_payload
 from stock_profiler.modules.decision_cases.historical_probability import (
     InvalidHistoricalProbabilityRequest,
@@ -3659,6 +3660,19 @@ def _commit_framework_result(
                     )
                 except ValueError as error:
                     raise InvalidHistoricalSelectionRequest(str(error)) from error
+            if business_result is not None and execution_case.exit_evaluation is not None:
+                if business_result.status != "SUCCEEDED":
+                    raise ValueError("EXIT_EVALUATION_PREREQUISITE_FAILED")
+                result = result.model_copy(
+                    update={
+                        "exit_evaluation": assess_exit_evaluation(
+                            execution_case, ledger, connection
+                        ),
+                        "outcome_code": "EXIT_EVALUATION_RECORDED",
+                        "summary": "Saved independent synthetic exit evidence.",
+                        "key_reasons": ("HISTORICAL_EVIDENCE_DOES_NOT_GRANT_AUTHORITY",),
+                    }
+                )
             if business_result is not None and execution_case.standard_outcomes is not None:
                 if business_result.status != "SUCCEEDED":
                     raise ValueError("STANDARD_OUTCOME_PREREQUISITE_FAILED")

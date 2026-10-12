@@ -218,6 +218,10 @@ class DecisionLedger(Protocol[Transaction]):
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[DecisionEventFact, ...]: ...
 
+    def exit_evaluation_history(
+        self, connection: Transaction, access_scope: ResultAccessScope
+    ) -> tuple[DecisionEventFact, ...]: ...
+
     def standard_evaluation_history(
         self, connection: Transaction, access_scope: ResultAccessScope
     ) -> tuple[DecisionEventFact, ...]: ...

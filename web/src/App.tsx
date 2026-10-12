@@ -33,6 +33,7 @@ import { UniverseEvidence } from "./UniverseEvidence";
 import { SelectionEvidence } from "./SelectionEvidence";
 import { CandidatePage, CandidateReleaseStatus } from "./CandidatePage";
 import { CandidateReleaseEvidence } from "./CandidateReleaseEvidence";
+import { ExitEvaluationEvidence } from "./ExitEvaluationEvidence";
 import { StandardOutcomeEvidence } from "./StandardOutcomeEvidence";
 import { HistoricalProbabilityEvidence } from "./HistoricalProbabilityEvidence";
 import { HistoricalSelectionEvidence } from "./HistoricalSelectionEvidence";
@@ -175,6 +176,9 @@ function FormalReportView({ report }: { report: FormalReport }) {
       )}
       {report.result.historical_selection && (
         <HistoricalSelectionEvidence evidence={report.result.historical_selection} />
+      )}
+      {report.result.exit_evaluation && (
+        <ExitEvaluationEvidence evidence={report.result.exit_evaluation} />
       )}
       {report.result.standard_outcomes && (
         <StandardOutcomeEvidence outcome={report.result.standard_outcomes} />

@@ -2891,6 +2891,240 @@ export interface components {
             upper_error: string;
             version: components["schemas"]["CapabilityVersion"];
         };
+        /** ExitCostCurve */
+        ExitCostCurve: {
+            /** Commission Rate */
+            commission_rate: string;
+            /** Fee Rate */
+            fee_rate: string;
+            /** Minimum Commission */
+            minimum_commission: string;
+            /** Slippage Rate */
+            slippage_rate: string;
+            /** Tax Rate */
+            tax_rate: string;
+        };
+        /** ExitCounts */
+        ExitCounts: {
+            /** Due */
+            due: number;
+            /** Due Missing */
+            due_missing: number;
+            /** Evaluable */
+            evaluable: number;
+            /** Immature */
+            immature: number;
+            /** Registered */
+            registered: number;
+        };
+        /** ExitDecisionLabel */
+        ExitDecisionLabel: {
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "HOLD" | "REDUCE" | "EXIT" | "ABSTAIN" | "DATA_FAILED";
+            /** Downside Return */
+            downside_return?: string | null;
+            forecast: components["schemas"]["ExitForecast"];
+            /** Prediction Id */
+            prediction_id: string;
+            /**
+             * Reversal Without Evidence
+             * @default false
+             */
+            reversal_without_evidence: boolean;
+            /** State */
+            state: string;
+            /** Statistical */
+            statistical: boolean;
+            /** Upside Capture */
+            upside_capture?: string | null;
+            /** Value Return */
+            value_return?: string | null;
+        };
+        /** ExitEvaluationReport */
+        ExitEvaluationReport: {
+            /**
+             * Actionable
+             * @default false
+             * @constant
+             */
+            actionable: false;
+            /**
+             * Authorization Granted
+             * @default false
+             * @constant
+             */
+            authorization_granted: false;
+            counts?: components["schemas"]["ExitCounts"] | null;
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Disposition */
+            disposition: string;
+            /**
+             * Forecast Freezes
+             * @default []
+             */
+            forecast_freezes: components["schemas"]["ExitForecastFreeze"][];
+            inference?: components["schemas"]["ExitInference"] | null;
+            policy: components["schemas"]["ExitPolicy"];
+            /**
+             * Positions
+             * @default []
+             */
+            positions: components["schemas"]["ExitPositionResult"][];
+            /** Previous Event Id */
+            previous_event_id?: string | null;
+            /** Previous Report Id */
+            previous_report_id?: string | null;
+            /** Registration Event Id */
+            registration_event_id: string | null;
+            /**
+             * Report Version
+             * @default 1
+             */
+            report_version: number;
+        };
+        /** ExitForecast */
+        ExitForecast: {
+            /** Baseline Probabilities */
+            baseline_probabilities?: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+            /**
+             * Cutoff At
+             * Format: date-time
+             */
+            cutoff_at: string;
+            /** Data Complete */
+            data_complete: boolean;
+            /** Downside */
+            downside: {
+                [key: string]: components["schemas"]["stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability"];
+            };
+            /**
+             * Frozen At
+             * Format: date-time
+             */
+            frozen_at: string;
+            hard_evidence?: components["schemas"]["ExitHardFact"] | null;
+            /** Hard Evidence Id */
+            hard_evidence_id: string | null;
+            /** Hard Exit */
+            hard_exit: boolean;
+            /** Model Version */
+            model_version: string;
+            /** New Evidence Id */
+            new_evidence_id: string;
+            /** Prediction Id */
+            prediction_id: string;
+            /** Qualified Scope */
+            qualified_scope: boolean;
+            /** Quantiles */
+            quantiles?: {
+                [key: string]: string;
+            };
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "BULL" | "BEAR" | "SIDEWAYS";
+            /**
+             * Training Watermark At
+             * Format: date-time
+             */
+            training_watermark_at: string;
+            value: components["schemas"]["stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability"] | null;
+        };
+        /** ExitForecastFreeze */
+        ExitForecastFreeze: {
+            forecast: components["schemas"]["ExitForecast"];
+            /** Lifecycle Id */
+            lifecycle_id: string;
+        };
+        /** ExitGate */
+        ExitGate: {
+            /**
+             * Applicable
+             * @default true
+             */
+            applicable: boolean;
+            /** Block Bounds */
+            block_bounds: {
+                [key: string]: string | null;
+            };
+            /** Bound */
+            bound: string | null;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "LOWER" | "UPPER" | "EXACT";
+            /** Estimate */
+            estimate: string | null;
+            /** Passed */
+            passed: boolean | null;
+            /** Strict */
+            strict: boolean;
+            /** Threshold */
+            threshold: string;
+            /** Undefined Resamples */
+            undefined_resamples: {
+                [key: string]: number;
+            };
+        };
+        /** ExitHardFact */
+        ExitHardFact: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Authority
+             * @constant
+             */
+            authority: "EXCHANGE";
+            /** Correction Reason */
+            correction_reason: string | null;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string | null;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "AUTHORITATIVE_DELISTING" | "AUTHORITATIVE_TRADING_TERMINATION" | "SECURITY_INELIGIBLE";
+            /** Source Version */
+            source_version: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+        };
         /** ExitHardGate */
         ExitHardGate: {
             /**
@@ -2918,6 +3152,86 @@ export interface components {
             /** Thesis Event Id */
             thesis_event_id: string | null;
         };
+        /** ExitInference */
+        ExitInference: {
+            /** Diagnostics */
+            diagnostics: {
+                [key: string]: components["schemas"]["CalibrationDiagnostics"];
+            };
+            /** Disposition */
+            disposition: string;
+            /** Gates */
+            gates: {
+                [key: string]: components["schemas"]["ExitGate"];
+            };
+            /**
+             * Inference Unit
+             * @default WHOLE_LIFECYCLE_COMMON_ENTRY_MONTH_BLOCKS
+             * @constant
+             */
+            inference_unit: "WHOLE_LIFECYCLE_COMMON_ENTRY_MONTH_BLOCKS";
+            /**
+             * Missing Evidence
+             * @default []
+             */
+            missing_evidence: string[];
+            /** Pinball Loss */
+            pinball_loss: {
+                [key: string]: string | null;
+            };
+            /** Resampling */
+            resampling: {
+                [key: string]: {
+                    [key: string]: string | number;
+                };
+            };
+            /** Watermarks */
+            watermarks: {
+                [key: string]: components["schemas"]["ExitWatermark"];
+            };
+        };
+        /** ExitObservation */
+        ExitObservation: {
+            /**
+             * Acquired At
+             * Format: date-time
+             */
+            acquired_at: string;
+            /**
+             * Authority
+             * @constant
+             */
+            authority: "EXCHANGE";
+            /** Correction Reason */
+            correction_reason: string | null;
+            /** Corrects Evidence Id */
+            corrects_evidence_id: string | null;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /** Evidence Id */
+            evidence_id: string;
+            /** Forecasts */
+            forecasts: components["schemas"]["ExitForecast"][];
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Sessions */
+            sessions: components["schemas"]["ExitSession"][];
+            /** Source Version */
+            source_version: string;
+            /**
+             * Validated At
+             * Format: date-time
+             */
+            validated_at: string;
+        };
         /** ExitOutcome */
         ExitOutcome: {
             /**
@@ -2939,7 +3253,7 @@ export interface components {
              * Probabilities
              * @default []
              */
-            probabilities: components["schemas"]["GuardedExitProbability"][];
+            probabilities: components["schemas"]["stock_profiler__modules__position_management__exit_contracts__GuardedExitProbability"][];
             /**
              * Reasons
              * @default []
@@ -2957,6 +3271,141 @@ export interface components {
             thesis?: components["schemas"]["ExitThesis"] | null;
             /** Thesis Event Id */
             thesis_event_id?: string | null;
+        };
+        /** ExitPolicy */
+        ExitPolicy: {
+            /** Action Version */
+            action_version: string;
+            /** Baseline Version */
+            baseline_version: string;
+            /** Block Lengths */
+            block_lengths: number[];
+            /** Bootstrap Repetitions */
+            bootstrap_repetitions: number;
+            /** Confidence */
+            confidence: string;
+            /**
+             * Continuous Quantile
+             * @default 0.5
+             */
+            continuous_quantile: string;
+            /** Cost Version */
+            cost_version: string;
+            /** Denied Value */
+            denied_value: string;
+            /** End Month */
+            end_month: string;
+            /** Established Value */
+            established_value: string;
+            /** Fixed Exit Loss */
+            fixed_exit_loss: string;
+            /** Fixed Reduce Loss */
+            fixed_reduce_loss: string;
+            /** Loss Grids */
+            loss_grids: string[];
+            /** Market Calendar Version */
+            market_calendar_version: string;
+            /** Model Version */
+            model_version: string;
+            /** Risky Downside */
+            risky_downside: string;
+            /** Safe Downside */
+            safe_downside: string;
+            /** Selected Grid */
+            selected_grid: string;
+            /** Start Month */
+            start_month: string;
+            /** States */
+            states: ("BULL" | "BEAR" | "SIDEWAYS")[];
+            /** Trailing Exit Loss */
+            trailing_exit_loss: string;
+            /** Trailing Reduce Loss */
+            trailing_reduce_loss: string;
+            /** Version Id */
+            version_id: string;
+        };
+        /** ExitPolicyPath */
+        ExitPolicyPath: {
+            /** Current Exposure */
+            current_exposure: string;
+            /** Daily Wealth */
+            daily_wealth: string[];
+            /** Dates */
+            dates: string[];
+            /** Exit Cost */
+            exit_cost: string;
+            /** Gross Total Return */
+            gross_total_return: string | null;
+            /** Maximum Drawdown */
+            maximum_drawdown: string;
+            /** Net Total Return */
+            net_total_return: string | null;
+            /** Pending Target */
+            pending_target: string;
+            /** Trades */
+            trades: components["schemas"]["StandardExitTrade"][];
+            /** Turnover */
+            turnover: string;
+        };
+        /** ExitPositionResult */
+        ExitPositionResult: {
+            /** Candidate Evaluation Id */
+            candidate_evaluation_id: string;
+            /**
+             * Current Exposure
+             * @default 1
+             */
+            current_exposure: string;
+            /** Decisions */
+            decisions: components["schemas"]["ExitDecisionLabel"][];
+            /**
+             * Entry At
+             * Format: date-time
+             */
+            entry_at: string;
+            /** Entry Price */
+            entry_price: string;
+            /**
+             * Initial Exposure
+             * @default 1
+             */
+            initial_exposure: string;
+            /** Initial Quantity */
+            initial_quantity: string;
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /**
+             * Matures At
+             * Format: date-time
+             */
+            matures_at: string;
+            /** Missing Reasons */
+            missing_reasons: string[];
+            observation: components["schemas"]["ExitObservation"] | null;
+            /**
+             * Origin
+             * @default SYSTEM
+             * @constant
+             */
+            origin: "SYSTEM";
+            /** Policies */
+            policies: {
+                [key: string]: components["schemas"]["ExitPolicyPath"];
+            };
+            /**
+             * Replay Consistent
+             * @default true
+             */
+            replay_consistent: boolean;
+            /** Security Id */
+            security_id: string;
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PENDING" | "UNAVAILABLE" | "EVALUABLE";
         };
         /** ExitProposition */
         ExitProposition: {
@@ -2985,6 +3434,27 @@ export interface components {
              * @constant
              */
             trigger_direction: "LIQUIDATE";
+        };
+        /** ExitSession */
+        ExitSession: {
+            /** Blocked Reason */
+            blocked_reason: ("SUSPENDED" | "LIMIT_DOWN" | "NO_BIDS" | "RESTRICTED") | null;
+            /** Cash Per Initial Share */
+            cash_per_initial_share: string;
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            costs: components["schemas"]["ExitCostCurve"];
+            /** Price */
+            price: string;
+            /** Quantity Multiplier */
+            quantity_multiplier: string;
+            /** Sellable */
+            sellable: boolean;
+            /** Vwap */
+            vwap: string;
         };
         /** ExitTarget */
         ExitTarget: {
@@ -3044,6 +3514,37 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** ExitWatermark */
+        ExitWatermark: {
+            /** Directions */
+            directions: {
+                [key: string]: number;
+            };
+            /** Disposition */
+            disposition: string;
+            /** Mature Months */
+            mature_months: number;
+            /** Nonoverlapping Windows */
+            nonoverlapping_windows: number;
+            /** Periods */
+            periods: number;
+            /** Position Count */
+            position_count: number;
+            /** Sufficient */
+            sufficient: boolean;
+            /** Target Events */
+            target_events: {
+                [key: string]: number;
+            };
+            /** Target Nonevents */
+            target_nonevents: {
+                [key: string]: number;
+            };
+            /** Target Positions */
+            target_positions: {
+                [key: string]: number;
+            };
+        };
         /**
          * ExternalResult
          * @description The user-visible result expected from this original synthetic fixture.
@@ -3063,6 +3564,7 @@ export interface components {
             evaluation_registrations: components["schemas"]["EvaluationRegistration"][];
             execution_plan?: components["schemas"]["ExecutionPlanOutcome"] | null;
             exit_assessment?: components["schemas"]["ExitOutcome"] | null;
+            exit_evaluation?: components["schemas"]["ExitEvaluationReport"] | null;
             governance?: components["schemas"]["GovernanceOutcome"] | null;
             historical_probability?: components["schemas"]["HistoricalProbabilityReport"] | null;
             historical_selection?: components["schemas"]["HistoricalSelectionReport"] | null;
@@ -3320,51 +3822,6 @@ export interface components {
             task?: components["schemas"]["FrozenTask"] | null;
             task_node?: components["schemas"]["RegisteredTaskNode"] | null;
             usage?: components["schemas"]["TaskUsage"] | null;
-        };
-        /** GuardedExitProbability */
-        GuardedExitProbability: {
-            /** Assessment Digest */
-            assessment_digest: string;
-            calibration: components["schemas"]["ExitCalibration"];
-            /** Guarded Lower */
-            guarded_lower: string | null;
-            /** Guarded Upper */
-            guarded_upper: string | null;
-            /** Loss Boundary */
-            loss_boundary: string | null;
-            /** Point */
-            point: string;
-            /**
-             * Produced At
-             * Format: date-time
-             */
-            produced_at: string;
-            /** Qualification Id */
-            qualification_id: string;
-            qualification_scope: components["schemas"]["QualificationScope"];
-            /**
-             * Qualification Status
-             * @enum {string}
-             */
-            qualification_status: "VALID" | "AT_RISK" | "NOT_QUALIFIED";
-            /**
-             * Reasons
-             * @default []
-             */
-            reasons: string[];
-            /** Security Id */
-            security_id: string;
-            /**
-             * Target
-             * @enum {string}
-             */
-            target: "D20" | "V60";
-            /**
-             * Valid Until
-             * Format: date-time
-             */
-            valid_until: string;
-            version: components["schemas"]["CapabilityVersion"];
         };
         /** HistoricalCounts */
         HistoricalCounts: {
@@ -6074,6 +6531,71 @@ export interface components {
              */
             status: "CREATED" | "RUNNING" | "WAITING" | "SUCCEEDED" | "REJECTED" | "ABSTAINED" | "FAILED" | "PENDING" | "EXPIRED" | "EXECUTION_BLOCKED" | "UNKNOWN" | "CANCELLED";
         };
+        /** StandardExitPosition */
+        StandardExitPosition: {
+            /** Candidate Evaluation Id */
+            candidate_evaluation_id: string;
+            /**
+             * Current Exposure
+             * @default 1
+             */
+            current_exposure: string;
+            /**
+             * Entry At
+             * Format: date-time
+             */
+            entry_at: string;
+            /** Entry Price */
+            entry_price: string;
+            /**
+             * Initial Exposure
+             * @default 1
+             */
+            initial_exposure: string;
+            /** Lifecycle Id */
+            lifecycle_id: string;
+            /**
+             * Matures At
+             * Format: date-time
+             */
+            matures_at: string;
+            /**
+             * Origin
+             * @default SYSTEM
+             * @constant
+             */
+            origin: "SYSTEM";
+            /** Security Id */
+            security_id: string;
+            /** Source Event Id */
+            source_event_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PENDING" | "UNAVAILABLE" | "EVALUABLE";
+        };
+        /** StandardExitTrade */
+        StandardExitTrade: {
+            /** Costs */
+            costs: string;
+            /**
+             * Executed At
+             * Format: date-time
+             */
+            executed_at: string;
+            /** Exposure Sold */
+            exposure_sold: string;
+            /** Net Proceeds */
+            net_proceeds: string;
+            /** Price */
+            price: string;
+            /**
+             * Signal At
+             * Format: date-time
+             */
+            signal_at: string;
+        };
         /** StandardObservation */
         StandardObservation: {
             entry: components["schemas"]["EntryEvidence"] | null;
@@ -6098,6 +6620,11 @@ export interface components {
             cutoff_at: string;
             /** Delivery */
             delivery: components["schemas"]["CandidateBatchDelivery"][];
+            /**
+             * Exit Positions
+             * @default []
+             */
+            exit_positions: components["schemas"]["StandardExitPosition"][];
             /** Members */
             members: components["schemas"]["EvaluationMember"][];
             /** Populations */
@@ -6596,6 +7123,60 @@ export interface components {
             m_agent_wheel_url: string;
             /** Source Sha */
             source_sha: string;
+        };
+        /** GuardedExitProbability */
+        stock_profiler__modules__evaluation__exit_contracts__GuardedExitProbability: {
+            /** Lower Error */
+            lower_error: string;
+            /** Point */
+            point: string;
+            /** Upper Error */
+            upper_error: string;
+        };
+        /** GuardedExitProbability */
+        stock_profiler__modules__position_management__exit_contracts__GuardedExitProbability: {
+            /** Assessment Digest */
+            assessment_digest: string;
+            calibration: components["schemas"]["ExitCalibration"];
+            /** Guarded Lower */
+            guarded_lower: string | null;
+            /** Guarded Upper */
+            guarded_upper: string | null;
+            /** Loss Boundary */
+            loss_boundary: string | null;
+            /** Point */
+            point: string;
+            /**
+             * Produced At
+             * Format: date-time
+             */
+            produced_at: string;
+            /** Qualification Id */
+            qualification_id: string;
+            qualification_scope: components["schemas"]["QualificationScope"];
+            /**
+             * Qualification Status
+             * @enum {string}
+             */
+            qualification_status: "VALID" | "AT_RISK" | "NOT_QUALIFIED";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Security Id */
+            security_id: string;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "D20" | "V60";
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            version: components["schemas"]["CapabilityVersion"];
         };
     };
     responses: never;
