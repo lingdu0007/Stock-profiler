@@ -15,7 +15,7 @@ def confirmation_permitted(
 ) -> bool:
     outcome = report.result.monitoring
     if outcome is None:
-        return True
+        return report.result.position_action is None
     if (
         report.access_scope is None
         or outcome.disposition != "ASSESSED"

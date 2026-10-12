@@ -78,6 +78,10 @@ it cannot rewrap the old conclusion to renew its window. Original reports stay
 immutable. Independent P0/P1 targets retain their own provenance and survive a
 missing or expired statistical window.
 
+Position-action source reports remain readable audit records. A new plan choice
+must use a daily or event monitoring assessment with a bound window, rather than
+confirming the raw source through the generic user-fact route.
+
 The authorized workspace and confirmation boundary revalidate the saved source,
 current qualification and original evidence. At the window's end, P2 leaves the
 inbox and loses confirmation eligibility. The browser advances only its display

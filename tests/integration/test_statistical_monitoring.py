@@ -646,3 +646,38 @@ def test_deterministic_confirmation_does_not_need_statistical_qualification(
         )
         is not None
     )
+
+
+def test_raw_position_conclusion_cannot_bypass_monitoring_confirmation_window(
+    migrated_settings: Settings,
+) -> None:
+    from stock_profiler.modules.delivery.user_facts import UserFactRequest
+
+    source = saved(
+        migrated_settings,
+        action_payload(migrated_settings, points=("0.65", "0.55", "0.45", "0.35", "0.50")),
+    )
+    saved(migrated_settings, statistical_payload(migrated_settings, source))
+    actor = principal().model_copy(update={"permissions": ("REPORT_READ", "USER_FACT")})
+    delivery = ResultDelivery.from_settings(
+        migrated_settings, clock=GovernanceClock("2042-05-20T16:00:00Z")
+    )
+    assert (
+        delivery.record_user_fact(
+            source.report_version_id,
+            actor,
+            UserFactRequest(
+                kind="CONFIRMED", choice="ACCEPT", idempotency_key="synthetic-raw-source-bypass"
+            ),
+        )
+        is None
+    )
+    assert (
+        delivery.record_user_fact(
+            source.report_version_id,
+            actor,
+            UserFactRequest(kind="VIEWED", idempotency_key="synthetic-raw-source-view"),
+        )
+        is not None
+    )
+    assert delivery.read_report(source.report_version_id, actor) == source
