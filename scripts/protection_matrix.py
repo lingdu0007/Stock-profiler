@@ -119,7 +119,8 @@ MUTATIONS = {
     "notification_fallback": GuardMutation(
         "src/stock_profiler/modules/delivery/monitoring_notifications.py",
         "route_synthetic_notifications",
-        'item.priority == "P0" or request.immediate_result != "ACCEPTED"',
+        'item.priority == "P0" or '
+        '(item.priority == "P1" and request.immediate_result != "ACCEPTED")',
         "False",
         "tests/integration/test_monitoring_workspace.py"
         "::test_notification_fallback_preserves_action_and_minimizes_external_content",

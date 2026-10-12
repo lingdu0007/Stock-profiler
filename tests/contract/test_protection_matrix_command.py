@@ -189,6 +189,18 @@ def test_gate_mutation_requires_one_exact_guard_and_leaves_other_code_intact(
         mutate(target, "authorize", "value is None", "False")
 
 
+@pytest.mark.parametrize(
+    "name",
+    tuple(runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))["MUTATIONS"]),
+)
+def test_frozen_mutations_match_the_current_source(name: str, tmp_path: Path) -> None:
+    module: dict[str, Any] = runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))
+    mutation = module["MUTATIONS"][name]
+    target = tmp_path / "guard.py"
+    target.write_text((ROOT / mutation.path).read_text(encoding="utf-8"), encoding="utf-8")
+    module["mutate_guard"](target, mutation.function, mutation.condition, mutation.replacement)
+
+
 def test_matrix_coverage_cannot_lose_a_required_surface() -> None:
     module: dict[str, Any] = runpy.run_path(str(ROOT / "scripts/protection_matrix.py"))
     verify_coverage = module["verify_coverage"]
