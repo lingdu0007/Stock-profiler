@@ -553,3 +553,96 @@ def test_statistical_exit_has_zero_target_and_late_publication_does_not_revive_i
     workspace = delivery.monitoring_workspace(principal())
     assert workspace is not None and workspace.inbox == ()
     assert delivery.read_report(report.report_version_id, principal()) == report
+
+
+@pytest.mark.parametrize("dependency", ["cost", "rules"])
+def test_original_required_execution_evidence_expiry_closes_p2_even_with_fresh_envelopes(
+    migrated_settings: Settings,
+    dependency: str,
+) -> None:
+    from stock_profiler.modules.delivery.user_facts import UserFactRequest
+
+    payload = action_payload(migrated_settings, points=("0.65", "0.55", "0.45", "0.35", "0.50"))
+    for route in payload["position_action"]["execution"]["routes"]:
+        evidence = (
+            route["cost_curve"]["evidence"] if dependency == "cost" else route["rules_evidence"]
+        )
+        evidence["expires_at"] = "2042-05-19T09:00:00Z"
+    source = saved(migrated_settings, payload)
+    report = saved(migrated_settings, statistical_payload(migrated_settings, source))
+    actor = principal().model_copy(update={"permissions": ("REPORT_READ", "USER_FACT")})
+    delivery = ResultDelivery.from_settings(
+        migrated_settings, clock=GovernanceClock("2042-05-19T09:00:00Z")
+    )
+    workspace = delivery.monitoring_workspace(actor)
+    assert workspace is not None and workspace.inbox == ()
+    assert (
+        delivery.record_user_fact(
+            report.report_version_id,
+            actor,
+            UserFactRequest(
+                kind="CONFIRMED", choice="ACCEPT", idempotency_key="synthetic-expired-dependency"
+            ),
+        )
+        is None
+    )
+    notification = saved(
+        migrated_settings, notification_payload(migrated_settings, report), "2042-05-19T09:00:00Z"
+    )
+    assert (
+        notification.result.monitoring is not None
+        and notification.result.monitoring.notifications == ()
+    )
+
+
+def test_historical_hard_liquidation_is_delivered_on_first_later_monitoring(
+    migrated_settings: Settings,
+) -> None:
+    payload = action_payload(migrated_settings, gate="legal")
+    first = saved(migrated_settings, payload)
+    assessment = saved_assessment(migrated_settings, payload)
+    assessment["evidence"][0]["legal_termination"] = False
+    later_payload = action_payload(
+        migrated_settings, cutoff_at="2042-05-19T16:00:00Z", previous=assessment
+    )
+    later_source = saved(migrated_settings, later_payload)
+    assert (
+        first.result.position_action is not None and later_source.result.position_action is not None
+    )
+    assert later_source.result.position_action.direction == "EXIT"
+    report = saved(migrated_settings, statistical_payload(migrated_settings, later_source))
+    assert report.result.monitoring is not None
+    assert any(
+        item.priority == "P0" and item.target_quantity == 0
+        for item in report.result.monitoring.cases
+    )
+
+
+def test_deterministic_confirmation_does_not_need_statistical_qualification(
+    migrated_settings: Settings,
+) -> None:
+    from stock_profiler.modules.delivery.user_facts import UserFactRequest
+
+    payload = action_payload(migrated_settings, gate="legal")
+    payload["position_action"]["qualification_id"] = (
+        "synthetic-unavailable-statistical-qualification"
+    )
+    source = saved(migrated_settings, payload)
+    report = saved(migrated_settings, statistical_payload(migrated_settings, source))
+    actor = principal().model_copy(update={"permissions": ("REPORT_READ", "USER_FACT")})
+    delivery = ResultDelivery.from_settings(
+        migrated_settings, clock=GovernanceClock("2042-05-19T08:00:00Z")
+    )
+    assert report.result.monitoring is not None and all(
+        item.priority != "P2" for item in report.result.monitoring.cases
+    )
+    assert (
+        delivery.record_user_fact(
+            report.report_version_id,
+            actor,
+            UserFactRequest(
+                kind="CONFIRMED", choice="ACCEPT", idempotency_key="synthetic-protection-confirmed"
+            ),
+        )
+        is not None
+    )

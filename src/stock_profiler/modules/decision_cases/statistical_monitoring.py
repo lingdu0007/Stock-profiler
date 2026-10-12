@@ -3,10 +3,20 @@
 from datetime import datetime
 from hashlib import sha256
 
-from stock_profiler.modules.decision_cases.domain import FormalReport, FrozenDecisionCase
+from pydantic import BaseModel
+
+from stock_profiler.modules.decision_cases.domain import (
+    FormalReport,
+    FrozenDecisionCase,
+    ResultAccessScope,
+)
 from stock_profiler.modules.decision_cases.ports import DecisionLedger, Transaction
 from stock_profiler.modules.delivery.monitoring_contracts import MonitoringCase, MonitoringOutcome
-from stock_profiler.modules.position_management.exit_contracts import SecurityAssessment
+from stock_profiler.modules.position_management.contracts import PositionEvidence
+from stock_profiler.modules.position_management.exit_contracts import (
+    GuardedExitProbability,
+    SecurityAssessment,
+)
 from stock_profiler.modules.qualification.service import (
     current_qualification,
     qualification_is_current,
@@ -19,6 +29,8 @@ def project_position_action(
     blocked: MonitoringOutcome,
     ledger: DecisionLedger[Transaction],
     connection: Transaction,
+    *,
+    prerequisite_met: bool,
 ) -> MonitoringOutcome:
     command, scope = case.monitoring, case.access_scope
     assert command is not None and scope is not None
@@ -60,6 +72,19 @@ def project_position_action(
         and capital.result.drawdown.state is not None
         and capital.result.drawdown.state.risk_state == "PRESERVATION"
     )
+    protective_sources = (
+        {
+            identity
+            for target in deterministic.targets
+            if deterministic is not None
+            for identity in target.source_obligation_ids
+            if (obligation := ledger.get_formal_report_for_event(identity, connection)) is not None
+            and obligation.result.exit_assessment is not None
+            and obligation.result.exit_assessment.hard_gates
+        }
+        if deterministic is not None
+        else set()
+    )
     if deterministic is not None:
         for target in deterministic.targets:
             if not target.source_obligation_ids:
@@ -81,6 +106,7 @@ def project_position_action(
                 obligation_ids=target.source_obligation_ids,
                 priority="P0"
                 if capital_protection
+                or protective_sources.intersection(target.source_obligation_ids)
                 or target.security_id == original.security_id
                 and protective
                 or previous is not None
@@ -121,7 +147,7 @@ def project_position_action(
             else None,
         }
     )
-    if blocked.reasons != ("MONITORING_HANDOFF_UNAVAILABLE",):
+    if not prerequisite_met:
         return projected
     security_fact = ledger.get_decision_event(original.security_event_id, connection)
     assessment = security_fact.case.exit_assessment if security_fact else None
@@ -206,6 +232,8 @@ def statistical_conclusion_current(
         connection, scope, source.event_id
     ):
         return False
+    if not execution_conclusion_current(report, ledger, connection):
+        return False
     now = datetime.fromisoformat(ledger.observed_at())
     record = current_qualification(
         ledger.governance_history(connection, scope),
@@ -213,15 +241,36 @@ def statistical_conclusion_current(
         original.policy.version,
     )
     security = ledger.get_formal_report_for_event(original.security_event_id, connection)
+    authorizations = ledger.portfolio_authorization_history(
+        connection, scope, original.execution.portfolio_id, now.isoformat()
+    )
+    authorization = next(
+        (item.authorization for item in reversed(authorizations) if item.authorization is not None),
+        None,
+    )
     return not (
-        record is None
+        authorization is None
+        or authorization.authorization_id != original.execution.authorization_id
+        or authorization.proposal.risk_budget.expires_at <= now
+        or any(
+            route.security_id == original.security_id
+            and (
+                route.cost_curve is None or not _evidence_unexpired(route.cost_curve.evidence, now)
+            )
+            for route in original.execution.routes
+        )
+        or record is None
         or record.decision_id != original.qualification_id
         or record.status not in {"VALID", "AT_RISK"}
         or not qualification_is_current(record, now)
         or security is None
         or security.result.exit_assessment is None
+        or security.result.exit_assessment.thesis is None
+        or security.result.exit_assessment.thesis.valid_until <= now
+        or any(evidence.valid_until <= now for evidence in security.result.exit_assessment.evidence)
         or any(
             prediction.valid_until <= now
+            or not _prediction_qualification_current(prediction, scope, ledger, connection, now)
             for prediction in security.result.exit_assessment.probabilities
         )
         or outcome.freshness is None
@@ -239,4 +288,81 @@ def statistical_conclusion_current(
                 outcome.freshness.calendar_evidence,
             )
         )
+    )
+
+
+def execution_conclusion_current(
+    report: FormalReport, ledger: DecisionLedger[Transaction], connection: Transaction
+) -> bool:
+    """Verify a deterministic plan's saved execution facts independently of statistics."""
+    outcome, scope = report.result.monitoring, report.access_scope
+    if outcome is None or scope is None or outcome.conclusion_report_id is None:
+        return False
+    source = ledger.get_formal_report(outcome.conclusion_report_id)
+    if (
+        source is None
+        or ledger.get_correction_event(source.event_id, connection) is not None
+        or not ledger.monitoring_inputs_unchanged(connection, scope, source.event_id)
+    ):
+        return False
+    fact = ledger.get_original_decision_event(source.business_object_id, connection)
+    command = fact.case.position_action if fact else None
+    if command is None:
+        return False
+    now = datetime.fromisoformat(ledger.observed_at())
+    for route in command.execution.routes:
+        if not _evidence_unexpired(route.rules_evidence, now):
+            return False
+        curves = (route.cost_curve, route.conservative_cost_curve)
+        if not any(
+            curve is not None and _evidence_unexpired(curve.evidence, now) for curve in curves
+        ):
+            return False
+    for event_id in (
+        command.execution.concentration_event_id,
+        command.execution.stress_event_id,
+        command.execution.liquidity_event_id,
+        command.execution.drawdown_event_id,
+    ):
+        dependency = ledger.get_formal_report_for_event(event_id, connection)
+        if (
+            dependency is None
+            or dependency.access_scope is None
+            or not scope.same_scope_as(dependency.access_scope)
+            or ledger.get_correction_event(event_id, connection) is not None
+            or not _evidence_unexpired(dependency.result, now)
+        ):
+            return False
+    return True
+
+
+def _evidence_unexpired(value: object, now: datetime) -> bool:
+    if isinstance(value, PositionEvidence):
+        return value.expires_at is None or now < value.expires_at
+    if isinstance(value, BaseModel):
+        return all(
+            _evidence_unexpired(getattr(value, name), now) for name in type(value).model_fields
+        )
+    if isinstance(value, tuple):
+        return all(_evidence_unexpired(item, now) for item in value)
+    return True
+
+
+def _prediction_qualification_current(
+    prediction: GuardedExitProbability,
+    scope: ResultAccessScope,
+    ledger: DecisionLedger[Transaction],
+    connection: Transaction,
+    now: datetime,
+) -> bool:
+    record = current_qualification(
+        ledger.governance_history(connection, scope),
+        prediction.qualification_scope,
+        prediction.version,
+    )
+    return (
+        record is not None
+        and record.decision_id == prediction.qualification_id
+        and record.status in {"VALID", "AT_RISK"}
+        and qualification_is_current(record, now)
     )

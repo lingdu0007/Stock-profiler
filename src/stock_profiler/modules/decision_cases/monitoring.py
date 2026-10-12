@@ -141,18 +141,22 @@ def assess_monitoring(
         "DAILY_CLOSE",
         "EVENT_REASSESS",
     }:
+        prerequisite_met = True
         calendar = command.calendar
         if calendar is None or calendar.evidence.problem_codes(
             command.cutoff_at, require_current_completeness=True
         ):
+            prerequisite_met = False
             blocked = blocked.model_copy(update={"reasons": ("MONITORING_CALENDAR_UNAVAILABLE",)})
         elif any(item.status != "VALIDATED" for item in _evidence_status(command)):
+            prerequisite_met = False
             blocked = blocked.model_copy(
                 update={"reasons": ("MONITORING_EVIDENCE_FAMILY_INCOMPLETE",)}
             )
         elif command.kind == "DAILY_CLOSE" and (
             not calendar.is_trading_day or calendar.close_at > command.cutoff_at
         ):
+            prerequisite_met = False
             blocked = blocked.model_copy(update={"reasons": ("MONITORING_CLOSE_NOT_COMPLETED",)})
         elif command.kind == "EVENT_REASSESS" and (
             not command.events
@@ -164,8 +168,11 @@ def assess_monitoring(
                 for event in command.events
             )
         ):
+            prerequisite_met = False
             blocked = blocked.model_copy(update={"reasons": ("MONITORING_EVENT_UNQUALIFIED",)})
-        return project_position_action(case, source, blocked, ledger, connection)
+        return project_position_action(
+            case, source, blocked, ledger, connection, prerequisite_met=prerequisite_met
+        )
     if command.kind == "EVENT_REASSESS":
         if not command.events or any(
             _EVENT_AUTHORITIES.get(event.kind) != event.authority
